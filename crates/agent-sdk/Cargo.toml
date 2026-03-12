@@ -1,0 +1,56 @@
+[package]
+name = "agent-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "Claude Agent SDK port for Rust - build production AI agents with Claude"
+license = "MIT"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+tokio-stream = "0.1"
+futures = "0.3"
+async-trait = "0.1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Streaming helpers
+async-stream = "0.3"
+bytes = "1"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "stream"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Regex for hook matchers
+regex = "1"
+
+# UUID for session IDs
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Chrono for timestamps
+chrono = { version = "0.4", features = ["serde"] }
+
+# Process management
+which = "7"
+
+# Glob patterns
+glob = "0.3"
+
+# Temporary directories
+tempfile = "3"
+
+[dev-dependencies]
+tokio-test = "0.4"
+pretty_assertions = "1"
+colored = "3"
