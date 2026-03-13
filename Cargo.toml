@@ -6,6 +6,8 @@ members = [
     "crates/orion-memory",
     "crates/orion-vault",
     "crates/orion-session",
+    "crates/orion-skills",
+    "crates/orion-cron",
     "crates/orion-agent",
     "crates/orion-gateway",
     "crates/orion",

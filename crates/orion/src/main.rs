@@ -47,6 +47,18 @@ enum Commands {
         #[command(subcommand)]
         action: SessionAction,
     },
+
+    /// Skill management.
+    Skills {
+        #[command(subcommand)]
+        action: SkillAction,
+    },
+
+    /// Cron job management.
+    Cron {
+        #[command(subcommand)]
+        action: CronAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -96,6 +108,52 @@ enum SessionAction {
     },
 }
 
+#[derive(Subcommand)]
+enum SkillAction {
+    /// List all skills.
+    List,
+    /// Show a skill's content.
+    Show {
+        /// Skill name.
+        name: String,
+    },
+    /// Create a new skill from a file or inline content.
+    Create {
+        /// Skill name.
+        name: String,
+        /// Markdown content (or use --file).
+        #[arg(short, long)]
+        content: Option<String>,
+        /// Read content from a file.
+        #[arg(short, long)]
+        file: Option<String>,
+    },
+    /// Delete a skill.
+    Delete {
+        /// Skill name.
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum CronAction {
+    /// List all cron jobs.
+    List,
+    /// Remove a cron job by name.
+    Remove {
+        /// Job name.
+        name: String,
+    },
+    /// Show recent runs for a job.
+    Runs {
+        /// Job name.
+        name: String,
+        /// Maximum runs to show.
+        #[arg(short, long, default_value = "10")]
+        limit: usize,
+    },
+}
+
 fn truncate(s: &str, max: usize) -> String {
     if s.len() > max {
         format!("{}...", &s[..max])
@@ -117,6 +175,14 @@ fn tool_icon(name: &str) -> &str {
         "MemoryAppendDaily" => "📅",
         "VaultGet" => "🔐",
         "VaultSet" => "🔑",
+        "SkillCreate" => "🛠️",
+        "SkillUpdate" => "🛠️",
+        "SkillDelete" => "🗑️",
+        "SkillList" => "📋",
+        "CronAdd" => "⏰",
+        "CronList" => "📋",
+        "CronRemove" => "🗑️",
+        "CronRuns" => "📊",
         _ => "🔧",
     }
 }
@@ -440,6 +506,96 @@ async fn main() -> anyhow::Result<()> {
                                 summary
                             );
                         }
+                    }
+                }
+            }
+        }
+
+        Commands::Skills { action } => {
+            let agent = OrionAgent::new(config)?;
+            match action {
+                SkillAction::List => {
+                    let skills = agent.skills().list()?;
+                    if skills.is_empty() {
+                        println!("No skills found.");
+                    } else {
+                        for s in &skills {
+                            let preview = if s.content.len() > 60 {
+                                format!("{}...", &s.content[..60])
+                            } else {
+                                s.content.clone()
+                            };
+                            println!("  {} — {}", s.name, preview.replace('\n', " "));
+                        }
+                    }
+                }
+                SkillAction::Show { name } => {
+                    match agent.skills().get(&name)? {
+                        Some(skill) => println!("{}", skill.content),
+                        None => println!("Skill '{}' not found.", name),
+                    }
+                }
+                SkillAction::Create { name, content, file } => {
+                    let content = if let Some(path) = file {
+                        std::fs::read_to_string(&path)?
+                    } else if let Some(c) = content {
+                        c
+                    } else {
+                        anyhow::bail!("Provide --content or --file");
+                    };
+                    agent.skills().create(&name, &content)?;
+                    println!("Created skill '{}'.", name);
+                }
+                SkillAction::Delete { name } => {
+                    agent.skills().delete(&name)?;
+                    println!("Deleted skill '{}'.", name);
+                }
+            }
+        }
+
+        Commands::Cron { action } => {
+            let agent = OrionAgent::new(config)?;
+            match action {
+                CronAction::List => {
+                    let jobs = agent.cron().list_jobs()?;
+                    if jobs.is_empty() {
+                        println!("No cron jobs.");
+                    } else {
+                        for j in &jobs {
+                            let status = if j.enabled { "enabled" } else { "disabled" };
+                            let next = j.next_run_at.as_deref().unwrap_or("none");
+                            println!(
+                                "  {} [{}] next={} — {}",
+                                j.name, status, next,
+                                truncate(&j.prompt, 60)
+                            );
+                        }
+                    }
+                }
+                CronAction::Remove { name } => {
+                    agent.cron().remove_job_by_name(&name)?;
+                    println!("Removed job '{}'.", name);
+                }
+                CronAction::Runs { name, limit } => {
+                    let jobs = agent.cron().list_jobs()?;
+                    let job = jobs.iter().find(|j| j.name == name);
+                    match job {
+                        Some(j) => {
+                            let runs = agent.cron().list_runs(&j.id, limit)?;
+                            if runs.is_empty() {
+                                println!("No runs for '{}'.", name);
+                            } else {
+                                for r in &runs {
+                                    let summary = r.result_summary.as_deref().unwrap_or("");
+                                    println!(
+                                        "  {} {:?} {}",
+                                        r.started_at, r.status,
+                                        truncate(summary, 60)
+                                    );
+                                }
+                            }
+                        }
+                        None => println!("Job '{}' not found.", name),
                     }
                 }
             }

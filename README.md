@@ -1,16 +1,18 @@
 # Orion RS
 
-A modular personal AI assistant platform built in Rust, powered by Claude. Orion provides persistent memory, encrypted credential storage, automatic session management, and a gateway server supporting HTTP and WebSocket frontends.
+A modular personal AI assistant platform built in Rust, powered by Claude. Orion provides persistent memory, encrypted credential storage, automatic session management, self-extending skills, scheduled tasks, and a gateway server supporting HTTP and WebSocket frontends.
 
 ## Architecture
 
 ```
 crates/
 ├── agent-sdk/          Claude API client + agent loop
-├── orion-core/         Shared types, config, error handling
+├── orion-core/         Shared types, config, error handling, migration runner
 ├── orion-memory/       SQLite FTS5 full-text search + markdown files
 ├── orion-vault/        AES-256-GCM encrypted credential storage
 ├── orion-session/      Session lifecycle + time-gap analysis
+├── orion-skills/       Self-extension skill system (markdown-based)
+├── orion-cron/         Cron scheduling (interval, cron expr, one-shot)
 ├── orion-agent/        Orchestrator wiring everything together
 ├── orion-gateway/      Axum HTTP/WS server
 └── orion/              CLI binary
@@ -24,9 +26,11 @@ orion-core             (independent)
 orion-memory           → orion-core
 orion-vault            → orion-core
 orion-session          → orion-core
-orion-agent            → orion-core, orion-memory, orion-session, orion-vault, agent-sdk
+orion-skills           → orion-core
+orion-cron             → orion-core
+orion-agent            → orion-core, orion-memory, orion-session, orion-vault, orion-skills, orion-cron, agent-sdk
 orion-gateway          → orion-core, orion-agent, orion-session
-orion (bin)            → orion-core, orion-agent, orion-gateway
+orion (bin)            → orion-core, orion-agent, orion-gateway, orion-skills, orion-cron
 ```
 
 ## Quick Start
@@ -83,14 +87,14 @@ orion chat "What's the capital of France?"
 # Interactive REPL
 orion repl
 
-# Start the HTTP/WS gateway
+# Start the HTTP/WS gateway (also starts the cron scheduler)
 orion serve
 ```
 
 ## CLI Reference
 
 ```
-orion serve                              Start the gateway server
+orion serve                              Start the gateway server + cron scheduler
 orion chat "<message>"                   Send a one-shot message
 orion repl                               Interactive REPL session
 
@@ -103,6 +107,16 @@ orion vault delete <key>                 Delete a credential
 orion vault list                         List all stored keys
 
 orion sessions list [-l 10]              List recent sessions
+
+orion skills list                        List all skills
+orion skills show <name>                 Show a skill's content
+orion skills create <name> -c "..."      Create a skill from inline content
+orion skills create <name> -f file.md    Create a skill from a file
+orion skills delete <name>               Delete a skill
+
+orion cron list                          List all cron jobs
+orion cron remove <name>                 Remove a cron job
+orion cron runs <name> [-l 10]           Show recent runs for a job
 ```
 
 ## Gateway API
@@ -251,9 +265,29 @@ while let Some(msg) = stream.next().await {
 
 **Custom tools:** Register via `Options::builder().external_tool_handler(handler).custom_tools(defs).build()`. The external handler is called before the built-in executor; return `Some(ToolResult)` to handle the call, or `None` to fall through to built-ins.
 
+**Hooks:** 18 lifecycle events (PreToolUse, PostToolUse, SessionStart, etc.) with async callbacks, regex matchers, and configurable timeouts.
+
 ### orion-core
 
-Shared foundation: `OrionConfig` (loaded from TOML), `OrionError` (unified error enum), and request/response types (`ChatMessage`, `ChatResponse`, `ChatUsage`).
+Shared foundation: `OrionConfig` (loaded from TOML), `OrionError` (unified error enum), request/response types (`ChatMessage`, `ChatResponse`, `ChatUsage`), and the **migration runner**.
+
+#### Migration System
+
+Each crate owns its schema via versioned migrations. The `run_migrations(conn, namespace, migrations)` function:
+- Creates a `_migrations` table for tracking applied versions
+- Runs each pending migration in its own transaction
+- Scopes versions by namespace so multiple crates can share a database
+
+```rust
+use orion_core::{Migration, run_migrations};
+
+let migrations = &[
+    Migration { version: 1, name: "create_items", sql: "CREATE TABLE ..." },
+    Migration { version: 2, name: "add_column", sql: "ALTER TABLE ..." },
+];
+
+run_migrations(&conn, "my_crate", migrations)?;
+```
 
 ### orion-memory
 
@@ -293,24 +327,71 @@ Automatic session management with time-gap heuristics:
 
 Each session tracks creation time, last message time, message count, closure status, summary, and per-turn token usage with cost.
 
+### orion-skills
+
+Self-extension system. Skills are markdown files stored at `<data_dir>/skills/<name>/SKILL.md` that augment the agent's capabilities at runtime.
+
+**How it works:**
+1. The agent (or user via CLI) creates a skill with `SkillCreate`
+2. On each chat turn, all skills are loaded and injected into the system prompt
+3. Skills can be updated or deleted at any time
+
+**Agent tools:** `SkillCreate`, `SkillUpdate`, `SkillDelete`, `SkillList`
+
+Skills are pure filesystem — no database required. The directory-per-skill layout (`skills/<name>/SKILL.md`) allows future expansion (config files, examples per skill).
+
+### orion-cron
+
+Built-in scheduling system for recurring and one-shot tasks.
+
+**Schedule types:**
+
+| Type | Config | Example |
+|---|---|---|
+| Interval | `every_ms` | Every 5 minutes (300000) |
+| Cron | `expr` | `"0 0 9 * * *"` (daily at 9am) |
+| One-shot | `at` | ISO 8601 timestamp |
+
+**How it works:**
+1. The agent creates a job via `CronAdd` with a name, prompt, and schedule
+2. A background scheduler (30-second tick) polls for due jobs
+3. When a job fires, its prompt is sent through `OrionAgent::chat()`
+4. Run history is recorded with status and result summary
+5. One-shot jobs can auto-delete with `delete_after_run: true`
+
+**Agent tools:** `CronAdd`, `CronList`, `CronRemove`, `CronRuns`
+
+The scheduler starts automatically when the gateway server runs (`orion serve`).
+
 ### orion-agent
 
 The orchestrator. `OrionAgent::chat()` executes the full pipeline:
 
 1. **Resolve session** — time-gap analysis to continue or create
-2. **Build system prompt** — bootstrap context + date/time + tool instructions
-3. **Configure tools** — built-in (Read, Bash, Glob, Grep) + custom (MemorySearch, MemoryWrite, MemoryAppendDaily, VaultGet, VaultSet)
+2. **Build system prompt** — bootstrap context + active skills + date/time + tool instructions
+3. **Configure tools** — built-in (Read, Bash, Glob, Grep) + 13 custom tools
 4. **Run agent loop** — `agent_sdk::query()` with `BypassPermissions` mode
 5. **Record usage** — persist token counts and cost to session
 6. **Append daily log** — summarize the exchange in today's log file
 
+**Custom tools (13):**
+
+| Category | Tools |
+|---|---|
+| Memory | `MemorySearch`, `MemoryWrite`, `MemoryAppendDaily` |
+| Vault | `VaultGet`, `VaultSet` |
+| Skills | `SkillCreate`, `SkillUpdate`, `SkillDelete`, `SkillList` |
+| Cron | `CronAdd`, `CronList`, `CronRemove`, `CronRuns` |
+
+All tool handlers go through a shared `ToolContext` struct that holds `Arc` references to each subsystem.
+
 ### orion-gateway
 
-Axum-based HTTP and WebSocket server. Wraps `OrionAgent` in shared state (`Arc<AppState>`) and exposes it through REST endpoints and a WebSocket connection.
+Axum-based HTTP and WebSocket server. Wraps `OrionAgent` in shared state (`Arc<AppState>`) and exposes it through REST endpoints and a WebSocket connection. Starts the cron scheduler as a background task on boot.
 
 ### orion (CLI)
 
-Command-line interface with clap. The `repl` command uses rustyline for readline support (history, Ctrl+C/Ctrl+D handling).
+Command-line interface with clap. The `repl` command uses rustyline for readline support (history, Ctrl+C/Ctrl+D handling). Rich colored output with per-tool icons for streaming display.
 
 ## Development
 
@@ -320,16 +401,19 @@ Command-line interface with clap. The `repl` command uses rustyline for readline
 cargo test
 ```
 
-45 unit tests + 2 doc-tests across all crates.
+67 unit tests + 2 doc-tests across all crates.
 
 ### Test Breakdown
 
 | Crate | Tests |
 |---|---|
 | agent-sdk | 17 unit + 2 doc |
+| orion-core | 4 (migration runner) |
 | orion-memory | 8 |
 | orion-vault | 7 |
 | orion-session | 8 |
+| orion-skills | 9 |
+| orion-cron | 7 |
 | orion-agent | 3 |
 
 ### Project Structure
@@ -354,33 +438,44 @@ crates/
 │   └── src/
 │       ├── config.rs        OrionConfig from TOML
 │       ├── error.rs         OrionError enum
+│       ├── migrate.rs       Migration runner (namespace-scoped, versioned)
 │       └── types.rs         ChatMessage, ChatResponse
 ├── orion-memory/
 │   └── src/
 │       ├── store.rs         MemoryStore (search, write, reindex)
 │       ├── indexer.rs       Text chunking + FTS5 indexing
-│       ├── schema.rs        SQLite migrations
+│       ├── schema.rs        Versioned migrations
 │       └── defaults.rs      Default SOUL/USER/MEMORY content
 ├── orion-vault/
 │   └── src/
 │       ├── lib.rs           Vault (AES-256-GCM encrypt/decrypt)
-│       └── schema.rs        SQLite migrations
+│       └── schema.rs        Versioned migrations
 ├── orion-session/
 │   └── src/
 │       ├── lib.rs           SessionManager (time-gap, usage)
-│       └── schema.rs        SQLite migrations
+│       └── schema.rs        Versioned migrations
+├── orion-skills/
+│   └── src/
+│       └── lib.rs           SkillStore (create, update, delete, bootstrap)
+├── orion-cron/
+│   └── src/
+│       ├── lib.rs           Re-exports
+│       ├── store.rs         CronStore (CRUD, due jobs, run history)
+│       ├── scheduler.rs     Background scheduler loop
+│       ├── schema.rs        Versioned migrations
+│       └── types.rs         CronJob, CronRun, Schedule, RunStatus
 ├── orion-agent/
 │   └── src/
 │       ├── lib.rs           OrionAgent orchestrator
-│       └── tools.rs         Custom tool definitions + handler
+│       └── tools.rs         13 custom tool definitions + ToolContext handler
 ├── orion-gateway/
 │   └── src/
-│       ├── lib.rs           Server setup + AppState
+│       ├── lib.rs           Server setup + AppState + scheduler start
 │       ├── routes.rs        HTTP API endpoints
 │       └── ws.rs            WebSocket handler
 └── orion/
     └── src/
-        └── main.rs          CLI with clap + REPL
+        └── main.rs          CLI with clap + REPL + skills/cron subcommands
 ```
 
 ## License

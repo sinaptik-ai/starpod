@@ -13,7 +13,7 @@ use orion_core::OrionConfig;
 
 /// Shared application state.
 pub struct AppState {
-    pub agent: OrionAgent,
+    pub agent: Arc<OrionAgent>,
     pub api_key: Option<String>,
 }
 
@@ -29,11 +29,18 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
 /// Start the gateway server.
 pub async fn serve(config: OrionConfig) -> orion_core::Result<()> {
-    let agent = OrionAgent::new(config.clone())?;
+    let agent = Arc::new(OrionAgent::new(config.clone())?);
+
+    // Start the cron scheduler in the background
+    let _scheduler_handle = agent.start_scheduler();
+    info!("Cron scheduler started");
 
     let api_key = std::env::var("ORION_API_KEY").ok();
 
-    let state = Arc::new(AppState { agent, api_key });
+    let state = Arc::new(AppState {
+        agent,
+        api_key,
+    });
 
     let app = build_router(state);
 

@@ -10,6 +10,8 @@ orion-core = { path = "../orion-core" }
 orion-memory = { path = "../orion-memory" }
 orion-session = { path = "../orion-session" }
 orion-vault = { path = "../orion-vault" }
+orion-skills = { path = "../orion-skills" }
+orion-cron = { path = "../orion-cron" }
 chrono = { version = "0.4", features = ["serde"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }

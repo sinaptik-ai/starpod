@@ -13,3 +13,4 @@ uuid = { version = "1", features = ["v4", "serde"] }
 tokio = { version = "1", features = ["fs"] }
 toml = "0.8"
 dirs = "6"
+rusqlite = { version = "0.32", features = ["bundled", "modern_sqlite"] }

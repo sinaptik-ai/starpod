@@ -27,6 +27,14 @@ pub enum OrionError {
     #[error("Agent error: {0}")]
     Agent(String),
 
+    /// Skill errors.
+    #[error("Skill error: {0}")]
+    Skill(String),
+
+    /// Cron / scheduling errors.
+    #[error("Cron error: {0}")]
+    Cron(String),
+
     /// Channel / communication errors.
     #[error("Channel error: {0}")]
     Channel(String),
