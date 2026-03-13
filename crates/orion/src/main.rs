@@ -1,3 +1,5 @@
+mod onboarding;
+
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -69,7 +71,31 @@ enum Commands {
 #[derive(Subcommand)]
 enum AgentCommand {
     /// Initialize a new Orion project in the current directory.
-    Init,
+    Init {
+        /// Skip the interactive wizard and use defaults.
+        #[arg(long, alias = "skip-onboarding")]
+        default: bool,
+
+        /// Your name (used in conversations).
+        #[arg(long)]
+        name: Option<String>,
+
+        /// IANA timezone (e.g. "Europe/Rome"). Auto-detected if omitted.
+        #[arg(long)]
+        timezone: Option<String>,
+
+        /// Agent display name.
+        #[arg(long, default_value = "Orion")]
+        agent_name: String,
+
+        /// Agent personality text.
+        #[arg(long)]
+        soul: Option<String>,
+
+        /// Claude model to use.
+        #[arg(long, default_value = "claude-sonnet-4-6")]
+        model: String,
+    },
 
     /// Start the gateway HTTP/WS server (+ Telegram bot if configured).
     Serve,
@@ -463,19 +489,89 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         // ── Agent commands ─────────────────────────────────────────────
         Commands::Agent { action } => match action {
-            AgentCommand::Init => {
+            AgentCommand::Init {
+                default,
+                name,
+                timezone,
+                agent_name,
+                soul,
+                model,
+            } => {
                 let cwd = std::env::current_dir()?;
-                OrionConfig::init(&cwd).await?;
+
+                // Check if already initialized — show a friendly error
+                if cwd.join(".orion").exists() {
+                    eprintln!(
+                        "  {} Already initialized: {} exists.",
+                        "✗".red().bold(),
+                        ".orion/".bright_white()
+                    );
+                    eprintln!(
+                        "  {} Edit {} to reconfigure.",
+                        "→".dimmed(),
+                        ".orion/config.toml".bright_white()
+                    );
+                    std::process::exit(1);
+                }
+
+                // Check if any CLI params were explicitly provided
+                let has_cli_params = name.is_some()
+                    || timezone.is_some()
+                    || agent_name != "Orion"
+                    || soul.is_some()
+                    || model != "claude-sonnet-4-6";
+
+                let config_content = if default || has_cli_params {
+                    // Non-interactive: build from CLI args
+                    let tz = timezone.or_else(onboarding::detect_system_timezone);
+                    let result = onboarding::OnboardingResult {
+                        user_name: name,
+                        timezone: tz,
+                        agent_name: if agent_name == "Orion" {
+                            None
+                        } else {
+                            Some(agent_name)
+                        },
+                        agent_soul: soul,
+                        telegram_token: None,
+                        telegram_user_id: None,
+                        provider: "anthropic".to_string(),
+                        model,
+                    };
+                    Some(onboarding::generate_config(&result))
+                } else {
+                    // Interactive onboarding wizard
+                    match onboarding::run() {
+                        Ok(result) => Some(onboarding::generate_config(&result)),
+                        Err(_) => {
+                            println!(
+                                "\n  {} Using default configuration.",
+                                "→".dimmed()
+                            );
+                            None
+                        }
+                    }
+                };
+
+                OrionConfig::init(&cwd, config_content.as_deref()).await?;
+
+                println!();
                 println!(
                     "  {} Initialized Orion project in {}",
                     "✓".green().bold(),
                     cwd.join(".orion").display()
                 );
                 println!(
-                    "  {} Edit {} to configure your agent.",
+                    "  {} Edit {} to fine-tune your config.",
                     "→".dimmed(),
                     ".orion/config.toml".bright_white()
                 );
+                println!(
+                    "  {} Run {} to start your agent.",
+                    "→".dimmed(),
+                    "orion agent serve".bright_white()
+                );
+                println!();
             }
 
             AgentCommand::Serve => {

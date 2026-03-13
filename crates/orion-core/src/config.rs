@@ -332,7 +332,10 @@ impl OrionConfig {
 
     /// Initialize a new Orion project in the given directory.
     /// Creates `.orion/config.toml` and `.orion/data/`.
-    pub async fn init(dir: &Path) -> Result<(), OrionError> {
+    ///
+    /// If `config_content` is provided, it is written as the config file.
+    /// Otherwise a commented default template is used.
+    pub async fn init(dir: &Path, config_content: Option<&str>) -> Result<(), OrionError> {
         let orion_dir = dir.join(PROJECT_DIR);
 
         if orion_dir.exists() {
@@ -348,8 +351,17 @@ impl OrionConfig {
             .await
             .map_err(|e| OrionError::Io(e))?;
 
-        // Write default config
-        let config_content = r#"# Orion agent configuration
+        let content = config_content.unwrap_or(Self::DEFAULT_CONFIG);
+
+        tokio::fs::write(orion_dir.join(CONFIG_FILE), content)
+            .await
+            .map_err(|e| OrionError::Io(e))?;
+
+        Ok(())
+    }
+
+    /// Default config template (well-commented, all values commented out or set to defaults).
+    pub const DEFAULT_CONFIG: &str = r#"# Orion agent configuration
 # See: https://github.com/gventuri/orion-rs
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -418,11 +430,4 @@ server_addr = "127.0.0.1:3000"
 # stream_mode = "off"             # "edit_in_place" or "off"
 # edit_throttle_ms = 300          # Min interval between streaming edits
 "#;
-
-        tokio::fs::write(orion_dir.join(CONFIG_FILE), config_content)
-            .await
-            .map_err(|e| OrionError::Io(e))?;
-
-        Ok(())
-    }
 }
