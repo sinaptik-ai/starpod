@@ -714,7 +714,7 @@ mod tests {
     #[test]
     fn serialize_request_omits_none_fields() {
         let req = CreateMessageRequest {
-            model: "claude-sonnet-4-20250514".into(),
+            model: "claude-haiku-4-5".into(),
             max_tokens: 1024,
             messages: vec![ApiMessage {
                 role: "user".into(),
@@ -782,7 +782,7 @@ mod tests {
 
     #[test]
     fn parse_message_start_event() {
-        let data = r#"{"message":{"id":"msg_1","role":"assistant","content":[],"model":"claude-sonnet-4-20250514","stop_reason":null,"usage":{"input_tokens":10,"output_tokens":0}}}"#;
+        let data = r#"{"message":{"id":"msg_1","role":"assistant","content":[],"model":"claude-haiku-4-5","stop_reason":null,"usage":{"input_tokens":10,"output_tokens":0}}}"#;
         let event = parse_stream_event("message_start", data).unwrap();
         match event {
             StreamEvent::MessageStart { message } => {

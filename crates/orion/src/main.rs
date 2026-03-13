@@ -473,6 +473,7 @@ async fn main() -> anyhow::Result<()> {
 
             AgentCommand::Serve => {
                 let config = OrionConfig::load().await?;
+                let addr = &config.server_addr;
                 let agent = Arc::new(OrionAgent::new(config.clone()).await?);
 
                 // Start Telegram bot in background if token is configured
@@ -481,6 +482,7 @@ async fn main() -> anyhow::Result<()> {
                     .clone()
                     .or_else(|| std::env::var("TELEGRAM_BOT_TOKEN").ok());
 
+                let telegram_active = telegram_token.is_some();
                 if let Some(token) = telegram_token {
                     let tg_agent = Arc::clone(&agent);
                     tokio::spawn(async move {
@@ -489,6 +491,50 @@ async fn main() -> anyhow::Result<()> {
                         }
                     });
                 }
+
+                // Print startup banner
+                println!();
+                println!(
+                    "  {} {}",
+                    "Orion".bright_cyan().bold(),
+                    "is running".bright_white()
+                );
+                println!();
+                println!(
+                    "  {} {}",
+                    "Frontend".dimmed(),
+                    format!("http://{}", addr).bright_white()
+                );
+                println!(
+                    "  {} {}",
+                    "API     ".dimmed(),
+                    format!("http://{}/api", addr).bright_white()
+                );
+                println!(
+                    "  {} {}",
+                    "WS      ".dimmed(),
+                    format!("ws://{}/ws", addr).bright_white()
+                );
+                println!(
+                    "  {} {}",
+                    "Telegram".dimmed(),
+                    if telegram_active {
+                        "connected".green().to_string()
+                    } else {
+                        "not configured".yellow().to_string()
+                    }
+                );
+                println!(
+                    "  {} {}",
+                    "Model   ".dimmed(),
+                    config.model.bright_white()
+                );
+                println!(
+                    "  {} {}",
+                    "Project ".dimmed(),
+                    config.project_root.display().to_string().bright_white()
+                );
+                println!();
 
                 orion_gateway::serve_with_agent(agent, config).await?;
             }

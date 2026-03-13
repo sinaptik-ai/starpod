@@ -158,10 +158,10 @@ impl OrionConfig {
 
         // Write default config
         let config_content = r#"# Orion agent configuration
-# See: https://github.com/gabrieleventuri/orion-rs
+# See: https://github.com/gventuri/orion-rs
 
 # Claude model to use
-model = "claude-sonnet-4-20250514"
+model = "claude-haiku-4-5"
 
 # Maximum agentic turns per request
 max_turns = 30
