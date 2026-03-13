@@ -8,6 +8,7 @@ description = "Axum HTTP/WS gateway server for Orion"
 orion-core = { path = "../orion-core" }
 orion-agent = { path = "../orion-agent" }
 orion-session = { path = "../orion-session" }
+agent-sdk = { path = "../agent-sdk" }
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }

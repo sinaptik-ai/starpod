@@ -3,6 +3,9 @@ mod ws;
 
 use std::sync::Arc;
 
+use axum::http::header;
+use axum::response::IntoResponse;
+use axum::routing::get;
 use axum::Router;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -17,9 +20,18 @@ pub struct AppState {
     pub api_key: Option<String>,
 }
 
+/// Serve the embedded web UI.
+async fn index_handler() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        include_str!("../static/index.html"),
+    )
+}
+
 /// Build the Axum router with all routes.
 pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
+        .route("/", get(index_handler))
         .merge(routes::api_routes())
         .merge(ws::ws_routes())
         .layer(CorsLayer::permissive())

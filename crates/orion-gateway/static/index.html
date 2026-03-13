@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Orion</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --bg-surface: #161b22;
+  --bg-hover: #1c2128;
+  --border: #30363d;
+  --text: #e6edf3;
+  --text-dim: #7d8590;
+  --accent: #58a6ff;
+  --accent-dim: #1f6feb;
+  --green: #3fb950;
+  --red: #f85149;
+  --purple: #bc8cff;
+  --yellow: #d29922;
+  --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  overflow: hidden;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+/* Header */
+header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+header h1 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+header .status {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-left: auto;
+}
+
+header .status .dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+header .status .dot.connected { background: var(--green); }
+header .status .dot.disconnected { background: var(--red); }
+header .status .dot.connecting { background: var(--yellow); }
+
+/* Messages area */
+#messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+#messages::-webkit-scrollbar { width: 6px; }
+#messages::-webkit-scrollbar-track { background: transparent; }
+#messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.msg {
+  max-width: 100%;
+  animation: fadeIn 0.15s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.msg.user {
+  align-self: flex-end;
+  max-width: 80%;
+}
+
+.msg.user .bubble {
+  background: var(--accent-dim);
+  color: var(--text);
+  border-radius: 16px 16px 4px 16px;
+  padding: 10px 16px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.msg.assistant .bubble {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 4px 16px 16px 16px;
+  padding: 14px 18px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.msg.assistant .bubble code {
+  background: var(--bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.msg.assistant .bubble pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  margin: 8px 0;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: pre;
+}
+
+/* Tool activity */
+.tool-activity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  margin: 4px 0;
+  background: var(--bg);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  border-left: 2px solid var(--purple);
+}
+
+.tool-activity .tool-name {
+  color: var(--accent);
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+
+.tool-activity .tool-status {
+  margin-left: auto;
+  font-size: 11px;
+}
+
+.tool-activity .tool-status.ok { color: var(--green); }
+.tool-activity .tool-status.err { color: var(--red); }
+
+/* Streaming indicator */
+.streaming-cursor::after {
+  content: '▋';
+  animation: blink 1s step-end infinite;
+  color: var(--accent);
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+/* Stats bar */
+.stats {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 8px;
+  display: flex;
+  gap: 12px;
+}
+
+/* Input area */
+#input-area {
+  padding: 16px 20px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+#input-form {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+#input-text {
+  flex: 1;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 16px;
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  resize: none;
+  outline: none;
+  max-height: 200px;
+  line-height: 1.5;
+  transition: border-color 0.15s;
+}
+
+#input-text:focus { border-color: var(--accent); }
+#input-text::placeholder { color: var(--text-dim); }
+
+#send-btn {
+  background: var(--accent-dim);
+  color: var(--text);
+  border: none;
+  border-radius: 12px;
+  padding: 12px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+
+#send-btn:hover { background: var(--accent); color: var(--bg); }
+#send-btn:disabled { opacity: 0.4; cursor: default; }
+
+/* Welcome */
+.welcome {
+  text-align: center;
+  color: var(--text-dim);
+  margin: auto;
+  padding: 40px 20px;
+}
+
+.welcome h2 {
+  color: var(--accent);
+  font-size: 24px;
+  margin-bottom: 8px;
+}
+
+.welcome p { font-size: 14px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Orion</h1>
+    <div class="status">
+      <span class="dot connecting" id="status-dot"></span>
+      <span id="status-text">Connecting...</span>
+    </div>
+  </header>
+  <div id="messages">
+    <div class="welcome">
+      <h2>Orion</h2>
+      <p>Personal AI assistant. Type a message to begin.</p>
+    </div>
+  </div>
+  <div id="input-area">
+    <form id="input-form">
+      <textarea id="input-text" placeholder="Message Orion..." rows="1" autofocus></textarea>
+      <button type="submit" id="send-btn">Send</button>
+    </form>
+  </div>
+</div>
+
+<script>
+const messages = document.getElementById('messages');
+const inputText = document.getElementById('input-text');
+const sendBtn = document.getElementById('send-btn');
+const inputForm = document.getElementById('input-form');
+const statusDot = document.getElementById('status-dot');
+const statusText = document.getElementById('status-text');
+
+let ws = null;
+let isStreaming = false;
+let currentBubble = null;
+let currentToolsContainer = null;
+let reconnectAttempt = 0;
+
+function setStatus(state) {
+  statusDot.className = 'dot ' + state;
+  statusText.textContent = state === 'connected' ? 'Connected' :
+                           state === 'connecting' ? 'Connecting...' : 'Disconnected';
+}
+
+function scrollToBottom() {
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function autoResize() {
+  inputText.style.height = 'auto';
+  inputText.style.height = Math.min(inputText.scrollHeight, 200) + 'px';
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function formatText(text) {
+  // Simple markdown: code blocks, inline code, bold, italic
+  let html = escapeHtml(text);
+
+  // Code blocks: ```...```
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    return '<pre>' + code + '</pre>';
+  });
+
+  // Inline code: `...`
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  // Bold: **...**
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+  // Italic: *...*
+  html = html.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
+
+  return html;
+}
+
+function addUserMessage(text) {
+  // Remove welcome screen
+  const welcome = messages.querySelector('.welcome');
+  if (welcome) welcome.remove();
+
+  const msg = document.createElement('div');
+  msg.className = 'msg user';
+  msg.innerHTML = '<div class="bubble">' + escapeHtml(text) + '</div>';
+  messages.appendChild(msg);
+  scrollToBottom();
+}
+
+function startAssistantMessage() {
+  const msg = document.createElement('div');
+  msg.className = 'msg assistant';
+
+  currentToolsContainer = document.createElement('div');
+  currentToolsContainer.className = 'tools';
+
+  currentBubble = document.createElement('div');
+  currentBubble.className = 'bubble streaming-cursor';
+
+  msg.appendChild(currentToolsContainer);
+  msg.appendChild(currentBubble);
+  messages.appendChild(msg);
+  scrollToBottom();
+}
+
+function appendText(text) {
+  if (!currentBubble) return;
+  // Accumulate raw text, then format the whole thing
+  if (!currentBubble._rawText) currentBubble._rawText = '';
+  currentBubble._rawText += text;
+  currentBubble.innerHTML = formatText(currentBubble._rawText);
+  currentBubble.classList.add('streaming-cursor');
+  scrollToBottom();
+}
+
+function addToolUse(name, input) {
+  if (!currentToolsContainer) return;
+  const el = document.createElement('div');
+  el.className = 'tool-activity';
+  let preview = '';
+  if (input.file_path) preview = input.file_path;
+  else if (input.pattern) preview = input.pattern;
+  else if (input.command) preview = input.command.length > 60 ? input.command.slice(0, 60) + '...' : input.command;
+  else if (input.query) preview = input.query;
+  else if (input.key) preview = input.key;
+  else if (input.file) preview = input.file;
+  else if (input.name) preview = input.name;
+
+  el.innerHTML = '<span class="tool-name">' + escapeHtml(name) + '</span> ' +
+                 '<span>' + escapeHtml(preview) + '</span>' +
+                 '<span class="tool-status">running...</span>';
+  el.id = 'tool-' + Date.now();
+  currentToolsContainer.appendChild(el);
+  scrollToBottom();
+  return el;
+}
+
+let lastToolEl = null;
+
+function addToolResult(content, isError) {
+  // Update the last tool's status
+  const tools = currentToolsContainer ? currentToolsContainer.querySelectorAll('.tool-activity') : [];
+  const last = tools[tools.length - 1];
+  if (last) {
+    const status = last.querySelector('.tool-status');
+    if (isError) {
+      status.textContent = 'error';
+      status.className = 'tool-status err';
+    } else {
+      status.textContent = 'done';
+      status.className = 'tool-status ok';
+    }
+  }
+  scrollToBottom();
+}
+
+function endStream(data) {
+  if (currentBubble) {
+    currentBubble.classList.remove('streaming-cursor');
+    // Re-render final text with formatting
+    if (currentBubble._rawText) {
+      currentBubble.innerHTML = formatText(currentBubble._rawText);
+    }
+
+    // Add stats
+    if (data.num_turns > 0) {
+      const stats = document.createElement('div');
+      stats.className = 'stats';
+      stats.innerHTML =
+        '<span>' + data.num_turns + ' turn' + (data.num_turns > 1 ? 's' : '') + '</span>' +
+        '<span>$' + data.cost_usd.toFixed(4) + '</span>' +
+        '<span>' + Math.round(data.input_tokens / 1000) + 'k in / ' +
+                    Math.round(data.output_tokens / 1000) + 'k out</span>';
+      currentBubble.parentElement.appendChild(stats);
+    }
+  }
+
+  if (data.is_error && data.errors && data.errors.length > 0) {
+    if (currentBubble && !currentBubble._rawText) {
+      currentBubble.innerHTML = '<span style="color:var(--red)">' +
+        data.errors.map(escapeHtml).join('<br>') + '</span>';
+    }
+  }
+
+  isStreaming = false;
+  currentBubble = null;
+  currentToolsContainer = null;
+  sendBtn.disabled = false;
+  inputText.focus();
+  scrollToBottom();
+}
+
+function connect() {
+  setStatus('connecting');
+
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const token = localStorage.getItem('orion_api_key');
+  let url = proto + '//' + location.host + '/ws';
+  if (token) url += '?token=' + encodeURIComponent(token);
+
+  ws = new WebSocket(url);
+
+  ws.onopen = () => {
+    setStatus('connected');
+    reconnectAttempt = 0;
+  };
+
+  ws.onclose = () => {
+    setStatus('disconnected');
+    if (isStreaming) {
+      endStream({ num_turns: 0, cost_usd: 0, input_tokens: 0, output_tokens: 0, is_error: true, errors: ['Connection lost'] });
+    }
+    // Reconnect with backoff
+    const delay = Math.min(1000 * Math.pow(2, reconnectAttempt), 30000);
+    reconnectAttempt++;
+    setTimeout(connect, delay);
+  };
+
+  ws.onerror = () => {
+    // onclose will fire after this
+  };
+
+  ws.onmessage = (event) => {
+    let data;
+    try {
+      data = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+
+    switch (data.type) {
+      case 'stream_start':
+        startAssistantMessage();
+        break;
+      case 'text_delta':
+        appendText(data.text);
+        break;
+      case 'tool_use':
+        addToolUse(data.name, data.input);
+        break;
+      case 'tool_result':
+        addToolResult(data.content, data.is_error);
+        break;
+      case 'stream_end':
+        endStream(data);
+        break;
+      case 'error':
+        if (isStreaming) {
+          endStream({ num_turns: 0, cost_usd: 0, input_tokens: 0, output_tokens: 0, is_error: true, errors: [data.message] });
+        } else {
+          // Show error as assistant message
+          startAssistantMessage();
+          if (currentBubble) {
+            currentBubble._rawText = 'Error: ' + data.message;
+            currentBubble.innerHTML = '<span style="color:var(--red)">' + escapeHtml(data.message) + '</span>';
+            currentBubble.classList.remove('streaming-cursor');
+          }
+          currentBubble = null;
+          currentToolsContainer = null;
+        }
+        break;
+    }
+  };
+}
+
+function sendMessage() {
+  const text = inputText.value.trim();
+  if (!text || isStreaming || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+  addUserMessage(text);
+  isStreaming = true;
+  sendBtn.disabled = true;
+
+  ws.send(JSON.stringify({
+    type: 'message',
+    text: text,
+    channel_id: 'web'
+  }));
+
+  inputText.value = '';
+  autoResize();
+}
+
+inputForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  sendMessage();
+});
+
+inputText.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+inputText.addEventListener('input', autoResize);
+
+// API key prompt (only if ORION_API_KEY is set on server)
+// Users can set it via: localStorage.setItem('orion_api_key', 'your-key')
+
+connect();
+</script>
+</body>
+</html>
