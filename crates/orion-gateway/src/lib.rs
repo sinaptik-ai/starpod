@@ -42,16 +42,17 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 /// Start the gateway server (creates its own agent).
 pub async fn serve(config: OrionConfig) -> orion_core::Result<()> {
     let agent = Arc::new(OrionAgent::new(config.clone()).await?);
-    serve_with_agent(agent, config).await
+    serve_with_agent(agent, config, None).await
 }
 
 /// Start the gateway server with a pre-built agent (for sharing with Telegram bot).
 pub async fn serve_with_agent(
     agent: Arc<OrionAgent>,
     config: OrionConfig,
+    notifier: Option<orion_cron::NotificationSender>,
 ) -> orion_core::Result<()> {
     // Start the cron scheduler in the background
-    let _scheduler_handle = agent.start_scheduler();
+    let _scheduler_handle = agent.start_scheduler(notifier);
     info!("Cron scheduler started");
 
     let api_key = std::env::var("ORION_API_KEY").ok();

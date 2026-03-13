@@ -163,8 +163,6 @@ pub fn generate_config(result: &OnboardingResult) -> String {
     config.push_str(&format!("model = \"{}\"\n", result.model));
     config.push_str("max_turns = 30\n");
     config.push_str("server_addr = \"127.0.0.1:3000\"\n\n");
-    config.push_str("# Anthropic API key (or set ANTHROPIC_API_KEY env var)\n");
-    config.push_str("# api_key = \"\"\n\n");
     config.push_str("# Reasoning effort for extended thinking: \"low\", \"medium\", \"high\"\n");
     config.push_str("# reasoning_effort = \"medium\"\n\n");
 

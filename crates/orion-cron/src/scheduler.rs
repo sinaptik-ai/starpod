@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use tokio::task::JoinHandle;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 use crate::store::{compute_next_run, CronStore};
 use crate::types::RunStatus;
@@ -13,10 +13,16 @@ use crate::types::RunStatus;
 pub type JobExecutor =
     Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> + Send + Sync>;
 
+/// Callback type for sending notifications after a cron job completes.
+/// Receives (job_name, result_text, success).
+pub type NotificationSender =
+    Arc<dyn Fn(String, String, bool) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+
 /// Background scheduler that polls for due jobs and executes them.
 pub struct CronScheduler {
     store: Arc<CronStore>,
     executor: JobExecutor,
+    notifier: Option<NotificationSender>,
     tick_interval_secs: u64,
     user_tz: Option<String>,
 }
@@ -36,9 +42,16 @@ impl CronScheduler {
         Self {
             store,
             executor,
+            notifier: None,
             tick_interval_secs,
             user_tz,
         }
+    }
+
+    /// Set a notification callback that fires after each job completes.
+    pub fn with_notifier(mut self, notifier: NotificationSender) -> Self {
+        self.notifier = Some(notifier);
+        self
     }
 
     /// Start the scheduler background loop. Returns a JoinHandle.
@@ -66,12 +79,19 @@ impl CronScheduler {
         };
 
         if due_jobs.is_empty() {
-            debug!("No due cron jobs");
             return;
         }
 
+        info!(count = due_jobs.len(), "Found due cron jobs");
+
         for job in due_jobs {
-            debug!(job = %job.name, "Executing cron job");
+            info!(job = %job.name, "Executing cron job");
+
+            // Dedup guard: clear next_run_at so the next tick won't pick this job up again
+            if let Err(e) = self.store.update_next_run(&job.id, None).await {
+                error!(job = %job.name, error = %e, "Failed to clear next_run_at");
+                continue;
+            }
 
             // Record run start
             let run_id = match self.store.record_run_start(&job.id).await {
@@ -89,7 +109,10 @@ impl CronScheduler {
 
             // Record completion
             let (status, summary) = match result {
-                Ok(s) => (RunStatus::Success, s),
+                Ok(s) => {
+                    info!(job = %job.name, "Cron job completed successfully");
+                    (RunStatus::Success, s)
+                }
                 Err(e) => {
                     warn!(job = %job.name, error = %e, "Cron job failed");
                     (RunStatus::Failed, e)
@@ -98,12 +121,18 @@ impl CronScheduler {
 
             let _ = self
                 .store
-                .record_run_complete(&run_id, status, Some(&summary))
+                .record_run_complete(&run_id, status.clone(), Some(&summary))
                 .await;
+
+            // Send notification if configured
+            if let Some(ref notifier) = self.notifier {
+                let success = status == RunStatus::Success;
+                (notifier)(job.name.clone(), summary.clone(), success).await;
+            }
 
             // Handle one-shot / delete-after-run
             if job.delete_after_run {
-                debug!(job = %job.name, "Removing one-shot job after execution");
+                info!(job = %job.name, "Removing one-shot job after execution");
                 let _ = self.store.remove_job(&job.id).await;
                 continue;
             }
@@ -112,10 +141,9 @@ impl CronScheduler {
             let last_run = Some(Utc::now());
             match compute_next_run(&job.schedule, last_run, self.user_tz.as_deref()) {
                 Ok(Some(next)) => {
-                    let _ = self.store.update_next_run(&job.id, Some(&next)).await;
+                    let _ = self.store.update_next_run(&job.id, Some(next)).await;
                 }
                 Ok(None) => {
-                    // No more runs (e.g., one-shot already fired)
                     let _ = self.store.disable_job(&job.id).await;
                 }
                 Err(e) => {

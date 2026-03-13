@@ -368,8 +368,13 @@ impl OrionAgent {
     /// Start the cron scheduler as a background task.
     ///
     /// The executor callback sends the job prompt through `chat()`.
+    /// An optional `notifier` is called after each job completes to deliver
+    /// results to the user (e.g. via Telegram).
     /// Returns a JoinHandle for the background task.
-    pub fn start_scheduler(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+    pub fn start_scheduler(
+        self: &Arc<Self>,
+        notifier: Option<orion_cron::NotificationSender>,
+    ) -> tokio::task::JoinHandle<()> {
         let cron_store = Arc::clone(&self.cron);
         let agent = Arc::clone(self);
 
@@ -390,18 +395,19 @@ impl OrionAgent {
         });
 
         let user_tz = self.config.user.timezone.clone();
-        let scheduler = orion_cron::CronScheduler::new(cron_store, executor, 30, user_tz);
+        let mut scheduler = orion_cron::CronScheduler::new(cron_store, executor, 30, user_tz);
+        if let Some(n) = notifier {
+            scheduler = scheduler.with_notifier(n);
+        }
         scheduler.start()
     }
 }
 
 /// Derive a 32-byte vault key.
 fn derive_vault_key(config: &OrionConfig) -> [u8; 32] {
-    let env_key = std::env::var("ANTHROPIC_API_KEY").ok();
-    let seed = config
-        .api_key
+    let resolved = config.resolved_api_key();
+    let seed = resolved
         .as_deref()
-        .or(env_key.as_deref())
         .filter(|s| !s.is_empty())
         .unwrap_or("orion-default-vault-key-change-me!");
 

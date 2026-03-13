@@ -6,6 +6,7 @@ use agent_sdk::{CustomToolDefinition, ToolResult};
 use serde_json::json;
 use tracing::debug;
 
+use orion_cron::store::epoch_to_rfc3339;
 use orion_cron::CronStore;
 use orion_memory::MemoryStore;
 use orion_skills::SkillStore;
@@ -506,8 +507,8 @@ pub async fn handle_custom_tool(
                                 "prompt": j.prompt,
                                 "schedule": j.schedule,
                                 "enabled": j.enabled,
-                                "last_run_at": j.last_run_at,
-                                "next_run_at": j.next_run_at,
+                                "last_run_at": j.last_run_at.map(epoch_to_rfc3339),
+                                "next_run_at": j.next_run_at.map(epoch_to_rfc3339),
                             })
                         })
                         .collect();
@@ -576,8 +577,8 @@ pub async fn handle_custom_tool(
                         .iter()
                         .map(|r| {
                             json!({
-                                "started_at": r.started_at,
-                                "completed_at": r.completed_at,
+                                "started_at": epoch_to_rfc3339(r.started_at),
+                                "completed_at": r.completed_at.map(epoch_to_rfc3339),
                                 "status": r.status,
                                 "result_summary": r.result_summary,
                             })

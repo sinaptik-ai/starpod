@@ -4,13 +4,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum Schedule {
-    /// Run once at a specific UTC timestamp (ISO 8601).
+    /// Run once at a specific timestamp (ISO 8601 with optional timezone offset; normalized to UTC).
     #[serde(rename = "one_shot")]
     OneShot { at: String },
     /// Run at fixed intervals (milliseconds).
     #[serde(rename = "interval")]
     Interval { every_ms: u64 },
-    /// Standard cron expression (e.g., "0 */6 * * *").
+    /// Cron expression (5-field standard or 6-field with seconds).
     #[serde(rename = "cron")]
     Cron { expr: String },
 }
@@ -24,9 +24,9 @@ pub struct CronJob {
     pub schedule: Schedule,
     pub enabled: bool,
     pub delete_after_run: bool,
-    pub created_at: String,
-    pub last_run_at: Option<String>,
-    pub next_run_at: Option<String>,
+    pub created_at: i64,
+    pub last_run_at: Option<i64>,
+    pub next_run_at: Option<i64>,
 }
 
 /// Record of a single job execution.
@@ -34,8 +34,8 @@ pub struct CronJob {
 pub struct CronRun {
     pub id: String,
     pub job_id: String,
-    pub started_at: String,
-    pub completed_at: Option<String>,
+    pub started_at: i64,
+    pub completed_at: Option<i64>,
     pub status: RunStatus,
     pub result_summary: Option<String>,
 }

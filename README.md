@@ -101,9 +101,6 @@ server_addr = "127.0.0.1:3000"
 # Reasoning effort for extended thinking: "low", "medium", "high"
 # reasoning_effort = "medium"
 
-# Anthropic API key (or set ANTHROPIC_API_KEY env var)
-# api_key = "sk-ant-..."
-
 [identity]
 # name = "Orion"                  # Agent's display name
 # emoji = "🤖"                    # Agent's emoji/avatar

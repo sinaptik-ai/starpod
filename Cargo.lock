@@ -1940,6 +1940,7 @@ dependencies = [
  "futures",
  "orion-agent",
  "orion-core",
+ "orion-cron",
  "orion-session",
  "serde",
  "serde_json",

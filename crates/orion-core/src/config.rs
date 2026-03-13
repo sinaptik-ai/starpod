@@ -148,11 +148,6 @@ pub struct OrionConfig {
     #[serde(default = "default_max_turns")]
     pub max_turns: u32,
 
-    /// Anthropic API key (if not set via ANTHROPIC_API_KEY env var).
-    /// Shorthand for `[providers.anthropic] api_key`.
-    #[serde(default)]
-    pub api_key: Option<String>,
-
     /// Reasoning effort for extended thinking (low, medium, high).
     #[serde(default)]
     pub reasoning_effort: Option<ReasoningEffort>,
@@ -172,16 +167,6 @@ pub struct OrionConfig {
     /// Telegram bot configuration.
     #[serde(default)]
     pub telegram: TelegramConfig,
-
-    // ── Legacy flat fields (still supported, prefer [telegram] section) ──
-
-    /// Legacy: Telegram bot token. Prefer `[telegram] bot_token`.
-    #[serde(default)]
-    pub telegram_bot_token: Option<String>,
-
-    /// Legacy: Telegram allowed users. Prefer `[telegram] allowed_users`.
-    #[serde(default)]
-    pub telegram_allowed_users: Vec<u64>,
 
     /// The project root directory (not serialized — set at load time).
     #[serde(skip)]
@@ -213,14 +198,11 @@ impl Default for OrionConfig {
             provider: default_provider(),
             model: default_model(),
             max_turns: default_max_turns(),
-            api_key: None,
             reasoning_effort: None,
             identity: IdentityConfig::default(),
             user: UserConfig::default(),
             providers: ProvidersConfig::default(),
             telegram: TelegramConfig::default(),
-            telegram_bot_token: None,
-            telegram_allowed_users: Vec::new(),
             project_root: PathBuf::new(),
         }
     }
@@ -262,14 +244,6 @@ impl OrionConfig {
             config.data_dir = config.project_root.join(&config.data_dir);
         }
 
-        // Merge legacy telegram fields into [telegram] section
-        if config.telegram.bot_token.is_none() && config.telegram_bot_token.is_some() {
-            config.telegram.bot_token = config.telegram_bot_token.clone();
-        }
-        if config.telegram.allowed_users.is_empty() && !config.telegram_allowed_users.is_empty() {
-            config.telegram.allowed_users = config.telegram_allowed_users.clone();
-        }
-
         Ok(config)
     }
 
@@ -289,33 +263,27 @@ impl OrionConfig {
         Ok(config)
     }
 
-    /// Resolved Anthropic API key: checks providers.anthropic.api_key, then top-level api_key,
+    /// Resolved Anthropic API key: checks providers.anthropic.api_key,
     /// then ANTHROPIC_API_KEY env var.
     pub fn resolved_api_key(&self) -> Option<String> {
         self.providers
             .anthropic
             .as_ref()
             .and_then(|p| p.api_key.clone())
-            .or_else(|| self.api_key.clone())
             .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
     }
 
-    /// Resolved Telegram bot token: checks [telegram] section, then legacy field, then env var.
+    /// Resolved Telegram bot token: checks [telegram] section, then env var.
     pub fn resolved_telegram_token(&self) -> Option<String> {
         self.telegram
             .bot_token
             .clone()
-            .or_else(|| self.telegram_bot_token.clone())
             .or_else(|| std::env::var("TELEGRAM_BOT_TOKEN").ok())
     }
 
-    /// Resolved Telegram allowed users: prefers [telegram] section, falls back to legacy.
+    /// Resolved Telegram allowed users from [telegram] section.
     pub fn resolved_telegram_allowed_users(&self) -> &[u64] {
-        if !self.telegram.allowed_users.is_empty() {
-            &self.telegram.allowed_users
-        } else {
-            &self.telegram_allowed_users
-        }
+        &self.telegram.allowed_users
     }
 
     /// Resolved database path (uses `db_path` if set, otherwise `<data_dir>/memory.db`).
@@ -379,9 +347,6 @@ max_turns = 30
 
 # Server bind address
 server_addr = "127.0.0.1:3000"
-
-# Anthropic API key (or set ANTHROPIC_API_KEY env var)
-# api_key = ""
 
 # Reasoning effort for extended thinking: "low", "medium", "high"
 # reasoning_effort = "medium"

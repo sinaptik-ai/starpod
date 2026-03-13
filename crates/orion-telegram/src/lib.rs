@@ -364,6 +364,17 @@ fn split_message(text: &str, max_len: usize) -> Vec<String> {
     chunks
 }
 
+/// Send a plain-text notification to a list of Telegram users.
+///
+/// Used by the cron scheduler to deliver job results.
+pub async fn send_notification(token: &str, user_ids: &[u64], text: &str) {
+    let bot = Bot::new(token);
+    for &uid in user_ids {
+        let chat_id = ChatId(uid as i64);
+        bot.send_message(chat_id, text).await.ok();
+    }
+}
+
 // Re-export for use in CLI
 use teloxide::types::Message as TeloxideMessage;
 

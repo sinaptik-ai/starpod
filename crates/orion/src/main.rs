@@ -582,11 +582,38 @@ async fn main() -> anyhow::Result<()> {
 
                 // Start Telegram bot in background if token is configured
                 let telegram_token = config.resolved_telegram_token();
+                let telegram_allowed = config.resolved_telegram_allowed_users().to_vec();
 
                 let telegram_active = telegram_token.is_some();
-                if let Some(token) = telegram_token {
+
+                // Build a cron notification sender for Telegram (if configured)
+                let cron_notifier: Option<orion_cron::NotificationSender> =
+                    if let Some(ref token) = telegram_token {
+                        if !telegram_allowed.is_empty() {
+                            let token = token.clone();
+                            let users = telegram_allowed.clone();
+                            Some(Arc::new(move |job_name, result_text, success| {
+                                let token = token.clone();
+                                let users = users.clone();
+                                Box::pin(async move {
+                                    let status = if success { "completed" } else { "failed" };
+                                    let msg = format!(
+                                        "[Cron] Job \"{}\" {}:\n\n{}",
+                                        job_name, status, result_text
+                                    );
+                                    orion_telegram::send_notification(&token, &users, &msg).await;
+                                })
+                            }))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                if let Some(token) = telegram_token.clone() {
                     let tg_agent = Arc::clone(&agent);
-                    let allowed = config.resolved_telegram_allowed_users().to_vec();
+                    let allowed = telegram_allowed.clone();
                     tokio::spawn(async move {
                         if let Err(e) =
                             orion_telegram::run_with_agent_filtered(tg_agent, token, allowed).await
@@ -653,7 +680,7 @@ async fn main() -> anyhow::Result<()> {
                 );
                 println!();
 
-                orion_gateway::serve_with_agent(agent, config).await?;
+                orion_gateway::serve_with_agent(agent, config, cron_notifier).await?;
             }
 
             AgentCommand::Chat { message } => {
@@ -845,7 +872,9 @@ async fn main() -> anyhow::Result<()> {
                     } else {
                         for j in &jobs {
                             let status = if j.enabled { "enabled" } else { "disabled" };
-                            let next = j.next_run_at.as_deref().unwrap_or("none");
+                            let next = j.next_run_at
+                                .map(orion_cron::store::epoch_to_rfc3339)
+                                .unwrap_or_else(|| "none".to_string());
                             println!(
                                 "  {} [{}] next={} — {}",
                                 j.name, status, next,
@@ -869,9 +898,10 @@ async fn main() -> anyhow::Result<()> {
                             } else {
                                 for r in &runs {
                                     let summary = r.result_summary.as_deref().unwrap_or("");
+                                    let started = orion_cron::store::epoch_to_rfc3339(r.started_at);
                                     println!(
                                         "  {} {:?} {}",
-                                        r.started_at, r.status,
+                                        started, r.status,
                                         truncate(summary, 60)
                                     );
                                 }
