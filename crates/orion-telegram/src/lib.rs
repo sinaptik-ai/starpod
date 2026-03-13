@@ -116,6 +116,12 @@ async fn handle_message(
             chat_id = %chat_id,
             "Rejected message from unauthorized user"
         );
+        bot.send_message(
+            chat_id,
+            "Sorry, you're not authorized to use this bot. Ask the bot owner to add your user ID to the allow-list.",
+        )
+        .await
+        .ok();
         return Ok(());
     }
 
