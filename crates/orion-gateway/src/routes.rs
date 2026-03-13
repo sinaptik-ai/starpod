@@ -76,7 +76,7 @@ async fn list_sessions_handler(
 ) -> Result<Json<Vec<orion_session::SessionMeta>>, (StatusCode, Json<ErrorResponse>)> {
     check_api_key(&state, &headers)?;
 
-    match state.agent.session_mgr().list_sessions(params.limit) {
+    match state.agent.session_mgr().list_sessions(params.limit).await {
         Ok(sessions) => Ok(Json(sessions)),
         Err(e) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -95,7 +95,7 @@ async fn get_session_handler(
 ) -> Result<Json<Option<orion_session::SessionMeta>>, (StatusCode, Json<ErrorResponse>)> {
     check_api_key(&state, &headers)?;
 
-    match state.agent.session_mgr().get_session(&id) {
+    match state.agent.session_mgr().get_session(&id).await {
         Ok(session) => Ok(Json(session)),
         Err(e) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -135,7 +135,7 @@ async fn memory_search_handler(
 ) -> Result<Json<Vec<SearchResultResponse>>, (StatusCode, Json<ErrorResponse>)> {
     check_api_key(&state, &headers)?;
 
-    match state.agent.memory().search(&params.q, params.limit) {
+    match state.agent.memory().search(&params.q, params.limit).await {
         Ok(results) => {
             let response: Vec<SearchResultResponse> = results
                 .into_iter()
@@ -164,7 +164,7 @@ async fn reindex_handler(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     check_api_key(&state, &headers)?;
 
-    match state.agent.memory().reindex() {
+    match state.agent.memory().reindex().await {
         Ok(()) => Ok(Json(serde_json::json!({"status": "ok"}))),
         Err(e) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,

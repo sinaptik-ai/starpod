@@ -272,7 +272,7 @@ pub async fn handle_custom_tool(
 
             debug!(query = %query, limit = limit, "MemorySearch");
 
-            match ctx.memory.search(query, limit) {
+            match ctx.memory.search(query, limit).await {
                 Ok(results) => {
                     let formatted: Vec<serde_json::Value> = results
                         .iter()
@@ -303,7 +303,7 @@ pub async fn handle_custom_tool(
 
             debug!(file = %file, "MemoryWrite");
 
-            match ctx.memory.write_file(file, content) {
+            match ctx.memory.write_file(file, content).await {
                 Ok(()) => Some(ToolResult {
                     content: format!("Successfully wrote {}", file),
                     is_error: false,
@@ -320,7 +320,7 @@ pub async fn handle_custom_tool(
 
             debug!("MemoryAppendDaily");
 
-            match ctx.memory.append_daily(text) {
+            match ctx.memory.append_daily(text).await {
                 Ok(()) => Some(ToolResult {
                     content: "Appended to daily log.".into(),
                     is_error: false,
@@ -338,7 +338,7 @@ pub async fn handle_custom_tool(
 
             debug!(key = %key, "VaultGet");
 
-            match ctx.vault.get(key) {
+            match ctx.vault.get(key).await {
                 Ok(Some(value)) => Some(ToolResult {
                     content: value,
                     is_error: false,
@@ -360,7 +360,7 @@ pub async fn handle_custom_tool(
 
             debug!(key = %key, "VaultSet");
 
-            match ctx.vault.set(key, value) {
+            match ctx.vault.set(key, value).await {
                 Ok(()) => Some(ToolResult {
                     content: format!("Stored '{}' in vault.", key),
                     is_error: false,
@@ -480,7 +480,7 @@ pub async fn handle_custom_tool(
 
             debug!(job = %name, "CronAdd");
 
-            match ctx.cron.add_job(name, prompt, &schedule, delete_after_run) {
+            match ctx.cron.add_job(name, prompt, &schedule, delete_after_run).await {
                 Ok(id) => Some(ToolResult {
                     content: format!("Scheduled job '{}' (id: {})", name, &id[..8]),
                     is_error: false,
@@ -495,7 +495,7 @@ pub async fn handle_custom_tool(
         "CronList" => {
             debug!("CronList");
 
-            match ctx.cron.list_jobs() {
+            match ctx.cron.list_jobs().await {
                 Ok(jobs) => {
                     let formatted: Vec<serde_json::Value> = jobs
                         .iter()
@@ -527,7 +527,7 @@ pub async fn handle_custom_tool(
 
             debug!(job = %name, "CronRemove");
 
-            match ctx.cron.remove_job_by_name(name) {
+            match ctx.cron.remove_job_by_name(name).await {
                 Ok(()) => Some(ToolResult {
                     content: format!("Removed job '{}'.", name),
                     is_error: false,
@@ -549,7 +549,7 @@ pub async fn handle_custom_tool(
             debug!(job = %name, "CronRuns");
 
             // Find job by name first
-            let jobs = match ctx.cron.list_jobs() {
+            let jobs = match ctx.cron.list_jobs().await {
                 Ok(j) => j,
                 Err(e) => {
                     return Some(ToolResult {
@@ -569,7 +569,7 @@ pub async fn handle_custom_tool(
                 }
             };
 
-            match ctx.cron.list_runs(&job.id, limit) {
+            match ctx.cron.list_runs(&job.id, limit).await {
                 Ok(runs) => {
                     let formatted: Vec<serde_json::Value> = runs
                         .iter()

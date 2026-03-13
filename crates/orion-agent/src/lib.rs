@@ -41,21 +41,21 @@ pub struct OrionAgent {
 
 impl OrionAgent {
     /// Create a new OrionAgent from config.
-    pub fn new(config: OrionConfig) -> Result<Self> {
-        let memory = MemoryStore::new(&config.data_dir)?;
+    pub async fn new(config: OrionConfig) -> Result<Self> {
+        let memory = MemoryStore::new(&config.data_dir).await?;
 
-        let db_path = config.resolved_db_path();
+        let session_db = config.data_dir.join("session.db");
         let sessions_dir = config.data_dir.join("sessions");
-        let session_mgr = SessionManager::new(&db_path, &sessions_dir)?;
+        let session_mgr = SessionManager::new(&session_db, &sessions_dir).await?;
 
         let vault_db = config.data_dir.join("vault.db");
         let master_key = derive_vault_key(&config);
-        let vault = Vault::new(&vault_db, &master_key)?;
+        let vault = Vault::new(&vault_db, &master_key).await?;
 
         let skills = SkillStore::new(&config.data_dir)?;
 
         let cron_db = config.data_dir.join("cron.db");
-        let cron = CronStore::new(&cron_db)?;
+        let cron = CronStore::new(&cron_db).await?;
 
         Ok(Self {
             memory: Arc::new(memory),
@@ -118,18 +118,18 @@ impl OrionAgent {
     /// Process a chat message through the full Orion pipeline.
     pub async fn chat(&self, message: ChatMessage) -> Result<ChatResponse> {
         // Step 1: Resolve session
-        let session_id = match self.session_mgr.resolve_session()? {
+        let session_id = match self.session_mgr.resolve_session().await? {
             SessionDecision::Continue(id) => {
                 debug!(session_id = %id, "Continuing existing session");
                 id
             }
             SessionDecision::New => {
-                let id = self.session_mgr.create_session()?;
+                let id = self.session_mgr.create_session().await?;
                 debug!(session_id = %id, "Created new session");
                 id
             }
         };
-        self.session_mgr.touch_session(&session_id)?;
+        self.session_mgr.touch_session(&session_id).await?;
 
         // Step 2: Build system prompt
         let system_prompt = self.build_system_prompt(&session_id)?;
@@ -191,7 +191,7 @@ impl OrionAgent {
                                 model: self.config.model.clone(),
                             },
                             result.num_turns,
-                        );
+                        ).await;
                     }
 
                     if result.is_error {
@@ -218,7 +218,7 @@ impl OrionAgent {
             "**User**: {}\n**Orion**: {}",
             truncate(&message.text, 200),
             summary,
-        ));
+        )).await;
 
         Ok(ChatResponse {
             text: result_text,
@@ -231,19 +231,19 @@ impl OrionAgent {
     ///
     /// Returns (Query stream, session_id). The caller should consume the stream
     /// for real-time display, then call `finalize_chat()` with the collected results.
-    pub fn chat_stream(&self, message: &str) -> Result<(Query, String)> {
-        let session_id = match self.session_mgr.resolve_session()? {
+    pub async fn chat_stream(&self, message: &str) -> Result<(Query, String)> {
+        let session_id = match self.session_mgr.resolve_session().await? {
             SessionDecision::Continue(id) => {
                 debug!(session_id = %id, "Continuing existing session");
                 id
             }
             SessionDecision::New => {
-                let id = self.session_mgr.create_session()?;
+                let id = self.session_mgr.create_session().await?;
                 debug!(session_id = %id, "Created new session");
                 id
             }
         };
-        self.session_mgr.touch_session(&session_id)?;
+        self.session_mgr.touch_session(&session_id).await?;
 
         let system_prompt = self.build_system_prompt(&session_id)?;
 
@@ -263,7 +263,7 @@ impl OrionAgent {
     }
 
     /// Finalize a streaming chat — record usage and append daily log.
-    pub fn finalize_chat(
+    pub async fn finalize_chat(
         &self,
         session_id: &str,
         user_text: &str,
@@ -282,7 +282,7 @@ impl OrionAgent {
                     model: self.config.model.clone(),
                 },
                 result.num_turns,
-            );
+            ).await;
         }
 
         let summary = if result_text.len() > 200 {
@@ -294,7 +294,7 @@ impl OrionAgent {
             "**User**: {}\n**Orion**: {}",
             truncate(user_text, 200),
             summary,
-        ));
+        )).await;
     }
 
     /// Get a reference to the memory store.
@@ -395,18 +395,18 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_agent_construction() {
+    #[tokio::test]
+    async fn test_agent_construction() {
         let tmp = TempDir::new().unwrap();
-        let agent = OrionAgent::new(test_config(&tmp)).unwrap();
+        let agent = OrionAgent::new(test_config(&tmp)).await.unwrap();
 
         // Memory should be initialized
         let ctx = agent.memory().bootstrap_context().unwrap();
         assert!(ctx.contains("Orion"));
 
         // Vault should work
-        agent.vault().set("test", "value").unwrap();
-        assert_eq!(agent.vault().get("test").unwrap().as_deref(), Some("value"));
+        agent.vault().set("test", "value").await.unwrap();
+        assert_eq!(agent.vault().get("test").await.unwrap().as_deref(), Some("value"));
 
         // Skills dir should exist
         assert!(tmp.path().join("skills").exists());
@@ -445,7 +445,7 @@ mod tests {
     async fn test_custom_tool_handler() {
         let tmp = TempDir::new().unwrap();
         let config = test_config(&tmp);
-        let agent = OrionAgent::new(config).unwrap();
+        let agent = OrionAgent::new(config).await.unwrap();
 
         let ctx = ToolContext {
             memory: Arc::clone(agent.memory()),

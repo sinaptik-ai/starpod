@@ -1,4 +1,4 @@
-use rusqlite::Connection;
+use sqlx::SqlitePool;
 
 use orion_core::OrionError;
 
@@ -70,28 +70,25 @@ pub fn chunk_text(source: &str, text: &str) -> Vec<Chunk> {
 }
 
 /// Delete all FTS entries for a given source, then insert new chunks.
-pub fn reindex_source(conn: &Connection, source: &str, text: &str) -> Result<(), OrionError> {
+pub async fn reindex_source(pool: &SqlitePool, source: &str, text: &str) -> Result<(), OrionError> {
     // Delete old entries for this source
-    conn.execute(
-        "DELETE FROM memory_fts WHERE source = ?1",
-        rusqlite::params![source],
-    )
-    .map_err(|e| OrionError::Database(format!("Failed to delete old chunks: {}", e)))?;
+    sqlx::query("DELETE FROM memory_fts WHERE source = ?1")
+        .bind(source)
+        .execute(pool)
+        .await
+        .map_err(|e| OrionError::Database(format!("Failed to delete old chunks: {}", e)))?;
 
     // Chunk and insert
     let chunks = chunk_text(source, text);
-    let mut stmt = conn
-        .prepare("INSERT INTO memory_fts (source, chunk_text, line_start, line_end) VALUES (?1, ?2, ?3, ?4)")
-        .map_err(|e| OrionError::Database(format!("Failed to prepare insert: {}", e)))?;
-
     for chunk in &chunks {
-        stmt.execute(rusqlite::params![
-            chunk.source,
-            chunk.text,
-            chunk.line_start as i64,
-            chunk.line_end as i64,
-        ])
-        .map_err(|e| OrionError::Database(format!("Failed to insert chunk: {}", e)))?;
+        sqlx::query("INSERT INTO memory_fts (source, chunk_text, line_start, line_end) VALUES (?1, ?2, ?3, ?4)")
+            .bind(&chunk.source)
+            .bind(&chunk.text)
+            .bind(chunk.line_start as i64)
+            .bind(chunk.line_end as i64)
+            .execute(pool)
+            .await
+            .map_err(|e| OrionError::Database(format!("Failed to insert chunk: {}", e)))?;
     }
 
     Ok(())

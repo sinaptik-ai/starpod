@@ -49,7 +49,7 @@ impl CronScheduler {
 
     /// Single tick: check for due jobs and execute them.
     async fn tick(&self) {
-        let due_jobs = match self.store.get_due_jobs() {
+        let due_jobs = match self.store.get_due_jobs().await {
             Ok(jobs) => jobs,
             Err(e) => {
                 error!(error = %e, "Failed to query due jobs");
@@ -66,7 +66,7 @@ impl CronScheduler {
             debug!(job = %job.name, "Executing cron job");
 
             // Record run start
-            let run_id = match self.store.record_run_start(&job.id) {
+            let run_id = match self.store.record_run_start(&job.id).await {
                 Ok(id) => id,
                 Err(e) => {
                     error!(job = %job.name, error = %e, "Failed to record run start");
@@ -90,12 +90,13 @@ impl CronScheduler {
 
             let _ = self
                 .store
-                .record_run_complete(&run_id, status, Some(&summary));
+                .record_run_complete(&run_id, status, Some(&summary))
+                .await;
 
             // Handle one-shot / delete-after-run
             if job.delete_after_run {
                 debug!(job = %job.name, "Removing one-shot job after execution");
-                let _ = self.store.remove_job(&job.id);
+                let _ = self.store.remove_job(&job.id).await;
                 continue;
             }
 
@@ -103,15 +104,15 @@ impl CronScheduler {
             let last_run = Some(Utc::now());
             match compute_next_run(&job.schedule, last_run) {
                 Ok(Some(next)) => {
-                    let _ = self.store.update_next_run(&job.id, Some(&next));
+                    let _ = self.store.update_next_run(&job.id, Some(&next)).await;
                 }
                 Ok(None) => {
                     // No more runs (e.g., one-shot already fired)
-                    let _ = self.store.disable_job(&job.id);
+                    let _ = self.store.disable_job(&job.id).await;
                 }
                 Err(e) => {
                     error!(job = %job.name, error = %e, "Failed to compute next run");
-                    let _ = self.store.disable_job(&job.id);
+                    let _ = self.store.disable_job(&job.id).await;
                 }
             }
         }

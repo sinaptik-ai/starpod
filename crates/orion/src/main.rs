@@ -412,13 +412,13 @@ async fn main() -> anyhow::Result<()> {
         Commands::Chat { message } => {
             print_header();
             let start = Instant::now();
-            let agent = OrionAgent::new(config)?;
+            let agent = OrionAgent::new(config).await?;
 
-            let (mut stream, session_id) = agent.chat_stream(&message)?;
+            let (mut stream, session_id) = agent.chat_stream(&message).await?;
             let (result_text, result_msg) = process_stream(&mut stream, &start).await?;
 
             if let Some(ref result) = result_msg {
-                agent.finalize_chat(&session_id, &message, &result_text, result);
+                agent.finalize_chat(&session_id, &message, &result_text, result).await;
                 print_result(&result_text, result, &start);
             }
             println!();
@@ -429,10 +429,10 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::Memory { action } => {
-            let agent = OrionAgent::new(config)?;
+            let agent = OrionAgent::new(config).await?;
             match action {
                 MemoryAction::Search { query, limit } => {
-                    let results = agent.memory().search(&query, limit)?;
+                    let results = agent.memory().search(&query, limit).await?;
                     if results.is_empty() {
                         println!("No results found.");
                     } else {
@@ -450,29 +450,29 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
                 MemoryAction::Reindex => {
-                    agent.memory().reindex()?;
+                    agent.memory().reindex().await?;
                     println!("Memory index rebuilt.");
                 }
             }
         }
 
         Commands::Vault { action } => {
-            let agent = OrionAgent::new(config)?;
+            let agent = OrionAgent::new(config).await?;
             match action {
-                VaultAction::Get { key } => match agent.vault().get(&key)? {
+                VaultAction::Get { key } => match agent.vault().get(&key).await? {
                     Some(value) => println!("{}", value),
                     None => println!("No value found for key: {}", key),
                 },
                 VaultAction::Set { key, value } => {
-                    agent.vault().set(&key, &value)?;
+                    agent.vault().set(&key, &value).await?;
                     println!("Stored '{}'.", key);
                 }
                 VaultAction::Delete { key } => {
-                    agent.vault().delete(&key)?;
+                    agent.vault().delete(&key).await?;
                     println!("Deleted '{}'.", key);
                 }
                 VaultAction::List => {
-                    let keys = agent.vault().list_keys()?;
+                    let keys = agent.vault().list_keys().await?;
                     if keys.is_empty() {
                         println!("Vault is empty.");
                     } else {
@@ -485,10 +485,10 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::Sessions { action } => {
-            let agent = OrionAgent::new(config)?;
+            let agent = OrionAgent::new(config).await?;
             match action {
                 SessionAction::List { limit } => {
-                    let sessions = agent.session_mgr().list_sessions(limit)?;
+                    let sessions = agent.session_mgr().list_sessions(limit).await?;
                     if sessions.is_empty() {
                         println!("No sessions found.");
                     } else {
@@ -512,7 +512,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::Skills { action } => {
-            let agent = OrionAgent::new(config)?;
+            let agent = OrionAgent::new(config).await?;
             match action {
                 SkillAction::List => {
                     let skills = agent.skills().list()?;
@@ -554,10 +554,10 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::Cron { action } => {
-            let agent = OrionAgent::new(config)?;
+            let agent = OrionAgent::new(config).await?;
             match action {
                 CronAction::List => {
-                    let jobs = agent.cron().list_jobs()?;
+                    let jobs = agent.cron().list_jobs().await?;
                     if jobs.is_empty() {
                         println!("No cron jobs.");
                     } else {
@@ -573,15 +573,15 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
                 CronAction::Remove { name } => {
-                    agent.cron().remove_job_by_name(&name)?;
+                    agent.cron().remove_job_by_name(&name).await?;
                     println!("Removed job '{}'.", name);
                 }
                 CronAction::Runs { name, limit } => {
-                    let jobs = agent.cron().list_jobs()?;
+                    let jobs = agent.cron().list_jobs().await?;
                     let job = jobs.iter().find(|j| j.name == name);
                     match job {
                         Some(j) => {
-                            let runs = agent.cron().list_runs(&j.id, limit)?;
+                            let runs = agent.cron().list_runs(&j.id, limit).await?;
                             if runs.is_empty() {
                                 println!("No runs for '{}'.", name);
                             } else {
@@ -607,7 +607,7 @@ async fn main() -> anyhow::Result<()> {
 
 /// Interactive REPL mode with rich output.
 async fn run_repl(config: OrionConfig) -> anyhow::Result<()> {
-    let agent = OrionAgent::new(config)?;
+    let agent = OrionAgent::new(config).await?;
 
     print_header();
     println!(
@@ -647,11 +647,11 @@ async fn run_repl(config: OrionConfig) -> anyhow::Result<()> {
         rl.add_history_entry(line)?;
 
         let start = Instant::now();
-        let (mut stream, session_id) = agent.chat_stream(line)?;
+        let (mut stream, session_id) = agent.chat_stream(line).await?;
         let (result_text, result_msg) = process_stream(&mut stream, &start).await?;
 
         if let Some(ref result) = result_msg {
-            agent.finalize_chat(&session_id, line, &result_text, result);
+            agent.finalize_chat(&session_id, line, &result_text, result).await;
             print_result(&result_text, result, &start);
         } else if !result_text.is_empty() {
             // Fallback if no ResultMessage

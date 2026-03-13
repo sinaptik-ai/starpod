@@ -29,7 +29,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
 /// Start the gateway server.
 pub async fn serve(config: OrionConfig) -> orion_core::Result<()> {
-    let agent = Arc::new(OrionAgent::new(config.clone())?);
+    let agent = Arc::new(OrionAgent::new(config.clone()).await?);
 
     // Start the cron scheduler in the background
     let _scheduler_handle = agent.start_scheduler();

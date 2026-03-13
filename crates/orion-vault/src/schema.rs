@@ -1,32 +1,12 @@
-use rusqlite::Connection;
+use sqlx::SqlitePool;
 
-use orion_core::{Migration, OrionError};
+use orion_core::OrionError;
 
-/// Vault migrations.
-pub fn migrations() -> &'static [Migration] {
-    &[Migration {
-        version: 1,
-        name: "create_vault_tables",
-        sql: "
-            CREATE TABLE IF NOT EXISTS vault_entries (
-                key TEXT PRIMARY KEY,
-                encrypted_value BLOB NOT NULL,
-                nonce BLOB NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS vault_audit (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                key TEXT NOT NULL,
-                action TEXT NOT NULL,
-                timestamp TEXT NOT NULL
-            );
-        ",
-    }]
-}
-
-/// Run vault database migrations.
-pub fn migrate(conn: &Connection) -> Result<(), OrionError> {
-    orion_core::run_migrations(conn, "vault", migrations())
+/// Run vault database migrations using sqlx.
+pub async fn run_migrations(pool: &SqlitePool) -> Result<(), OrionError> {
+    sqlx::migrate!("./migrations")
+        .run(pool)
+        .await
+        .map_err(|e| OrionError::Database(format!("Vault migration failed: {}", e)))?;
+    Ok(())
 }
