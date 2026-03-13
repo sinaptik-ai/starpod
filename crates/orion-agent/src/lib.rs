@@ -130,6 +130,7 @@ impl OrionAgent {
             vault: Arc::clone(&self.vault),
             skills: Arc::clone(&self.skills),
             cron: Arc::clone(&self.cron),
+            user_tz: self.config.user.timezone.clone(),
         });
 
         Box::new(move |tool_name, input| {
@@ -388,7 +389,8 @@ impl OrionAgent {
             })
         });
 
-        let scheduler = orion_cron::CronScheduler::new(cron_store, executor, 30);
+        let user_tz = self.config.user.timezone.clone();
+        let scheduler = orion_cron::CronScheduler::new(cron_store, executor, 30, user_tz);
         scheduler.start()
     }
 }
@@ -494,6 +496,7 @@ mod tests {
             vault: Arc::clone(agent.vault()),
             skills: Arc::clone(agent.skills()),
             cron: Arc::clone(agent.cron()),
+            user_tz: None,
         };
 
         // Test MemorySearch

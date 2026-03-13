@@ -18,6 +18,7 @@ pub struct CronScheduler {
     store: Arc<CronStore>,
     executor: JobExecutor,
     tick_interval_secs: u64,
+    user_tz: Option<String>,
 }
 
 impl CronScheduler {
@@ -25,11 +26,18 @@ impl CronScheduler {
     ///
     /// `executor` is called with the job's prompt string when a job fires.
     /// `tick_interval_secs` controls how often the scheduler checks for due jobs.
-    pub fn new(store: Arc<CronStore>, executor: JobExecutor, tick_interval_secs: u64) -> Self {
+    /// `user_tz` is an optional IANA timezone for evaluating cron expressions.
+    pub fn new(
+        store: Arc<CronStore>,
+        executor: JobExecutor,
+        tick_interval_secs: u64,
+        user_tz: Option<String>,
+    ) -> Self {
         Self {
             store,
             executor,
             tick_interval_secs,
+            user_tz,
         }
     }
 
@@ -102,7 +110,7 @@ impl CronScheduler {
 
             // Compute and set next run time
             let last_run = Some(Utc::now());
-            match compute_next_run(&job.schedule, last_run) {
+            match compute_next_run(&job.schedule, last_run, self.user_tz.as_deref()) {
                 Ok(Some(next)) => {
                     let _ = self.store.update_next_run(&job.id, Some(&next)).await;
                 }

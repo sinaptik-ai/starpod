@@ -1,9 +1,10 @@
 use std::path::Path;
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow};
 use sqlx::{Row, SqlitePool};
 use std::str::FromStr;
+use tracing::warn;
 use uuid::Uuid;
 
 use orion_core::{OrionError, Result};
@@ -53,11 +54,12 @@ impl CronStore {
         prompt: &str,
         schedule: &Schedule,
         delete_after_run: bool,
+        user_tz: Option<&str>,
     ) -> Result<String> {
         let id = Uuid::new_v4().to_string();
-        let now = Utc::now().to_rfc3339();
+        let now = normalize_utc(Utc::now());
         let (stype, svalue) = schedule_to_db(schedule);
-        let next_run = compute_next_run(schedule, None)?;
+        let next_run = compute_next_run(schedule, None, user_tz)?;
         let delete_flag = delete_after_run as i64;
 
         sqlx::query(
@@ -122,7 +124,7 @@ impl CronStore {
 
     /// Get jobs that are due for execution.
     pub async fn get_due_jobs(&self) -> Result<Vec<CronJob>> {
-        let now = Utc::now().to_rfc3339();
+        let now = normalize_utc(Utc::now());
 
         let rows = sqlx::query(
             "SELECT id, name, prompt, schedule_type, schedule_value, enabled, delete_after_run, created_at, last_run_at, next_run_at
@@ -140,7 +142,7 @@ impl CronStore {
     /// Record that a job started running. Returns the run ID.
     pub async fn record_run_start(&self, job_id: &str) -> Result<String> {
         let run_id = Uuid::new_v4().to_string();
-        let now = Utc::now().to_rfc3339();
+        let now = normalize_utc(Utc::now());
 
         sqlx::query(
             "INSERT INTO cron_runs (id, job_id, started_at, status) VALUES (?1, ?2, ?3, 'running')",
@@ -169,7 +171,7 @@ impl CronStore {
         status: RunStatus,
         summary: Option<&str>,
     ) -> Result<()> {
-        let now = Utc::now().to_rfc3339();
+        let now = normalize_utc(Utc::now());
         sqlx::query(
             "UPDATE cron_runs SET completed_at = ?2, status = ?3, result_summary = ?4 WHERE id = ?1",
         )
@@ -270,18 +272,29 @@ fn schedule_from_db(stype: &str, svalue: &str) -> Schedule {
     }
 }
 
+/// Normalize a UTC datetime to RFC3339 with `+00:00` suffix (never `Z`), no fractional seconds.
+fn normalize_utc(dt: DateTime<Utc>) -> String {
+    dt.to_rfc3339_opts(SecondsFormat::Secs, false)
+}
+
 /// Compute the next run time for a schedule.
+///
+/// `user_tz` is an optional IANA timezone string (e.g. "Europe/Rome").
+/// For `Cron` schedules, expressions are evaluated in the user's timezone
+/// so that "0 0 23 * * *" fires at 23:00 local time. Falls back to UTC
+/// if the timezone is `None` or invalid.
 pub fn compute_next_run(
     schedule: &Schedule,
     last_run: Option<DateTime<Utc>>,
+    user_tz: Option<&str>,
 ) -> Result<Option<String>> {
     let now = Utc::now();
     match schedule {
         Schedule::OneShot { at } => {
             if let Ok(dt) = DateTime::parse_from_rfc3339(at) {
-                let dt = dt.with_timezone(&Utc);
-                if dt > now && last_run.is_none() {
-                    Ok(Some(at.clone()))
+                let dt_utc = dt.with_timezone(&Utc);
+                if dt_utc > now && last_run.is_none() {
+                    Ok(Some(normalize_utc(dt_utc)))
                 } else {
                     Ok(None)
                 }
@@ -292,15 +305,25 @@ pub fn compute_next_run(
         Schedule::Interval { every_ms } => {
             let base = last_run.unwrap_or(now);
             let next = base + Duration::milliseconds(*every_ms as i64);
-            Ok(Some(next.to_rfc3339()))
+            Ok(Some(normalize_utc(next)))
         }
         Schedule::Cron { expr } => {
-            let schedule = cron::Schedule::from_str(expr)
+            let cron_schedule = cron::Schedule::from_str(expr)
                 .map_err(|e| OrionError::Cron(format!("Invalid cron expression '{}': {}", expr, e)))?;
-            match schedule.upcoming(Utc).next() {
-                Some(next) => Ok(Some(next.to_rfc3339())),
-                None => Ok(None),
-            }
+
+            let next_utc = match user_tz.and_then(|s| s.parse::<chrono_tz::Tz>().ok()) {
+                Some(tz) => {
+                    cron_schedule.upcoming(tz).next().map(|dt| dt.with_timezone(&Utc))
+                }
+                None => {
+                    if user_tz.is_some() {
+                        warn!(tz = ?user_tz, "Invalid timezone, falling back to UTC");
+                    }
+                    cron_schedule.upcoming(Utc).next()
+                }
+            };
+
+            Ok(next_utc.map(normalize_utc))
         }
     }
 }
@@ -321,7 +344,7 @@ mod tests {
 
         let schedule = Schedule::Interval { every_ms: 60000 };
         let id = store
-            .add_job("check-deploy", "Check deploy status", &schedule, false)
+            .add_job("check-deploy", "Check deploy status", &schedule, false, None)
             .await
             .unwrap();
         assert!(!id.is_empty());
@@ -338,7 +361,7 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let id = store.add_job("temp", "temp job", &schedule, false).await.unwrap();
+        let id = store.add_job("temp", "temp job", &schedule, false, None).await.unwrap();
 
         store.remove_job(&id).await.unwrap();
         assert_eq!(store.list_jobs().await.unwrap().len(), 0);
@@ -349,7 +372,7 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        store.add_job("my-job", "do stuff", &schedule, false).await.unwrap();
+        store.add_job("my-job", "do stuff", &schedule, false, None).await.unwrap();
 
         store.remove_job_by_name("my-job").await.unwrap();
         assert_eq!(store.list_jobs().await.unwrap().len(), 0);
@@ -360,7 +383,7 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let job_id = store.add_job("test-job", "test", &schedule, false).await.unwrap();
+        let job_id = store.add_job("test-job", "test", &schedule, false, None).await.unwrap();
 
         let run_id = store.record_run_start(&job_id).await.unwrap();
 
@@ -381,8 +404,11 @@ mod tests {
     #[tokio::test]
     async fn test_compute_next_run_interval() {
         let schedule = Schedule::Interval { every_ms: 300000 };
-        let next = compute_next_run(&schedule, None).unwrap();
+        let next = compute_next_run(&schedule, None, None).unwrap();
         assert!(next.is_some());
+        // Verify normalized format (no Z suffix)
+        let val = next.unwrap();
+        assert!(val.ends_with("+00:00"), "Expected +00:00 suffix, got: {}", val);
     }
 
     #[tokio::test]
@@ -390,8 +416,33 @@ mod tests {
         let schedule = Schedule::Cron {
             expr: "0 0 * * * *".to_string(),
         };
-        let next = compute_next_run(&schedule, None).unwrap();
+        let next = compute_next_run(&schedule, None, None).unwrap();
         assert!(next.is_some());
+        let val = next.unwrap();
+        assert!(val.ends_with("+00:00"), "Expected +00:00 suffix, got: {}", val);
+    }
+
+    #[tokio::test]
+    async fn test_compute_next_run_cron_with_timezone() {
+        // "Every day at 23:00" — should differ between UTC and Europe/Rome
+        let schedule = Schedule::Cron {
+            expr: "0 0 23 * * *".to_string(),
+        };
+        let next_utc = compute_next_run(&schedule, None, None).unwrap().unwrap();
+        let next_rome = compute_next_run(&schedule, None, Some("Europe/Rome")).unwrap().unwrap();
+        // Rome is UTC+1 or UTC+2 (DST), so next_rome should be 1-2 hours earlier in UTC
+        assert_ne!(next_utc, next_rome, "Timezone should affect computed next_run");
+        assert!(next_rome.ends_with("+00:00"), "Should be normalized to +00:00");
+    }
+
+    #[tokio::test]
+    async fn test_compute_next_run_one_shot_normalizes_z() {
+        // A one-shot with Z suffix should be normalized to +00:00
+        let future = (Utc::now() + Duration::hours(1)).to_rfc3339_opts(SecondsFormat::Secs, true); // uses Z
+        assert!(future.ends_with("Z"));
+        let schedule = Schedule::OneShot { at: future };
+        let next = compute_next_run(&schedule, None, None).unwrap().unwrap();
+        assert!(next.ends_with("+00:00"), "Z should be normalized to +00:00, got: {}", next);
     }
 
     #[tokio::test]
@@ -399,7 +450,7 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let id = store.add_job("j", "p", &schedule, false).await.unwrap();
+        let id = store.add_job("j", "p", &schedule, false, None).await.unwrap();
 
         store.disable_job(&id).await.unwrap();
 

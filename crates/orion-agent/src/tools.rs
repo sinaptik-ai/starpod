@@ -17,6 +17,7 @@ pub struct ToolContext {
     pub vault: Arc<Vault>,
     pub skills: Arc<SkillStore>,
     pub cron: Arc<CronStore>,
+    pub user_tz: Option<String>,
 }
 
 /// Build the JSON schema definitions for all Orion custom tools.
@@ -168,7 +169,7 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
         // --- Cron tools ---
         CustomToolDefinition {
             name: "CronAdd".into(),
-            description: "Schedule a recurring or one-shot task. The prompt will be sent to you as a message when the job fires.".into(),
+            description: "Schedule a recurring or one-shot task. Cron expressions are evaluated in the user's configured timezone. The prompt will be sent to you as a message when the job fires.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -480,7 +481,7 @@ pub async fn handle_custom_tool(
 
             debug!(job = %name, "CronAdd");
 
-            match ctx.cron.add_job(name, prompt, &schedule, delete_after_run).await {
+            match ctx.cron.add_job(name, prompt, &schedule, delete_after_run, ctx.user_tz.as_deref()).await {
                 Ok(id) => Some(ToolResult {
                     content: format!("Scheduled job '{}' (id: {})", name, &id[..8]),
                     is_error: false,
