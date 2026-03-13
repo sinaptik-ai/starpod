@@ -11,7 +11,7 @@ use orion_agent::OrionAgent;
 use orion_core::OrionConfig;
 
 #[derive(Parser)]
-#[command(name = "orion", about = "Orion — personal AI assistant", version)]
+#[command(name = "orion", about = "Orion — personal AI assistant platform", version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -19,17 +19,19 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start the gateway HTTP/WS server.
-    Serve,
-
-    /// Send a one-shot chat message.
-    Chat {
-        /// The message to send.
-        message: String,
+    /// Agent management — init, serve, chat, repl.
+    Agent {
+        #[command(subcommand)]
+        action: AgentCommand,
     },
 
-    /// Start an interactive REPL session.
-    Repl,
+    /// Instance management (coming soon).
+    Instance {
+        #[command(subcommand)]
+        action: InstanceCommand,
+    },
+
+    // ── Utility subcommands (will move under `agent` later) ──
 
     /// Memory management commands.
     Memory {
@@ -60,10 +62,54 @@ enum Commands {
         #[command(subcommand)]
         action: CronAction,
     },
-
-    /// Start the Telegram bot standalone.
-    Telegram,
 }
+
+// ── Agent subcommands ──────────────────────────────────────────────────────
+
+#[derive(Subcommand)]
+enum AgentCommand {
+    /// Initialize a new Orion project in the current directory.
+    Init,
+
+    /// Start the gateway HTTP/WS server (+ Telegram bot if configured).
+    Serve,
+
+    /// Send a one-shot chat message.
+    Chat {
+        /// The message to send.
+        message: String,
+    },
+
+    /// Start an interactive REPL session.
+    Repl,
+}
+
+// ── Instance subcommands (stubs for future backend) ────────────────────────
+
+#[derive(Subcommand)]
+enum InstanceCommand {
+    /// Create a new remote instance.
+    Create,
+    /// List running instances.
+    List,
+    /// Kill a running instance.
+    Kill {
+        /// Instance ID.
+        id: String,
+    },
+    /// Pause a running instance.
+    Pause {
+        /// Instance ID.
+        id: String,
+    },
+    /// Restart a paused or running instance.
+    Restart {
+        /// Instance ID.
+        id: String,
+    },
+}
+
+// ── Utility subcommands ────────────────────────────────────────────────────
 
 #[derive(Subcommand)]
 enum MemoryAction {
@@ -157,6 +203,8 @@ enum CronAction {
         limit: usize,
     },
 }
+
+// ── Helpers ────────────────────────────────────────────────────────────────
 
 fn truncate(s: &str, max: usize) -> String {
     if s.len() > max {
@@ -279,7 +327,6 @@ async fn process_stream(
                     match block {
                         ContentBlock::Text { text } => {
                             if !text.trim().is_empty() {
-                                // Collect text for final result
                                 if !result_text.is_empty() {
                                     result_text.push('\n');
                                 }
@@ -334,7 +381,6 @@ async fn process_stream(
                 }
             }
             Message::Result(result) => {
-                // Capture final result text if we don't have one
                 if result_text.is_empty() {
                     if let Some(text) = &result.result {
                         result_text = text.clone();
@@ -360,7 +406,6 @@ fn print_result(result_text: &str, result_msg: &agent_sdk::ResultMessage, start:
         }
     }
 
-    // Print response text
     if !result_text.is_empty() {
         println!();
         for line in result_text.lines() {
@@ -368,7 +413,6 @@ fn print_result(result_text: &str, result_msg: &agent_sdk::ResultMessage, start:
         }
     }
 
-    // Stats line
     println!();
     print_separator();
     let elapsed = start.elapsed().as_secs_f64();
@@ -397,6 +441,8 @@ fn print_result(result_text: &str, result_msg: &agent_sdk::ResultMessage, start:
     print_separator();
 }
 
+// ── Main ───────────────────────────────────────────────────────────────────
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -406,50 +452,96 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cli = Cli::parse();
-    let config = OrionConfig::load().await?;
 
     match cli.command {
-        Commands::Serve => {
-            let agent = Arc::new(OrionAgent::new(config.clone()).await?);
-
-            // Start Telegram bot in background if token is configured
-            let telegram_token = config
-                .telegram_bot_token
-                .clone()
-                .or_else(|| std::env::var("TELEGRAM_BOT_TOKEN").ok());
-
-            if let Some(token) = telegram_token {
-                let tg_agent = Arc::clone(&agent);
-                tokio::spawn(async move {
-                    if let Err(e) = orion_telegram::run_with_agent(tg_agent, token).await {
-                        tracing::error!(error = %e, "Telegram bot error");
-                    }
-                });
+        // ── Agent commands ─────────────────────────────────────────────
+        Commands::Agent { action } => match action {
+            AgentCommand::Init => {
+                let cwd = std::env::current_dir()?;
+                OrionConfig::init(&cwd).await?;
+                println!(
+                    "  {} Initialized Orion project in {}",
+                    "✓".green().bold(),
+                    cwd.join(".orion").display()
+                );
+                println!(
+                    "  {} Edit {} to configure your agent.",
+                    "→".dimmed(),
+                    ".orion/config.toml".bright_white()
+                );
             }
 
-            orion_gateway::serve_with_agent(agent, config).await?;
-        }
+            AgentCommand::Serve => {
+                let config = OrionConfig::load().await?;
+                let agent = Arc::new(OrionAgent::new(config.clone()).await?);
 
-        Commands::Chat { message } => {
-            print_header();
-            let start = Instant::now();
-            let agent = OrionAgent::new(config).await?;
+                // Start Telegram bot in background if token is configured
+                let telegram_token = config
+                    .telegram_bot_token
+                    .clone()
+                    .or_else(|| std::env::var("TELEGRAM_BOT_TOKEN").ok());
 
-            let (mut stream, session_id) = agent.chat_stream(&message).await?;
-            let (result_text, result_msg) = process_stream(&mut stream, &start).await?;
+                if let Some(token) = telegram_token {
+                    let tg_agent = Arc::clone(&agent);
+                    tokio::spawn(async move {
+                        if let Err(e) = orion_telegram::run_with_agent(tg_agent, token).await {
+                            tracing::error!(error = %e, "Telegram bot error");
+                        }
+                    });
+                }
 
-            if let Some(ref result) = result_msg {
-                agent.finalize_chat(&session_id, &message, &result_text, result).await;
-                print_result(&result_text, result, &start);
+                orion_gateway::serve_with_agent(agent, config).await?;
             }
-            println!();
+
+            AgentCommand::Chat { message } => {
+                let config = OrionConfig::load().await?;
+                print_header();
+                let start = Instant::now();
+                let agent = OrionAgent::new(config).await?;
+
+                let (mut stream, session_id) = agent.chat_stream(&message).await?;
+                let (result_text, result_msg) = process_stream(&mut stream, &start).await?;
+
+                if let Some(ref result) = result_msg {
+                    agent
+                        .finalize_chat(&session_id, &message, &result_text, result)
+                        .await;
+                    print_result(&result_text, result, &start);
+                }
+                println!();
+            }
+
+            AgentCommand::Repl => {
+                let config = OrionConfig::load().await?;
+                run_repl(config).await?;
+            }
+        },
+
+        // ── Instance commands (stubs) ──────────────────────────────────
+        Commands::Instance { action } => {
+            match action {
+                InstanceCommand::Create => {
+                    println!("  {} Instance management is coming soon.", "ℹ".bright_cyan());
+                    println!("  {} This will connect to the Orion backend to spin up remote instances.", "→".dimmed());
+                }
+                InstanceCommand::List => {
+                    println!("  {} No instances running (backend not connected).", "ℹ".bright_cyan());
+                }
+                InstanceCommand::Kill { id } => {
+                    println!("  {} Cannot kill instance {}: backend not connected.", "✗".red(), id);
+                }
+                InstanceCommand::Pause { id } => {
+                    println!("  {} Cannot pause instance {}: backend not connected.", "✗".red(), id);
+                }
+                InstanceCommand::Restart { id } => {
+                    println!("  {} Cannot restart instance {}: backend not connected.", "✗".red(), id);
+                }
+            }
         }
 
-        Commands::Repl => {
-            run_repl(config).await?;
-        }
-
+        // ── Utility commands ───────────────────────────────────────────
         Commands::Memory { action } => {
+            let config = OrionConfig::load().await?;
             let agent = OrionAgent::new(config).await?;
             match action {
                 MemoryAction::Search { query, limit } => {
@@ -478,6 +570,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::Vault { action } => {
+            let config = OrionConfig::load().await?;
             let agent = OrionAgent::new(config).await?;
             match action {
                 VaultAction::Get { key } => match agent.vault().get(&key).await? {
@@ -506,6 +599,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::Sessions { action } => {
+            let config = OrionConfig::load().await?;
             let agent = OrionAgent::new(config).await?;
             match action {
                 SessionAction::List { limit } => {
@@ -533,6 +627,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::Skills { action } => {
+            let config = OrionConfig::load().await?;
             let agent = OrionAgent::new(config).await?;
             match action {
                 SkillAction::List => {
@@ -574,20 +669,8 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
-        Commands::Telegram => {
-            let token = config
-                .telegram_bot_token
-                .clone()
-                .or_else(|| std::env::var("TELEGRAM_BOT_TOKEN").ok())
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "No Telegram bot token. Set telegram_bot_token in config.toml or TELEGRAM_BOT_TOKEN env var"
-                    )
-                })?;
-            orion_telegram::run(config, token).await?;
-        }
-
         Commands::Cron { action } => {
+            let config = OrionConfig::load().await?;
             let agent = OrionAgent::new(config).await?;
             match action {
                 CronAction::List => {
@@ -688,7 +771,6 @@ async fn run_repl(config: OrionConfig) -> anyhow::Result<()> {
             agent.finalize_chat(&session_id, line, &result_text, result).await;
             print_result(&result_text, result, &start);
         } else if !result_text.is_empty() {
-            // Fallback if no ResultMessage
             println!("\n  {}\n", result_text);
         }
 

@@ -4,11 +4,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::OrionError;
 
-/// Main configuration for Orion, loaded from `~/.orion/config.toml`.
+/// Project directory name (created by `orion agent init`).
+const PROJECT_DIR: &str = ".orion";
+const CONFIG_FILE: &str = "config.toml";
+
+/// Main configuration for Orion, loaded from `.orion/config.toml` in the current directory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrionConfig {
-    /// Root data directory (default: `~/.orion/orion_data`)
-    #[serde(default = "default_data_dir")]
+    /// Root data directory (default: `.orion/data` relative to project root)
+    #[serde(default)]
     pub data_dir: PathBuf,
 
     /// Path to the SQLite database (default: `<data_dir>/memory.db`)
@@ -31,16 +35,13 @@ pub struct OrionConfig {
     #[serde(default)]
     pub api_key: Option<String>,
 
-    /// Telegram bot token (from @BotFather). If set, `orion serve` also starts the Telegram bot.
+    /// Telegram bot token (from @BotFather). If set, `orion agent serve` also starts the Telegram bot.
     #[serde(default)]
     pub telegram_bot_token: Option<String>,
-}
 
-fn default_data_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".orion")
-        .join("orion_data")
+    /// The project root directory (not serialized — set at load time).
+    #[serde(skip)]
+    pub project_root: PathBuf,
 }
 
 fn default_server_addr() -> String {
@@ -58,26 +59,55 @@ fn default_max_turns() -> u32 {
 impl Default for OrionConfig {
     fn default() -> Self {
         Self {
-            data_dir: default_data_dir(),
+            data_dir: PathBuf::new(),
             db_path: None,
             server_addr: default_server_addr(),
             model: default_model(),
             max_turns: default_max_turns(),
             api_key: None,
             telegram_bot_token: None,
+            project_root: PathBuf::new(),
         }
     }
 }
 
 impl OrionConfig {
-    /// Load config from `~/.orion/config.toml`, falling back to defaults.
-    pub async fn load() -> Result<Self, OrionError> {
-        let config_path = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".orion")
-            .join("config.toml");
+    /// Find the `.orion/` directory by walking up from the current directory.
+    /// Returns the project root (parent of `.orion/`).
+    pub fn find_project_root() -> Option<PathBuf> {
+        let mut dir = std::env::current_dir().ok()?;
+        loop {
+            if dir.join(PROJECT_DIR).is_dir() {
+                return Some(dir);
+            }
+            if !dir.pop() {
+                return None;
+            }
+        }
+    }
 
-        Self::load_from(&config_path).await
+    /// Load config from `.orion/config.toml` in the current project.
+    /// Walks up from CWD to find the project root.
+    pub async fn load() -> Result<Self, OrionError> {
+        let project_root = Self::find_project_root().ok_or_else(|| {
+            OrionError::Config(
+                "No .orion/ directory found. Run `orion agent init` to initialize a project."
+                    .to_string(),
+            )
+        })?;
+
+        let config_path = project_root.join(PROJECT_DIR).join(CONFIG_FILE);
+        let mut config = Self::load_from(&config_path).await?;
+        config.project_root = project_root;
+
+        // Resolve data_dir relative to project root if not absolute
+        if config.data_dir.as_os_str().is_empty() {
+            config.data_dir = config.project_root.join(PROJECT_DIR).join("data");
+        } else if config.data_dir.is_relative() {
+            config.data_dir = config.project_root.join(&config.data_dir);
+        }
+
+        Ok(config)
     }
 
     /// Load config from a specific path.
@@ -101,5 +131,55 @@ impl OrionConfig {
         self.db_path
             .clone()
             .unwrap_or_else(|| self.data_dir.join("memory.db"))
+    }
+
+    /// Path to the `.orion/` directory for this project.
+    pub fn orion_dir(&self) -> PathBuf {
+        self.project_root.join(PROJECT_DIR)
+    }
+
+    /// Initialize a new Orion project in the given directory.
+    /// Creates `.orion/config.toml` and `.orion/data/`.
+    pub async fn init(dir: &Path) -> Result<(), OrionError> {
+        let orion_dir = dir.join(PROJECT_DIR);
+
+        if orion_dir.exists() {
+            return Err(OrionError::Config(format!(
+                "Already initialized: {} exists",
+                orion_dir.display()
+            )));
+        }
+
+        // Create directory structure
+        let data_dir = orion_dir.join("data");
+        tokio::fs::create_dir_all(&data_dir)
+            .await
+            .map_err(|e| OrionError::Io(e))?;
+
+        // Write default config
+        let config_content = r#"# Orion agent configuration
+# See: https://github.com/gabrieleventuri/orion-rs
+
+# Claude model to use
+model = "claude-sonnet-4-20250514"
+
+# Maximum agentic turns per request
+max_turns = 30
+
+# Server bind address
+server_addr = "127.0.0.1:3000"
+
+# Anthropic API key (or set ANTHROPIC_API_KEY env var)
+# api_key = ""
+
+# Telegram bot token (or set TELEGRAM_BOT_TOKEN env var)
+# telegram_bot_token = ""
+"#;
+
+        tokio::fs::write(orion_dir.join(CONFIG_FILE), config_content)
+            .await
+            .map_err(|e| OrionError::Io(e))?;
+
+        Ok(())
     }
 }
