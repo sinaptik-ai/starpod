@@ -10,5 +10,6 @@ members = [
     "crates/orion-cron",
     "crates/orion-agent",
     "crates/orion-gateway",
+    "crates/orion-telegram",
     "crates/orion",
 ]

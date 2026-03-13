@@ -1,0 +1,12 @@
+[package]
+name = "orion-telegram"
+version = "0.1.0"
+edition = "2021"
+description = "Telegram bot interface for Orion"
+
+[dependencies]
+orion-core = { path = "../orion-core" }
+orion-agent = { path = "../orion-agent" }
+teloxide = { version = "0.13", features = ["macros"] }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"

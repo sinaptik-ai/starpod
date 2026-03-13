@@ -91,7 +91,7 @@ pub fn get_tool_definition(name: &str) -> Option<ToolDef> {
         }),
         "Bash" => Some(ToolDef {
             name: "Bash",
-            description: "Execute a bash command and return its output.",
+            description: "Execute a bash command and return its output. Use run_in_background for long-running processes like servers.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -106,6 +106,10 @@ pub fn get_tool_definition(name: &str) -> Option<ToolDef> {
                     "description": {
                         "type": "string",
                         "description": "Description of what the command does"
+                    },
+                    "run_in_background": {
+                        "type": "boolean",
+                        "description": "Run the command in the background. Use this for long-running processes like servers. Returns immediately with the PID."
                     }
                 },
                 "required": ["command"]

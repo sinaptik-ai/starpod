@@ -30,6 +30,10 @@ pub struct OrionConfig {
     /// Anthropic API key (if not set via ANTHROPIC_API_KEY env var)
     #[serde(default)]
     pub api_key: Option<String>,
+
+    /// Telegram bot token (from @BotFather). If set, `orion serve` also starts the Telegram bot.
+    #[serde(default)]
+    pub telegram_bot_token: Option<String>,
 }
 
 fn default_data_dir() -> PathBuf {
@@ -60,6 +64,7 @@ impl Default for OrionConfig {
             model: default_model(),
             max_turns: default_max_turns(),
             api_key: None,
+            telegram_bot_token: None,
         }
     }
 }

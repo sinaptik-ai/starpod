@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Instant;
 
 use clap::{Parser, Subcommand};
@@ -59,6 +60,9 @@ enum Commands {
         #[command(subcommand)]
         action: CronAction,
     },
+
+    /// Start the Telegram bot standalone.
+    Telegram,
 }
 
 #[derive(Subcommand)]
@@ -406,7 +410,24 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Serve => {
-            orion_gateway::serve(config).await?;
+            let agent = Arc::new(OrionAgent::new(config.clone()).await?);
+
+            // Start Telegram bot in background if token is configured
+            let telegram_token = config
+                .telegram_bot_token
+                .clone()
+                .or_else(|| std::env::var("TELEGRAM_BOT_TOKEN").ok());
+
+            if let Some(token) = telegram_token {
+                let tg_agent = Arc::clone(&agent);
+                tokio::spawn(async move {
+                    if let Err(e) = orion_telegram::run_with_agent(tg_agent, token).await {
+                        tracing::error!(error = %e, "Telegram bot error");
+                    }
+                });
+            }
+
+            orion_gateway::serve_with_agent(agent, config).await?;
         }
 
         Commands::Chat { message } => {
@@ -551,6 +572,19 @@ async fn main() -> anyhow::Result<()> {
                     println!("Deleted skill '{}'.", name);
                 }
             }
+        }
+
+        Commands::Telegram => {
+            let token = config
+                .telegram_bot_token
+                .clone()
+                .or_else(|| std::env::var("TELEGRAM_BOT_TOKEN").ok())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "No Telegram bot token. Set telegram_bot_token in config.toml or TELEGRAM_BOT_TOKEN env var"
+                    )
+                })?;
+            orion_telegram::run(config, token).await?;
         }
 
         Commands::Cron { action } => {

@@ -13,6 +13,7 @@ agent-sdk = { path = "../agent-sdk" }
 orion-core = { path = "../orion-core" }
 orion-agent = { path = "../orion-agent" }
 orion-gateway = { path = "../orion-gateway" }
+orion-telegram = { path = "../orion-telegram" }
 orion-skills = { path = "../orion-skills" }
 orion-cron = { path = "../orion-cron" }
 clap = { version = "4", features = ["derive"] }

@@ -292,8 +292,8 @@ const statusText = document.getElementById('status-text');
 
 let ws = null;
 let isStreaming = false;
-let currentBubble = null;
-let currentToolsContainer = null;
+let currentMsg = null;      // the .msg.assistant wrapper
+let currentBubble = null;   // the active text bubble (null when a tool is showing)
 let reconnectAttempt = 0;
 
 function setStatus(state) {
@@ -353,31 +353,43 @@ function addUserMessage(text) {
 function startAssistantMessage() {
   const msg = document.createElement('div');
   msg.className = 'msg assistant';
-
-  currentToolsContainer = document.createElement('div');
-  currentToolsContainer.className = 'tools';
-
-  currentBubble = document.createElement('div');
-  currentBubble.className = 'bubble streaming-cursor';
-
-  msg.appendChild(currentToolsContainer);
-  msg.appendChild(currentBubble);
+  currentMsg = msg;
+  currentBubble = null;
   messages.appendChild(msg);
   scrollToBottom();
 }
 
+// Ensure there is an active text bubble to write into.
+// If the last child of currentMsg is already a bubble, reuse it;
+// otherwise create a new one (e.g. after a tool-activity element).
+function ensureBubble() {
+  if (currentBubble) return currentBubble;
+  if (!currentMsg) return null;
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble streaming-cursor';
+  currentMsg.appendChild(bubble);
+  currentBubble = bubble;
+  return bubble;
+}
+
 function appendText(text) {
-  if (!currentBubble) return;
-  // Accumulate raw text, then format the whole thing
-  if (!currentBubble._rawText) currentBubble._rawText = '';
-  currentBubble._rawText += text;
-  currentBubble.innerHTML = formatText(currentBubble._rawText);
-  currentBubble.classList.add('streaming-cursor');
+  const bubble = ensureBubble();
+  if (!bubble) return;
+  if (!bubble._rawText) bubble._rawText = '';
+  bubble._rawText += text;
+  bubble.innerHTML = formatText(bubble._rawText);
+  bubble.classList.add('streaming-cursor');
   scrollToBottom();
 }
 
 function addToolUse(name, input) {
-  if (!currentToolsContainer) return;
+  if (!currentMsg) return;
+  // Close current text bubble so tools appear after it
+  if (currentBubble) {
+    currentBubble.classList.remove('streaming-cursor');
+    currentBubble = null;
+  }
+
   const el = document.createElement('div');
   el.className = 'tool-activity';
   let preview = '';
@@ -392,17 +404,14 @@ function addToolUse(name, input) {
   el.innerHTML = '<span class="tool-name">' + escapeHtml(name) + '</span> ' +
                  '<span>' + escapeHtml(preview) + '</span>' +
                  '<span class="tool-status">running...</span>';
-  el.id = 'tool-' + Date.now();
-  currentToolsContainer.appendChild(el);
+  currentMsg.appendChild(el);
   scrollToBottom();
-  return el;
 }
 
-let lastToolEl = null;
-
 function addToolResult(content, isError) {
-  // Update the last tool's status
-  const tools = currentToolsContainer ? currentToolsContainer.querySelectorAll('.tool-activity') : [];
+  if (!currentMsg) return;
+  // Find the last tool-activity in the message and update its status
+  const tools = currentMsg.querySelectorAll('.tool-activity');
   const last = tools[tools.length - 1];
   if (last) {
     const status = last.querySelector('.tool-status');
@@ -418,11 +427,24 @@ function addToolResult(content, isError) {
 }
 
 function endStream(data) {
-  if (currentBubble) {
-    currentBubble.classList.remove('streaming-cursor');
-    // Re-render final text with formatting
-    if (currentBubble._rawText) {
-      currentBubble.innerHTML = formatText(currentBubble._rawText);
+  // Finalize all text bubbles in this message
+  if (currentMsg) {
+    currentMsg.querySelectorAll('.bubble').forEach(b => {
+      b.classList.remove('streaming-cursor');
+      if (b._rawText) b.innerHTML = formatText(b._rawText);
+    });
+
+    // Show errors if no text was produced
+    if (data.is_error && data.errors && data.errors.length > 0) {
+      const hasText = Array.from(currentMsg.querySelectorAll('.bubble')).some(b => b._rawText);
+      if (!hasText) {
+        const bubble = ensureBubble();
+        if (bubble) {
+          bubble.innerHTML = '<span style="color:var(--red)">' +
+            data.errors.map(escapeHtml).join('<br>') + '</span>';
+          bubble.classList.remove('streaming-cursor');
+        }
+      }
     }
 
     // Add stats
@@ -434,20 +456,13 @@ function endStream(data) {
         '<span>$' + data.cost_usd.toFixed(4) + '</span>' +
         '<span>' + Math.round(data.input_tokens / 1000) + 'k in / ' +
                     Math.round(data.output_tokens / 1000) + 'k out</span>';
-      currentBubble.parentElement.appendChild(stats);
-    }
-  }
-
-  if (data.is_error && data.errors && data.errors.length > 0) {
-    if (currentBubble && !currentBubble._rawText) {
-      currentBubble.innerHTML = '<span style="color:var(--red)">' +
-        data.errors.map(escapeHtml).join('<br>') + '</span>';
+      currentMsg.appendChild(stats);
     }
   }
 
   isStreaming = false;
+  currentMsg = null;
   currentBubble = null;
-  currentToolsContainer = null;
   sendBtn.disabled = false;
   inputText.focus();
   scrollToBottom();
@@ -513,13 +528,14 @@ function connect() {
         } else {
           // Show error as assistant message
           startAssistantMessage();
-          if (currentBubble) {
-            currentBubble._rawText = 'Error: ' + data.message;
-            currentBubble.innerHTML = '<span style="color:var(--red)">' + escapeHtml(data.message) + '</span>';
-            currentBubble.classList.remove('streaming-cursor');
+          const bubble = ensureBubble();
+          if (bubble) {
+            bubble._rawText = 'Error: ' + data.message;
+            bubble.innerHTML = '<span style="color:var(--red)">' + escapeHtml(data.message) + '</span>';
+            bubble.classList.remove('streaming-cursor');
           }
+          currentMsg = null;
           currentBubble = null;
-          currentToolsContainer = null;
         }
         break;
     }

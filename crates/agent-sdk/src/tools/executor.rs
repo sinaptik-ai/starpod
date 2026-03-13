@@ -239,8 +239,30 @@ impl ToolExecutor {
     // ── Bash ────────────────────────────────────────────────────────────
 
     /// Run a shell command via `/bin/bash -c`, capturing stdout and stderr.
-    /// Supports an optional timeout (in milliseconds).
+    /// Supports an optional timeout (in milliseconds) and background execution.
     async fn execute_bash(&self, input: &BashInput) -> Result<ToolResult> {
+        // Background mode: spawn and return immediately with the PID.
+        if input.run_in_background == Some(true) {
+            let child = Command::new("/bin/bash")
+                .arg("-c")
+                .arg(&input.command)
+                .current_dir(&self.cwd)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+
+            return match child {
+                Ok(child) => {
+                    let pid = child.id().unwrap_or(0);
+                    Ok(ToolResult {
+                        content: format!("Process started in background (pid: {pid})"),
+                        is_error: false,
+                    })
+                }
+                Err(e) => Ok(ToolResult::err(format!("Failed to spawn process: {e}"))),
+            };
+        }
+
         let timeout_ms = input.timeout.unwrap_or(120_000);
         let timeout_dur = Duration::from_millis(timeout_ms);
 
