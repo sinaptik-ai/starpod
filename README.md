@@ -146,12 +146,50 @@ API key authentication: set `ORION_API_KEY` env var on the server, then `localSt
 
 ## Telegram Bot
 
-Set `telegram_bot_token` in `.orion/config.toml` or the `TELEGRAM_BOT_TOKEN` env var. The bot starts automatically alongside the gateway when you run `orion agent serve`, sharing the same agent instance.
+### Setup (step by step)
 
-Features:
-- Handles `/start` command
-- Shows typing indicator while processing
-- Splits long messages at line boundaries (Telegram's 4096-char limit)
+1. **Create a bot with BotFather**
+   - Open Telegram and search for `@BotFather`
+   - Send `/newbot`
+   - Choose a name (e.g. "My Orion Assistant")
+   - Choose a username (must end in `bot`, e.g. `my_orion_bot`)
+   - BotFather will reply with a token like `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`
+
+2. **Add the token to your project**
+
+   Either add it to `.orion/config.toml`:
+   ```toml
+   telegram_bot_token = "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+   ```
+
+   Or set it as an environment variable:
+   ```bash
+   export TELEGRAM_BOT_TOKEN="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+   ```
+
+3. **Start the server**
+   ```bash
+   orion agent serve
+   ```
+   You should see `Telegram  connected` in the startup banner. The bot is now running.
+
+4. **Chat with your bot**
+   - Open Telegram and search for your bot's username (e.g. `@my_orion_bot`)
+   - Send `/start` to begin
+   - Send any message — the bot uses the same agent as the web UI and API
+
+### Optional: customize your bot in BotFather
+
+- `/setdescription` — set what users see before starting a chat
+- `/setabouttext` — set the bio shown on the bot's profile
+- `/setuserpic` — set the bot's profile picture
+- `/setcommands` — register `/start` as a command with a description
+
+### Features
+
+- Shares the same `OrionAgent` instance with the web UI and API
+- Shows typing indicator while the agent is thinking
+- Splits long responses at line boundaries (Telegram's 4096-char limit)
 - Sends as MarkdownV2, falls back to plain text on parse failure
 
 ## Gateway API
