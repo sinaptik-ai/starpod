@@ -1,0 +1,16 @@
+[package]
+name = "orion-session"
+version = "0.1.0"
+edition = "2021"
+description = "Session management for Orion - metadata, time-gap analysis, usage tracking"
+
+[dependencies]
+orion-core = { path = "../orion-core" }
+rusqlite = { version = "0.32", features = ["bundled", "modern_sqlite"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"

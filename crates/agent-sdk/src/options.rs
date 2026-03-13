@@ -1,8 +1,11 @@
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use serde::{Deserialize, Serialize};
 
 use crate::hooks::{HookCallbackMatcher, HookEvent};
 use crate::mcp::McpServerConfig;
+use crate::tools::executor::ToolResult;
 use crate::types::agent::AgentDefinition;
 use crate::types::permissions::{CanUseToolOptions, PermissionResult};
 
@@ -223,7 +226,42 @@ pub struct Options {
 
     /// Enable prompt suggestions.
     pub prompt_suggestions: bool,
+
+    /// External tool handler for custom tools.
+    ///
+    /// Called before the built-in executor. If it returns `Some(ToolResult)`,
+    /// the built-in executor is skipped for that tool call.
+    pub external_tool_handler: Option<ExternalToolHandlerFn>,
+
+    /// Custom tool definitions (JSON schemas) sent to the API alongside built-in tools.
+    ///
+    /// These are typically used with `external_tool_handler` to register and handle
+    /// tools that aren't part of the built-in set (e.g. MemorySearch, VaultGet).
+    pub custom_tool_definitions: Vec<CustomToolDefinition>,
 }
+
+/// A custom tool definition to send to the Claude API.
+#[derive(Debug, Clone)]
+pub struct CustomToolDefinition {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+/// Type alias for external tool handler callback.
+///
+/// When set, this handler is called before the built-in tool executor. If it returns
+/// `Some(ToolResult)`, the built-in executor is skipped for that tool call.
+/// This allows embedding custom tools (e.g. MemorySearch, VaultGet) alongside
+/// the built-in tools (Read, Write, Bash, etc.).
+pub type ExternalToolHandlerFn = Box<
+    dyn Fn(
+            String,
+            serde_json::Value,
+        ) -> Pin<Box<dyn Future<Output = Option<ToolResult>> + Send>>
+        + Send
+        + Sync,
+>;
 
 /// Type alias for the can_use_tool callback.
 pub type CanUseToolFn = Box<
@@ -272,6 +310,8 @@ impl Default for Options {
             tool_config: None,
             plugins: Vec::new(),
             prompt_suggestions: false,
+            external_tool_handler: None,
+            custom_tool_definitions: Vec::new(),
         }
     }
 }
@@ -370,6 +410,11 @@ impl OptionsBuilder {
         self
     }
 
+    pub fn session_id(mut self, id: impl Into<String>) -> Self {
+        self.options.session_id = Some(id.into());
+        self
+    }
+
     pub fn fork_session(mut self, value: bool) -> Self {
         self.options.fork_session = value;
         self
@@ -412,6 +457,21 @@ impl OptionsBuilder {
 
     pub fn sandbox(mut self, settings: SandboxSettings) -> Self {
         self.options.sandbox = Some(settings);
+        self
+    }
+
+    pub fn external_tool_handler(mut self, handler: ExternalToolHandlerFn) -> Self {
+        self.options.external_tool_handler = Some(handler);
+        self
+    }
+
+    pub fn custom_tool(mut self, def: CustomToolDefinition) -> Self {
+        self.options.custom_tool_definitions.push(def);
+        self
+    }
+
+    pub fn custom_tools(mut self, defs: Vec<CustomToolDefinition>) -> Self {
+        self.options.custom_tool_definitions.extend(defs);
         self
     }
 

@@ -1,0 +1,21 @@
+[package]
+name = "orion"
+version = "0.1.0"
+edition = "2021"
+description = "Orion CLI - personal AI assistant"
+
+[[bin]]
+name = "orion"
+path = "src/main.rs"
+
+[dependencies]
+orion-core = { path = "../orion-core" }
+orion-agent = { path = "../orion-agent" }
+orion-gateway = { path = "../orion-gateway" }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde_json = "1"
+rustyline = "15"
+anyhow = "1"

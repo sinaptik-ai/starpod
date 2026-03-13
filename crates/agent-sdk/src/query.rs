@@ -201,22 +201,34 @@ async fn run_agent_loop(
     };
 
     let raw_defs: Vec<_> = get_tool_definitions(&tool_names);
-    let num_tools = raw_defs.len();
-    let tool_defs: Vec<ToolDefinition> = raw_defs
+
+    // Combine built-in + custom tool definitions
+    let mut all_defs: Vec<ToolDefinition> = raw_defs
         .into_iter()
-        .enumerate()
-        .map(|(i, td)| ToolDefinition {
+        .map(|td| ToolDefinition {
             name: td.name.to_string(),
             description: td.description.to_string(),
             input_schema: td.input_schema,
-            // Mark the last tool with cache_control so the tools block is cached
-            cache_control: if i == num_tools - 1 {
-                Some(CacheControl::ephemeral())
-            } else {
-                None
-            },
+            cache_control: None,
         })
         .collect();
+
+    // Append custom tool definitions
+    for ctd in &options.custom_tool_definitions {
+        all_defs.push(ToolDefinition {
+            name: ctd.name.clone(),
+            description: ctd.description.clone(),
+            input_schema: ctd.input_schema.clone(),
+            cache_control: None,
+        });
+    }
+
+    // Mark the last tool with cache_control so the tools block is cached
+    if let Some(last) = all_defs.last_mut() {
+        last.cache_control = Some(CacheControl::ephemeral());
+    }
+
+    let tool_defs = all_defs;
 
     // Emit init system message
     let init_msg = Message::System(SystemMessage {
@@ -545,18 +557,30 @@ async fn run_agent_loop(
 
             match verdict {
                 PermissionVerdict::Allow | PermissionVerdict::AllowWithUpdatedInput(_) => {
-                    // Execute the tool
+                    // Execute the tool — try external handler first, then built-in
                     debug!(tool = %tool_name, "Executing tool");
-                    let result = tool_executor
-                        .execute(tool_name, actual_input.clone())
-                        .await;
-
-                    let tool_result = match result {
-                        Ok(tr) => tr,
-                        Err(e) => ToolResult {
-                            content: format!("Tool execution error: {}", e),
-                            is_error: true,
-                        },
+                    let tool_result = if let Some(ref handler) = options.external_tool_handler {
+                        let ext_result = handler(tool_name.clone(), actual_input.clone()).await;
+                        if let Some(tr) = ext_result {
+                            tr
+                        } else {
+                            // External handler didn't handle it — fall through to built-in
+                            match tool_executor.execute(tool_name, actual_input.clone()).await {
+                                Ok(tr) => tr,
+                                Err(e) => ToolResult {
+                                    content: format!("Tool execution error: {}", e),
+                                    is_error: true,
+                                },
+                            }
+                        }
+                    } else {
+                        match tool_executor.execute(tool_name, actual_input.clone()).await {
+                            Ok(tr) => tr,
+                            Err(e) => ToolResult {
+                                content: format!("Tool execution error: {}", e),
+                                is_error: true,
+                            },
+                        }
                     };
 
                     // Run PostToolUse hooks

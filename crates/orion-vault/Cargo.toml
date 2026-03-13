@@ -1,0 +1,17 @@
+[package]
+name = "orion-vault"
+version = "0.1.0"
+edition = "2021"
+description = "Encrypted credential storage for Orion - AES-256-GCM"
+
+[dependencies]
+orion-core = { path = "../orion-core" }
+rusqlite = { version = "0.32", features = ["bundled", "modern_sqlite"] }
+aes-gcm = "0.10"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+rand = "0.8"
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"

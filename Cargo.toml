@@ -2,4 +2,11 @@
 resolver = "2"
 members = [
     "crates/agent-sdk",
+    "crates/orion-core",
+    "crates/orion-memory",
+    "crates/orion-vault",
+    "crates/orion-session",
+    "crates/orion-agent",
+    "crates/orion-gateway",
+    "crates/orion",
 ]

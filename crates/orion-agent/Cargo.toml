@@ -1,0 +1,20 @@
+[package]
+name = "orion-agent"
+version = "0.1.0"
+edition = "2021"
+description = "Orchestrator for Orion - wires agent-sdk + memory + session + vault"
+
+[dependencies]
+agent-sdk = { path = "../agent-sdk" }
+orion-core = { path = "../orion-core" }
+orion-memory = { path = "../orion-memory" }
+orion-session = { path = "../orion-session" }
+orion-vault = { path = "../orion-vault" }
+chrono = { version = "0.4", features = ["serde"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,16 @@
+[package]
+name = "orion-memory"
+version = "0.1.0"
+edition = "2021"
+description = "Memory system for Orion - SQLite FTS5 + markdown file management"
+
+[dependencies]
+orion-core = { path = "../orion-core" }
+rusqlite = { version = "0.32", features = ["bundled", "modern_sqlite"] }
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1", features = ["fs", "sync"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }

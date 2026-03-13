@@ -1,0 +1,52 @@
+mod routes;
+mod ws;
+
+use std::sync::Arc;
+
+use axum::Router;
+use tower_http::cors::CorsLayer;
+use tower_http::trace::TraceLayer;
+use tracing::info;
+
+use orion_agent::OrionAgent;
+use orion_core::OrionConfig;
+
+/// Shared application state.
+pub struct AppState {
+    pub agent: OrionAgent,
+    pub api_key: Option<String>,
+}
+
+/// Build the Axum router with all routes.
+pub fn build_router(state: Arc<AppState>) -> Router {
+    Router::new()
+        .merge(routes::api_routes())
+        .merge(ws::ws_routes())
+        .layer(CorsLayer::permissive())
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
+}
+
+/// Start the gateway server.
+pub async fn serve(config: OrionConfig) -> orion_core::Result<()> {
+    let agent = OrionAgent::new(config.clone())?;
+
+    let api_key = std::env::var("ORION_API_KEY").ok();
+
+    let state = Arc::new(AppState { agent, api_key });
+
+    let app = build_router(state);
+
+    let addr = &config.server_addr;
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| orion_core::OrionError::Config(format!("Failed to bind {}: {}", addr, e)))?;
+
+    info!(addr = %addr, "Orion gateway listening");
+
+    axum::serve(listener, app)
+        .await
+        .map_err(|e| orion_core::OrionError::Config(format!("Server error: {}", e)))?;
+
+    Ok(())
+}
