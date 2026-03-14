@@ -74,6 +74,8 @@ prompt → Claude API → tool calls → execute → feed results → repeat
 
 The agent has access to file I/O, web search, memory, vault, skills, and cron tools.
 
+**Conversation compaction**: when `input_tokens` exceeds the context budget (160k tokens), older messages are automatically summarized via a separate API call and replaced with a compact summary. The full transcript is preserved on disk. Tool-use cycles are never split.
+
 ### 5. Finalization
 
 - Usage is recorded in the session database

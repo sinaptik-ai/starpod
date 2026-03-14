@@ -21,6 +21,7 @@ use crate::client::{
     ApiClient, ApiContentBlock, ApiMessage, CacheControl, CreateMessageRequest, SystemBlock,
     ThinkingParam, ToolDefinition,
 };
+use crate::compact;
 use crate::error::{AgentError, Result};
 use crate::hooks::{HookCallbackMatcher, HookEvent, HookInput};
 use crate::hooks::input::BaseHookInput;
@@ -682,6 +683,90 @@ async fn run_agent_loop(
             role: "user".to_string(),
             content: tool_results,
         });
+
+        // --- Compaction check (between turns) ---
+        if let Some(context_budget) = options.context_budget {
+            if compact::should_compact(response.usage.input_tokens, context_budget) {
+                let split_point = compact::find_split_point(&conversation);
+                if split_point > 0 {
+                    debug!(
+                        input_tokens = response.usage.input_tokens,
+                        context_budget,
+                        split_point,
+                        "Context budget exceeded, compacting conversation"
+                    );
+
+                    let compaction_model = options
+                        .compaction_model
+                        .as_deref()
+                        .unwrap_or(compact::DEFAULT_COMPACTION_MODEL);
+
+                    let summary_prompt =
+                        compact::build_summary_prompt(&conversation[..split_point]);
+
+                    match compact::call_summarizer(
+                        &api_client,
+                        &summary_prompt,
+                        compaction_model,
+                        &model,
+                    )
+                    .await
+                    {
+                        Ok(summary) => {
+                            let pre_tokens = response.usage.input_tokens;
+                            let messages_compacted = split_point;
+
+                            compact::splice_conversation(
+                                &mut conversation,
+                                split_point,
+                                &summary,
+                            );
+
+                            // Emit CompactBoundary system message
+                            let compact_msg = Message::System(SystemMessage {
+                                subtype: SystemSubtype::CompactBoundary,
+                                uuid: Uuid::new_v4(),
+                                session_id: session_id.clone(),
+                                agents: None,
+                                claude_code_version: None,
+                                cwd: None,
+                                tools: None,
+                                mcp_servers: None,
+                                model: None,
+                                permission_mode: None,
+                                compact_metadata: Some(CompactMetadata {
+                                    trigger: CompactTrigger::Auto,
+                                    pre_tokens,
+                                }),
+                            });
+
+                            if options.persist_session {
+                                let _ = session
+                                    .append_message(
+                                        &serde_json::to_value(&compact_msg)
+                                            .unwrap_or_default(),
+                                    )
+                                    .await;
+                            }
+                            let _ = tx.send(Ok(compact_msg));
+
+                            debug!(
+                                pre_tokens,
+                                messages_compacted,
+                                summary_len = summary.len(),
+                                "Conversation compacted"
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Compaction failed, continuing without compaction: {}",
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

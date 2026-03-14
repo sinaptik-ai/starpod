@@ -179,6 +179,11 @@ pub struct OrionConfig {
     #[serde(default)]
     pub reasoning_effort: Option<ReasoningEffort>,
 
+    /// Model used for conversation compaction summaries.
+    /// Defaults to the primary model if not set.
+    #[serde(default)]
+    pub compaction_model: Option<String>,
+
     /// Agent identity (name, emoji, personality).
     #[serde(default)]
     pub identity: IdentityConfig,
@@ -231,6 +236,7 @@ impl Default for OrionConfig {
             model: default_model(),
             max_turns: default_max_turns(),
             reasoning_effort: None,
+            compaction_model: None,
             identity: IdentityConfig::default(),
             user: UserConfig::default(),
             providers: ProvidersConfig::default(),
@@ -395,6 +401,9 @@ server_addr = "127.0.0.1:3000"
 
 # Reasoning effort for extended thinking: "low", "medium", "high"
 # reasoning_effort = "medium"
+
+# Model for conversation compaction summaries (defaults to primary model)
+# compaction_model = "claude-haiku-4-5"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AGENT IDENTITY

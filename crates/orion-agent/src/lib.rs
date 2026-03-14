@@ -170,8 +170,13 @@ impl OrionAgent {
             .model(&self.config.model)
             .max_turns(self.config.max_turns)
             .session_id(session_id.clone())
+            .context_budget(160_000)
             .external_tool_handler(self.build_tool_handler())
             .custom_tools(custom_tool_definitions());
+
+        if let Some(ref cm) = self.config.compaction_model {
+            builder = builder.compaction_model(cm);
+        }
 
         if let Some(thinking) = self.thinking_config() {
             builder = builder.thinking(thinking);
@@ -290,8 +295,13 @@ impl OrionAgent {
             .model(&self.config.model)
             .max_turns(self.config.max_turns)
             .session_id(session_id.clone())
+            .context_budget(160_000)
             .external_tool_handler(self.build_tool_handler())
             .custom_tools(custom_tool_definitions());
+
+        if let Some(ref cm) = self.config.compaction_model {
+            builder = builder.compaction_model(cm);
+        }
 
         if let Some(thinking) = self.thinking_config() {
             builder = builder.thinking(thinking);

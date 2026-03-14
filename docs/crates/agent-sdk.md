@@ -50,6 +50,8 @@ Options::builder()
 | `.permission_mode()` | Tool access control |
 | `.external_tool_handler()` | Custom tool callback |
 | `.custom_tools()` | Custom tool definitions |
+| `.context_budget()` | Token threshold for conversation compaction |
+| `.compaction_model()` | Model for generating compaction summaries |
 
 ## Message Types
 
@@ -98,4 +100,4 @@ The handler returns `Some(ToolResult)` to handle a tool, or `None` to let the SD
 
 ## Tests
 
-17 unit tests + 2 doc-tests.
+24 unit tests + 2 doc-tests.

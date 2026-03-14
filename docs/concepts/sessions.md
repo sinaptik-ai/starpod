@@ -68,6 +68,26 @@ Every agent turn records:
 - Model used
 - Turn number
 
+## Conversation Compaction
+
+When a conversation approaches the model's context window limit (~160k tokens), Orion automatically compacts older messages:
+
+1. **Detection** — after each tool-use cycle, the agent checks if `input_tokens` exceeds the context budget (160k tokens)
+2. **Summarization** — older messages are sent to a summarizer model (configurable via `compaction_model` in config, defaults to the primary model) which produces a structured summary
+3. **Splicing** — old messages are replaced with the summary, preserving the system prompt and recent turns (at least 4 messages)
+4. **Persistence** — the full transcript is already persisted to disk; compaction only affects the in-memory context sent to the API
+5. **Logging** — a `CompactBoundary` event is emitted and recorded in the `compaction_log` table
+
+Tool-use cycles are never split — if a compaction boundary would fall between a tool call and its result, it moves to keep them together.
+
+Configure the summarization model in `.orion/config.toml`:
+
+```toml
+compaction_model = "claude-haiku-4-5"
+```
+
+If the compaction model fails, it falls back to the primary model.
+
 ## Message Persistence
 
 All messages (user, assistant, tool use/results) are saved to the session database. The web UI loads full history when revisiting a session.
