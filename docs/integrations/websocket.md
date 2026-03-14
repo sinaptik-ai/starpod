@@ -131,6 +131,37 @@ Server:  {"type": "text_delta", "text": "- README.md\n"}
 Server:  {"type": "stream_end", ...}
 ```
 
+## Followup Messages
+
+You can send additional messages while a stream is active. The behavior depends on the `followup_mode` setting in `config.toml`:
+
+### Inject Mode (default)
+
+Messages are integrated into the running agent loop at the next iteration boundary. The agent sees them as additional context before its next API call.
+
+```
+Client:  {"type": "message", "text": "List files"}
+Server:  {"type": "stream_start", "session_id": "..."}
+Server:  {"type": "tool_use", "name": "Glob", ...}
+Client:  {"type": "message", "text": "also check hidden files"}   ← sent during stream
+Server:  {"type": "tool_result", ...}
+Server:  {"type": "text_delta", "text": "..."}                    ← response includes both requests
+Server:  {"type": "stream_end", ...}
+```
+
+### Queue Mode
+
+Messages are buffered and processed as a new agent loop after the current stream finishes.
+
+```
+Client:  {"type": "message", "text": "List files"}
+Server:  {"type": "stream_start", ...}
+Client:  {"type": "message", "text": "also check hidden files"}   ← queued
+Server:  {"type": "stream_end", ...}
+Server:  {"type": "stream_start", ...}                            ← new stream for queued message
+Server:  {"type": "stream_end", ...}
+```
+
 ## Reconnection
 
 The web UI implements auto-reconnect with exponential backoff. If you're building a custom client, handle WebSocket disconnection and reconnect with increasing delays.

@@ -14,6 +14,9 @@ server_addr = "127.0.0.1:3000"   # HTTP/WS server bind address
 # Extended thinking (optional)
 # reasoning_effort = "medium"     # "low", "medium", or "high"
 
+# Followup message handling during active agent loops
+# followup_mode = "inject"        # "inject" or "queue"
+
 # ─── Agent Identity ────────────────────────────────────
 [identity]
 # name = "Orion"                  # Agent's display name
@@ -49,6 +52,7 @@ server_addr = "127.0.0.1:3000"   # HTTP/WS server bind address
 | `max_turns` | integer | `30` | Max agentic loop iterations per chat |
 | `server_addr` | string | `"127.0.0.1:3000"` | Server bind address |
 | `reasoning_effort` | string | — | Extended thinking: `"low"`, `"medium"`, `"high"` |
+| `followup_mode` | string | `"inject"` | How followup messages are handled during an active agent loop: `"inject"` or `"queue"` |
 
 ## Identity
 

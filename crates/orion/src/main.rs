@@ -731,7 +731,7 @@ async fn main() -> anyhow::Result<()> {
                     channel_session_key: Some(uuid::Uuid::new_v4().to_string()),
                     attachments: Vec::new(),
                 };
-                let (mut stream, session_id) = agent.chat_stream(&chat_msg).await?;
+                let (mut stream, session_id, _followup_tx) = agent.chat_stream(&chat_msg).await?;
                 let (result_text, result_msg) = process_stream(&mut stream, &start).await?;
 
                 if let Some(ref result) = result_msg {
@@ -1294,7 +1294,7 @@ async fn run_repl(config: OrionConfig, name: &str) -> anyhow::Result<()> {
             channel_session_key: Some(session_key.clone()),
             attachments: Vec::new(),
         };
-        let (mut stream, session_id) = agent.chat_stream(&chat_msg).await?;
+        let (mut stream, session_id, _followup_tx) = agent.chat_stream(&chat_msg).await?;
         let (result_text, result_msg) = process_stream(&mut stream, &start).await?;
 
         if let Some(ref result) = result_msg {
