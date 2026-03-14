@@ -254,6 +254,9 @@ pub struct Options {
     /// At each iteration boundary (before calling the API), the loop drains
     /// all pending messages from this channel and appends them as user messages.
     pub followup_rx: Option<mpsc::UnboundedReceiver<String>>,
+
+    /// Explicit API key. When set, bypasses the `ANTHROPIC_API_KEY` env var lookup.
+    pub api_key: Option<String>,
 }
 
 /// A custom tool definition to send to the Claude API.
@@ -331,6 +334,7 @@ impl Default for Options {
             external_tool_handler: None,
             custom_tool_definitions: Vec::new(),
             followup_rx: None,
+            api_key: None,
         }
     }
 }
@@ -509,6 +513,11 @@ impl OptionsBuilder {
         self
     }
 
+    pub fn api_key(mut self, key: impl Into<String>) -> Self {
+        self.options.api_key = Some(key.into());
+        self
+    }
+
     pub fn build(self) -> Options {
         self.options
     }
@@ -534,5 +543,36 @@ impl std::fmt::Debug for Options {
             .field("resume", &self.resume)
             .field("persist_session", &self.persist_session)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builder_api_key_sets_field() {
+        let opts = Options::builder()
+            .api_key("sk-ant-test-key")
+            .build();
+        assert_eq!(opts.api_key.as_deref(), Some("sk-ant-test-key"));
+    }
+
+    #[test]
+    fn builder_api_key_default_is_none() {
+        let opts = Options::builder().build();
+        assert!(opts.api_key.is_none());
+    }
+
+    #[test]
+    fn builder_api_key_with_other_options() {
+        let opts = Options::builder()
+            .model("claude-haiku-4-5")
+            .api_key("sk-ant-combined")
+            .max_turns(10)
+            .build();
+        assert_eq!(opts.api_key.as_deref(), Some("sk-ant-combined"));
+        assert_eq!(opts.model.as_deref(), Some("claude-haiku-4-5"));
+        assert_eq!(opts.max_turns, Some(10));
     }
 }

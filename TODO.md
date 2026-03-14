@@ -53,7 +53,7 @@
 - [ ] **Voice support** — TTS/STT integration for voice interaction (ElevenLabs, OpenAI, local Piper)
 
 ### Web UI
-- [ ] **Conversation history sidebar** — Browse and resume past sessions
+- [x] **Conversation history sidebar** — Browse and resume past sessions
 - [ ] **Settings panel** — Edit config, manage API keys, view usage from the UI
 - [ ] **File upload** — Drag & drop files into chat
 - [ ] **Mobile responsive** — Better layout on small screens

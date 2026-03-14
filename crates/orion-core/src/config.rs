@@ -534,4 +534,58 @@ mod tests {
         let config: OrionConfig = toml::from_str(toml).unwrap();
         assert!(config.telegram.allowed_users.is_empty());
     }
+
+    #[test]
+    fn test_resolved_api_key_from_config() {
+        let toml = r#"
+            [providers.anthropic]
+            api_key = "sk-ant-from-config"
+        "#;
+        let config: OrionConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.resolved_api_key().unwrap(), "sk-ant-from-config");
+    }
+
+    #[test]
+    fn test_resolved_api_key_config_takes_priority_over_env() {
+        let toml = r#"
+            [providers.anthropic]
+            api_key = "sk-ant-from-config"
+        "#;
+        let config: OrionConfig = toml::from_str(toml).unwrap();
+        // Even if env var is set, config value should win
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-from-env");
+        let key = config.resolved_api_key().unwrap();
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        assert_eq!(key, "sk-ant-from-config");
+    }
+
+    #[test]
+    fn test_resolved_api_key_falls_back_to_env() {
+        let toml = "";
+        let config: OrionConfig = toml::from_str(toml).unwrap();
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-from-env");
+        let key = config.resolved_api_key();
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        assert_eq!(key.unwrap(), "sk-ant-from-env");
+    }
+
+    #[test]
+    fn test_resolved_api_key_none_when_neither_set() {
+        let toml = "";
+        let config: OrionConfig = toml::from_str(toml).unwrap();
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        assert!(config.resolved_api_key().is_none());
+    }
+
+    #[test]
+    fn test_resolved_api_key_empty_provider_section() {
+        // Provider section exists but no api_key — should fall back to env
+        let toml = r#"
+            [providers.anthropic]
+            base_url = "https://api.anthropic.com"
+        "#;
+        let config: OrionConfig = toml::from_str(toml).unwrap();
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        assert!(config.resolved_api_key().is_none());
+    }
 }
