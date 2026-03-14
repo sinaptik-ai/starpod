@@ -71,23 +71,22 @@ impl StarpodAgent {
         })
     }
 
-    /// Path to the downloads directory.
+    /// Path to the downloads directory (lives in the project root, not inside `.orion/`).
     fn downloads_dir(&self) -> PathBuf {
-        self.config.data_dir.join("downloads")
+        self.config.project_root.join("downloads")
     }
 
-    /// Save attachments to disk under `{data_dir}/downloads/{session_id}/`.
+    /// Save attachments to disk under `{project_root}/downloads/`.
     /// Returns a list of saved file paths.
     async fn save_attachments(
         &self,
-        session_id: &str,
         attachments: &[Attachment],
     ) -> Vec<PathBuf> {
         if attachments.is_empty() {
             return Vec::new();
         }
 
-        let dir = self.downloads_dir().join(session_id);
+        let dir = self.downloads_dir();
         if let Err(e) = tokio::fs::create_dir_all(&dir).await {
             warn!(error = %e, "Failed to create downloads directory");
             return Vec::new();
@@ -276,7 +275,7 @@ impl StarpodAgent {
         let _ = self.session_mgr.set_title_if_empty(&session_id, &message.text).await;
 
         // Step 2: Save attachments to downloads/ and build query attachments
-        let saved_paths = self.save_attachments(&session_id, &message.attachments).await;
+        let saved_paths = self.save_attachments(&message.attachments).await;
         let (query_atts, extra_text) =
             Self::build_query_attachments(&message.attachments, &saved_paths);
 
@@ -431,7 +430,7 @@ impl StarpodAgent {
         let _ = self.session_mgr.set_title_if_empty(&session_id, &message.text).await;
 
         // Save attachments and build query attachments
-        let saved_paths = self.save_attachments(&session_id, &message.attachments).await;
+        let saved_paths = self.save_attachments(&message.attachments).await;
         let (query_atts, extra_text) =
             Self::build_query_attachments(&message.attachments, &saved_paths);
 
@@ -645,6 +644,7 @@ mod tests {
         StarpodConfig {
             data_dir: tmp.path().to_path_buf(),
             db_path: Some(tmp.path().join("memory.db")),
+            project_root: tmp.path().to_path_buf(),
             ..StarpodConfig::default()
         }
     }
@@ -788,7 +788,7 @@ mod tests {
             data,
         }];
 
-        let paths = agent.save_attachments("test-session", &attachments).await;
+        let paths = agent.save_attachments(&attachments).await;
         assert_eq!(paths.len(), 1);
         assert!(paths[0].exists());
 
@@ -798,7 +798,6 @@ mod tests {
 
         // Verify directory structure
         assert!(paths[0].to_string_lossy().contains("downloads"));
-        assert!(paths[0].to_string_lossy().contains("test-session"));
     }
 
     #[tokio::test]
@@ -806,7 +805,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let agent = StarpodAgent::new(test_config(&tmp)).await.unwrap();
 
-        let paths = agent.save_attachments("test-session", &[]).await;
+        let paths = agent.save_attachments(&[]).await;
         assert!(paths.is_empty());
         // downloads dir should not be created for empty attachments
         assert!(!tmp.path().join("downloads").exists());
@@ -825,7 +824,7 @@ mod tests {
             data,
         }];
 
-        let paths = agent.save_attachments("test-session", &attachments).await;
+        let paths = agent.save_attachments(&attachments).await;
         assert_eq!(paths.len(), 1);
         // The path should NOT traverse up — slashes replaced with _
         let name = paths[0].file_name().unwrap().to_string_lossy();
