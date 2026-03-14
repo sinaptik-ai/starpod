@@ -161,6 +161,15 @@ pub struct Options {
     /// Maximum budget in USD.
     pub max_budget_usd: Option<f64>,
 
+    /// Context budget in tokens. When input_tokens from the API response
+    /// exceeds this threshold, older messages are compacted into a summary.
+    /// Recommended: ~80% of the model's context window (e.g. 160_000 for 200k).
+    pub context_budget: Option<u64>,
+
+    /// Model to use for generating compaction summaries.
+    /// Falls back to the primary model if the compaction call fails.
+    pub compaction_model: Option<String>,
+
     /// System prompt configuration.
     pub system_prompt: Option<SystemPrompt>,
 
@@ -288,6 +297,8 @@ impl Default for Options {
             effort: None,
             max_turns: None,
             max_budget_usd: None,
+            context_budget: None,
+            compaction_model: None,
             system_prompt: None,
             thinking: None,
             hooks: HashMap::new(),
@@ -372,6 +383,16 @@ impl OptionsBuilder {
 
     pub fn max_budget_usd(mut self, budget: f64) -> Self {
         self.options.max_budget_usd = Some(budget);
+        self
+    }
+
+    pub fn context_budget(mut self, budget: u64) -> Self {
+        self.options.context_budget = Some(budget);
+        self
+    }
+
+    pub fn compaction_model(mut self, model: impl Into<String>) -> Self {
+        self.options.compaction_model = Some(model.into());
         self
     }
 
@@ -491,6 +512,8 @@ impl std::fmt::Debug for Options {
             .field("effort", &self.effort)
             .field("max_turns", &self.max_turns)
             .field("max_budget_usd", &self.max_budget_usd)
+            .field("context_budget", &self.context_budget)
+            .field("compaction_model", &self.compaction_model)
             .field("hooks_count", &self.hooks.len())
             .field("mcp_servers_count", &self.mcp_servers.len())
             .field("agents_count", &self.agents.len())

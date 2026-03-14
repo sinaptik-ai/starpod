@@ -14,6 +14,9 @@ server_addr = "127.0.0.1:3000"   # HTTP/WS server bind address
 # Extended thinking (optional)
 # reasoning_effort = "medium"     # "low", "medium", or "high"
 
+# Conversation compaction (optional)
+# compaction_model = "claude-haiku-4-5"  # Model for summarizing old messages
+
 # ─── Agent Identity ────────────────────────────────────
 [identity]
 # name = "Orion"                  # Agent's display name
@@ -52,6 +55,7 @@ server_addr = "127.0.0.1:3000"   # HTTP/WS server bind address
 | `max_turns` | integer | `30` | Max agentic loop iterations per chat |
 | `server_addr` | string | `"127.0.0.1:3000"` | Server bind address |
 | `reasoning_effort` | string | — | Extended thinking: `"low"`, `"medium"`, `"high"` |
+| `compaction_model` | string | primary model | Model for conversation compaction summaries |
 
 ## Identity
 

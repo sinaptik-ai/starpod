@@ -343,6 +343,34 @@ impl SessionManager {
         })
     }
 
+    /// Record a compaction event for a session.
+    pub async fn record_compaction(
+        &self,
+        session_id: &str,
+        trigger: &str,
+        pre_tokens: u64,
+        summary: &str,
+        messages_compacted: usize,
+    ) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO compaction_log (session_id, timestamp, trigger, pre_tokens, summary, messages_compacted)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )
+        .bind(session_id)
+        .bind(&now)
+        .bind(trigger)
+        .bind(pre_tokens as i64)
+        .bind(summary)
+        .bind(messages_compacted as i64)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| OrionError::Database(format!("Record compaction failed: {}", e)))?;
+
+        debug!(session_id = %session_id, pre_tokens, messages_compacted, "Recorded compaction event");
+        Ok(())
+    }
+
     /// Save a message to a session.
     ///
     /// When the first "user" message is saved, the session title is automatically
@@ -629,6 +657,30 @@ mod tests {
         let old = mgr.get_session(&id).await.unwrap().unwrap();
         assert!(old.is_closed);
         assert_eq!(old.summary.as_deref(), Some("Auto-closed: inactivity"));
+    }
+
+    #[tokio::test]
+    async fn test_record_compaction() {
+        let (_tmp, mgr) = setup().await;
+        let id = mgr.create_session(&Channel::Main, "test-key").await.unwrap();
+
+        mgr.record_compaction(&id, "auto", 150_000, "Summary of old messages", 12)
+            .await
+            .unwrap();
+
+        // Verify via raw query
+        let row = sqlx::query(
+            "SELECT trigger, pre_tokens, summary, messages_compacted FROM compaction_log WHERE session_id = ?1",
+        )
+        .bind(&id)
+        .fetch_one(&mgr.pool)
+        .await
+        .unwrap();
+
+        assert_eq!(row.get::<String, _>("trigger"), "auto");
+        assert_eq!(row.get::<i64, _>("pre_tokens"), 150_000);
+        assert_eq!(row.get::<String, _>("summary"), "Summary of old messages");
+        assert_eq!(row.get::<i64, _>("messages_compacted"), 12);
     }
 
     #[tokio::test]

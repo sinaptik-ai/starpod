@@ -29,6 +29,7 @@
 //! ```
 
 pub mod client;
+pub mod compact;
 pub mod error;
 pub mod hooks;
 pub mod mcp;

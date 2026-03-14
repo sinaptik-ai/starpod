@@ -29,6 +29,9 @@ let messages = mgr.get_messages(&id).await?;
 mgr.record_usage(&id, &usage_record, turn).await?;
 let summary = mgr.session_usage(&id).await?;
 
+// Compaction logging
+mgr.record_compaction(&id, "auto", 150_000, "Summary text", 12).await?;
+
 // Listing
 let sessions = mgr.list_sessions(20).await?;
 let session = mgr.get_session(&id).await?;
@@ -84,4 +87,4 @@ pub struct UsageSummary {
 
 ## Tests
 
-11 unit tests.
+12 unit tests.
