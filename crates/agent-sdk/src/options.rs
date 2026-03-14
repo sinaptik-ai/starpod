@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 
 use crate::hooks::{HookCallbackMatcher, HookEvent};
 use crate::mcp::McpServerConfig;
@@ -247,6 +248,12 @@ pub struct Options {
     /// These are typically used with `external_tool_handler` to register and handle
     /// tools that aren't part of the built-in set (e.g. MemorySearch, VaultGet).
     pub custom_tool_definitions: Vec<CustomToolDefinition>,
+
+    /// Receiver for followup messages injected during an active agent loop.
+    ///
+    /// At each iteration boundary (before calling the API), the loop drains
+    /// all pending messages from this channel and appends them as user messages.
+    pub followup_rx: Option<mpsc::UnboundedReceiver<String>>,
 }
 
 /// A custom tool definition to send to the Claude API.
@@ -323,6 +330,7 @@ impl Default for Options {
             prompt_suggestions: false,
             external_tool_handler: None,
             custom_tool_definitions: Vec::new(),
+            followup_rx: None,
         }
     }
 }
@@ -493,6 +501,11 @@ impl OptionsBuilder {
 
     pub fn custom_tools(mut self, defs: Vec<CustomToolDefinition>) -> Self {
         self.options.custom_tool_definitions.extend(defs);
+        self
+    }
+
+    pub fn followup_rx(mut self, rx: mpsc::UnboundedReceiver<String>) -> Self {
+        self.options.followup_rx = Some(rx);
         self
     }
 

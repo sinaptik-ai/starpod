@@ -221,7 +221,7 @@ async fn handle_final_only(
     user_id_str: Option<String>,
 ) -> Result<(), teloxide::RequestError> {
     let chat_msg = build_chat_msg(text, user_id_str, chat_id);
-    let (mut stream, session_id) = match agent.chat_stream(&chat_msg).await {
+    let (mut stream, session_id, _followup_tx) = match agent.chat_stream(&chat_msg).await {
         Ok(s) => s,
         Err(e) => {
             error!(error = %e, "Failed to start stream");
@@ -291,7 +291,7 @@ async fn handle_all_messages(
     user_id_str: Option<String>,
 ) -> Result<(), teloxide::RequestError> {
     let chat_msg = build_chat_msg(text, user_id_str, chat_id);
-    let (mut stream, session_id) = match agent.chat_stream(&chat_msg).await {
+    let (mut stream, session_id, _followup_tx) = match agent.chat_stream(&chat_msg).await {
         Ok(s) => s,
         Err(e) => {
             error!(error = %e, "Failed to start stream");

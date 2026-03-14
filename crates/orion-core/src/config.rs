@@ -49,6 +49,17 @@ pub enum ReasoningEffort {
     High,
 }
 
+/// How followup messages are handled when they arrive during an active agent loop.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FollowupMode {
+    /// Inject followup messages into the next iteration of the running agent loop.
+    #[default]
+    Inject,
+    /// Queue followup messages and start a new agent loop after the current one finishes.
+    Queue,
+}
+
 /// Configuration for a single LLM provider.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -200,6 +211,12 @@ pub struct OrionConfig {
     #[serde(default)]
     pub telegram: TelegramConfig,
 
+    /// How followup messages are handled during an active agent loop.
+    /// "inject" (default) integrates them into the next loop iteration;
+    /// "queue" buffers them and starts a new loop after the current one finishes.
+    #[serde(default)]
+    pub followup_mode: FollowupMode,
+
     /// Remote instance backend URL (e.g. "https://api.orion.example.com").
     /// If set, `orion instance` commands will connect to this backend.
     #[serde(default)]
@@ -237,6 +254,7 @@ impl Default for OrionConfig {
             max_turns: default_max_turns(),
             reasoning_effort: None,
             compaction_model: None,
+            followup_mode: FollowupMode::default(),
             identity: IdentityConfig::default(),
             user: UserConfig::default(),
             providers: ProvidersConfig::default(),
@@ -404,6 +422,11 @@ server_addr = "127.0.0.1:3000"
 
 # Model for conversation compaction summaries (defaults to primary model)
 # compaction_model = "claude-haiku-4-5"
+
+# How followup messages are handled during an active agent loop.
+# "inject" (default) integrates them into the next loop iteration;
+# "queue" buffers them and starts a new loop after the current one finishes.
+# followup_mode = "inject"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AGENT IDENTITY

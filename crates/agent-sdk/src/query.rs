@@ -150,7 +150,7 @@ pub fn query(prompt: &str, options: Options) -> Query {
 /// 6. Repeat until done or limits hit
 async fn run_agent_loop(
     prompt: String,
-    options: Options,
+    mut options: Options,
     tx: mpsc::UnboundedSender<Result<Message>>,
     cancel: tokio_util::sync::CancellationToken,
 ) -> Result<()> {
@@ -277,6 +277,9 @@ async fn run_agent_loop(
     // Initialize tool executor
     let tool_executor = ToolExecutor::new(PathBuf::from(&cwd));
 
+    // Take followup_rx out of options before borrowing options immutably
+    let mut followup_rx = options.followup_rx.take();
+
     // Initialize permission evaluator
     let permission_eval = PermissionEvaluator::new(&options);
 
@@ -383,6 +386,47 @@ async fn run_agent_loop(
                 );
                 let _ = tx.send(Ok(result_msg));
                 return Ok(());
+            }
+        }
+
+        // Drain any followup messages that arrived while we were processing.
+        // These are batched into a single user message appended to the conversation
+        // so the model sees them on the next API call.
+        if let Some(ref mut followup_rx) = followup_rx {
+            let mut followups: Vec<String> = Vec::new();
+            while let Ok(msg) = followup_rx.try_recv() {
+                followups.push(msg);
+            }
+            if !followups.is_empty() {
+                let combined = followups.join("\n\n");
+                debug!(count = followups.len(), "Injecting followup messages into agent loop");
+
+                conversation.push(ApiMessage {
+                    role: "user".to_string(),
+                    content: vec![ApiContentBlock::Text {
+                        text: combined.clone(),
+                        cache_control: None,
+                    }],
+                });
+
+                // Emit a user message so downstream consumers know about the injection
+                let followup_msg = Message::User(UserMessage {
+                    uuid: Some(Uuid::new_v4()),
+                    session_id: session_id.clone(),
+                    content: vec![ContentBlock::Text { text: combined }],
+                    parent_tool_use_id: None,
+                    is_synthetic: false,
+                    tool_use_result: None,
+                });
+
+                if options.persist_session {
+                    let _ = session
+                        .append_message(&serde_json::to_value(&followup_msg).unwrap_or_default())
+                        .await;
+                }
+                if tx.send(Ok(followup_msg)).is_err() {
+                    return Ok(());
+                }
             }
         }
 

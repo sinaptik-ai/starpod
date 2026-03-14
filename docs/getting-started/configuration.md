@@ -17,6 +17,9 @@ server_addr = "127.0.0.1:3000"   # HTTP/WS server bind address
 # Conversation compaction (optional)
 # compaction_model = "claude-haiku-4-5"  # Model for summarizing old messages
 
+# Followup message handling during active agent loops
+# followup_mode = "inject"        # "inject" or "queue"
+
 # ─── Agent Identity ────────────────────────────────────
 [identity]
 # name = "Orion"                  # Agent's display name
@@ -56,6 +59,7 @@ server_addr = "127.0.0.1:3000"   # HTTP/WS server bind address
 | `server_addr` | string | `"127.0.0.1:3000"` | Server bind address |
 | `reasoning_effort` | string | — | Extended thinking: `"low"`, `"medium"`, `"high"` |
 | `compaction_model` | string | primary model | Model for conversation compaction summaries |
+| `followup_mode` | string | `"inject"` | How followup messages are handled during an active agent loop: `"inject"` or `"queue"` |
 
 ## Identity
 

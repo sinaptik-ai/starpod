@@ -69,8 +69,10 @@ The memory system bootstraps context:
 The `agent-sdk` drives the agentic loop:
 
 ```
-prompt → Claude API → tool calls → execute → feed results → repeat
+prompt → drain followups → Claude API → tool calls → execute → feed results → repeat
 ```
+
+At each iteration boundary (before calling the API), any followup messages that arrived via the `followup_rx` channel are drained and appended as user messages. This allows the agent to incorporate rapid user messages without interrupting the current loop. The behavior is configurable via `followup_mode` (`"inject"` or `"queue"`).
 
 The agent has access to file I/O, web search, memory, vault, skills, and cron tools.
 

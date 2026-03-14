@@ -8,7 +8,8 @@ use tracing::{debug, error};
 
 use agent_sdk::{ExternalToolHandlerFn, Message, Options, PermissionMode, Query};
 use agent_sdk::options::{SystemPrompt, ThinkingConfig};
-use orion_core::ReasoningEffort;
+use orion_core::{FollowupMode, ReasoningEffort};
+use tokio::sync::mpsc;
 
 use orion_core::{ChatMessage, ChatResponse, ChatUsage, OrionConfig, OrionError, Result};
 use orion_cron::CronStore;
@@ -268,9 +269,18 @@ impl OrionAgent {
 
     /// Start a streaming chat that yields raw agent-sdk messages.
     ///
-    /// Returns (Query stream, session_id). The caller should consume the stream
-    /// for real-time display, then call `finalize_chat()` with the collected results.
-    pub async fn chat_stream(&self, message: &ChatMessage) -> Result<(Query, String)> {
+    /// Returns (Query stream, session_id, followup_tx). The caller should consume
+    /// the stream for real-time display, then call `finalize_chat()` with the
+    /// collected results.
+    ///
+    /// The returned `followup_tx` can be used to inject followup messages into
+    /// the running agent loop (when `followup_mode = "inject"`). Messages sent
+    /// through this channel are drained at each iteration boundary and appended
+    /// as user messages before the next API call.
+    pub async fn chat_stream(
+        &self,
+        message: &ChatMessage,
+    ) -> Result<(Query, String, mpsc::UnboundedSender<String>)> {
         let (channel, key) = resolve_channel(message);
         let session_id = match self.session_mgr.resolve_session(&channel, &key).await? {
             SessionDecision::Continue(id) => {
@@ -288,6 +298,9 @@ impl OrionAgent {
 
         let system_prompt = self.build_system_prompt(&session_id)?;
 
+        // Create the followup channel — sender goes to caller, receiver to the agent loop
+        let (followup_tx, followup_rx) = mpsc::unbounded_channel::<String>();
+
         let mut builder = Options::builder()
             .allowed_tools(Self::allowed_tools())
             .system_prompt(SystemPrompt::Custom(system_prompt))
@@ -297,7 +310,8 @@ impl OrionAgent {
             .session_id(session_id.clone())
             .context_budget(160_000)
             .external_tool_handler(self.build_tool_handler())
-            .custom_tools(custom_tool_definitions());
+            .custom_tools(custom_tool_definitions())
+            .followup_rx(followup_rx);
 
         if let Some(ref cm) = self.config.compaction_model {
             builder = builder.compaction_model(cm);
@@ -310,7 +324,12 @@ impl OrionAgent {
         let options = builder.build();
 
         let stream = agent_sdk::query(&message.text, options);
-        Ok((stream, session_id))
+        Ok((stream, session_id, followup_tx))
+    }
+
+    /// Get the configured followup mode.
+    pub fn followup_mode(&self) -> FollowupMode {
+        self.config.followup_mode
     }
 
     /// Finalize a streaming chat — record usage and append daily log.

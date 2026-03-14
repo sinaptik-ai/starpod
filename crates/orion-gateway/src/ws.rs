@@ -7,9 +7,11 @@ use axum::routing::get;
 use axum::Router;
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 use tracing::{debug, error};
 
 use agent_sdk::{ContentBlock, Message};
+use orion_core::FollowupMode;
 
 use crate::AppState;
 
@@ -117,35 +119,84 @@ async fn send_msg(
 }
 
 /// Handle an individual WebSocket connection with streaming.
+///
+/// Supports two followup modes:
+/// - **Inject**: Messages arriving during an active stream are sent through the
+///   followup channel and integrated into the next agent loop iteration.
+/// - **Queue**: Messages are buffered and dispatched as new agent loops after
+///   the current stream finishes.
 async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     let (mut sender, mut receiver) = socket.split();
+    let followup_mode = state.config.followup_mode;
 
     debug!("WebSocket client connected");
 
-    while let Some(msg) = receiver.next().await {
-        let msg = match msg {
-            Ok(WsMessage::Text(text)) => text,
-            Ok(WsMessage::Close(_)) => {
+    // Active stream state — holds the followup sender (inject mode) or
+    // queued messages (queue mode) while a stream is running.
+    let mut active_followup_tx: Option<mpsc::UnboundedSender<String>> = None;
+    let mut queued_messages: Vec<orion_core::ChatMessage> = Vec::new();
+
+    loop {
+        // If there is no active stream but we have queued messages (queue mode),
+        // start a new stream for the next queued message batch.
+        if active_followup_tx.is_none() && !queued_messages.is_empty() {
+            let batch = std::mem::take(&mut queued_messages);
+            let combined_text = batch.iter().map(|m| m.text.as_str()).collect::<Vec<_>>().join("\n\n");
+            // Use the channel info from the first message
+            let first = &batch[0];
+            let chat_msg = orion_core::ChatMessage {
+                text: combined_text.clone(),
+                user_id: first.user_id.clone(),
+                channel_id: first.channel_id.clone(),
+                channel_session_key: first.channel_session_key.clone(),
+                attachments: Vec::new(),
+            };
+
+            let (mut stream, session_id, _followup_tx) = match state.agent.chat_stream(&chat_msg).await {
+                Ok(s) => s,
+                Err(e) => {
+                    let _ = send_msg(&mut sender, &ServerMessage::Error {
+                        message: format!("Chat error: {}", e),
+                    }).await;
+                    continue;
+                }
+            };
+
+            let _ = state.agent.session_mgr().save_message(&session_id, "user", &combined_text).await;
+
+            if !send_msg(&mut sender, &ServerMessage::StreamStart {
+                session_id: session_id.clone(),
+            }).await {
+                break;
+            }
+
+            // Consume this queued batch stream (no followup injection needed here
+            // since we're replaying buffered messages after the main stream finished).
+            process_stream(&mut stream, &mut sender, &state, &session_id, &combined_text).await;
+            continue;
+        }
+
+        // Wait for the next WS message from the client.
+        let msg = match receiver.next().await {
+            Some(Ok(WsMessage::Text(text))) => text,
+            Some(Ok(WsMessage::Close(_))) => {
                 debug!("WebSocket client disconnected");
                 break;
             }
-            Ok(_) => continue,
-            Err(e) => {
+            Some(Ok(_)) => continue,
+            Some(Err(e)) => {
                 error!(error = %e, "WebSocket receive error");
                 break;
             }
+            None => break,
         };
 
         let client_msg: ClientMessage = match serde_json::from_str(&msg) {
             Ok(m) => m,
             Err(e) => {
-                let _ = send_msg(
-                    &mut sender,
-                    &ServerMessage::Error {
-                        message: format!("Invalid message format: {}", e),
-                    },
-                )
-                .await;
+                let _ = send_msg(&mut sender, &ServerMessage::Error {
+                    message: format!("Invalid message format: {}", e),
+                }).await;
                 continue;
             }
         };
@@ -157,7 +208,6 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 channel_id,
                 channel_session_key,
             } => {
-                // Build ChatMessage for channel-aware session routing
                 let chat_msg = orion_core::ChatMessage {
                     text: text.clone(),
                     user_id,
@@ -166,190 +216,295 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     attachments: Vec::new(),
                 };
 
-                // Start streaming chat
-                let (mut stream, session_id) = match state.agent.chat_stream(&chat_msg).await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        let _ = send_msg(
-                            &mut sender,
-                            &ServerMessage::Error {
-                                message: format!("Chat error: {}", e),
-                            },
-                        )
-                        .await;
-                        continue;
+                // If a stream is already active, handle according to followup_mode
+                if let Some(ref followup_tx) = active_followup_tx {
+                    match followup_mode {
+                        FollowupMode::Inject => {
+                            debug!(text = %text, "Injecting followup into active agent loop");
+                            let _ = followup_tx.send(text);
+                        }
+                        FollowupMode::Queue => {
+                            debug!(text = %text, "Queuing message for after current stream");
+                            queued_messages.push(chat_msg);
+                        }
                     }
-                };
+                    continue;
+                }
 
-                // Save user message
+                // No active stream — start a new one
+                let (mut stream, session_id, followup_tx) =
+                    match state.agent.chat_stream(&chat_msg).await {
+                        Ok(s) => s,
+                        Err(e) => {
+                            let _ = send_msg(&mut sender, &ServerMessage::Error {
+                                message: format!("Chat error: {}", e),
+                            }).await;
+                            continue;
+                        }
+                    };
+
                 let _ = state.agent.session_mgr().save_message(&session_id, "user", &text).await;
 
-                // Send stream_start
-                if !send_msg(
-                    &mut sender,
-                    &ServerMessage::StreamStart {
-                        session_id: session_id.clone(),
-                    },
-                )
-                .await
-                {
+                if !send_msg(&mut sender, &ServerMessage::StreamStart {
+                    session_id: session_id.clone(),
+                }).await {
                     break;
                 }
 
-                let mut result_text = String::new();
+                active_followup_tx = Some(followup_tx);
 
-                // Stream messages to the client
-                while let Some(msg_result) = stream.next().await {
-                    match msg_result {
-                        Ok(Message::Assistant(assistant)) => {
-                            for block in &assistant.content {
-                                match block {
-                                    ContentBlock::Text { text } => {
-                                        if !text.is_empty() {
-                                            if !result_text.is_empty() {
-                                                result_text.push('\n');
-                                            }
-                                            result_text.push_str(text);
+                // Process the stream, concurrently listening for new WS messages
+                let stream_done = process_stream_with_followups(
+                    &mut stream,
+                    &mut sender,
+                    &mut receiver,
+                    &state,
+                    &session_id,
+                    &text,
+                    followup_mode,
+                    active_followup_tx.as_ref().unwrap(),
+                    &mut queued_messages,
+                ).await;
 
-                                            if !send_msg(
-                                                &mut sender,
-                                                &ServerMessage::TextDelta {
-                                                    text: text.clone(),
-                                                },
-                                            )
-                                            .await
-                                            {
-                                                return;
-                                            }
-                                        }
-                                    }
-                                    ContentBlock::ToolUse { name, input, .. } => {
-                                        // Save tool_use as a message
-                                        let tool_json = serde_json::json!({
-                                            "type": "tool_use",
-                                            "name": name,
-                                            "input": input,
-                                        });
-                                        let _ = state.agent.session_mgr().save_message(
-                                            &session_id, "tool_use",
-                                            &serde_json::to_string(&tool_json).unwrap_or_default(),
-                                        ).await;
+                active_followup_tx = None;
 
-                                        if !send_msg(
-                                            &mut sender,
-                                            &ServerMessage::ToolUse {
-                                                name: name.clone(),
-                                                input: input.clone(),
-                                            },
-                                        )
-                                        .await
-                                        {
-                                            return;
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                        Ok(Message::User(user)) => {
-                            for block in &user.content {
-                                if let ContentBlock::ToolResult {
-                                    content, is_error, ..
-                                } = block
-                                {
-                                    let content_str = content
-                                        .as_str()
-                                        .map(|s| s.to_string())
-                                        .unwrap_or_else(|| {
-                                            serde_json::to_string(content).unwrap_or_default()
-                                        });
+                if !stream_done {
+                    // WS was closed during streaming
+                    break;
+                }
+            }
+        }
+    }
+}
 
-                                    // Truncate tool results for the WS stream
-                                    let preview = if content_str.len() > 500 {
-                                        format!("{}...", &content_str[..500])
-                                    } else {
-                                        content_str
-                                    };
+/// Process a stream to completion, concurrently accepting new WS messages
+/// for followup injection or queuing.
+async fn process_stream_with_followups(
+    stream: &mut agent_sdk::Query,
+    sender: &mut futures::stream::SplitSink<WebSocket, WsMessage>,
+    receiver: &mut futures::stream::SplitStream<WebSocket>,
+    state: &Arc<AppState>,
+    session_id: &str,
+    user_text: &str,
+    followup_mode: FollowupMode,
+    followup_tx: &mpsc::UnboundedSender<String>,
+    queued_messages: &mut Vec<orion_core::ChatMessage>,
+) -> bool {
+    let mut result_text = String::new();
 
-                                    // Save tool_result as a message
-                                    let tool_result_json = serde_json::json!({
-                                        "type": "tool_result",
-                                        "content": &preview,
-                                        "is_error": is_error.unwrap_or(false),
-                                    });
-                                    let _ = state.agent.session_mgr().save_message(
-                                        &session_id, "tool_result",
-                                        &serde_json::to_string(&tool_result_json).unwrap_or_default(),
-                                    ).await;
-
-                                    if !send_msg(
-                                        &mut sender,
-                                        &ServerMessage::ToolResult {
-                                            content: preview,
-                                            is_error: is_error.unwrap_or(false),
-                                        },
-                                    )
-                                    .await
-                                    {
-                                        return;
-                                    }
-                                }
-                            }
-                        }
-                        Ok(Message::Result(result)) => {
-                            if result_text.is_empty() {
-                                if let Some(text) = &result.result {
-                                    result_text = text.clone();
-                                }
-                            }
-
-                            // Finalize chat (record usage + daily log)
-                            state
-                                .agent
-                                .finalize_chat(&session_id, &text, &result_text, &result)
-                                .await;
-
-                            // Save assistant message
-                            if !result_text.is_empty() {
-                                let _ = state.agent.session_mgr().save_message(&session_id, "assistant", &result_text).await;
-                            }
-
-                            let _ = send_msg(
-                                &mut sender,
-                                &ServerMessage::StreamEnd {
-                                    session_id: session_id.clone(),
-                                    num_turns: result.num_turns,
-                                    cost_usd: result.total_cost_usd,
-                                    input_tokens: result
-                                        .usage
-                                        .as_ref()
-                                        .map(|u| u.input_tokens)
-                                        .unwrap_or(0),
-                                    output_tokens: result
-                                        .usage
-                                        .as_ref()
-                                        .map(|u| u.output_tokens)
-                                        .unwrap_or(0),
-                                    is_error: result.is_error,
-                                    errors: result.errors.clone(),
-                                },
-                            )
-                            .await;
-                        }
-                        Ok(_) => {}
-                        Err(e) => {
-                            error!(error = %e, "Stream error");
-                            let _ = send_msg(
-                                &mut sender,
-                                &ServerMessage::Error {
-                                    message: format!("Stream error: {}", e),
-                                },
-                            )
-                            .await;
-                            break;
+    loop {
+        tokio::select! {
+            // Branch 1: Next message from the agent stream
+            stream_msg = StreamExt::next(stream) => {
+                match stream_msg {
+                    Some(Ok(msg)) => {
+                        let action = handle_stream_message(
+                            msg, sender, state, session_id, user_text, &mut result_text,
+                        ).await;
+                        match action {
+                            StreamAction::Continue => {}
+                            StreamAction::Done => return true,
+                            StreamAction::Disconnected => return false,
                         }
                     }
+                    Some(Err(e)) => {
+                        error!(error = %e, "Stream error");
+                        let _ = send_msg(sender, &ServerMessage::Error {
+                            message: format!("Stream error: {}", e),
+                        }).await;
+                        return true;
+                    }
+                    None => {
+                        // Stream ended without a Result message
+                        return true;
+                    }
                 }
+            }
+
+            // Branch 2: New message from the WebSocket client
+            ws_msg = StreamExt::next(receiver) => {
+                match ws_msg {
+                    Some(Ok(WsMessage::Text(text))) => {
+                        if let Ok(ClientMessage::Message { text, user_id, channel_id, channel_session_key }) = serde_json::from_str::<ClientMessage>(&text) {
+                            match followup_mode {
+                                FollowupMode::Inject => {
+                                    debug!(text = %text, "Injecting followup into active agent loop");
+                                    let _ = followup_tx.send(text);
+                                }
+                                FollowupMode::Queue => {
+                                    debug!(text = %text, "Queuing message for after current stream");
+                                    queued_messages.push(orion_core::ChatMessage {
+                                        text,
+                                        user_id,
+                                        channel_id: channel_id.or(Some("main".into())),
+                                        channel_session_key,
+                                        attachments: Vec::new(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    Some(Ok(WsMessage::Close(_))) => {
+                        debug!("WebSocket client disconnected during stream");
+                        return false;
+                    }
+                    Some(Err(e)) => {
+                        error!(error = %e, "WebSocket receive error during stream");
+                        return false;
+                    }
+                    Some(Ok(_)) => {}
+                    None => return false,
+                }
+            }
+        }
+    }
+}
+
+/// Result of handling a single stream message.
+enum StreamAction {
+    Continue,
+    Done,
+    Disconnected,
+}
+
+/// Handle a single message from the agent stream, forwarding to the WS client.
+async fn handle_stream_message(
+    msg: Message,
+    sender: &mut futures::stream::SplitSink<WebSocket, WsMessage>,
+    state: &Arc<AppState>,
+    session_id: &str,
+    user_text: &str,
+    result_text: &mut String,
+) -> StreamAction {
+    match msg {
+        Message::Assistant(assistant) => {
+            for block in &assistant.content {
+                match block {
+                    ContentBlock::Text { text } => {
+                        if !text.is_empty() {
+                            if !result_text.is_empty() {
+                                result_text.push('\n');
+                            }
+                            result_text.push_str(text);
+
+                            if !send_msg(sender, &ServerMessage::TextDelta {
+                                text: text.clone(),
+                            }).await {
+                                return StreamAction::Disconnected;
+                            }
+                        }
+                    }
+                    ContentBlock::ToolUse { name, input, .. } => {
+                        let tool_json = serde_json::json!({
+                            "type": "tool_use",
+                            "name": name,
+                            "input": input,
+                        });
+                        let _ = state.agent.session_mgr().save_message(
+                            session_id, "tool_use",
+                            &serde_json::to_string(&tool_json).unwrap_or_default(),
+                        ).await;
+
+                        if !send_msg(sender, &ServerMessage::ToolUse {
+                            name: name.clone(),
+                            input: input.clone(),
+                        }).await {
+                            return StreamAction::Disconnected;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Message::User(user) => {
+            for block in &user.content {
+                if let ContentBlock::ToolResult { content, is_error, .. } = block {
+                    let content_str = content
+                        .as_str()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| serde_json::to_string(content).unwrap_or_default());
+
+                    let preview = if content_str.len() > 500 {
+                        format!("{}...", &content_str[..500])
+                    } else {
+                        content_str
+                    };
+
+                    let tool_result_json = serde_json::json!({
+                        "type": "tool_result",
+                        "content": &preview,
+                        "is_error": is_error.unwrap_or(false),
+                    });
+                    let _ = state.agent.session_mgr().save_message(
+                        session_id, "tool_result",
+                        &serde_json::to_string(&tool_result_json).unwrap_or_default(),
+                    ).await;
+
+                    if !send_msg(sender, &ServerMessage::ToolResult {
+                        content: preview,
+                        is_error: is_error.unwrap_or(false),
+                    }).await {
+                        return StreamAction::Disconnected;
+                    }
+                }
+            }
+        }
+        Message::Result(result) => {
+            if result_text.is_empty() {
+                if let Some(text) = &result.result {
+                    *result_text = text.clone();
+                }
+            }
+
+            state.agent.finalize_chat(session_id, user_text, result_text, &result).await;
+
+            if !result_text.is_empty() {
+                let _ = state.agent.session_mgr().save_message(session_id, "assistant", result_text).await;
+            }
+
+            let _ = send_msg(sender, &ServerMessage::StreamEnd {
+                session_id: session_id.to_string(),
+                num_turns: result.num_turns,
+                cost_usd: result.total_cost_usd,
+                input_tokens: result.usage.as_ref().map(|u| u.input_tokens).unwrap_or(0),
+                output_tokens: result.usage.as_ref().map(|u| u.output_tokens).unwrap_or(0),
+                is_error: result.is_error,
+                errors: result.errors.clone(),
+            }).await;
+
+            return StreamAction::Done;
+        }
+        _ => {}
+    }
+    StreamAction::Continue
+}
+
+/// Process a stream to completion (no concurrent WS listening — used for queued batch replay).
+async fn process_stream(
+    stream: &mut agent_sdk::Query,
+    sender: &mut futures::stream::SplitSink<WebSocket, WsMessage>,
+    state: &Arc<AppState>,
+    session_id: &str,
+    user_text: &str,
+) {
+    let mut result_text = String::new();
+    while let Some(msg_result) = StreamExt::next(stream).await {
+        match msg_result {
+            Ok(msg) => {
+                let action = handle_stream_message(
+                    msg, sender, state, session_id, user_text, &mut result_text,
+                ).await;
+                match action {
+                    StreamAction::Continue => {}
+                    StreamAction::Done | StreamAction::Disconnected => return,
+                }
+            }
+            Err(e) => {
+                error!(error = %e, "Stream error");
+                let _ = send_msg(sender, &ServerMessage::Error {
+                    message: format!("Stream error: {}", e),
+                }).await;
+                return;
             }
         }
     }
