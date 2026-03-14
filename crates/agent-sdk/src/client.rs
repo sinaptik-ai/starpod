@@ -702,6 +702,10 @@ fn parse_stream_event(event_type: &str, data: &str) -> Result<StreamEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Serialize tests that mutate environment variables.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn provider_default_is_anthropic() {
@@ -832,5 +836,59 @@ mod tests {
         // Should be capped at max_backoff.
         let d100 = client.backoff_duration(100);
         assert!(d100 <= client.retry_config.max_backoff);
+    }
+
+    #[test]
+    fn with_api_key_stores_key() {
+        let client = ApiClient::with_api_key("sk-ant-test-123");
+        assert_eq!(client.api_key, "sk-ant-test-123");
+    }
+
+    #[test]
+    fn new_fails_when_env_var_missing() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let prev = env::var("ANTHROPIC_API_KEY").ok();
+        env::remove_var("ANTHROPIC_API_KEY");
+        let result = ApiClient::new();
+        if let Some(v) = prev { env::set_var("ANTHROPIC_API_KEY", v); }
+        match result {
+            Err(AgentError::AuthenticationFailed(msg)) => {
+                assert!(msg.contains("not set"), "expected 'not set' in: {msg}");
+            }
+            Err(other) => panic!("expected AuthenticationFailed, got: {other:?}"),
+            Ok(_) => panic!("expected error when ANTHROPIC_API_KEY is unset"),
+        }
+    }
+
+    #[test]
+    fn new_fails_when_env_var_empty() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let prev = env::var("ANTHROPIC_API_KEY").ok();
+        env::set_var("ANTHROPIC_API_KEY", "");
+        let result = ApiClient::new();
+        match prev {
+            Some(v) => env::set_var("ANTHROPIC_API_KEY", v),
+            None => env::remove_var("ANTHROPIC_API_KEY"),
+        }
+        match result {
+            Err(AgentError::AuthenticationFailed(msg)) => {
+                assert!(msg.contains("empty"), "expected 'empty' in: {msg}");
+            }
+            Err(other) => panic!("expected AuthenticationFailed, got: {other:?}"),
+            Ok(_) => panic!("expected error when ANTHROPIC_API_KEY is empty"),
+        }
+    }
+
+    #[test]
+    fn new_succeeds_when_env_var_set() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let prev = env::var("ANTHROPIC_API_KEY").ok();
+        env::set_var("ANTHROPIC_API_KEY", "sk-ant-test-env");
+        let result = ApiClient::new();
+        match prev {
+            Some(v) => env::set_var("ANTHROPIC_API_KEY", v),
+            None => env::remove_var("ANTHROPIC_API_KEY"),
+        }
+        assert!(result.is_ok());
     }
 }

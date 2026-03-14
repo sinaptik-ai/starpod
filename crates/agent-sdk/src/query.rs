@@ -271,7 +271,11 @@ async fn run_agent_loop(
     }
 
     // Initialize API client
-    let api_client = ApiClient::new()?;
+    let api_client = if let Some(key) = &options.api_key {
+        ApiClient::with_api_key(key)
+    } else {
+        ApiClient::new()?
+    };
 
     // Initialize tool executor
     let tool_executor = ToolExecutor::new(PathBuf::from(&cwd));

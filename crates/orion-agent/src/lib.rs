@@ -173,6 +173,9 @@ impl OrionAgent {
             .external_tool_handler(self.build_tool_handler())
             .custom_tools(custom_tool_definitions());
 
+        if let Some(key) = self.config.resolved_api_key() {
+            builder = builder.api_key(key);
+        }
         if let Some(thinking) = self.thinking_config() {
             builder = builder.thinking(thinking);
         }
@@ -293,6 +296,9 @@ impl OrionAgent {
             .external_tool_handler(self.build_tool_handler())
             .custom_tools(custom_tool_definitions());
 
+        if let Some(key) = self.config.resolved_api_key() {
+            builder = builder.api_key(key);
+        }
         if let Some(thinking) = self.thinking_config() {
             builder = builder.thinking(thinking);
         }
