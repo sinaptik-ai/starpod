@@ -1,6 +1,6 @@
 # Configuration
 
-All configuration lives in `.orion/config.toml` in your project root.
+All configuration lives in `.starpod/config.toml` in your project root.
 
 ## Full Reference
 
@@ -22,7 +22,7 @@ server_addr = "127.0.0.1:3000"   # HTTP/WS server bind address
 
 # ─── Agent Identity ────────────────────────────────────
 [identity]
-# name = "Orion"                  # Agent's display name
+# name = "Aster"                  # Agent's display name
 # emoji = "🤖"                    # Agent's avatar emoji
 # soul = ""                       # Personality injected into system prompt
 
@@ -57,7 +57,7 @@ server_addr = "127.0.0.1:3000"   # HTTP/WS server bind address
 # base_url = "http://localhost:11434/v1/chat/completions"  # No API key needed
 
 # ─── Instances ─────────────────────────────────────────
-# instance_backend_url = "https://api.orion.example.com"  # Or set ORION_INSTANCE_BACKEND_URL env var
+# instance_backend_url = "https://api.starpod.example.com"  # Or set STARPOD_INSTANCE_BACKEND_URL env var
 
 # ─── Telegram ──────────────────────────────────────────
 [telegram]
@@ -85,7 +85,7 @@ The `[identity]` section controls how the agent presents itself.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `name` | string | `"Orion"` | Display name in system prompt |
+| `name` | string | `"Aster"` | Display name in system prompt |
 | `emoji` | string | — | Avatar emoji for the web UI |
 | `soul` | string | — | Personality/instructions for every turn |
 
@@ -117,7 +117,7 @@ For each provider, keys are resolved in priority order (first match wins):
 Ollama requires no API key by default.
 
 ::: warning
-Never commit API keys to version control. Use environment variables or add `.orion/config.toml` to `.gitignore`.
+Never commit API keys to version control. Use environment variables or add `.starpod/config.toml` to `.gitignore`.
 :::
 
 ## Telegram Settings
@@ -140,5 +140,5 @@ Never commit API keys to version control. Use environment variables or add `.ori
 | `DEEPSEEK_API_KEY` | `providers.deepseek.api_key` |
 | `OPENROUTER_API_KEY` | `providers.openrouter.api_key` |
 | `TELEGRAM_BOT_TOKEN` | `telegram.bot_token` |
-| `ORION_API_KEY` | API key auth for the HTTP/WS gateway |
-| `ORION_INSTANCE_BACKEND_URL` | `instance_backend_url` |
+| `STARPOD_API_KEY` | API key auth for the HTTP/WS gateway |
+| `STARPOD_INSTANCE_BACKEND_URL` | `instance_backend_url` |

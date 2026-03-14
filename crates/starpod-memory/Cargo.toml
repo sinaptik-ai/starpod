@@ -1,0 +1,16 @@
+[package]
+name = "starpod-memory"
+version = "0.1.0"
+edition = "2021"
+description = "Memory system for Starpod - SQLite FTS5 + markdown file management"
+
+[dependencies]
+starpod-core = { path = "../starpod-core" }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1", features = ["fs", "sync"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }

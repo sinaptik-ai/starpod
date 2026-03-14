@@ -1,12 +1,12 @@
 # Project Setup
 
-Orion is project-scoped — each directory where you run `orion agent init` gets its own `.orion/` folder with config, memory, credentials, and skills.
+Starpod is project-scoped — each directory where you run `starpod agent init` gets its own `.starpod/` folder with config, memory, credentials, and skills.
 
 ## Interactive Wizard
 
 ```bash
 cd your-project
-orion agent init
+starpod agent init
 ```
 
 The wizard walks you through:
@@ -18,13 +18,13 @@ The wizard walks you through:
 ## Skip the Wizard
 
 ```bash
-orion agent init --default
+starpod agent init --default
 ```
 
 ## Custom Flags
 
 ```bash
-orion agent init \
+starpod agent init \
   --name "Alice" \
   --timezone "Europe/Rome" \
   --agent-name "Jarvis" \
@@ -38,7 +38,7 @@ orion agent init \
 |------|-------------|---------|
 | `--name` | Your display name | System username |
 | `--timezone` | IANA timezone | Auto-detected |
-| `--agent-name` | Agent's display name | `Orion` |
+| `--agent-name` | Agent's display name | `Aster` |
 | `--soul` | Personality/instructions | Empty |
 | `--model` | Claude model to use | `claude-haiku-4-5` |
 | `--default` | Skip the wizard | — |
@@ -46,7 +46,7 @@ orion agent init \
 ## What Gets Created
 
 ```
-.orion/
+.starpod/
 ├── config.toml      Project configuration
 └── data/
     ├── SOUL.md      Agent personality (from --soul or wizard)
@@ -63,10 +63,10 @@ Each project is fully independent. Different agents, different personalities, di
 
 ```bash
 cd ~/work/backend
-orion agent init --agent-name "Backend Bot" --model "claude-sonnet-4-6"
+starpod agent init --agent-name "Backend Bot" --model "claude-sonnet-4-6"
 
 cd ~/personal/notes
-orion agent init --agent-name "Journal" --soul "You help me reflect on my day"
+starpod agent init --agent-name "Journal" --soul "You help me reflect on my day"
 ```
 
-Orion walks up from the current directory to find the nearest `.orion/` folder, just like Git finds `.git/`.
+Starpod walks up from the current directory to find the nearest `.starpod/` folder, just like Git finds `.git/`.

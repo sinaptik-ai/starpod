@@ -1,6 +1,6 @@
 # Cron & Scheduling
 
-Orion includes a built-in scheduler for running agent prompts on a schedule. Jobs execute through the same `OrionAgent::chat()` pipeline as interactive conversations — full tool access and memory.
+Starpod includes a built-in scheduler for running agent prompts on a schedule. Jobs execute through the same `StarpodAgent::chat()` pipeline as interactive conversations — full tool access and memory.
 
 ## Schedule Types
 
@@ -56,7 +56,7 @@ The agent uses `CronAdd` to create the job.
 The scheduler runs in the background with a **30-second tick**:
 
 1. Check for due jobs (`next_run_at <= now`)
-2. Execute each job's prompt through `OrionAgent::chat()`
+2. Execute each job's prompt through `StarpodAgent::chat()`
 3. Record the run (status, duration, result summary)
 4. Send notification via Telegram (if configured)
 5. Compute next run time (or delete if one-shot)
@@ -77,9 +77,9 @@ Completed cron jobs can send results to Telegram. The notification includes the 
 ## CLI
 
 ```bash
-orion agent cron list                         # List all jobs
-orion agent cron remove "morning-reminder"    # Remove a job
-orion agent cron runs "morning-reminder" -l 10 # View run history
+starpod agent cron list                         # List all jobs
+starpod agent cron remove "morning-reminder"    # Remove a job
+starpod agent cron runs "morning-reminder" -l 10 # View run history
 ```
 
 ## Timezone

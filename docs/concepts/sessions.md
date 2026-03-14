@@ -1,6 +1,6 @@
 # Sessions
 
-Orion tracks conversations as **sessions** with per-channel strategies for creation and continuation.
+Starpod tracks conversations as **sessions** with per-channel strategies for creation and continuation.
 
 ## Channels
 
@@ -70,7 +70,7 @@ Every agent turn records:
 
 ## Conversation Compaction
 
-When a conversation approaches the model's context window limit (~160k tokens), Orion automatically compacts older messages:
+When a conversation approaches the model's context window limit (~160k tokens), Starpod automatically compacts older messages:
 
 1. **Detection** — after each tool-use cycle, the agent checks if `input_tokens` exceeds the context budget (160k tokens)
 2. **Summarization** — older messages are sent to a summarizer model (configurable via `compaction_model` in config, defaults to the primary model) which produces a structured summary
@@ -80,7 +80,7 @@ When a conversation approaches the model's context window limit (~160k tokens), 
 
 Tool-use cycles are never split — if a compaction boundary would fall between a tool call and its result, it moves to keep them together.
 
-Configure the summarization model in `.orion/config.toml`:
+Configure the summarization model in `.starpod/config.toml`:
 
 ```toml
 compaction_model = "claude-haiku-4-5"
@@ -95,5 +95,5 @@ All messages (user, assistant, tool use/results) are saved to the session databa
 ## CLI
 
 ```bash
-orion agent sessions list --limit 10
+starpod agent sessions list --limit 10
 ```

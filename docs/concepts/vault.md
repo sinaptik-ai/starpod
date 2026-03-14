@@ -32,16 +32,16 @@ Encrypts and stores the value. Overwrites if the key already exists.
 
 ```bash
 # Store a credential
-orion agent vault set github_token "ghp_xxxxxxxxxxxx"
+starpod agent vault set github_token "ghp_xxxxxxxxxxxx"
 
 # Retrieve it
-orion agent vault get github_token
+starpod agent vault get github_token
 
 # List all stored keys (values are not shown)
-orion agent vault list
+starpod agent vault list
 
 # Delete a credential
-orion agent vault delete github_token
+starpod agent vault delete github_token
 ```
 
 ## Use Cases
@@ -52,5 +52,5 @@ orion agent vault delete github_token
 - Any secret the agent needs across conversations
 
 ::: warning
-The vault encrypts values at rest, but they are decrypted in memory when accessed. Treat the `.orion/data/memory.db` file as sensitive.
+The vault encrypts values at rest, but they are decrypted in memory when accessed. Treat the `.starpod/data/memory.db` file as sensitive.
 :::

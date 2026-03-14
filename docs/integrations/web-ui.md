@@ -1,6 +1,6 @@
 # Web UI
 
-Orion ships with an embedded web UI served at `http://localhost:3000/` when running `orion agent serve`.
+Starpod ships with an embedded web UI served at `http://localhost:3000/` when running `starpod agent serve`.
 
 ## Features
 
@@ -15,23 +15,23 @@ Orion ships with an embedded web UI served at `http://localhost:3000/` when runn
 
 ## Authentication
 
-To protect the web UI, set the `ORION_API_KEY` environment variable on the server:
+To protect the web UI, set the `STARPOD_API_KEY` environment variable on the server:
 
 ```bash
-ORION_API_KEY="your-secret-key" orion agent serve
+STARPOD_API_KEY="your-secret-key" starpod agent serve
 ```
 
 Then set the key in your browser's console:
 
 ```js
-localStorage.setItem('orion_api_key', 'your-secret-key')
+localStorage.setItem('starpod_api_key', 'your-secret-key')
 ```
 
 The key is sent as an `X-API-Key` header on HTTP requests and as a `?token=` query parameter on WebSocket connections.
 
 ## How It Works
 
-The web UI is a single HTML file embedded in the `orion-gateway` binary. It connects via WebSocket to `/ws` and:
+The web UI is a single HTML file embedded in the `starpod-gateway` binary. It connects via WebSocket to `/ws` and:
 
 1. Sends `{"type": "message", "text": "...", "channel_id": "main", "attachments": [...]}` messages
 2. Receives streaming events: `stream_start`, `text_delta`, `tool_use`, `tool_result`, `stream_end`

@@ -311,7 +311,7 @@ function endStream(data) {
 function connect() {
   setStatus('connecting')
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const token = localStorage.getItem('orion_api_key')
+  const token = localStorage.getItem('starpod_api_key')
   let url = proto + '//' + location.host + '/ws'
   if (token) url += '?token=' + encodeURIComponent(token)
 
@@ -486,7 +486,7 @@ function toggleSidebar() {
 const welcomeHTML =
   '<div class="flex items-center justify-center text-center" id="welcome" style="min-height: calc(100dvh - 120px)">' +
     '<div>' +
-      '<div class="font-mono text-3xl font-extrabold tracking-tighter mb-2 bg-gradient-to-b from-primary to-muted bg-clip-text text-transparent select-none">orion</div>' +
+      '<div class="font-mono text-3xl font-extrabold tracking-tighter mb-2 bg-gradient-to-b from-primary to-muted bg-clip-text text-transparent select-none">starpod</div>' +
       '<p class="text-sm text-muted mb-8">What can I help you with?</p>' +
       '<div class="flex gap-3 justify-center flex-wrap">' +
         '<div class="flex items-center gap-2 text-xs text-muted px-3 py-1.5 bg-surface border border-border-subtle rounded-lg">' +
@@ -525,7 +525,7 @@ function formatSessionDate(isoStr) {
 }
 
 function fetchSessions() {
-  const token = localStorage.getItem('orion_api_key')
+  const token = localStorage.getItem('starpod_api_key')
   const headers = {}
   if (token) headers['X-API-Key'] = token
 
@@ -575,7 +575,7 @@ function selectSession(session) {
 
   messages.innerHTML = '<div class="text-center text-dim text-sm py-8">Loading messages...</div>'
 
-  const token = localStorage.getItem('orion_api_key')
+  const token = localStorage.getItem('starpod_api_key')
   const headers = {}
   if (token) headers['X-API-Key'] = token
 
@@ -584,7 +584,7 @@ function selectSession(session) {
     .then(msgs => {
       messages.innerHTML = ''
       if (!msgs || msgs.length === 0) {
-        messages.innerHTML = '<div class="flex items-center justify-center text-center" style="min-height: calc(100dvh - 120px)" id="welcome"><div><div class="font-mono text-3xl font-extrabold tracking-tighter mb-2 bg-gradient-to-b from-primary to-muted bg-clip-text text-transparent">orion</div><p class="text-sm text-muted">No messages in this conversation.</p></div></div>'
+        messages.innerHTML = '<div class="flex items-center justify-center text-center" style="min-height: calc(100dvh - 120px)" id="welcome"><div><div class="font-mono text-3xl font-extrabold tracking-tighter mb-2 bg-gradient-to-b from-primary to-muted bg-clip-text text-transparent">starpod</div><p class="text-sm text-muted">No messages in this conversation.</p></div></div>'
         return
       }
 
@@ -666,7 +666,7 @@ function selectSession(session) {
       scrollToBottom()
     })
     .catch(() => {
-      messages.innerHTML = '<div class="flex items-center justify-center text-center" style="min-height: calc(100dvh - 120px)" id="welcome"><div><div class="font-mono text-3xl font-extrabold tracking-tighter mb-2 bg-gradient-to-b from-primary to-muted bg-clip-text text-transparent">orion</div><p class="text-sm text-muted">Failed to load messages.</p></div></div>'
+      messages.innerHTML = '<div class="flex items-center justify-center text-center" style="min-height: calc(100dvh - 120px)" id="welcome"><div><div class="font-mono text-3xl font-extrabold tracking-tighter mb-2 bg-gradient-to-b from-primary to-muted bg-clip-text text-transparent">starpod</div><p class="text-sm text-muted">Failed to load messages.</p></div></div>'
     })
 
   inputText.focus()

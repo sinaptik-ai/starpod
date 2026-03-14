@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitepress'
 
 export default defineConfig({
-  title: 'Orion',
+  title: 'Starpod',
   description: 'A local-first personal AI assistant platform built in Rust',
   head: [
     ['link', { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
@@ -15,7 +15,7 @@ export default defineConfig({
 
   themeConfig: {
     logo: '/logo.svg',
-    siteTitle: 'Orion',
+    siteTitle: 'Starpod',
 
     nav: [
       { text: 'Guide', link: '/getting-started/installation' },
@@ -29,7 +29,7 @@ export default defineConfig({
         {
           text: 'Introduction',
           items: [
-            { text: 'What is Orion?', link: '/' },
+            { text: 'What is Starpod?', link: '/' },
             { text: 'Architecture', link: '/architecture' },
           ],
         },
@@ -82,23 +82,23 @@ export default defineConfig({
           collapsed: true,
           items: [
             { text: 'agent-sdk', link: '/crates/agent-sdk' },
-            { text: 'orion-core', link: '/crates/orion-core' },
-            { text: 'orion-memory', link: '/crates/orion-memory' },
-            { text: 'orion-vault', link: '/crates/orion-vault' },
-            { text: 'orion-session', link: '/crates/orion-session' },
-            { text: 'orion-skills', link: '/crates/orion-skills' },
-            { text: 'orion-cron', link: '/crates/orion-cron' },
-            { text: 'orion-agent', link: '/crates/orion-agent' },
-            { text: 'orion-gateway', link: '/crates/orion-gateway' },
-            { text: 'orion-telegram', link: '/crates/orion-telegram' },
-            { text: 'orion-instances', link: '/crates/orion-instances' },
+            { text: 'starpod-core', link: '/crates/starpod-core' },
+            { text: 'starpod-memory', link: '/crates/starpod-memory' },
+            { text: 'starpod-vault', link: '/crates/starpod-vault' },
+            { text: 'starpod-session', link: '/crates/starpod-session' },
+            { text: 'starpod-skills', link: '/crates/starpod-skills' },
+            { text: 'starpod-cron', link: '/crates/starpod-cron' },
+            { text: 'starpod-agent', link: '/crates/starpod-agent' },
+            { text: 'starpod-gateway', link: '/crates/starpod-gateway' },
+            { text: 'starpod-telegram', link: '/crates/starpod-telegram' },
+            { text: 'starpod-instances', link: '/crates/starpod-instances' },
           ],
         },
       ],
     },
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/gabrieleventuri/orion-rs' },
+      { icon: 'github', link: 'https://github.com/gabrieleventuri/starpod-rs' },
     ],
 
     search: {
@@ -106,7 +106,7 @@ export default defineConfig({
     },
 
     editLink: {
-      pattern: 'https://github.com/gabrieleventuri/orion-rs/edit/main/docs/:path',
+      pattern: 'https://github.com/gabrieleventuri/starpod-rs/edit/main/docs/:path',
       text: 'Edit this page on GitHub',
     },
 

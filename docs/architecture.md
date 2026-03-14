@@ -1,33 +1,33 @@
 # Architecture
 
-Orion is a Rust workspace with 11 crates, each responsible for a single concern.
+Starpod is a Rust workspace with 11 crates, each responsible for a single concern.
 
 ```
 crates/
 ├── agent-sdk/          Claude API client + agent loop
-├── orion-core/         Shared types, config, error handling
-├── orion-memory/       SQLite FTS5 full-text search + markdown files
-├── orion-vault/        AES-256-GCM encrypted credential storage
-├── orion-session/      Channel-aware session lifecycle
-├── orion-skills/       Self-extension skill system (markdown-based)
-├── orion-cron/         Cron scheduling (interval, cron expr, one-shot)
-├── orion-agent/        Orchestrator wiring everything together
-├── orion-gateway/      Axum HTTP/WS server + embedded web UI
-├── orion-telegram/     Telegram bot interface (teloxide)
-└── orion/              CLI binary
+├── starpod-core/         Shared types, config, error handling
+├── starpod-memory/       SQLite FTS5 full-text search + markdown files
+├── starpod-vault/        AES-256-GCM encrypted credential storage
+├── starpod-session/      Channel-aware session lifecycle
+├── starpod-skills/       Self-extension skill system (markdown-based)
+├── starpod-cron/         Cron scheduling (interval, cron expr, one-shot)
+├── starpod-agent/        Orchestrator wiring everything together
+├── starpod-gateway/      Axum HTTP/WS server + embedded web UI
+├── starpod-telegram/     Telegram bot interface (teloxide)
+└── starpod/              CLI binary
 ```
 
 ## Dependency Graph
 
 ```
                     ┌─────────────┐
-                    │    orion    │  CLI binary
+                    │  starpod   │  CLI binary
                     └──────┬──────┘
                            │
               ┌────────────┼────────────┐
               ▼            ▼            ▼
        ┌────────────┐ ┌────────────┐ ┌──────────────┐
-       │  gateway   │ │  telegram  │ │  orion-agent  │
+       │  gateway   │ │  telegram  │ │  starpod-agent  │
        │  (HTTP/WS) │ │   (bot)   │ │ (orchestrator)│
        └─────┬──────┘ └─────┬──────┘ └──────┬───────┘
              └───────────────┼───────────────┘
@@ -38,7 +38,7 @@ crates/
             │        │       │       │        │
             └────────┴───────┼───────┴────────┘
                              ▼
-                         orion-core
+                         starpod-core
                              │
                          agent-sdk
 ```
@@ -47,11 +47,11 @@ crates/
 
 ### 1. User Sends a Message
 
-Via the web UI (WebSocket), Telegram bot, CLI (`orion agent chat`), or HTTP API (`POST /api/chat`).
+Via the web UI (WebSocket), Telegram bot, CLI (`starpod agent chat`), or HTTP API (`POST /api/chat`).
 
 ### 2. Channel Routing
 
-The `orion-agent` maps the incoming message to a **Channel** (`Main` or `Telegram`) and resolves the session:
+The `starpod-agent` maps the incoming message to a **Channel** (`Main` or `Telegram`) and resolves the session:
 - **Main** — explicit sessions, client provides a UUID
 - **Telegram** — time-gap sessions, 6-hour inactivity timeout
 
@@ -115,7 +115,7 @@ SQLite connections use `Mutex<Connection>` for safe concurrent access.
 ## Project Directory
 
 ```
-.orion/
+.starpod/
 ├── config.toml          Project configuration
 └── data/
     ├── SOUL.md          Agent personality
@@ -131,4 +131,4 @@ SQLite connections use `Mutex<Connection>` for safe concurrent access.
     └── memory.db        SQLite (FTS5 + sessions + vault + cron)
 ```
 
-Orion walks up from the current directory to find the nearest `.orion/` folder — just like Git finds `.git/`.
+Starpod walks up from the current directory to find the nearest `.starpod/` folder — just like Git finds `.git/`.

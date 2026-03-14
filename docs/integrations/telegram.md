@@ -1,6 +1,6 @@
 # Telegram Bot
 
-Orion can run as a Telegram bot, sharing the same agent instance as the web UI and API.
+Starpod can run as a Telegram bot, sharing the same agent instance as the web UI and API.
 
 ## Setup
 
@@ -8,13 +8,13 @@ Orion can run as a Telegram bot, sharing the same agent instance as the web UI a
 
 1. Open Telegram and search for `@BotFather`
 2. Send `/newbot`
-3. Choose a name (e.g. "My Orion Assistant")
-4. Choose a username (must end in `bot`, e.g. `my_orion_bot`)
+3. Choose a name (e.g. "My Starpod Assistant")
+4. Choose a username (must end in `bot`, e.g. `my_starpod_bot`)
 5. Copy the token (e.g. `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`)
 
 ### 2. Add the Token
 
-Either in `.orion/config.toml`:
+Either in `.starpod/config.toml`:
 
 ```toml
 [telegram]
@@ -28,7 +28,7 @@ export TELEGRAM_BOT_TOKEN="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
 ```
 
 ::: tip
-`orion agent init` can set this up during the interactive wizard.
+`starpod agent init` can set this up during the interactive wizard.
 :::
 
 ### 3. Restrict Access
@@ -47,7 +47,7 @@ The bot won't respond to anyone until you add at least one user ID. `/start` is 
 ### 4. Start the Server
 
 ```bash
-orion agent serve
+starpod agent serve
 ```
 
 You should see `Telegram  connected` in the startup banner.

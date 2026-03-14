@@ -1,0 +1,20 @@
+[package]
+name = "starpod-cron"
+version = "0.1.0"
+edition = "2021"
+description = "Cron scheduling system for Starpod"
+
+[dependencies]
+starpod-core = { path = "../starpod-core" }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+cron = "0.15"
+chrono-tz = "0.10"
+
+[dev-dependencies]
+tempfile = "3"

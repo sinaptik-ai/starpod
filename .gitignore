@@ -1,8 +1,8 @@
 /target
-.orion/
+.starpod/
 docs/node_modules/
 docs/.vitepress/dist/
 docs/.vitepress/cache/
 docs/.vitepress/.temp/
 web/node_modules/
-crates/orion-gateway/static/dist/
+crates/starpod-gateway/static/dist/

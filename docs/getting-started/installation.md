@@ -8,17 +8,17 @@
 ## Install from Source
 
 ```bash
-git clone https://github.com/gabrieleventuri/orion-rs.git
-cd orion-rs
-cargo install --path crates/orion --locked
+git clone https://github.com/gabrieleventuri/starpod-rs.git
+cd starpod-rs
+cargo install --path crates/starpod --locked
 ```
 
-This installs the `orion` binary to your Cargo bin directory (usually `~/.cargo/bin/`).
+This installs the `starpod` binary to your Cargo bin directory (usually `~/.cargo/bin/`).
 
 ## Verify
 
 ```bash
-orion --help
+starpod --help
 ```
 
 ## Set Your API Key
@@ -40,4 +40,4 @@ The environment variable is checked as a fallback. If both are set, the config f
 
 ## Next Steps
 
-Head to [Project Setup](/getting-started/initialization) to initialize Orion in your project directory.
+Head to [Project Setup](/getting-started/initialization) to initialize Starpod in your project directory.

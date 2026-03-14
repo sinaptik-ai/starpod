@@ -1,19 +1,19 @@
 # Instances
 
-Orion can manage **remote cloud instances** through a backend API. You can create, list, pause, restart, and kill instances — plus stream logs, open SSH sessions, and monitor health with automatic restart on stale heartbeats.
+Starpod can manage **remote cloud instances** through a backend API. You can create, list, pause, restart, and kill instances — plus stream logs, open SSH sessions, and monitor health with automatic restart on stale heartbeats.
 
 ## Configuration
 
-Add the backend URL to your `.orion/config.toml`:
+Add the backend URL to your `.starpod/config.toml`:
 
 ```toml
-instance_backend_url = "https://api.orion.example.com"
+instance_backend_url = "https://api.starpod.example.com"
 ```
 
 Or set the environment variable:
 
 ```bash
-export ORION_INSTANCE_BACKEND_URL="https://api.orion.example.com"
+export STARPOD_INSTANCE_BACKEND_URL="https://api.starpod.example.com"
 ```
 
 The API key for authentication is resolved from `providers.anthropic.api_key` or the `ANTHROPIC_API_KEY` environment variable.
@@ -46,16 +46,16 @@ Logs are streamed as newline-delimited JSON from the backend. Each log entry con
 - **Debug** — dim
 
 ```bash
-orion instance logs <id>            # Stream last 50 lines
-orion instance logs <id> --tail 100 # Stream last 100 lines
+starpod instance logs <id>            # Stream last 50 lines
+starpod instance logs <id> --tail 100 # Stream last 100 lines
 ```
 
 ## SSH Access
 
-Orion fetches SSH connection info from the backend and spawns a native `ssh` process. If the backend provides an ephemeral private key, it is written to a temporary file with `0600` permissions and cleaned up after the session ends.
+Starpod fetches SSH connection info from the backend and spawns a native `ssh` process. If the backend provides an ephemeral private key, it is written to a temporary file with `0600` permissions and cleaned up after the session ends.
 
 ```bash
-orion instance ssh <id>
+starpod instance ssh <id>
 ```
 
 ## Health Monitoring
@@ -77,7 +77,7 @@ Health data includes:
 You can register callbacks that fire when an instance's status changes — useful for alerting or logging:
 
 ```rust
-use orion_instances::{InstanceClient, HealthMonitor};
+use starpod_instances::{InstanceClient, HealthMonitor};
 
 let client = InstanceClient::new("https://api.example.com", Some("api-key"));
 let monitor = HealthMonitor::new(client, "instance-id")
@@ -95,15 +95,15 @@ let _ = shutdown.send(());  // Stop monitoring
 ## CLI
 
 ```bash
-orion instance create                         # Create a new instance
-orion instance create --name "my-bot" --region "us-east-1"
-orion instance list                           # List all instances
-orion instance kill <id>                      # Terminate an instance
-orion instance pause <id>                     # Suspend an instance
-orion instance restart <id>                   # Resume a paused instance
-orion instance logs <id> [--tail N]           # Stream logs (default: 50 lines)
-orion instance ssh <id>                       # SSH into an instance
-orion instance health <id>                    # Check instance health
+starpod instance create                         # Create a new instance
+starpod instance create --name "my-bot" --region "us-east-1"
+starpod instance list                           # List all instances
+starpod instance kill <id>                      # Terminate an instance
+starpod instance pause <id>                     # Suspend an instance
+starpod instance restart <id>                   # Resume a paused instance
+starpod instance logs <id> [--tail N]           # Stream logs (default: 50 lines)
+starpod instance ssh <id>                       # SSH into an instance
+starpod instance health <id>                    # Check instance health
 ```
 
 ## Gateway API

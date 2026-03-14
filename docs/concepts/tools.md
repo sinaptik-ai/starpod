@@ -1,6 +1,6 @@
 # Agent Tools
 
-The agent has access to **built-in tools** from the Claude Agent SDK plus **13 custom tools** provided by Orion.
+The agent has access to **built-in tools** from the Claude Agent SDK plus **13 custom tools** provided by Starpod.
 
 ## Built-in Tools
 

@@ -1,7 +1,7 @@
 ---
 layout: home
 hero:
-  name: Orion
+  name: Starpod
   text: Your Local AI Assistant
   tagline: A local-first personal AI assistant platform built in Rust, powered by Claude. Per-project memory, skills, scheduling, and encrypted credentials — no cloud state.
   actions:
@@ -10,7 +10,7 @@ hero:
       link: /getting-started/installation
     - theme: alt
       text: View on GitHub
-      link: https://github.com/gabrieleventuri/orion-rs
+      link: https://github.com/gabrieleventuri/starpod-rs
 features:
   - icon: 🧠
     title: Persistent Memory
@@ -29,5 +29,5 @@ features:
     details: Web UI with streaming, Telegram bot, interactive REPL, one-shot CLI, and a full HTTP/WebSocket API. All channels share the same agent instance and session history.
   - icon: 📁
     title: Project-Scoped
-    details: "Each project gets its own .orion/ directory — isolated config, memory, credentials, and skills. No global state. Works like Git: walks up to find the nearest .orion/ folder."
+    details: "Each project gets its own .starpod/ directory — isolated config, memory, credentials, and skills. No global state. Works like Git: walks up to find the nearest .starpod/ folder."
 ---

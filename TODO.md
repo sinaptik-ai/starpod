@@ -1,15 +1,15 @@
-# Orion RS — TODO
+# Starpod RS — TODO
 
 ## Completed
 
 - [x] **SQLite Migrations** — Each crate owns its migrations via `sqlx::migrate!("./migrations")` with versioned `.sql` files
-- [x] **Skills** — `orion-skills` crate, filesystem-based `skills/<name>/SKILL.md`, 4 agent tools (SkillCreate/Update/Delete/List), injected into system prompt, CLI subcommands
-- [x] **Scheduling / Cron** — `orion-cron` crate with interval/cron-expression/one-shot schedules, SQLite storage, background scheduler (30s tick), 4 agent tools (CronAdd/List/Remove/Runs), CLI subcommands, auto-start in gateway
+- [x] **Skills** — `starpod-skills` crate, filesystem-based `skills/<name>/SKILL.md`, 4 agent tools (SkillCreate/Update/Delete/List), injected into system prompt, CLI subcommands
+- [x] **Scheduling / Cron** — `starpod-cron` crate with interval/cron-expression/one-shot schedules, SQLite storage, background scheduler (30s tick), 4 agent tools (CronAdd/List/Remove/Runs), CLI subcommands, auto-start in gateway
 - [x] **sqlx migration** — Replaced rusqlite + custom migration runner with sqlx across all 4 DB crates (memory, vault, session, cron). Async `SqlitePool`, connection pooling, built-in migration system
 - [x] **Web UI** — Embedded SPA at `/`, streaming WS protocol, minimal dark theme, collapsible tools, clickable URLs
-- [x] **Telegram bot** — `orion-telegram` crate with teloxide, auto-starts alongside gateway when token configured
+- [x] **Telegram bot** — `starpod-telegram` crate with teloxide, auto-starts alongside gateway when token configured
 - [x] **Background Bash** — `run_in_background` support for Bash tool so long-running processes don't block
-- [x] **Local-first CLI restructure** — `orion agent {init, serve, chat, repl}` + `orion instance {create, list, kill, pause, restart}` stubs. Config from `.orion/config.toml` per-project, no global config.
+- [x] **Local-first CLI restructure** — `starpod agent {init, serve, chat, repl}` + `starpod instance {create, list, kill, pause, restart}` stubs. Config from `.starpod/config.toml` per-project, no global config.
 - [x] **Agent identity** — `[identity]` config section with `name`, `emoji`, `soul` (personality). Injected into system prompt and used in Telegram /start, CLI header, daily logs.
 - [x] **User profile** — `[user]` config section with `name`, `timezone`. Injected into system prompt for personalized responses.
 - [x] **Reasoning effort** — `reasoning_effort` config option (low/medium/high) maps to extended thinking budget tokens. Wired through agent-sdk to Claude API.
@@ -20,19 +20,19 @@
 ## Planned
 
 ### CLI & Config
-- [x] **Nest utility commands under `agent`** — Move memory, vault, sessions, skills, cron subcommands under `orion agent` (e.g. `orion agent memory search`)
-- [ ] **`orion agent apply`** — Sync local `.orion/` config (model, tools, skills, system prompt, etc.) to backend so new instances inherit settings
-- [ ] **`orion agent status`** — Show current project config, agent health, DB sizes, active sessions
-- [ ] **`.orion/system_prompt.md`** — Allow custom system prompt per project (loaded from file, merged with defaults)
+- [x] **Nest utility commands under `agent`** — Move memory, vault, sessions, skills, cron subcommands under `starpod agent` (e.g. `starpod agent memory search`)
+- [ ] **`starpod agent apply`** — Sync local `.starpod/` config (model, tools, skills, system prompt, etc.) to backend so new instances inherit settings
+- [ ] **`starpod agent status`** — Show current project config, agent health, DB sizes, active sessions
+- [ ] **`.starpod/system_prompt.md`** — Allow custom system prompt per project (loaded from file, merged with defaults)
 
 ### Instance Management
-- [x] **Instance backend integration** — `orion-instances` crate with HTTP client connecting to remote backend API. CLI commands (create, list, kill, pause, restart) + gateway API routes. Config via `instance_backend_url` or `ORION_INSTANCE_BACKEND_URL` env var.
-- [x] **`orion instance logs <id>`** — Stream logs (newline-delimited JSON) from a running remote instance with colored level output
-- [x] **`orion instance ssh <id>`** — Fetch SSH connection info from backend, spawn native `ssh` process with optional ephemeral key
-- [x] **Instance health monitoring** — `HealthMonitor` with configurable heartbeat polling, auto-restart on stale heartbeat, status change callbacks. `orion instance health <id>` CLI command + `GET /api/instances/:id/health` gateway route.
+- [x] **Instance backend integration** — `starpod-instances` crate with HTTP client connecting to remote backend API. CLI commands (create, list, kill, pause, restart) + gateway API routes. Config via `instance_backend_url` or `STARPOD_INSTANCE_BACKEND_URL` env var.
+- [x] **`starpod instance logs <id>`** — Stream logs (newline-delimited JSON) from a running remote instance with colored level output
+- [x] **`starpod instance ssh <id>`** — Fetch SSH connection info from backend, spawn native `ssh` process with optional ephemeral key
+- [x] **Instance health monitoring** — `HealthMonitor` with configurable heartbeat polling, auto-restart on stale heartbeat, status change callbacks. `starpod instance health <id>` CLI command + `GET /api/instances/:id/health` gateway route.
 
 ### Agent Capabilities
-- [ ] **Conversation compaction** — Summarize/compress older messages when approaching context window limits. Preserve system prompt + recent turns, store full transcript on disk via `orion-session`.
+- [ ] **Conversation compaction** — Summarize/compress older messages when approaching context window limits. Preserve system prompt + recent turns, store full transcript on disk via `starpod-session`.
 - [ ] **Conversation history / context carry-over** — Load previous session context into new sessions for continuity
 - [x] **Group followup messages** — Batch rapid user messages into a single agent turn. Configurable via `followup_mode` (`"inject"` or `"queue"`)
 - [x] **Multi-provider implementation** — Trait-based `LlmProvider` abstraction with `AnthropicProvider`, `OpenAiProvider` (also Groq, DeepSeek, OpenRouter, Ollama), and `GeminiProvider`. Runtime switching via `config.provider`. Per-provider cost rates, capabilities, and streaming support.
@@ -41,7 +41,7 @@
 - [ ] **MCP (Model Context Protocol) support** — Allow connecting external MCP servers as tool providers
 
 ### Infrastructure
-- [ ] **Hooks crate** — Extract hook logic from agent-sdk into a standalone `orion-hooks` crate so Orion can define its own lifecycle hooks independently of the SDK
+- [ ] **Hooks crate** — Extract hook logic from agent-sdk into a standalone `starpod-hooks` crate so Starpod can define its own lifecycle hooks independently of the SDK
 - [ ] **Sandboxed execution** — Docker / Apple Container sandboxing for command execution
 - [ ] **Metrics & tracing** — Prometheus metrics, OpenTelemetry tracing for observability
 - [ ] **Rate limiting & auth** — Per-IP throttling, proper login/session auth beyond optional API key

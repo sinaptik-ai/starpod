@@ -1,6 +1,6 @@
 # API Reference
 
-Orion exposes a REST API and WebSocket endpoint through the `orion-gateway` crate.
+Starpod exposes a REST API and WebSocket endpoint through the `starpod-gateway` crate.
 
 ## Base URL
 
@@ -10,7 +10,7 @@ http://localhost:3000/api
 
 ## Authentication
 
-Set the `ORION_API_KEY` environment variable to enable API key authentication.
+Set the `STARPOD_API_KEY` environment variable to enable API key authentication.
 
 **HTTP requests** — include the key in the `X-API-Key` header:
 
@@ -24,7 +24,7 @@ curl -H "X-API-Key: your-key" http://localhost:3000/api/health
 ws://localhost:3000/ws?token=your-key
 ```
 
-If `ORION_API_KEY` is not set, the API is open (no auth required).
+If `STARPOD_API_KEY` is not set, the API is open (no auth required).
 
 ## Endpoints
 

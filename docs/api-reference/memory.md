@@ -46,7 +46,7 @@ curl "http://localhost:3000/api/memory/search?query=database+migrations&limit=5"
 
 ### POST /api/memory/reindex
 
-Rebuild the FTS5 search index. Run this after manually editing files in `.orion/data/`.
+Rebuild the FTS5 search index. Run this after manually editing files in `.starpod/data/`.
 
 ```bash
 curl -X POST http://localhost:3000/api/memory/reindex \

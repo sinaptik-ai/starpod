@@ -4,7 +4,7 @@ Skills are **markdown instruction files** injected into the agent's system promp
 
 ## How It Works
 
-1. A skill is a markdown file at `.orion/data/skills/<name>/SKILL.md`
+1. A skill is a markdown file at `.starpod/data/skills/<name>/SKILL.md`
 2. On every turn, all active skills are appended to the system prompt
 3. The agent can create, update, and delete skills at runtime
 
@@ -14,14 +14,14 @@ Skills are **markdown instruction files** injected into the agent's system promp
 
 ```bash
 # Inline content
-orion agent skills create "code-review" --content "When reviewing code, always check for:
+starpod agent skills create "code-review" --content "When reviewing code, always check for:
 - Error handling
 - Edge cases
 - Performance implications
 - Security vulnerabilities"
 
 # From a file
-orion agent skills create "code-review" --file code-review-instructions.md
+starpod agent skills create "code-review" --file code-review-instructions.md
 ```
 
 ### Via the Agent
@@ -35,9 +35,9 @@ The agent uses `SkillCreate` to save it. Takes effect immediately on subsequent 
 ## Managing Skills
 
 ```bash
-orion agent skills list              # List all skills
-orion agent skills show code-review  # View a skill
-orion agent skills delete code-review # Delete a skill
+starpod agent skills list              # List all skills
+starpod agent skills show code-review  # View a skill
+starpod agent skills delete code-review # Delete a skill
 ```
 
 ## Agent Tools
@@ -79,7 +79,7 @@ Always respond in this format:
 ## Storage
 
 ```
-.orion/data/skills/
+.starpod/data/skills/
 ├── code-review/
 │   └── SKILL.md
 ├── daily-standup/

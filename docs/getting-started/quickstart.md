@@ -1,12 +1,12 @@
 # Quick Start
 
-Get Orion running in under 2 minutes.
+Get Starpod running in under 2 minutes.
 
 ## 1. Initialize
 
 ```bash
 cd your-project
-orion agent init --default
+starpod agent init --default
 ```
 
 ## 2. Set your API key
@@ -18,11 +18,11 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 ## 3. Start the server
 
 ```bash
-orion agent serve
+starpod agent serve
 ```
 
 ```
-  Orion is running
+  Starpod is running
 
   Frontend http://127.0.0.1:3000
   API      http://127.0.0.1:3000/api
@@ -39,18 +39,18 @@ Open [http://localhost:3000](http://localhost:3000) for the web UI.
 One-shot message:
 
 ```bash
-orion agent chat "What files are in this directory?"
+starpod agent chat "What files are in this directory?"
 ```
 
 Interactive REPL:
 
 ```bash
-orion agent repl
+starpod agent repl
 ```
 
 ## What's Next?
 
 - [Configuration](/getting-started/configuration) — customize the model, personality, and more
-- [Memory](/concepts/memory) — learn how Orion remembers across conversations
+- [Memory](/concepts/memory) — learn how Starpod remembers across conversations
 - [Skills](/concepts/skills) — teach your agent new abilities
-- [Telegram](/integrations/telegram) — connect Orion to Telegram
+- [Telegram](/integrations/telegram) — connect Starpod to Telegram
