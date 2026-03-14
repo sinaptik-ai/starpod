@@ -3,48 +3,71 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#09090b">
   <title>Orion</title>
 </head>
-<body>
+<body class="bg-bg text-zinc-100 font-sans text-sm antialiased">
 
-<div class="sidebar" id="sidebar">
-  <div class="sidebar-header">
-    <h3>Conversations</h3>
-    <button class="sidebar-close" id="sidebar-close">&times;</button>
+<!-- Sidebar overlay -->
+<div class="fixed inset-0 bg-black/50 z-[99] hidden opacity-0 transition-opacity duration-250" id="sidebar-overlay"></div>
+
+<!-- Sidebar -->
+<div class="sidebar-panel fixed top-0 left-0 bottom-0 w-[280px] bg-surface border-r border-border-main z-100 flex flex-col" id="sidebar">
+  <div class="flex items-center justify-between px-3.5 py-3 border-b border-border-subtle shrink-0">
+    <h3 class="font-mono text-xs font-semibold text-secondary uppercase tracking-wide">Sessions</h3>
+    <button class="text-dim hover:text-zinc-100 hover:bg-elevated px-1.5 py-0.5 rounded text-lg leading-none transition-colors cursor-pointer" id="sidebar-close">&times;</button>
   </div>
-  <button class="new-chat-btn" id="new-chat-btn">+ New Chat</button>
-  <div class="session-list" id="session-list">
-    <div class="session-empty">Loading...</div>
+  <button class="mx-2.5 mt-2.5 mb-1 px-3 py-2 bg-transparent text-secondary border border-dashed border-border-main rounded-lg font-mono text-xs font-medium cursor-pointer transition-all hover:border-accent hover:text-accent hover:bg-accent-muted hover:border-solid shrink-0" id="new-chat-btn">+ new chat</button>
+  <div class="flex-1 overflow-y-auto p-1.5" id="session-list">
+    <div class="text-center text-dim text-sm py-6 px-3">Loading...</div>
   </div>
 </div>
 
-<div id="app">
-  <header>
-    <button class="menu-btn" id="menu-btn" aria-label="Conversations">
-      <svg viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+<!-- Main app -->
+<div id="app" class="flex flex-col h-dvh max-w-[760px] mx-auto transition-all duration-200">
+
+  <!-- Header -->
+  <header class="flex items-center gap-2.5 px-5 py-3 shrink-0 border-b border-border-subtle">
+    <button class="text-dim hover:text-zinc-100 hover:bg-elevated p-1.5 rounded-md flex items-center justify-center transition-colors cursor-pointer" id="menu-btn" aria-label="Conversations">
+      <svg class="w-4 h-4 stroke-current fill-none stroke-2" viewBox="0 0 24 24" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
     </button>
-    <span class="logo">Orion</span>
-    <div class="status">
-      <span class="dot connecting" id="status-dot"></span>
-      <span id="status-text">Connecting</span>
+    <span class="font-mono text-sm font-bold tracking-tight bg-gradient-to-br from-zinc-100 to-accent bg-clip-text text-transparent">orion</span>
+    <div class="font-mono text-[11px] text-dim ml-auto flex items-center gap-1.5 select-none">
+      <span class="w-1.5 h-1.5 rounded-full shrink-0 dot-connecting" id="status-dot"></span>
+      <span id="status-text">connecting</span>
     </div>
   </header>
-  <div id="messages">
-    <div class="welcome">
-      <h2>Orion</h2>
-      <p>Your personal AI assistant. Ask anything.</p>
+
+  <!-- Messages -->
+  <div id="messages" class="flex-1 overflow-y-auto px-5 pt-4 pb-6 flex flex-col gap-0.5">
+    <div class="text-center text-dim m-auto py-15 max-w-[420px]" id="welcome">
+      <div class="font-mono text-3xl font-extrabold tracking-tighter mb-2 bg-gradient-to-br from-zinc-100 via-accent to-purple bg-clip-text text-transparent">orion</div>
+      <p class="text-sm leading-relaxed text-dim">Your personal AI assistant</p>
+      <div class="flex gap-4 justify-center mt-6 flex-wrap">
+        <div class="flex items-center gap-1.5 font-mono text-xs text-dim px-3 py-1.5 bg-surface border border-border-subtle rounded-lg">
+          <kbd class="bg-elevated border border-border-main rounded px-1.5 py-0.5 font-mono text-[11px] text-secondary">Enter</kbd> send
+        </div>
+        <div class="flex items-center gap-1.5 font-mono text-xs text-dim px-3 py-1.5 bg-surface border border-border-subtle rounded-lg">
+          <kbd class="bg-elevated border border-border-main rounded px-1.5 py-0.5 font-mono text-[11px] text-secondary">Shift+Enter</kbd> newline
+        </div>
+      </div>
     </div>
   </div>
-  <div id="input-area">
-    <div id="attachment-preview"></div>
-    <form id="input-form">
+
+  <!-- Input -->
+  <div id="input-area" class="px-5 pt-3 pb-4 shrink-0">
+    <div id="attachment-preview" class="hidden gap-2 pb-2 flex-wrap"></div>
+    <form id="input-form" class="flex gap-2 items-end bg-input-bg border border-border-main rounded-2xl pl-3.5 pr-1.5 py-1.5 transition-all duration-200">
       <input type="file" id="file-input" multiple hidden>
-      <button type="button" id="attach-btn" aria-label="Attach file" title="Attach file (max 20 MB)">
-        <svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+      <button type="button" id="attach-btn" aria-label="Attach file" title="Attach file (max 20 MB)"
+        class="text-dim hover:text-accent hover:bg-accent-muted p-1.5 rounded-md flex items-center justify-center shrink-0 transition-colors cursor-pointer">
+        <svg class="w-4 h-4 fill-none stroke-current stroke-2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
       </button>
-      <textarea id="input-text" placeholder="Ask Orion anything..." rows="1" autofocus></textarea>
-      <button type="submit" id="send-btn" aria-label="Send">
-        <svg viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
+      <textarea id="input-text" placeholder="Ask anything..." rows="1" autofocus
+        class="flex-1 bg-transparent border-none py-2 text-zinc-100 font-sans text-sm resize-none outline-none max-h-40 leading-relaxed"></textarea>
+      <button type="submit" id="send-btn" aria-label="Send"
+        class="bg-accent-strong text-white border-none rounded-xl w-9 h-9 flex items-center justify-center cursor-pointer transition-all hover:bg-blue-600 hover:scale-105 active:scale-95 disabled:opacity-20 disabled:cursor-default disabled:transform-none shrink-0">
+        <svg class="w-4 h-4 fill-none stroke-current stroke-2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
       </button>
     </form>
   </div>
