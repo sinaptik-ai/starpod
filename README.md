@@ -10,7 +10,7 @@ crates/
 ├── orion-core/         Shared types, config, error handling
 ├── orion-memory/       SQLite FTS5 full-text search + markdown files
 ├── orion-vault/        AES-256-GCM encrypted credential storage
-├── orion-session/      Session lifecycle + time-gap analysis
+├── orion-session/      Channel-aware session lifecycle
 ├── orion-skills/       Self-extension skill system (markdown-based)
 ├── orion-cron/         Cron scheduling (interval, cron expr, one-shot)
 ├── orion-agent/        Orchestrator wiring everything together
@@ -261,7 +261,7 @@ Connect to `ws://localhost:3000/ws` (or `ws://localhost:3000/ws?token=KEY`).
 
 **Client sends:**
 ```json
-{"type": "message", "text": "Hello!", "channel_id": "web"}
+{"type": "message", "text": "Hello!", "channel_id": "main", "channel_session_key": "conv-uuid-here"}
 ```
 
 **Server streams:**
@@ -324,7 +324,12 @@ AES-256-GCM encrypted credential storage in SQLite with audit logging.
 
 ### orion-session
 
-Automatic session management: messages within 30 minutes continue the same session, otherwise a new one starts. Tracks token usage and cost per turn.
+Channel-aware session management with per-channel strategies:
+
+- **`main`** (web, REPL, CLI): Explicit sessions — the client provides a `channel_session_key` (e.g. a conversation UUID) and the session continues until closed. Multiple concurrent sessions are supported.
+- **`telegram`**: Time-gap sessions — messages within 6 hours continue the same session (keyed by chat ID), otherwise a new session starts and the old one is auto-closed.
+
+Tracks token usage and cost per turn. The scheduler creates standalone `main` sessions (one per cron run) and delivers results via the configured notification channel.
 
 ### orion-skills
 
@@ -342,16 +347,16 @@ Scheduling system supporting interval (`every_ms`), cron expressions, and one-sh
 cargo test
 ```
 
-63 unit tests + 2 doc-tests across all crates, zero warnings.
+70 unit tests + 2 doc-tests across all crates, zero warnings.
 
 | Crate | Tests |
 |-------|-------|
 | agent-sdk | 17 + 2 doc |
 | orion-memory | 8 |
 | orion-vault | 7 |
-| orion-session | 8 |
+| orion-session | 11 |
 | orion-skills | 9 |
-| orion-cron | 7 |
+| orion-cron | 11 |
 | orion-agent | 3 |
 | orion-telegram | 4 |
 

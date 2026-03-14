@@ -61,6 +61,8 @@ enum ClientMessage {
         user_id: Option<String>,
         #[serde(default)]
         channel_id: Option<String>,
+        #[serde(default)]
+        channel_session_key: Option<String>,
     },
 }
 
@@ -151,11 +153,21 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
         match client_msg {
             ClientMessage::Message {
                 text,
-                user_id: _,
-                channel_id: _,
+                user_id,
+                channel_id,
+                channel_session_key,
             } => {
+                // Build ChatMessage for channel-aware session routing
+                let chat_msg = orion_core::ChatMessage {
+                    text: text.clone(),
+                    user_id,
+                    channel_id: channel_id.or(Some("main".into())),
+                    channel_session_key,
+                    attachments: Vec::new(),
+                };
+
                 // Start streaming chat
-                let (mut stream, session_id) = match state.agent.chat_stream(&text).await {
+                let (mut stream, session_id) = match state.agent.chat_stream(&chat_msg).await {
                     Ok(s) => s,
                     Err(e) => {
                         let _ = send_msg(

@@ -14,6 +14,10 @@ pub struct ChatMessage {
     #[serde(default)]
     pub channel_id: Option<String>,
 
+    /// Optional session key within a channel (e.g. telegram chat_id, web conversation UUID).
+    #[serde(default)]
+    pub channel_session_key: Option<String>,
+
     /// Optional file attachments (paths or URLs).
     #[serde(default)]
     pub attachments: Vec<String>,

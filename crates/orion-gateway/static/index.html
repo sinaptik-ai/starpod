@@ -989,7 +989,7 @@ function renderSessions(sessions) {
     const el = document.createElement('div');
     el.className = 'session-item' + (s.id === currentSessionId ? ' active' : '');
 
-    const summary = s.summary || 'Untitled conversation';
+    const summary = s.title || s.summary || 'Untitled conversation';
     const date = formatSessionDate(s.last_message_at || s.created_at);
     const msgs = s.message_count || 0;
     const closed = s.is_closed ? ' \u00b7 ended' : '';

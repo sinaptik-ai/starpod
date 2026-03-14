@@ -30,6 +30,8 @@ struct ChatRequest {
     user_id: Option<String>,
     #[serde(default)]
     channel_id: Option<String>,
+    #[serde(default)]
+    channel_session_key: Option<String>,
 }
 
 /// Chat endpoint — POST /api/chat
@@ -44,6 +46,7 @@ async fn chat_handler(
         text: req.text,
         user_id: req.user_id,
         channel_id: req.channel_id,
+        channel_session_key: req.channel_session_key,
         attachments: Vec::new(),
     };
 

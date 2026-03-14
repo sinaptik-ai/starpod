@@ -10,7 +10,7 @@ use tracing_subscriber::EnvFilter;
 
 use agent_sdk::{ContentBlock, Message};
 use orion_agent::OrionAgent;
-use orion_core::OrionConfig;
+use orion_core::{ChatMessage, OrionConfig};
 
 #[derive(Parser)]
 #[command(name = "orion", about = "Orion — personal AI assistant platform", version)]
@@ -685,7 +685,14 @@ async fn main() -> anyhow::Result<()> {
                 let start = Instant::now();
                 let agent = OrionAgent::new(config).await?;
 
-                let (mut stream, session_id) = agent.chat_stream(&message).await?;
+                let chat_msg = ChatMessage {
+                    text: message.clone(),
+                    user_id: None,
+                    channel_id: Some("main".into()),
+                    channel_session_key: Some(uuid::Uuid::new_v4().to_string()),
+                    attachments: Vec::new(),
+                };
+                let (mut stream, session_id) = agent.chat_stream(&chat_msg).await?;
                 let (result_text, result_msg) = process_stream(&mut stream, &start).await?;
 
                 if let Some(ref result) = result_msg {
@@ -915,6 +922,7 @@ async fn main() -> anyhow::Result<()> {
 /// Interactive REPL mode with rich output.
 async fn run_repl(config: OrionConfig, name: &str) -> anyhow::Result<()> {
     let agent = OrionAgent::new(config).await?;
+    let session_key = uuid::Uuid::new_v4().to_string();
 
     print_header_with_name(name);
     println!(
@@ -954,7 +962,14 @@ async fn run_repl(config: OrionConfig, name: &str) -> anyhow::Result<()> {
         rl.add_history_entry(line)?;
 
         let start = Instant::now();
-        let (mut stream, session_id) = agent.chat_stream(line).await?;
+        let chat_msg = ChatMessage {
+            text: line.to_string(),
+            user_id: None,
+            channel_id: Some("main".into()),
+            channel_session_key: Some(session_key.clone()),
+            attachments: Vec::new(),
+        };
+        let (mut stream, session_id) = agent.chat_stream(&chat_msg).await?;
         let (result_text, result_msg) = process_stream(&mut stream, &start).await?;
 
         if let Some(ref result) = result_msg {

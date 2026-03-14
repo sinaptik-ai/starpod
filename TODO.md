@@ -15,6 +15,7 @@
 - [x] **Reasoning effort** — `reasoning_effort` config option (low/medium/high) maps to extended thinking budget tokens. Wired through agent-sdk to Claude API.
 - [x] **Multi-provider config** — `[providers]` config section with per-provider `api_key`, `base_url`, `models`, `enabled`. `provider` field selects active provider. Currently only Anthropic is implemented.
 - [x] **Telegram streaming** — Edit-in-place mode (`stream_mode = "edit_in_place"`) with configurable throttle (`edit_throttle_ms`). Falls back to blocking mode by default.
+- [x] **Channel-aware sessions** — Session management scoped by channel (`main`, `telegram`) with per-channel strategies. `main` = explicit sessions (client-controlled via `channel_session_key`), `telegram` = 6h time-gap with auto-close. Multiple concurrent web/REPL sessions supported. Scheduler creates standalone sessions per cron run.
 
 ## Planned
 
@@ -44,7 +45,8 @@
 - [ ] **Sandboxed execution** — Docker / Apple Container sandboxing for command execution
 - [ ] **Metrics & tracing** — Prometheus metrics, OpenTelemetry tracing for observability
 - [ ] **Rate limiting & auth** — Per-IP throttling, proper login/session auth beyond optional API key
-- [ ] **Multi-channel access** — Discord, Slack, WhatsApp integrations alongside existing HTTP/WS + CLI + Telegram
+- [ ] **Multi-channel access** — Discord, Slack, WhatsApp integrations alongside existing HTTP/WS + CLI + Telegram. Channel enum and session routing infrastructure is in place — add new `Channel` variants.
+- [ ] **Scheduler channel routing** — Allow cron jobs to route into existing channel sessions (e.g. attach to telegram conversation via `channel = "auto"` config) instead of creating standalone sessions
 - [ ] **Persistent agent mode** — Long-running daemon that watches files/events and acts proactively (not just on user messages)
 - [ ] **Plugin system** — Load custom tools from external crates or WASM modules at runtime
 - [ ] **Provider failover** — Automatic failover to backup provider when primary is down or rate-limited

@@ -13,7 +13,7 @@ use orion_core::ReasoningEffort;
 use orion_core::{ChatMessage, ChatResponse, ChatUsage, OrionConfig, OrionError, Result};
 use orion_cron::CronStore;
 use orion_memory::MemoryStore;
-use orion_session::{SessionDecision, SessionManager, UsageRecord};
+use orion_session::{Channel, SessionDecision, SessionManager, UsageRecord};
 use orion_skills::SkillStore;
 use orion_vault::Vault;
 
@@ -143,19 +143,21 @@ impl OrionAgent {
 
     /// Process a chat message through the full Orion pipeline.
     pub async fn chat(&self, message: ChatMessage) -> Result<ChatResponse> {
-        // Step 1: Resolve session
-        let session_id = match self.session_mgr.resolve_session().await? {
+        // Step 1: Resolve session via channel routing
+        let (channel, key) = resolve_channel(&message);
+        let session_id = match self.session_mgr.resolve_session(&channel, &key).await? {
             SessionDecision::Continue(id) => {
-                debug!(session_id = %id, "Continuing existing session");
+                debug!(session_id = %id, channel = %channel.as_str(), "Continuing existing session");
                 id
             }
             SessionDecision::New => {
-                let id = self.session_mgr.create_session().await?;
-                debug!(session_id = %id, "Created new session");
+                let id = self.session_mgr.create_session(&channel, &key).await?;
+                debug!(session_id = %id, channel = %channel.as_str(), "Created new session");
                 id
             }
         };
         self.session_mgr.touch_session(&session_id).await?;
+        let _ = self.session_mgr.set_title_if_empty(&session_id, &message.text).await;
 
         // Step 2: Build system prompt
         let system_prompt = self.build_system_prompt(&session_id)?;
@@ -263,19 +265,21 @@ impl OrionAgent {
     ///
     /// Returns (Query stream, session_id). The caller should consume the stream
     /// for real-time display, then call `finalize_chat()` with the collected results.
-    pub async fn chat_stream(&self, message: &str) -> Result<(Query, String)> {
-        let session_id = match self.session_mgr.resolve_session().await? {
+    pub async fn chat_stream(&self, message: &ChatMessage) -> Result<(Query, String)> {
+        let (channel, key) = resolve_channel(message);
+        let session_id = match self.session_mgr.resolve_session(&channel, &key).await? {
             SessionDecision::Continue(id) => {
-                debug!(session_id = %id, "Continuing existing session");
+                debug!(session_id = %id, channel = %channel.as_str(), "Continuing existing session");
                 id
             }
             SessionDecision::New => {
-                let id = self.session_mgr.create_session().await?;
-                debug!(session_id = %id, "Created new session");
+                let id = self.session_mgr.create_session(&channel, &key).await?;
+                debug!(session_id = %id, channel = %channel.as_str(), "Created new session");
                 id
             }
         };
         self.session_mgr.touch_session(&session_id).await?;
+        let _ = self.session_mgr.set_title_if_empty(&session_id, &message.text).await;
 
         let system_prompt = self.build_system_prompt(&session_id)?;
 
@@ -295,7 +299,7 @@ impl OrionAgent {
 
         let options = builder.build();
 
-        let stream = agent_sdk::query(message, options);
+        let stream = agent_sdk::query(&message.text, options);
         Ok((stream, session_id))
     }
 
@@ -385,6 +389,7 @@ impl OrionAgent {
                     text: prompt,
                     user_id: Some("cron".into()),
                     channel_id: Some("scheduler".into()),
+                    channel_session_key: None,
                     attachments: Vec::new(),
                 };
                 match agent.chat(msg).await {
@@ -400,6 +405,24 @@ impl OrionAgent {
             scheduler = scheduler.with_notifier(n);
         }
         scheduler.start()
+    }
+}
+
+/// Map a ChatMessage to a (Channel, session_key) pair for session routing.
+fn resolve_channel(msg: &ChatMessage) -> (Channel, String) {
+    match msg.channel_id.as_deref().unwrap_or("main") {
+        "telegram" => {
+            let key = msg.channel_session_key.clone()
+                .or_else(|| msg.user_id.clone())
+                .unwrap_or_else(|| "default".into());
+            (Channel::Telegram, key)
+        }
+        _ => {
+            // "main", "scheduler", or any unknown → explicit Main session
+            let key = msg.channel_session_key.clone()
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            (Channel::Main, key)
+        }
     }
 }
 

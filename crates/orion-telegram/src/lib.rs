@@ -178,6 +178,7 @@ async fn handle_blocking(
         text: text.to_string(),
         user_id: user_id_str,
         channel_id: Some("telegram".into()),
+        channel_session_key: Some(chat_id.0.to_string()),
         attachments: Vec::new(),
     };
 
@@ -209,7 +210,14 @@ async fn handle_streaming(
     let msg_id = placeholder.id;
 
     // Start streaming
-    let stream_result = agent.chat_stream(text).await;
+    let chat_msg = ChatMessage {
+        text: text.to_string(),
+        user_id: _user_id_str.clone(),
+        channel_id: Some("telegram".into()),
+        channel_session_key: Some(chat_id.0.to_string()),
+        attachments: Vec::new(),
+    };
+    let stream_result = agent.chat_stream(&chat_msg).await;
     let (mut stream, session_id) = match stream_result {
         Ok(s) => s,
         Err(e) => {
