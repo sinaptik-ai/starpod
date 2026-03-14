@@ -18,6 +18,7 @@ use orion_core::OrionConfig;
 pub struct AppState {
     pub agent: Arc<OrionAgent>,
     pub api_key: Option<String>,
+    pub config: OrionConfig,
 }
 
 /// Serve the embedded web UI.
@@ -60,6 +61,7 @@ pub async fn serve_with_agent(
     let state = Arc::new(AppState {
         agent,
         api_key,
+        config: config.clone(),
     });
 
     let app = build_router(state);

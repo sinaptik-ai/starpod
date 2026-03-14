@@ -35,6 +35,10 @@ pub enum OrionError {
     #[error("Cron error: {0}")]
     Cron(String),
 
+    /// Instance management errors.
+    #[error("Instance error: {0}")]
+    Instance(String),
+
     /// Channel / communication errors.
     #[error("Channel error: {0}")]
     Channel(String),

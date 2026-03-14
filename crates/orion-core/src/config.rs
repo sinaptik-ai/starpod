@@ -162,6 +162,11 @@ pub struct OrionConfig {
     #[serde(default)]
     pub telegram: TelegramConfig,
 
+    /// Remote instance backend URL (e.g. "https://api.orion.example.com").
+    /// If set, `orion instance` commands will connect to this backend.
+    #[serde(default)]
+    pub instance_backend_url: Option<String>,
+
     /// The project root directory (not serialized — set at load time).
     #[serde(skip)]
     pub project_root: PathBuf,
@@ -197,6 +202,7 @@ impl Default for OrionConfig {
             user: UserConfig::default(),
             providers: ProvidersConfig::default(),
             telegram: TelegramConfig::default(),
+            instance_backend_url: None,
             project_root: PathBuf::new(),
         }
     }
@@ -285,6 +291,13 @@ impl OrionConfig {
         self.db_path
             .clone()
             .unwrap_or_else(|| self.data_dir.join("memory.db"))
+    }
+
+    /// Resolved instance backend URL: checks config, then env var.
+    pub fn resolved_instance_backend_url(&self) -> Option<String> {
+        self.instance_backend_url
+            .clone()
+            .or_else(|| std::env::var("ORION_INSTANCE_BACKEND_URL").ok())
     }
 
     /// Path to the `.orion/` directory for this project.
@@ -387,5 +400,12 @@ server_addr = "127.0.0.1:3000"
 # bot_token = "123456:ABC..."     # Or set TELEGRAM_BOT_TOKEN env var
 # allowed_users = [123456789]     # User IDs allowed to chat (empty = no one)
 # stream_mode = "final_only"      # "final_only" or "all_messages"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# INSTANCES
+# ══════════════════════════════════════════════════════════════════════════════
+# Remote instance backend for `orion instance` commands.
+
+# instance_backend_url = "https://api.orion.example.com"  # Or set ORION_INSTANCE_BACKEND_URL env var
 "#;
 }

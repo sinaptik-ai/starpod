@@ -19,6 +19,13 @@ pub fn api_routes() -> Router<Arc<AppState>> {
         .route("/api/sessions/{id}/messages", get(get_session_messages_handler))
         .route("/api/memory/search", get(memory_search_handler))
         .route("/api/memory/reindex", post(reindex_handler))
+        .route("/api/instances", get(list_instances_handler))
+        .route("/api/instances", post(create_instance_handler))
+        .route("/api/instances/{id}", get(get_instance_handler))
+        .route("/api/instances/{id}", axum::routing::delete(delete_instance_handler))
+        .route("/api/instances/{id}/pause", post(pause_instance_handler))
+        .route("/api/instances/{id}/restart", post(restart_instance_handler))
+        .route("/api/instances/{id}/health", get(instance_health_handler))
         .route("/api/health", get(health_handler))
 }
 
@@ -207,6 +214,161 @@ async fn health_handler() -> Json<serde_json::Value> {
 #[derive(Debug, Serialize, Deserialize)]
 struct ErrorResponse {
     error: String,
+}
+
+// ── Instance routes ──────────────────────────────────────────────────────
+
+fn get_instance_client(state: &AppState) -> Result<orion_instances::InstanceClient, (StatusCode, Json<ErrorResponse>)> {
+    let config = &state.config;
+    let backend_url = config.resolved_instance_backend_url().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                error: "Instance backend not configured".into(),
+            }),
+        )
+    })?;
+    let api_key = config.resolved_api_key();
+    orion_instances::InstanceClient::new(&backend_url, api_key).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Instance client error: {}", e),
+            }),
+        )
+    })
+}
+
+/// List instances — GET /api/instances
+async fn list_instances_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<orion_instances::Instance>>, (StatusCode, Json<ErrorResponse>)> {
+    check_api_key(&state, &headers)?;
+    let client = get_instance_client(&state)?;
+
+    client.list_instances().await.map(Json).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("List instances error: {}", e),
+            }),
+        )
+    })
+}
+
+/// Create instance — POST /api/instances
+async fn create_instance_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<orion_instances::CreateInstanceRequest>,
+) -> Result<(StatusCode, Json<orion_instances::Instance>), (StatusCode, Json<ErrorResponse>)> {
+    check_api_key(&state, &headers)?;
+    let client = get_instance_client(&state)?;
+
+    client.create_instance(&req).await.map(|inst| (StatusCode::CREATED, Json(inst))).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Create instance error: {}", e),
+            }),
+        )
+    })
+}
+
+/// Get instance — GET /api/instances/:id
+async fn get_instance_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<orion_instances::Instance>, (StatusCode, Json<ErrorResponse>)> {
+    check_api_key(&state, &headers)?;
+    let client = get_instance_client(&state)?;
+
+    client.get_instance(&id).await.map(Json).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Get instance error: {}", e),
+            }),
+        )
+    })
+}
+
+/// Delete (kill) instance — DELETE /api/instances/:id
+async fn delete_instance_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    check_api_key(&state, &headers)?;
+    let client = get_instance_client(&state)?;
+
+    client.kill_instance(&id).await.map(|_| StatusCode::NO_CONTENT).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Kill instance error: {}", e),
+            }),
+        )
+    })
+}
+
+/// Pause instance — POST /api/instances/:id/pause
+async fn pause_instance_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    check_api_key(&state, &headers)?;
+    let client = get_instance_client(&state)?;
+
+    client.pause_instance(&id).await.map(|_| Json(serde_json::json!({"status": "paused"}))).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Pause instance error: {}", e),
+            }),
+        )
+    })
+}
+
+/// Restart instance — POST /api/instances/:id/restart
+async fn restart_instance_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    check_api_key(&state, &headers)?;
+    let client = get_instance_client(&state)?;
+
+    client.restart_instance(&id).await.map(|_| Json(serde_json::json!({"status": "restarted"}))).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Restart instance error: {}", e),
+            }),
+        )
+    })
+}
+
+/// Instance health — GET /api/instances/:id/health
+async fn instance_health_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<orion_instances::HealthInfo>, (StatusCode, Json<ErrorResponse>)> {
+    check_api_key(&state, &headers)?;
+    let client = get_instance_client(&state)?;
+
+    client.get_health(&id).await.map(Json).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Instance health error: {}", e),
+            }),
+        )
+    })
 }
 
 /// Check X-API-Key header if an API key is configured.

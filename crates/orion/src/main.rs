@@ -11,6 +11,7 @@ use tracing_subscriber::EnvFilter;
 use agent_sdk::{ContentBlock, Message};
 use orion_agent::OrionAgent;
 use orion_core::{ChatMessage, OrionConfig};
+use orion_instances::InstanceClient;
 
 #[derive(Parser)]
 #[command(name = "orion", about = "Orion — personal AI assistant platform", version)]
@@ -27,7 +28,7 @@ enum Commands {
         action: AgentCommand,
     },
 
-    /// Instance management (coming soon).
+    /// Remote instance management — create, list, kill, pause, restart, logs, ssh, health.
     Instance {
         #[command(subcommand)]
         action: InstanceCommand,
@@ -110,12 +111,19 @@ enum AgentCommand {
     Repl,
 }
 
-// ── Instance subcommands (stubs for future backend) ────────────────────────
+// ── Instance subcommands ────────────────────────────────────────────────────
 
 #[derive(Subcommand)]
 enum InstanceCommand {
     /// Create a new remote instance.
-    Create,
+    Create {
+        /// Instance name.
+        #[arg(short, long)]
+        name: Option<String>,
+        /// Cloud region.
+        #[arg(short, long)]
+        region: Option<String>,
+    },
     /// List running instances.
     List,
     /// Kill a running instance.
@@ -130,6 +138,24 @@ enum InstanceCommand {
     },
     /// Restart a paused or running instance.
     Restart {
+        /// Instance ID.
+        id: String,
+    },
+    /// Stream logs from a running instance.
+    Logs {
+        /// Instance ID.
+        id: String,
+        /// Number of recent log lines to fetch first.
+        #[arg(short, long, default_value = "50")]
+        tail: usize,
+    },
+    /// Open an SSH shell into a remote instance.
+    Ssh {
+        /// Instance ID.
+        id: String,
+    },
+    /// Show health / resource usage for an instance.
+    Health {
         /// Instance ID.
         id: String,
     },
@@ -711,24 +737,227 @@ async fn main() -> anyhow::Result<()> {
             }
         },
 
-        // ── Instance commands (stubs) ──────────────────────────────────
+        // ── Instance commands ──────────────────────────────────────────
         Commands::Instance { action } => {
+            let config = OrionConfig::load().await?;
+            let backend_url = config.resolved_instance_backend_url();
+
+            let Some(backend_url) = backend_url else {
+                eprintln!(
+                    "  {} Instance backend not configured.",
+                    "✗".red().bold()
+                );
+                eprintln!(
+                    "  {} Set {} in .orion/config.toml or env var {}.",
+                    "→".dimmed(),
+                    "instance_backend_url".bright_white(),
+                    "ORION_INSTANCE_BACKEND_URL".bright_white()
+                );
+                std::process::exit(1);
+            };
+
+            let api_key = config.resolved_api_key();
+            let client = InstanceClient::new(&backend_url, api_key)?;
+
             match action {
-                InstanceCommand::Create => {
-                    println!("  {} Instance management is coming soon.", "ℹ".bright_cyan());
-                    println!("  {} This will connect to the Orion backend to spin up remote instances.", "→".dimmed());
+                InstanceCommand::Create { name, region } => {
+                    let req = orion_instances::CreateInstanceRequest { name, region };
+                    match client.create_instance(&req).await {
+                        Ok(inst) => {
+                            println!(
+                                "  {} Created instance {}",
+                                "✓".green().bold(),
+                                inst.id.bright_white()
+                            );
+                            if let Some(name) = &inst.name {
+                                println!("  {} Name: {}", "│".dimmed(), name);
+                            }
+                            println!("  {} Status: {}", "│".dimmed(), inst.status);
+                            if let Some(region) = &inst.region {
+                                println!("  {} Region: {}", "│".dimmed(), region);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("  {} Failed to create instance: {}", "✗".red(), e);
+                            std::process::exit(1);
+                        }
+                    }
                 }
+
                 InstanceCommand::List => {
-                    println!("  {} No instances running (backend not connected).", "ℹ".bright_cyan());
+                    match client.list_instances().await {
+                        Ok(instances) => {
+                            if instances.is_empty() {
+                                println!("  {} No instances found.", "ℹ".bright_cyan());
+                            } else {
+                                for inst in &instances {
+                                    let name = inst.name.as_deref().unwrap_or("(unnamed)");
+                                    let region = inst.region.as_deref().unwrap_or("-");
+                                    println!(
+                                        "  {} [{}] {} region={}",
+                                        &inst.id[..8.min(inst.id.len())],
+                                        inst.status,
+                                        name,
+                                        region
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("  {} Failed to list instances: {}", "✗".red(), e);
+                            std::process::exit(1);
+                        }
+                    }
                 }
+
                 InstanceCommand::Kill { id } => {
-                    println!("  {} Cannot kill instance {}: backend not connected.", "✗".red(), id);
+                    match client.kill_instance(&id).await {
+                        Ok(()) => println!("  {} Killed instance {}.", "✓".green().bold(), id),
+                        Err(e) => {
+                            eprintln!("  {} Failed to kill instance {}: {}", "✗".red(), id, e);
+                            std::process::exit(1);
+                        }
+                    }
                 }
+
                 InstanceCommand::Pause { id } => {
-                    println!("  {} Cannot pause instance {}: backend not connected.", "✗".red(), id);
+                    match client.pause_instance(&id).await {
+                        Ok(()) => println!("  {} Paused instance {}.", "✓".green().bold(), id),
+                        Err(e) => {
+                            eprintln!("  {} Failed to pause instance {}: {}", "✗".red(), id, e);
+                            std::process::exit(1);
+                        }
+                    }
                 }
+
                 InstanceCommand::Restart { id } => {
-                    println!("  {} Cannot restart instance {}: backend not connected.", "✗".red(), id);
+                    match client.restart_instance(&id).await {
+                        Ok(()) => println!("  {} Restarted instance {}.", "✓".green().bold(), id),
+                        Err(e) => {
+                            eprintln!("  {} Failed to restart instance {}: {}", "✗".red(), id, e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+
+                InstanceCommand::Logs { id, tail } => {
+                    println!(
+                        "  {} Streaming logs for {} (tail={})...\n",
+                        "●".bright_green(),
+                        id.bright_white(),
+                        tail
+                    );
+
+                    match client.stream_logs(&id, Some(tail)).await {
+                        Ok(stream) => {
+                            use futures::StreamExt;
+                            tokio::pin!(stream);
+                            while let Some(entry) = StreamExt::next(&mut stream).await {
+                                match entry {
+                                    Ok(log) => {
+                                        let ts = chrono::DateTime::from_timestamp(log.timestamp, 0)
+                                            .map(|dt| dt.format("%H:%M:%S").to_string())
+                                            .unwrap_or_else(|| log.timestamp.to_string());
+                                        let level_colored = match log.level.as_str() {
+                                            "error" => log.level.red().to_string(),
+                                            "warn" => log.level.yellow().to_string(),
+                                            "info" => log.level.green().to_string(),
+                                            "debug" => log.level.dimmed().to_string(),
+                                            _ => log.level.clone(),
+                                        };
+                                        println!(
+                                            "  {} [{}] {}",
+                                            ts.dimmed(),
+                                            level_colored,
+                                            log.message
+                                        );
+                                    }
+                                    Err(e) => {
+                                        eprintln!("  {} Log stream error: {}", "✗".red(), e);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("  {} Failed to stream logs: {}", "✗".red(), e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+
+                InstanceCommand::Ssh { id } => {
+                    match client.get_ssh_info(&id).await {
+                        Ok(ssh) => {
+                            // If a private key is provided, write it to a temp file
+                            let key_file = if let Some(ref key) = ssh.private_key {
+                                let path = std::env::temp_dir().join(format!("orion-ssh-{}.pem", id));
+                                std::fs::write(&path, key)?;
+                                #[cfg(unix)]
+                                {
+                                    use std::os::unix::fs::PermissionsExt;
+                                    std::fs::set_permissions(
+                                        &path,
+                                        std::fs::Permissions::from_mode(0o600),
+                                    )?;
+                                }
+                                Some(path)
+                            } else {
+                                None
+                            };
+
+                            println!(
+                                "  {} Connecting to {}@{}:{}...",
+                                "●".bright_green(),
+                                ssh.user,
+                                ssh.host,
+                                ssh.port
+                            );
+
+                            let mut cmd = std::process::Command::new("ssh");
+                            cmd.arg("-p").arg(ssh.port.to_string());
+                            if let Some(ref key_path) = key_file {
+                                cmd.arg("-i").arg(key_path);
+                                cmd.arg("-o").arg("StrictHostKeyChecking=no");
+                            }
+                            cmd.arg(format!("{}@{}", ssh.user, ssh.host));
+
+                            let status = cmd.status()?;
+
+                            // Clean up temp key file
+                            if let Some(key_path) = key_file {
+                                let _ = std::fs::remove_file(key_path);
+                            }
+
+                            if !status.success() {
+                                std::process::exit(status.code().unwrap_or(1));
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("  {} Failed to get SSH info: {}", "✗".red(), e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+
+                InstanceCommand::Health { id } => {
+                    match client.get_health(&id).await {
+                        Ok(health) => {
+                            println!("  {} Instance {} health:", "●".bright_green(), id.bright_white());
+                            println!("  {} CPU:       {:.1}%", "│".dimmed(), health.cpu_percent);
+                            println!("  {} Memory:    {} MB", "│".dimmed(), health.memory_mb);
+                            println!("  {} Disk:      {} MB", "│".dimmed(), health.disk_mb);
+                            println!("  {} Uptime:    {}s", "│".dimmed(), health.uptime_secs);
+                            let hb = chrono::DateTime::from_timestamp(health.last_heartbeat, 0)
+                                .map(|dt| dt.to_rfc3339())
+                                .unwrap_or_else(|| health.last_heartbeat.to_string());
+                            println!("  {} Heartbeat: {}", "│".dimmed(), hb);
+                        }
+                        Err(e) => {
+                            eprintln!("  {} Failed to get health: {}", "✗".red(), e);
+                            std::process::exit(1);
+                        }
+                    }
                 }
             }
         }

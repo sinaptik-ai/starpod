@@ -26,10 +26,10 @@
 - [ ] **`.orion/system_prompt.md`** — Allow custom system prompt per project (loaded from file, merged with defaults)
 
 ### Instance Management
-- [ ] **Instance backend integration** — Connect `orion instance` commands to remote backend API for spinning up/managing cloud instances
-- [ ] **`orion instance logs <id>`** — Stream logs from a running remote instance
-- [ ] **`orion instance ssh <id>`** — Open a shell into a remote instance
-- [ ] **Instance health monitoring** — Heartbeat, auto-restart on crash, resource usage tracking
+- [x] **Instance backend integration** — `orion-instances` crate with HTTP client connecting to remote backend API. CLI commands (create, list, kill, pause, restart) + gateway API routes. Config via `instance_backend_url` or `ORION_INSTANCE_BACKEND_URL` env var.
+- [x] **`orion instance logs <id>`** — Stream logs (newline-delimited JSON) from a running remote instance with colored level output
+- [x] **`orion instance ssh <id>`** — Fetch SSH connection info from backend, spawn native `ssh` process with optional ephemeral key
+- [x] **Instance health monitoring** — `HealthMonitor` with configurable heartbeat polling, auto-restart on stale heartbeat, status change callbacks. `orion instance health <id>` CLI command + `GET /api/instances/:id/health` gateway route.
 
 ### Agent Capabilities
 - [ ] **Conversation compaction** — Summarize/compress older messages when approaching context window limits. Preserve system prompt + recent turns, store full transcript on disk via `orion-session`.
