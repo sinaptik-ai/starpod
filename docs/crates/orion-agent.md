@@ -32,10 +32,11 @@ agent.finalize_chat(&session_id, &user_text, &result_text, &result).await;
 2. **Resolve session** — find or create session via `SessionManager`
 3. **Bootstrap context** — memory files + daily logs
 4. **Build system prompt** — identity + context + skills + tools + time
-5. **Run agent-sdk query** — agentic loop with custom tools + automatic conversation compaction
-6. **Drain followup messages** — at each iteration boundary, inject any queued user messages (when `followup_mode = "inject"`)
-7. **Record usage** — tokens and cost to session database
-8. **Append daily log** — conversation summary
+5. **Build provider** — construct `LlmProvider` from `config.provider` (anthropic, openai, gemini, groq, deepseek, openrouter, ollama)
+6. **Run agent-sdk query** — agentic loop with custom tools via the selected provider + automatic conversation compaction
+7. **Drain followup messages** — at each iteration boundary, inject any queued user messages (when `followup_mode = "inject"`)
+8. **Record usage** — tokens and cost to session database
+9. **Append daily log** — conversation summary
 
 ## Followup Message Handling
 

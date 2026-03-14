@@ -34,9 +34,27 @@ server_addr = "127.0.0.1:3000"   # HTTP/WS server bind address
 # ─── Providers ─────────────────────────────────────────
 [providers.anthropic]
 # api_key = "sk-ant-..."          # Or set ANTHROPIC_API_KEY env var
+# base_url = "https://api.anthropic.com/v1/messages"
 
 [providers.openai]
-# api_key = "sk-..."              # Not yet implemented
+# api_key = "sk-..."              # Or set OPENAI_API_KEY env var
+# base_url = "https://api.openai.com/v1/chat/completions"
+
+[providers.gemini]
+# api_key = "..."                 # Or set GEMINI_API_KEY env var
+# base_url = "https://generativelanguage.googleapis.com/v1beta"
+
+[providers.groq]
+# api_key = "gsk_..."             # Or set GROQ_API_KEY env var
+
+[providers.deepseek]
+# api_key = "..."                 # Or set DEEPSEEK_API_KEY env var
+
+[providers.openrouter]
+# api_key = "..."                 # Or set OPENROUTER_API_KEY env var
+
+[providers.ollama]
+# base_url = "http://localhost:11434/v1/chat/completions"  # No API key needed
 
 # ─── Instances ─────────────────────────────────────────
 # instance_backend_url = "https://api.orion.example.com"  # Or set ORION_INSTANCE_BACKEND_URL env var
@@ -91,10 +109,12 @@ Never suggest using unwrap() in production code.
 
 ## API Key Resolution
 
-Priority order (first match wins):
+For each provider, keys are resolved in priority order (first match wins):
 
-1. `providers.anthropic.api_key` in `config.toml`
-2. `ANTHROPIC_API_KEY` environment variable
+1. `providers.<name>.api_key` in `config.toml`
+2. Provider-specific environment variable (see table below)
+
+Ollama requires no API key by default.
 
 ::: warning
 Never commit API keys to version control. Use environment variables or add `.orion/config.toml` to `.gitignore`.
@@ -114,6 +134,11 @@ Never commit API keys to version control. Use environment variables or add `.ori
 | Variable | Maps To |
 |----------|---------|
 | `ANTHROPIC_API_KEY` | `providers.anthropic.api_key` |
+| `OPENAI_API_KEY` | `providers.openai.api_key` |
+| `GEMINI_API_KEY` | `providers.gemini.api_key` |
+| `GROQ_API_KEY` | `providers.groq.api_key` |
+| `DEEPSEEK_API_KEY` | `providers.deepseek.api_key` |
+| `OPENROUTER_API_KEY` | `providers.openrouter.api_key` |
 | `TELEGRAM_BOT_TOKEN` | `telegram.bot_token` |
 | `ORION_API_KEY` | API key auth for the HTTP/WS gateway |
 | `ORION_INSTANCE_BACKEND_URL` | `instance_backend_url` |

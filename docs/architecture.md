@@ -66,13 +66,27 @@ The memory system bootstraps context:
 
 ### 4. Agent Loop
 
-The `agent-sdk` drives the agentic loop:
+The `agent-sdk` drives the agentic loop through the `LlmProvider` trait:
 
 ```
-prompt → drain followups → Claude API → tool calls → execute → feed results → repeat
+prompt → drain followups → LLM provider → tool calls → execute → feed results → repeat
 ```
 
 At each iteration boundary (before calling the API), any followup messages that arrived via the `followup_rx` channel are drained and appended as user messages. This allows the agent to incorporate rapid user messages without interrupting the current loop. The behavior is configurable via `followup_mode` (`"inject"` or `"queue"`).
+
+The provider is selected at runtime from `config.provider`:
+
+| Provider | Struct | Default Endpoint |
+|----------|--------|-----------------|
+| `anthropic` | `AnthropicProvider` | `api.anthropic.com/v1/messages` |
+| `openai` | `OpenAiProvider` | `api.openai.com/v1/chat/completions` |
+| `gemini` | `GeminiProvider` | `generativelanguage.googleapis.com/v1beta` |
+| `groq` | `OpenAiProvider` | `api.groq.com/openai/v1/chat/completions` |
+| `deepseek` | `OpenAiProvider` | `api.deepseek.com/v1/chat/completions` |
+| `openrouter` | `OpenAiProvider` | `openrouter.ai/api/v1/chat/completions` |
+| `ollama` | `OpenAiProvider` | `localhost:11434/v1/chat/completions` |
+
+Each provider translates between the canonical Anthropic types (`CreateMessageRequest`, `MessageResponse`, `StreamEvent`) and its own wire format internally.
 
 The agent has access to file I/O, web search, memory, vault, skills, and cron tools.
 

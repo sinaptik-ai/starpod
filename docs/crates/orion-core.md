@@ -38,11 +38,17 @@ OrionConfig::init(dir, content)    // -> Result<()>
 Methods that check both config and environment variables:
 
 ```rust
-config.resolved_api_key()                 // config || ANTHROPIC_API_KEY
-config.resolved_telegram_token()          // config || TELEGRAM_BOT_TOKEN
-config.resolved_telegram_allowed_users()  // &[u64]
-config.resolved_db_path()                 // data_dir/memory.db
+config.resolved_api_key()                     // config || ANTHROPIC_API_KEY
+config.resolved_telegram_token()              // config || TELEGRAM_BOT_TOKEN
+config.resolved_telegram_allowed_users()      // &[u64]
+config.resolved_db_path()                     // data_dir/memory.db
+
+// Multi-provider resolution
+config.resolved_provider_api_key("openai")    // config || OPENAI_API_KEY
+config.resolved_provider_base_url("openai")   // config || default endpoint
 ```
+
+Provider API key env vars: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`. Ollama requires no key.
 
 ## ChatMessage
 

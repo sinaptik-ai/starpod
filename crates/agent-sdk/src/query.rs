@@ -27,6 +27,8 @@ use crate::hooks::{HookCallbackMatcher, HookEvent, HookInput};
 use crate::hooks::input::BaseHookInput;
 use crate::options::{Options, PermissionMode, ThinkingConfig};
 use crate::permissions::{PermissionEvaluator, PermissionVerdict};
+use crate::provider::LlmProvider;
+use crate::providers::AnthropicProvider;
 use crate::session::Session;
 use crate::tools::definitions::get_tool_definitions;
 use crate::tools::executor::{ToolExecutor, ToolResult};
@@ -271,11 +273,17 @@ async fn run_agent_loop(
         return Ok(());
     }
 
-    // Initialize API client
+    // Initialize API client (used for compaction calls)
     let api_client = if let Some(key) = &options.api_key {
         ApiClient::with_api_key(key)
     } else {
         ApiClient::new()?
+    };
+
+    // Initialize LLM provider
+    let provider: Box<dyn LlmProvider> = match options.provider.take() {
+        Some(p) => p,
+        None => Box::new(AnthropicProvider::from_env()?),
     };
 
     // Initialize tool executor
@@ -506,9 +514,9 @@ async fn run_agent_loop(
             thinking: thinking_param,
         };
 
-        // Call Claude
+        // Call LLM provider
         let api_start = Instant::now();
-        let response = match api_client.create_message(&request).await {
+        let response = match provider.create_message(&request).await {
             Ok(resp) => resp,
             Err(e) => {
                 error!("API call failed: {}", e);
@@ -537,10 +545,9 @@ async fn run_agent_loop(
         total_usage.cache_read_input_tokens +=
             response.usage.cache_read_input_tokens.unwrap_or(0);
 
-        // Estimate cost (rough: $3/M input, $15/M output for Sonnet)
-        let turn_cost = (response.usage.input_tokens as f64 * 3.0
-            + response.usage.output_tokens as f64 * 15.0)
-            / 1_000_000.0;
+        // Estimate cost using provider-specific rates
+        let rates = provider.cost_rates(&model);
+        let turn_cost = rates.compute(response.usage.input_tokens, response.usage.output_tokens);
         total_cost += turn_cost;
 
         // Update model usage

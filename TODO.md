@@ -35,7 +35,7 @@
 - [ ] **Conversation compaction** — Summarize/compress older messages when approaching context window limits. Preserve system prompt + recent turns, store full transcript on disk via `orion-session`.
 - [ ] **Conversation history / context carry-over** — Load previous session context into new sessions for continuity
 - [x] **Group followup messages** — Batch rapid user messages into a single agent turn. Configurable via `followup_mode` (`"inject"` or `"queue"`)
-- [ ] **Multi-provider implementation** — Trait-based LLM provider abstraction (OpenAI, Gemini, DeepSeek, Ollama, etc.) with runtime provider switching. Config structure is ready.
+- [x] **Multi-provider implementation** — Trait-based `LlmProvider` abstraction with `AnthropicProvider`, `OpenAiProvider` (also Groq, DeepSeek, OpenRouter, Ollama), and `GeminiProvider`. Runtime switching via `config.provider`. Per-provider cost rates, capabilities, and streaming support.
 - [ ] **Telegram markdown formatting** — Convert agent response markdown to Telegram MarkdownV2 (escape special chars, map code blocks, bold, italic, links). Currently sent as plain text, losing all formatting.
 - [x] **File attachments** — Image/file uploads in web UI (drag & drop, file picker) and Telegram (photos, documents). Images sent via Claude vision API; non-image files saved to `{data_dir}/downloads/`. 20 MB per-file limit. Claude auto-resizes large images.
 - [ ] **MCP (Model Context Protocol) support** — Allow connecting external MCP servers as tool providers

@@ -362,6 +362,68 @@ impl OrionConfig {
             .or_else(|| std::env::var("ORION_INSTANCE_BACKEND_URL").ok())
     }
 
+    /// Resolved API key for any provider.
+    ///
+    /// Checks `providers.<name>.api_key` in config, then falls back to the
+    /// conventional environment variable for that provider.
+    pub fn resolved_provider_api_key(&self, provider: &str) -> Option<String> {
+        let cfg = match provider {
+            "anthropic" => self.providers.anthropic.as_ref(),
+            "openai" => self.providers.openai.as_ref(),
+            "gemini" => self.providers.gemini.as_ref(),
+            "groq" => self.providers.groq.as_ref(),
+            "deepseek" => self.providers.deepseek.as_ref(),
+            "openrouter" => self.providers.openrouter.as_ref(),
+            "ollama" => self.providers.ollama.as_ref(),
+            _ => None,
+        };
+
+        cfg.and_then(|c| c.api_key.clone()).or_else(|| {
+            let env_var = match provider {
+                "anthropic" => "ANTHROPIC_API_KEY",
+                "openai" => "OPENAI_API_KEY",
+                "gemini" => "GEMINI_API_KEY",
+                "groq" => "GROQ_API_KEY",
+                "deepseek" => "DEEPSEEK_API_KEY",
+                "openrouter" => "OPENROUTER_API_KEY",
+                "ollama" => return Some(String::new()), // Ollama doesn't require a key
+                _ => return None,
+            };
+            std::env::var(env_var).ok()
+        })
+    }
+
+    /// Resolved base URL for any provider.
+    ///
+    /// Checks `providers.<name>.base_url` in config, then returns the default
+    /// endpoint for that provider.
+    pub fn resolved_provider_base_url(&self, provider: &str) -> Option<String> {
+        let cfg = match provider {
+            "anthropic" => self.providers.anthropic.as_ref(),
+            "openai" => self.providers.openai.as_ref(),
+            "gemini" => self.providers.gemini.as_ref(),
+            "groq" => self.providers.groq.as_ref(),
+            "deepseek" => self.providers.deepseek.as_ref(),
+            "openrouter" => self.providers.openrouter.as_ref(),
+            "ollama" => self.providers.ollama.as_ref(),
+            _ => None,
+        };
+
+        cfg.and_then(|c| c.base_url.clone()).or_else(|| {
+            let default_url = match provider {
+                "anthropic" => "https://api.anthropic.com/v1/messages",
+                "openai" => "https://api.openai.com/v1/chat/completions",
+                "gemini" => "https://generativelanguage.googleapis.com/v1beta",
+                "groq" => "https://api.groq.com/openai/v1/chat/completions",
+                "deepseek" => "https://api.deepseek.com/v1/chat/completions",
+                "openrouter" => "https://openrouter.ai/api/v1/chat/completions",
+                "ollama" => "http://localhost:11434/v1/chat/completions",
+                _ => return None,
+            };
+            Some(default_url.to_string())
+        })
+    }
+
     /// Path to the `.orion/` directory for this project.
     pub fn orion_dir(&self) -> PathBuf {
         self.project_root.join(PROJECT_DIR)
@@ -587,5 +649,76 @@ mod tests {
         let config: OrionConfig = toml::from_str(toml).unwrap();
         std::env::remove_var("ANTHROPIC_API_KEY");
         assert!(config.resolved_api_key().is_none());
+    }
+
+    #[test]
+    fn resolved_provider_api_key_from_config() {
+        let toml = r#"
+            [providers.openai]
+            api_key = "sk-test-openai-key"
+        "#;
+        let config: OrionConfig = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.resolved_provider_api_key("openai"),
+            Some("sk-test-openai-key".to_string())
+        );
+    }
+
+    #[test]
+    fn resolved_provider_api_key_unknown_provider_returns_none() {
+        let config = OrionConfig::default();
+        assert_eq!(config.resolved_provider_api_key("nonexistent_provider"), None);
+    }
+
+    #[test]
+    fn resolved_provider_base_url_defaults() {
+        let config = OrionConfig::default();
+
+        assert_eq!(
+            config.resolved_provider_base_url("anthropic"),
+            Some("https://api.anthropic.com/v1/messages".to_string())
+        );
+        assert_eq!(
+            config.resolved_provider_base_url("openai"),
+            Some("https://api.openai.com/v1/chat/completions".to_string())
+        );
+        assert_eq!(
+            config.resolved_provider_base_url("gemini"),
+            Some("https://generativelanguage.googleapis.com/v1beta".to_string())
+        );
+        assert_eq!(
+            config.resolved_provider_base_url("groq"),
+            Some("https://api.groq.com/openai/v1/chat/completions".to_string())
+        );
+        assert_eq!(
+            config.resolved_provider_base_url("ollama"),
+            Some("http://localhost:11434/v1/chat/completions".to_string())
+        );
+    }
+
+    #[test]
+    fn resolved_provider_base_url_unknown_returns_none() {
+        let config = OrionConfig::default();
+        assert_eq!(config.resolved_provider_base_url("nonexistent_provider"), None);
+    }
+
+    #[test]
+    fn resolved_provider_base_url_config_override() {
+        let toml = r#"
+            [providers.openai]
+            base_url = "https://custom.openai.example.com/v1/chat"
+        "#;
+        let config: OrionConfig = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.resolved_provider_base_url("openai"),
+            Some("https://custom.openai.example.com/v1/chat".to_string())
+        );
+    }
+
+    #[test]
+    fn resolved_provider_api_key_ollama_returns_empty_string() {
+        let config = OrionConfig::default();
+        // Ollama doesn't require an API key, returns empty string
+        assert_eq!(config.resolved_provider_api_key("ollama"), Some(String::new()));
     }
 }

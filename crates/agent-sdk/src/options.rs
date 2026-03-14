@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 
 use crate::hooks::{HookCallbackMatcher, HookEvent};
 use crate::mcp::McpServerConfig;
+use crate::provider::LlmProvider;
 use crate::tools::executor::ToolResult;
 use crate::types::agent::AgentDefinition;
 use crate::types::permissions::{CanUseToolOptions, PermissionResult};
@@ -260,6 +261,9 @@ pub struct Options {
 
     /// File attachments to include in the first user message (images, PDFs, etc.).
     pub attachments: Vec<QueryAttachment>,
+
+    /// LLM provider to use. If `None`, defaults to `AnthropicProvider::from_env()`.
+    pub provider: Option<Box<dyn LlmProvider>>,
 }
 
 /// A custom tool definition to send to the Claude API.
@@ -350,6 +354,7 @@ impl Default for Options {
             followup_rx: None,
             api_key: None,
             attachments: Vec::new(),
+            provider: None,
         }
     }
 }
@@ -535,6 +540,11 @@ impl OptionsBuilder {
 
     pub fn attachments(mut self, attachments: Vec<QueryAttachment>) -> Self {
         self.options.attachments = attachments;
+        self
+    }
+
+    pub fn provider(mut self, provider: Box<dyn LlmProvider>) -> Self {
+        self.options.provider = Some(provider);
         self
     }
 

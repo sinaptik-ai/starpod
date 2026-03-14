@@ -1,6 +1,6 @@
 # agent-sdk
 
-Rust port of the Claude Agent SDK. Provides the `query()` function which drives the agentic loop: prompt → Claude API → tool execution → feed results → repeat.
+Rust port of the Claude Agent SDK. Provides the `query()` function which drives the agentic loop: prompt → LLM provider → tool execution → feed results → repeat.
 
 ## Usage
 
@@ -23,6 +23,55 @@ while let Some(msg) = stream.next().await {
 }
 ```
 
+## Multi-Provider Support
+
+The SDK supports multiple LLM providers via the `LlmProvider` trait. Each provider translates between the canonical API types and its own wire format.
+
+### Available Providers
+
+| Provider | Struct | Also Serves |
+|----------|--------|-------------|
+| Anthropic | `AnthropicProvider` | Bedrock, Vertex (via env vars) |
+| OpenAI | `OpenAiProvider` | Groq, DeepSeek, OpenRouter, Ollama |
+| Gemini | `GeminiProvider` | — |
+
+### Using a Specific Provider
+
+```rust
+use agent_sdk::{Options, OpenAiProvider};
+
+let provider = OpenAiProvider::new("sk-...");
+
+let stream = query(
+    "Hello!",
+    Options::builder()
+        .provider(Box::new(provider))
+        .model("gpt-4.1")
+        .build(),
+);
+```
+
+If no provider is set, defaults to `AnthropicProvider::from_env()`.
+
+### Implementing a Custom Provider
+
+```rust
+use agent_sdk::{LlmProvider, ProviderCapabilities, CostRates};
+use agent_sdk::client::{CreateMessageRequest, MessageResponse, StreamEvent};
+use async_trait::async_trait;
+
+#[async_trait]
+impl LlmProvider for MyProvider {
+    fn name(&self) -> &str { "my-provider" }
+    fn capabilities(&self) -> ProviderCapabilities { /* ... */ }
+    fn cost_rates(&self, model: &str) -> CostRates { /* ... */ }
+    async fn create_message(&self, req: &CreateMessageRequest)
+        -> Result<MessageResponse> { /* ... */ }
+    async fn create_message_stream(&self, req: &CreateMessageRequest)
+        -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>> { /* ... */ }
+}
+```
+
 ## Options Builder
 
 ```rust
@@ -36,12 +85,13 @@ Options::builder()
     .permission_mode(PermissionMode::BypassPermissions)
     .external_tool_handler(handler_fn)
     .custom_tools(vec![tool_def])
+    .provider(Box::new(my_provider))
     .build()
 ```
 
 | Method | Description |
 |--------|-------------|
-| `.model()` | Claude model identifier |
+| `.model()` | LLM model identifier |
 | `.max_turns()` | Maximum agentic loop iterations |
 | `.system_prompt()` | System prompt text |
 | `.allowed_tools()` | Restrict available tools |
@@ -52,6 +102,7 @@ Options::builder()
 | `.custom_tools()` | Custom tool definitions |
 | `.context_budget()` | Token threshold for conversation compaction |
 | `.compaction_model()` | Model for generating compaction summaries |
+| `.provider()` | LLM provider (default: Anthropic) |
 
 ## Message Types
 
@@ -100,4 +151,4 @@ The handler returns `Some(ToolResult)` to handle a tool, or `None` to let the SD
 
 ## Tests
 
-24 unit tests + 2 doc-tests.
+31 unit tests + 2 doc-tests.

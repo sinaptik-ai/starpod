@@ -7,7 +7,8 @@ use chrono::Local;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, warn};
 
-use agent_sdk::{ExternalToolHandlerFn, Message, Options, PermissionMode, Query, QueryAttachment};
+use agent_sdk::{ExternalToolHandlerFn, LlmProvider, Message, Options, PermissionMode, Query, QueryAttachment};
+use agent_sdk::{AnthropicProvider, GeminiProvider, OpenAiProvider};
 use agent_sdk::options::{SystemPrompt, ThinkingConfig};
 use orion_core::{FollowupMode, ReasoningEffort};
 use tokio::sync::mpsc;
@@ -206,6 +207,38 @@ impl OrionAgent {
         tools
     }
 
+    /// Build the LLM provider based on `config.provider`.
+    fn build_provider(&self) -> Result<Box<dyn LlmProvider>> {
+        let provider_name = &self.config.provider;
+        let api_key = self.config.resolved_provider_api_key(provider_name)
+            .ok_or_else(|| OrionError::Config(format!(
+                "No API key found for provider '{}'. Set it in config.toml or via environment variable.",
+                provider_name
+            )))?;
+        let base_url = self.config.resolved_provider_base_url(provider_name)
+            .ok_or_else(|| OrionError::Config(format!(
+                "Unknown provider: '{}'",
+                provider_name
+            )))?;
+
+        let provider: Box<dyn LlmProvider> = match provider_name.as_str() {
+            "anthropic" => Box::new(AnthropicProvider::new(api_key, base_url)),
+            "gemini" => Box::new(GeminiProvider::with_base_url(api_key, base_url)),
+            // OpenAI-compatible providers
+            "openai" | "groq" | "deepseek" | "openrouter" | "ollama" => {
+                Box::new(OpenAiProvider::with_base_url(api_key, base_url, provider_name))
+            }
+            other => {
+                return Err(OrionError::Config(format!(
+                    "Unsupported provider: '{}'. Supported: anthropic, openai, gemini, groq, deepseek, openrouter, ollama",
+                    other
+                )));
+            }
+        };
+
+        Ok(provider)
+    }
+
     /// Build the external tool handler closure.
     fn build_tool_handler(&self) -> ExternalToolHandlerFn {
         let ctx = Arc::new(ToolContext {
@@ -257,7 +290,9 @@ impl OrionAgent {
         // Step 3: Build system prompt
         let system_prompt = self.build_system_prompt(&session_id)?;
 
-        // Step 4: Build options and run query
+        // Step 4: Build provider and options, then run query
+        let provider = self.build_provider()?;
+
         let mut builder = Options::builder()
             .allowed_tools(Self::allowed_tools())
             .system_prompt(SystemPrompt::Custom(system_prompt))
@@ -268,7 +303,8 @@ impl OrionAgent {
             .context_budget(160_000)
             .external_tool_handler(self.build_tool_handler())
             .custom_tools(custom_tool_definitions())
-            .attachments(query_atts);
+            .attachments(query_atts)
+            .provider(provider);
 
         if let Some(ref cm) = self.config.compaction_model {
             builder = builder.compaction_model(cm);
@@ -285,7 +321,7 @@ impl OrionAgent {
 
         let mut stream = agent_sdk::query(&prompt, options);
 
-        // Step 4: Collect result
+        // Step 5: Collect result
         let mut result_text = String::new();
         let mut usage = ChatUsage::default();
 
@@ -406,6 +442,7 @@ impl OrionAgent {
         };
 
         let system_prompt = self.build_system_prompt(&session_id)?;
+        let provider = self.build_provider()?;
 
         // Create the followup channel — sender goes to caller, receiver to the agent loop
         let (followup_tx, followup_rx) = mpsc::unbounded_channel::<String>();
@@ -421,7 +458,8 @@ impl OrionAgent {
             .external_tool_handler(self.build_tool_handler())
             .custom_tools(custom_tool_definitions())
             .followup_rx(followup_rx)
-            .attachments(query_atts);
+            .attachments(query_atts)
+            .provider(provider);
 
         if let Some(ref cm) = self.config.compaction_model {
             builder = builder.compaction_model(cm);
