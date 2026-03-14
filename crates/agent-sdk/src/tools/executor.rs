@@ -25,6 +25,9 @@ pub struct ToolResult {
     pub content: String,
     /// Whether the result represents an error condition.
     pub is_error: bool,
+    /// Optional rich content (e.g. image blocks) to send directly as the API
+    /// tool-result `content` field. When set, this takes precedence over `content`.
+    pub raw_content: Option<serde_json::Value>,
 }
 
 impl ToolResult {
@@ -33,6 +36,7 @@ impl ToolResult {
         Self {
             content,
             is_error: false,
+            raw_content: None,
         }
     }
 
@@ -41,6 +45,7 @@ impl ToolResult {
         Self {
             content,
             is_error: true,
+            raw_content: None,
         }
     }
 }
@@ -108,8 +113,29 @@ impl ToolExecutor {
 
     /// Read a file's contents, optionally slicing by line offset and limit.
     /// Output uses `cat -n` style (line-number prefixed) formatting.
+    /// Image files (png, jpg, gif, webp) are returned as base64 image content
+    /// blocks so the model can see them directly.
     async fn execute_read(&self, input: &FileReadInput) -> Result<ToolResult> {
         let path = self.resolve_path(&input.file_path);
+
+        // Check if the file is an image by extension.
+        let ext = path
+            .extension()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_lowercase();
+
+        let media_type = match ext.as_str() {
+            "png" => Some("image/png"),
+            "jpg" | "jpeg" => Some("image/jpeg"),
+            "gif" => Some("image/gif"),
+            "webp" => Some("image/webp"),
+            _ => None,
+        };
+
+        if let Some(media_type) = media_type {
+            return self.read_image(&path, media_type).await;
+        }
 
         let content = match tokio::fs::read_to_string(&path).await {
             Ok(c) => c,
@@ -143,6 +169,46 @@ impl ToolExecutor {
         }
 
         Ok(ToolResult::ok(output))
+    }
+
+    /// Read an image file and return it as a base64 image content block.
+    async fn read_image(&self, path: &Path, media_type: &str) -> Result<ToolResult> {
+        let bytes = match tokio::fs::read(path).await {
+            Ok(b) => b,
+            Err(e) => {
+                return Ok(ToolResult::err(format!(
+                    "Failed to read {}: {e}",
+                    path.display()
+                )));
+            }
+        };
+
+        // Cap at 20 MB to avoid blowing up context.
+        if bytes.len() > 20 * 1024 * 1024 {
+            return Ok(ToolResult::err(format!(
+                "Image too large ({:.1} MB, max 20 MB): {}",
+                bytes.len() as f64 / (1024.0 * 1024.0),
+                path.display()
+            )));
+        }
+
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+        Ok(ToolResult {
+            content: format!("Image: {}", path.display()),
+            is_error: false,
+            raw_content: Some(serde_json::json!([
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": b64,
+                    }
+                }
+            ])),
+        })
     }
 
     // ── Write ───────────────────────────────────────────────────────────
@@ -257,6 +323,7 @@ impl ToolExecutor {
                     Ok(ToolResult {
                         content: format!("Process started in background (pid: {pid})"),
                         is_error: false,
+                        raw_content: None,
                     })
                 }
                 Err(e) => Ok(ToolResult::err(format!("Failed to spawn process: {e}"))),
@@ -326,6 +393,7 @@ impl ToolExecutor {
                 Ok(ToolResult {
                     content: combined,
                     is_error,
+                    raw_content: None,
                 })
             }
             Ok(Err(e)) => Ok(ToolResult::err(format!("Process IO error: {e}"))),
@@ -694,5 +762,218 @@ fn apply_offset_limit(items: Vec<String>, offset: usize, head_limit: usize) -> V
         after_offset.into_iter().take(head_limit).collect()
     } else {
         after_offset
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    fn setup() -> (TempDir, ToolExecutor) {
+        let tmp = TempDir::new().unwrap();
+        let executor = ToolExecutor::new(tmp.path().to_path_buf());
+        (tmp, executor)
+    }
+
+    // ── Read: text files ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn read_text_file() {
+        let (tmp, executor) = setup();
+        let file = tmp.path().join("hello.txt");
+        std::fs::write(&file, "line one\nline two\nline three\n").unwrap();
+
+        let result = executor
+            .execute("Read", json!({ "file_path": file.to_str().unwrap() }))
+            .await
+            .unwrap();
+
+        assert!(!result.is_error);
+        assert!(result.raw_content.is_none());
+        assert!(result.content.contains("line one"));
+        assert!(result.content.contains("line three"));
+    }
+
+    #[tokio::test]
+    async fn read_text_file_with_offset_and_limit() {
+        let (tmp, executor) = setup();
+        let file = tmp.path().join("lines.txt");
+        std::fs::write(&file, "a\nb\nc\nd\ne\n").unwrap();
+
+        let result = executor
+            .execute(
+                "Read",
+                json!({ "file_path": file.to_str().unwrap(), "offset": 1, "limit": 2 }),
+            )
+            .await
+            .unwrap();
+
+        assert!(!result.is_error);
+        // Offset 1 means skip first line, so we get lines 2-3 (b, c)
+        assert!(result.content.contains("b"));
+        assert!(result.content.contains("c"));
+        assert!(!result.content.contains("a"));
+        assert!(!result.content.contains("d"));
+    }
+
+    #[tokio::test]
+    async fn read_missing_file_returns_error() {
+        let (tmp, executor) = setup();
+        let file = tmp.path().join("nope.txt");
+
+        let result = executor
+            .execute("Read", json!({ "file_path": file.to_str().unwrap() }))
+            .await
+            .unwrap();
+
+        assert!(result.is_error);
+        assert!(result.content.contains("Failed to read"));
+    }
+
+    // ── Read: image files ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn read_png_returns_image_content_block() {
+        let (tmp, executor) = setup();
+        let file = tmp.path().join("test.png");
+        let png_bytes = b"\x89PNG\r\n\x1a\nfake-png-payload";
+        std::fs::write(&file, png_bytes).unwrap();
+
+        let result = executor
+            .execute("Read", json!({ "file_path": file.to_str().unwrap() }))
+            .await
+            .unwrap();
+
+        assert!(!result.is_error);
+        assert!(result.raw_content.is_some(), "image should set raw_content");
+
+        let blocks = result.raw_content.unwrap();
+        let block = blocks.as_array().unwrap().first().unwrap();
+        assert_eq!(block["type"], "image");
+        assert_eq!(block["source"]["type"], "base64");
+        assert_eq!(block["source"]["media_type"], "image/png");
+        // Verify the data round-trips through base64
+        let data = block["source"]["data"].as_str().unwrap();
+        assert!(!data.is_empty());
+        use base64::Engine;
+        let decoded = base64::engine::general_purpose::STANDARD.decode(data).unwrap();
+        assert_eq!(decoded, png_bytes);
+    }
+
+    #[tokio::test]
+    async fn read_jpeg_returns_image_content_block() {
+        let (tmp, executor) = setup();
+        // Write some bytes with .jpg extension — we don't need a valid JPEG,
+        // just enough to test the extension detection and base64 encoding.
+        let file = tmp.path().join("photo.jpg");
+        let fake_jpeg = b"\xFF\xD8\xFF\xE0fake-jpeg-data";
+        std::fs::write(&file, fake_jpeg).unwrap();
+
+        let result = executor
+            .execute("Read", json!({ "file_path": file.to_str().unwrap() }))
+            .await
+            .unwrap();
+
+        assert!(!result.is_error);
+        let blocks = result.raw_content.unwrap();
+        let block = blocks.as_array().unwrap().first().unwrap();
+        assert_eq!(block["source"]["media_type"], "image/jpeg");
+    }
+
+    #[tokio::test]
+    async fn read_jpeg_extension_detected() {
+        let (tmp, executor) = setup();
+        let file = tmp.path().join("photo.jpeg");
+        std::fs::write(&file, b"data").unwrap();
+
+        let result = executor
+            .execute("Read", json!({ "file_path": file.to_str().unwrap() }))
+            .await
+            .unwrap();
+
+        assert!(!result.is_error);
+        let blocks = result.raw_content.unwrap();
+        assert_eq!(blocks[0]["source"]["media_type"], "image/jpeg");
+    }
+
+    #[tokio::test]
+    async fn read_gif_returns_image_content_block() {
+        let (tmp, executor) = setup();
+        let file = tmp.path().join("anim.gif");
+        std::fs::write(&file, b"GIF89adata").unwrap();
+
+        let result = executor
+            .execute("Read", json!({ "file_path": file.to_str().unwrap() }))
+            .await
+            .unwrap();
+
+        assert!(!result.is_error);
+        let blocks = result.raw_content.unwrap();
+        assert_eq!(blocks[0]["source"]["media_type"], "image/gif");
+    }
+
+    #[tokio::test]
+    async fn read_webp_returns_image_content_block() {
+        let (tmp, executor) = setup();
+        let file = tmp.path().join("img.webp");
+        std::fs::write(&file, b"RIFF\x00\x00\x00\x00WEBP").unwrap();
+
+        let result = executor
+            .execute("Read", json!({ "file_path": file.to_str().unwrap() }))
+            .await
+            .unwrap();
+
+        assert!(!result.is_error);
+        let blocks = result.raw_content.unwrap();
+        assert_eq!(blocks[0]["source"]["media_type"], "image/webp");
+    }
+
+    #[tokio::test]
+    async fn read_missing_image_returns_error() {
+        let (tmp, executor) = setup();
+        let file = tmp.path().join("nope.png");
+
+        let result = executor
+            .execute("Read", json!({ "file_path": file.to_str().unwrap() }))
+            .await
+            .unwrap();
+
+        assert!(result.is_error);
+        assert!(result.content.contains("Failed to read"));
+        assert!(result.raw_content.is_none());
+    }
+
+    #[tokio::test]
+    async fn read_non_image_extension_returns_text() {
+        let (tmp, executor) = setup();
+        let file = tmp.path().join("data.csv");
+        std::fs::write(&file, "a,b,c\n1,2,3\n").unwrap();
+
+        let result = executor
+            .execute("Read", json!({ "file_path": file.to_str().unwrap() }))
+            .await
+            .unwrap();
+
+        assert!(!result.is_error);
+        assert!(result.raw_content.is_none(), "csv should not be treated as image");
+        assert!(result.content.contains("a,b,c"));
+    }
+
+    // ── ToolResult ──────────────────────────────────────────────────────
+
+    #[test]
+    fn tool_result_ok_has_no_raw_content() {
+        let r = ToolResult::ok("hello".into());
+        assert!(!r.is_error);
+        assert!(r.raw_content.is_none());
+    }
+
+    #[test]
+    fn tool_result_err_has_no_raw_content() {
+        let r = ToolResult::err("boom".into());
+        assert!(r.is_error);
+        assert!(r.raw_content.is_none());
     }
 }

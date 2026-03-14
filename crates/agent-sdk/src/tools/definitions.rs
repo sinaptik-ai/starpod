@@ -25,7 +25,7 @@ pub fn get_tool_definition(name: &str) -> Option<ToolDef> {
     match name {
         "Read" => Some(ToolDef {
             name: "Read",
-            description: "Read a file from the filesystem. Returns the file content with line numbers.",
+            description: "Read a file from the filesystem. Returns the file content with line numbers. Image files (png, jpg, gif, webp) are returned as visual content so you can see and analyze them directly.",
             input_schema: json!({
                 "type": "object",
                 "properties": {

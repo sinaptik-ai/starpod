@@ -50,6 +50,9 @@ which = "7"
 # Glob patterns
 glob = "0.3"
 
+# Base64 encoding (for image tool results)
+base64 = "0.22"
+
 # Temporary directories
 tempfile = "3"
 
