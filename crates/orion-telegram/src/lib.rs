@@ -13,9 +13,12 @@ use orion_core::{ChatMessage, OrionConfig};
 /// Maximum Telegram message length.
 const MAX_MSG_LEN: usize = 4096;
 
-/// Allowed user IDs (empty = no one can chat, only /start works to show user ID).
+/// Allowed user IDs and usernames (both empty = no one can chat, only /start works).
 #[derive(Clone)]
-struct AllowedUsers(Arc<HashSet<u64>>);
+struct AllowedUsers {
+    ids: Arc<HashSet<u64>>,
+    usernames: Arc<HashSet<String>>,
+}
 
 /// Message delivery config passed through teloxide DI.
 #[derive(Clone)]
@@ -32,14 +35,15 @@ struct AgentName(String);
 /// This takes ownership of the agent so it can be shared with the gateway
 /// if both are running. Pass `Arc<OrionAgent>` directly via `run_with_agent`.
 pub async fn run(config: OrionConfig, token: String) -> orion_core::Result<()> {
-    let allowed = config.resolved_telegram_allowed_users().to_vec();
+    let allowed_ids = config.resolved_telegram_allowed_user_ids();
+    let allowed_names = config.resolved_telegram_allowed_usernames();
     let agent = Arc::new(OrionAgent::new(config).await?);
-    run_with_agent_filtered(agent, token, allowed).await
+    run_with_agent_filtered(agent, token, allowed_ids, allowed_names).await
 }
 
 /// Run the Telegram bot with a pre-built agent (for sharing with the gateway).
 pub async fn run_with_agent(agent: Arc<OrionAgent>, token: String) -> orion_core::Result<()> {
-    run_with_agent_filtered(agent, token, Vec::new()).await
+    run_with_agent_filtered(agent, token, Vec::new(), Vec::new()).await
 }
 
 /// Run the Telegram bot with a pre-built agent and an allow-list.
@@ -47,18 +51,24 @@ pub async fn run_with_agent_filtered(
     agent: Arc<OrionAgent>,
     token: String,
     allowed_users: Vec<u64>,
+    allowed_usernames: Vec<String>,
 ) -> orion_core::Result<()> {
-    if allowed_users.is_empty() {
-        warn!("Telegram bot has no allowed_users configured — no one can chat. Send /start to the bot to get your user ID, then add it to [telegram] allowed_users in config.toml");
+    if allowed_users.is_empty() && allowed_usernames.is_empty() {
+        warn!("Telegram bot has no allowed_users or allowed_usernames configured — no one can chat. Send /start to the bot to get your user ID/username, then add it to [telegram] in config.toml");
     } else {
         info!(
             allowed_users = ?allowed_users,
-            "Telegram bot restricted to {} user(s)",
-            allowed_users.len()
+            allowed_usernames = ?allowed_usernames,
+            "Telegram bot restricted to {} user ID(s) + {} username(s)",
+            allowed_users.len(),
+            allowed_usernames.len()
         );
     }
 
-    let allowed = AllowedUsers(Arc::new(allowed_users.into_iter().collect()));
+    let allowed = AllowedUsers {
+        ids: Arc::new(allowed_users.into_iter().collect()),
+        usernames: Arc::new(allowed_usernames.into_iter().map(|u| u.to_lowercase()).collect()),
+    };
     let stream_cfg = StreamConfig {
         stream_mode: agent.config().telegram.stream_mode.clone(),
     };
@@ -95,26 +105,32 @@ async fn handle_message(
         None => return Ok(()), // Ignore non-text messages
     };
 
-    let user_id = msg.from.as_ref().map(|u| u.id.0);
+    let from_user = msg.from.as_ref();
+    let user_id = from_user.map(|u| u.id.0);
+    let username = from_user.and_then(|u| u.username.clone());
     let chat_id = msg.chat.id;
     let user_id_str = user_id.map(|id| id.to_string());
 
-    // /start always works — it shows the user their ID for config setup
+    // /start always works — it shows the user their ID/username for config setup
     if text == "/start" {
         let name = &agent_name.0;
         let mut greeting = format!("Hello\\! I'm {}, your personal AI assistant\\.", escape_md(name));
         if let Some(id) = user_id {
             greeting.push_str(&format!("\n\nYour user ID: `{}`", id));
-            greeting.push_str("\nAdd this to `\\[telegram\\] allowed_users` in your config to start chatting\\.");
         }
+        if let Some(ref uname) = username {
+            greeting.push_str(&format!("\nYour username: `{}`", escape_md(uname)));
+        }
+        greeting.push_str("\nAdd your ID to `\\[telegram\\] allowed_users` or your username to `allowed_usernames` in config to start chatting\\.");
         bot.send_message(chat_id, &greeting)
             .parse_mode(ParseMode::MarkdownV2)
             .await
             .or_else(|_| {
                 let fallback = format!(
-                    "Hello! I'm {}, your personal AI assistant.\n\nYour user ID: {}\nAdd this to [telegram] allowed_users in your config to start chatting.",
+                    "Hello! I'm {}, your personal AI assistant.\n\nYour user ID: {}\nYour username: {}\nAdd your ID to [telegram] allowed_users or username to allowed_usernames in config to start chatting.",
                     name,
-                    user_id.map(|id| id.to_string()).unwrap_or_default()
+                    user_id.map(|id| id.to_string()).unwrap_or_default(),
+                    username.as_deref().unwrap_or("(not set)")
                 );
                 tokio::task::block_in_place(|| {
                     tokio::runtime::Handle::current().block_on(
@@ -126,10 +142,14 @@ async fn handle_message(
         return Ok(());
     }
 
-    // Check allow-list (empty = no one allowed)
-    let is_allowed = user_id
-        .map(|id| allowed.0.contains(&id))
+    // Check allow-list: match by user ID or username
+    let id_allowed = user_id
+        .map(|id| allowed.ids.contains(&id))
         .unwrap_or(false);
+    let name_allowed = username.as_ref()
+        .map(|u| allowed.usernames.contains(&u.to_lowercase()))
+        .unwrap_or(false);
+    let is_allowed = id_allowed || name_allowed;
     if !is_allowed {
         debug!(
             user_id = ?user_id,

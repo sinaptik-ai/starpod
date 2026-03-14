@@ -82,16 +82,25 @@ pub struct ProvidersConfig {
     pub ollama: Option<ProviderConfig>,
 }
 
+/// A single entry in the Telegram allow-list: either a numeric user ID or a username string.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum AllowedUser {
+    Id(u64),
+    Username(String),
+}
+
 /// Telegram-specific configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TelegramConfig {
     /// Bot token from @BotFather.
     pub bot_token: Option<String>,
-    /// User IDs allowed to interact with the bot.
-    /// If empty, no one can chat (only /start works to show the user their ID).
+    /// Users allowed to interact with the bot — can be numeric IDs or
+    /// usernames (without @). Example: `[123456789, "alice"]`.
+    /// If empty, no one can chat (only /start works to show user ID/username).
     #[serde(default)]
-    pub allowed_users: Vec<u64>,
+    pub allowed_users: Vec<AllowedUser>,
     /// Message mode: "final_only" (default) sends only the last assistant
     /// message; "all_messages" sends each assistant message as a standalone
     /// Telegram message (tool-use messages are excluded).
@@ -106,6 +115,30 @@ impl Default for TelegramConfig {
             allowed_users: Vec::new(),
             stream_mode: default_stream_mode(),
         }
+    }
+}
+
+impl TelegramConfig {
+    /// Extract the numeric user IDs from the allow-list.
+    pub fn allowed_user_ids(&self) -> Vec<u64> {
+        self.allowed_users
+            .iter()
+            .filter_map(|u| match u {
+                AllowedUser::Id(id) => Some(*id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Extract the usernames (lowercased) from the allow-list.
+    pub fn allowed_usernames(&self) -> Vec<String> {
+        self.allowed_users
+            .iter()
+            .filter_map(|u| match u {
+                AllowedUser::Username(name) => Some(name.to_lowercase()),
+                _ => None,
+            })
+            .collect()
     }
 }
 
@@ -275,9 +308,14 @@ impl OrionConfig {
             .or_else(|| std::env::var("TELEGRAM_BOT_TOKEN").ok())
     }
 
-    /// Resolved Telegram allowed users from [telegram] section.
-    pub fn resolved_telegram_allowed_users(&self) -> &[u64] {
-        &self.telegram.allowed_users
+    /// Resolved Telegram allowed user IDs from [telegram] section.
+    pub fn resolved_telegram_allowed_user_ids(&self) -> Vec<u64> {
+        self.telegram.allowed_user_ids()
+    }
+
+    /// Resolved Telegram allowed usernames (lowercased) from [telegram] section.
+    pub fn resolved_telegram_allowed_usernames(&self) -> Vec<String> {
+        self.telegram.allowed_usernames()
     }
 
     /// Resolved database path (uses `db_path` if set, otherwise `<data_dir>/memory.db`).
@@ -385,7 +423,63 @@ server_addr = "127.0.0.1:3000"
 
 [telegram]
 # bot_token = "123456:ABC..."     # Or set TELEGRAM_BOT_TOKEN env var
-# allowed_users = [123456789]     # User IDs allowed to chat (empty = no one)
+# allowed_users = [123456789, "alice"]  # User IDs or usernames (without @)
 # stream_mode = "final_only"      # "final_only" or "all_messages"
 "#;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_allowed_users_ids_only() {
+        let toml = r#"
+            [telegram]
+            allowed_users = [111, 222]
+        "#;
+        let config: OrionConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.telegram.allowed_user_ids(), vec![111, 222]);
+        assert!(config.telegram.allowed_usernames().is_empty());
+    }
+
+    #[test]
+    fn test_allowed_users_usernames_only() {
+        let toml = r#"
+            [telegram]
+            allowed_users = ["alice", "Bob"]
+        "#;
+        let config: OrionConfig = toml::from_str(toml).unwrap();
+        assert!(config.telegram.allowed_user_ids().is_empty());
+        assert_eq!(config.telegram.allowed_usernames(), vec!["alice", "bob"]);
+    }
+
+    #[test]
+    fn test_allowed_users_mixed() {
+        let toml = r#"
+            [telegram]
+            allowed_users = [123456789, "alice", 987654321, "Bob"]
+        "#;
+        let config: OrionConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.telegram.allowed_user_ids(), vec![123456789, 987654321]);
+        assert_eq!(config.telegram.allowed_usernames(), vec!["alice", "bob"]);
+    }
+
+    #[test]
+    fn test_allowed_users_empty() {
+        let toml = r#"
+            [telegram]
+            allowed_users = []
+        "#;
+        let config: OrionConfig = toml::from_str(toml).unwrap();
+        assert!(config.telegram.allowed_user_ids().is_empty());
+        assert!(config.telegram.allowed_usernames().is_empty());
+    }
+
+    #[test]
+    fn test_allowed_users_default() {
+        let toml = "";
+        let config: OrionConfig = toml::from_str(toml).unwrap();
+        assert!(config.telegram.allowed_users.is_empty());
+    }
 }

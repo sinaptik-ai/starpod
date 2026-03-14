@@ -593,7 +593,8 @@ async fn main() -> anyhow::Result<()> {
 
                 // Start Telegram bot in background if token is configured
                 let telegram_token = config.resolved_telegram_token();
-                let telegram_allowed = config.resolved_telegram_allowed_users().to_vec();
+                let telegram_allowed = config.resolved_telegram_allowed_user_ids();
+                let telegram_allowed_usernames = config.resolved_telegram_allowed_usernames();
 
                 let telegram_active = telegram_token.is_some();
 
@@ -620,9 +621,10 @@ async fn main() -> anyhow::Result<()> {
                 if let Some(token) = telegram_token.clone() {
                     let tg_agent = Arc::clone(&agent);
                     let allowed = telegram_allowed.clone();
+                    let allowed_names = telegram_allowed_usernames.clone();
                     tokio::spawn(async move {
                         if let Err(e) =
-                            orion_telegram::run_with_agent_filtered(tg_agent, token, allowed).await
+                            orion_telegram::run_with_agent_filtered(tg_agent, token, allowed, allowed_names).await
                         {
                             tracing::error!(error = %e, "Telegram bot error");
                         }
