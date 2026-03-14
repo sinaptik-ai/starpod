@@ -33,7 +33,6 @@
 
 ### Agent Capabilities
 - [ ] **Conversation compaction** — Summarize/compress older messages when approaching context window limits. Preserve system prompt + recent turns, store full transcript on disk via `orion-session`.
-- [ ] **Conversation history / context carry-over** — Load previous session context into new sessions for continuity
 - [ ] **Group followup messages** — Batch rapid user messages into a single agent turn
 - [ ] **Multi-provider implementation** — Trait-based LLM provider abstraction (OpenAI, Gemini, DeepSeek, Ollama, etc.) with runtime provider switching. Config structure is ready.
 - [ ] **Telegram markdown formatting** — Convert agent response markdown to Telegram MarkdownV2 (escape special chars, map code blocks, bold, italic, links). Currently sent as plain text, losing all formatting.
