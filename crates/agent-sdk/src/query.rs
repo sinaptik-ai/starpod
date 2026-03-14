@@ -18,8 +18,8 @@ use tracing::{debug, error, warn};
 use uuid::Uuid;
 
 use crate::client::{
-    ApiClient, ApiContentBlock, ApiMessage, CacheControl, CreateMessageRequest, SystemBlock,
-    ThinkingParam, ToolDefinition,
+    ApiClient, ApiContentBlock, ApiMessage, CacheControl, CreateMessageRequest, ImageSource,
+    SystemBlock, ThinkingParam, ToolDefinition,
 };
 use crate::error::{AgentError, Result};
 use crate::hooks::{HookCallbackMatcher, HookEvent, HookInput};
@@ -312,14 +312,38 @@ async fn run_agent_loop(
         }
     }
 
-    // Add the user prompt
-    conversation.push(ApiMessage {
-        role: "user".to_string(),
-        content: vec![ApiContentBlock::Text {
+    // Add the user prompt (with optional image attachments)
+    {
+        let mut content_blocks: Vec<ApiContentBlock> = Vec::new();
+
+        // Add image attachments as Image content blocks
+        for att in &options.attachments {
+            let is_image = matches!(
+                att.mime_type.as_str(),
+                "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+            );
+            if is_image {
+                content_blocks.push(ApiContentBlock::Image {
+                    source: ImageSource {
+                        kind: "base64".to_string(),
+                        media_type: att.mime_type.clone(),
+                        data: att.base64_data.clone(),
+                    },
+                });
+            }
+        }
+
+        // Add the text prompt
+        content_blocks.push(ApiContentBlock::Text {
             text: prompt.clone(),
             cache_control: None,
-        }],
-    });
+        });
+
+        conversation.push(ApiMessage {
+            role: "user".to_string(),
+            content: content_blocks,
+        });
+    }
 
     // Persist user message
     if options.persist_session {
@@ -738,7 +762,9 @@ fn apply_cache_breakpoint(conversation: &mut [ApiMessage]) {
                 | ApiContentBlock::ToolResult { cache_control, .. } => {
                     *cache_control = None;
                 }
-                _ => {}
+                ApiContentBlock::Image { .. }
+                | ApiContentBlock::ToolUse { .. }
+                | ApiContentBlock::Thinking { .. } => {}
             }
         }
     }
@@ -751,7 +777,9 @@ fn apply_cache_breakpoint(conversation: &mut [ApiMessage]) {
                 | ApiContentBlock::ToolResult { cache_control, .. } => {
                     *cache_control = Some(CacheControl::ephemeral());
                 }
-                _ => {}
+                ApiContentBlock::Image { .. }
+                | ApiContentBlock::ToolUse { .. }
+                | ApiContentBlock::Thinking { .. } => {}
             }
         }
     }
@@ -762,6 +790,9 @@ fn api_block_to_content_block(block: &ApiContentBlock) -> ContentBlock {
     match block {
         ApiContentBlock::Text { text, .. } => ContentBlock::Text {
             text: text.clone(),
+        },
+        ApiContentBlock::Image { .. } => ContentBlock::Text {
+            text: "[image]".to_string(),
         },
         ApiContentBlock::ToolUse { id, name, input } => ContentBlock::ToolUse {
             id: id.clone(),

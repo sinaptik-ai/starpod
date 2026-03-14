@@ -7,4 +7,4 @@ pub use config::{
     ReasoningEffort, TelegramConfig, UserConfig,
 };
 pub use error::{OrionError, Result};
-pub use types::{ChatMessage, ChatResponse, ChatUsage};
+pub use types::{Attachment, ChatMessage, ChatResponse, ChatUsage, MAX_ATTACHMENT_SIZE};

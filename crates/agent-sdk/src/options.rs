@@ -238,6 +238,9 @@ pub struct Options {
     /// These are typically used with `external_tool_handler` to register and handle
     /// tools that aren't part of the built-in set (e.g. MemorySearch, VaultGet).
     pub custom_tool_definitions: Vec<CustomToolDefinition>,
+
+    /// File attachments to include in the first user message (images, PDFs, etc.).
+    pub attachments: Vec<QueryAttachment>,
 }
 
 /// A custom tool definition to send to the Claude API.
@@ -246,6 +249,17 @@ pub struct CustomToolDefinition {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
+}
+
+/// An attachment to include in the first user message sent to the API.
+#[derive(Debug, Clone)]
+pub struct QueryAttachment {
+    /// Original filename.
+    pub file_name: String,
+    /// MIME type (e.g. "image/png").
+    pub mime_type: String,
+    /// Base64-encoded data.
+    pub base64_data: String,
 }
 
 /// Type alias for external tool handler callback.
@@ -312,6 +326,7 @@ impl Default for Options {
             prompt_suggestions: false,
             external_tool_handler: None,
             custom_tool_definitions: Vec::new(),
+            attachments: Vec::new(),
         }
     }
 }
@@ -472,6 +487,11 @@ impl OptionsBuilder {
 
     pub fn custom_tools(mut self, defs: Vec<CustomToolDefinition>) -> Self {
         self.options.custom_tool_definitions.extend(defs);
+        self
+    }
+
+    pub fn attachments(mut self, attachments: Vec<QueryAttachment>) -> Self {
+        self.options.attachments = attachments;
         self
     }
 

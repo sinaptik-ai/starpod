@@ -108,6 +108,8 @@ SQLite connections use `Mutex<Connection>` for safe concurrent access.
     ├── skills/          Skill definitions
     │   └── <name>/
     │       └── SKILL.md
+    ├── downloads/       Uploaded file attachments
+    │   └── <session_id>/
     └── memory.db        SQLite (FTS5 + sessions + vault + cron)
 ```
 

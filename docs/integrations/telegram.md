@@ -67,6 +67,7 @@ stream_mode = "all_messages"
 ## Features
 
 - **Typing indicator** — shown while the agent is thinking
+- **File uploads** — send photos (vision) and documents (saved to `{data_dir}/downloads/`). Max 20 MB per file
 - **Markdown rendering** — converts to Telegram HTML format
 - **Message splitting** — splits at line boundaries for Telegram's 4096-char limit
 - **Fallback** — sends plain text if HTML parsing fails

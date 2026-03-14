@@ -12,6 +12,9 @@ const sessionList = document.getElementById('session-list')
 const menuBtn = document.getElementById('menu-btn')
 const sidebarClose = document.getElementById('sidebar-close')
 const newChatBtn = document.getElementById('new-chat-btn')
+const attachBtn = document.getElementById('attach-btn')
+const fileInput = document.getElementById('file-input')
+const attachmentPreview = document.getElementById('attachment-preview')
 
 // ── State ──
 let ws = null
@@ -21,6 +24,11 @@ let currentBubble = null
 let reconnectAttempt = 0
 let toolCounter = 0
 let currentSessionId = null
+
+/** Pending attachments as {file_name, mime_type, data (base64)} */
+let pendingAttachments = []
+
+const MAX_FILE_SIZE = 20 * 1024 * 1024 // 20 MB
 
 // ── Helpers ──
 function setStatus(state) {
@@ -96,13 +104,27 @@ window.toggleTool = function(id) {
 }
 
 // ── Messages ──
-function addUserMessage(text) {
+function addUserMessage(text, atts) {
   const welcome = messages.querySelector('.welcome')
   if (welcome) welcome.remove()
 
   const msg = document.createElement('div')
   msg.className = 'msg user'
-  msg.innerHTML = '<div class="bubble">' + escapeHtml(text) + '</div>'
+
+  let html = ''
+  if (atts && atts.length > 0) {
+    html += '<div class="user-attachments">'
+    for (const att of atts) {
+      if (att.mime_type.startsWith('image/')) {
+        html += '<img src="data:' + att.mime_type + ';base64,' + att.data + '" class="user-att-img" alt="' + escapeHtml(att.file_name) + '">'
+      } else {
+        html += '<div class="user-att-file">\u{1F4CE} ' + escapeHtml(att.file_name) + '</div>'
+      }
+    }
+    html += '</div>'
+  }
+  if (text) html += '<div class="bubble">' + escapeHtml(text) + '</div>'
+  msg.innerHTML = html
   messages.appendChild(msg)
   scrollToBottom()
 }
@@ -302,17 +324,98 @@ function connect() {
   }
 }
 
+// ── Attachments ──
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      // result is "data:<mime>;base64,<data>" — extract the base64 part
+      const base64 = reader.result.split(',')[1]
+      resolve(base64)
+    }
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
+async function addFiles(files) {
+  for (const file of files) {
+    if (file.size > MAX_FILE_SIZE) {
+      alert(`File "${file.name}" exceeds 20 MB limit (${(file.size / 1048576).toFixed(1)} MB)`)
+      continue
+    }
+    const base64 = await readFileAsBase64(file)
+    pendingAttachments.push({
+      file_name: file.name,
+      mime_type: file.type || 'application/octet-stream',
+      data: base64,
+    })
+  }
+  renderAttachmentPreview()
+}
+
+function removeAttachment(index) {
+  pendingAttachments.splice(index, 1)
+  renderAttachmentPreview()
+}
+
+// Expose for onclick in innerHTML
+window.removeAttachment = removeAttachment
+
+function renderAttachmentPreview() {
+  if (pendingAttachments.length === 0) {
+    attachmentPreview.innerHTML = ''
+    attachmentPreview.style.display = 'none'
+    return
+  }
+  attachmentPreview.style.display = 'flex'
+  attachmentPreview.innerHTML = pendingAttachments.map((att, i) => {
+    const isImage = att.mime_type.startsWith('image/')
+    const thumb = isImage
+      ? '<img src="data:' + att.mime_type + ';base64,' + att.data + '" class="att-thumb">'
+      : '<span class="att-icon">\u{1F4CE}</span>'
+    return '<div class="att-chip">' +
+      thumb +
+      '<span class="att-name">' + escapeHtml(att.file_name) + '</span>' +
+      '<button class="att-remove" onclick="removeAttachment(' + i + ')">&times;</button>' +
+    '</div>'
+  }).join('')
+}
+
+attachBtn.addEventListener('click', () => fileInput.click())
+fileInput.addEventListener('change', () => {
+  if (fileInput.files.length > 0) addFiles(fileInput.files)
+  fileInput.value = '' // reset so same file can be re-selected
+})
+
+// ── Drag & drop ──
+const app = document.getElementById('app')
+app.addEventListener('dragover', (e) => { e.preventDefault(); app.classList.add('drag-over') })
+app.addEventListener('dragleave', () => app.classList.remove('drag-over'))
+app.addEventListener('drop', (e) => {
+  e.preventDefault()
+  app.classList.remove('drag-over')
+  if (e.dataTransfer.files.length > 0) addFiles(e.dataTransfer.files)
+})
+
 // ── Send ──
 function sendMessage() {
   const text = inputText.value.trim()
-  if (!text || isStreaming || !ws || ws.readyState !== WebSocket.OPEN) return
+  if ((!text && pendingAttachments.length === 0) || isStreaming || !ws || ws.readyState !== WebSocket.OPEN) return
 
-  addUserMessage(text)
+  addUserMessage(text, pendingAttachments)
   isStreaming = true
   sendBtn.disabled = true
 
-  ws.send(JSON.stringify({ type: 'message', text, channel_id: 'web' }))
+  const payload = { type: 'message', text, channel_id: 'web' }
+  if (pendingAttachments.length > 0) {
+    payload.attachments = pendingAttachments
+  }
+  ws.send(JSON.stringify(payload))
+
   inputText.value = ''
+  pendingAttachments = []
+  renderAttachmentPreview()
   autoResize()
 }
 

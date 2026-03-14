@@ -8,7 +8,7 @@ use tracing::{debug, error, info, warn};
 
 use agent_sdk::{ContentBlock, Message};
 use orion_agent::OrionAgent;
-use orion_core::{ChatMessage, OrionConfig};
+use orion_core::{Attachment, ChatMessage, OrionConfig, MAX_ATTACHMENT_SIZE};
 
 /// Maximum Telegram message length.
 const MAX_MSG_LEN: usize = 4096;
@@ -92,6 +92,48 @@ pub async fn run_with_agent_filtered(
     Ok(())
 }
 
+/// Download a Telegram file by file_id and return its bytes.
+async fn download_telegram_file(
+    bot: &Bot,
+    file_id: &str,
+) -> std::result::Result<Vec<u8>, String> {
+    let file = bot
+        .get_file(file_id)
+        .await
+        .map_err(|e| format!("get_file failed: {e}"))?;
+
+    let url = format!(
+        "https://api.telegram.org/file/bot{}/{}",
+        bot.token(),
+        file.path
+    );
+    let bytes = reqwest::get(&url)
+        .await
+        .map_err(|e| format!("download failed: {e}"))?
+        .bytes()
+        .await
+        .map_err(|e| format!("read bytes failed: {e}"))?;
+
+    Ok(bytes.to_vec())
+}
+
+/// Infer MIME type from a filename extension.
+fn mime_from_filename(name: &str) -> String {
+    let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "pdf" => "application/pdf",
+        "txt" | "text" => "text/plain",
+        "json" => "application/json",
+        "csv" => "text/csv",
+        _ => "application/octet-stream",
+    }
+    .to_string()
+}
+
 async fn handle_message(
     bot: Bot,
     msg: TeloxideMessage,
@@ -100,10 +142,69 @@ async fn handle_message(
     stream_cfg: StreamConfig,
     agent_name: AgentName,
 ) -> Result<(), teloxide::RequestError> {
-    let text = match msg.text() {
-        Some(t) => t.to_string(),
-        None => return Ok(()), // Ignore non-text messages
-    };
+    // Extract text — may come from caption on photo/document messages
+    let text = msg
+        .text()
+        .or_else(|| msg.caption())
+        .unwrap_or("")
+        .to_string();
+
+    // Extract attachments from photos and documents
+    let mut attachments: Vec<Attachment> = Vec::new();
+
+    // Handle photos (Telegram sends multiple sizes; pick the largest)
+    if let Some(photos) = msg.photo() {
+        if let Some(largest) = photos.last() {
+            match download_telegram_file(&bot, &largest.file.id).await {
+                Ok(bytes) => {
+                    if bytes.len() <= MAX_ATTACHMENT_SIZE {
+                        use base64::Engine;
+                        attachments.push(Attachment {
+                            file_name: "photo.jpg".to_string(),
+                            mime_type: "image/jpeg".to_string(),
+                            data: base64::engine::general_purpose::STANDARD.encode(&bytes),
+                        });
+                    } else {
+                        warn!("Photo exceeds 20 MB, skipping");
+                    }
+                }
+                Err(e) => warn!(error = %e, "Failed to download Telegram photo"),
+            }
+        }
+    }
+
+    // Handle documents (files)
+    if let Some(doc) = msg.document() {
+        match download_telegram_file(&bot, &doc.file.id).await {
+            Ok(bytes) => {
+                if bytes.len() <= MAX_ATTACHMENT_SIZE {
+                    let file_name = doc
+                        .file_name
+                        .clone()
+                        .unwrap_or_else(|| "document".to_string());
+                    let mime_type = doc
+                        .mime_type
+                        .as_ref()
+                        .map(|m| m.to_string())
+                        .unwrap_or_else(|| mime_from_filename(&file_name));
+                    use base64::Engine;
+                    attachments.push(Attachment {
+                        file_name,
+                        mime_type,
+                        data: base64::engine::general_purpose::STANDARD.encode(&bytes),
+                    });
+                } else {
+                    warn!("Document exceeds 20 MB, skipping");
+                }
+            }
+            Err(e) => warn!(error = %e, "Failed to download Telegram document"),
+        }
+    }
+
+    // If no text and no attachments, nothing to do
+    if text.is_empty() && attachments.is_empty() {
+        return Ok(());
+    }
 
     let from_user = msg.from.as_ref();
     let user_id = from_user.map(|u| u.id.0);
@@ -178,20 +279,25 @@ async fn handle_message(
         .ok();
 
     if stream_cfg.stream_mode == "all_messages" {
-        handle_all_messages(&bot, chat_id, &agent, &text, user_id_str).await
+        handle_all_messages(&bot, chat_id, &agent, &text, user_id_str, attachments).await
     } else {
-        handle_final_only(&bot, chat_id, &agent, &text, user_id_str).await
+        handle_final_only(&bot, chat_id, &agent, &text, user_id_str, attachments).await
     }
 }
 
 /// Build a `ChatMessage` for Telegram.
-fn build_chat_msg(text: &str, user_id_str: Option<String>, chat_id: ChatId) -> ChatMessage {
+fn build_chat_msg(
+    text: &str,
+    user_id_str: Option<String>,
+    chat_id: ChatId,
+    attachments: Vec<Attachment>,
+) -> ChatMessage {
     ChatMessage {
         text: text.to_string(),
         user_id: user_id_str,
         channel_id: Some("telegram".into()),
         channel_session_key: Some(chat_id.0.to_string()),
-        attachments: Vec::new(),
+        attachments,
     }
 }
 
@@ -219,8 +325,9 @@ async fn handle_final_only(
     agent: &Arc<OrionAgent>,
     text: &str,
     user_id_str: Option<String>,
+    attachments: Vec<Attachment>,
 ) -> Result<(), teloxide::RequestError> {
-    let chat_msg = build_chat_msg(text, user_id_str, chat_id);
+    let chat_msg = build_chat_msg(text, user_id_str, chat_id, attachments);
     let (mut stream, session_id) = match agent.chat_stream(&chat_msg).await {
         Ok(s) => s,
         Err(e) => {
@@ -289,8 +396,9 @@ async fn handle_all_messages(
     agent: &Arc<OrionAgent>,
     text: &str,
     user_id_str: Option<String>,
+    attachments: Vec<Attachment>,
 ) -> Result<(), teloxide::RequestError> {
-    let chat_msg = build_chat_msg(text, user_id_str, chat_id);
+    let chat_msg = build_chat_msg(text, user_id_str, chat_id, attachments);
     let (mut stream, session_id) = match agent.chat_stream(&chat_msg).await {
         Ok(s) => s,
         Err(e) => {

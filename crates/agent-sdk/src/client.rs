@@ -99,6 +99,18 @@ pub struct SystemBlock {
     pub cache_control: Option<CacheControl>,
 }
 
+/// Source data for an image content block.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageSource {
+    /// Always "base64".
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// MIME type (e.g. "image/png").
+    pub media_type: String,
+    /// Base64-encoded image data.
+    pub data: String,
+}
+
 /// A single content block inside an API message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -108,6 +120,11 @@ pub enum ApiContentBlock {
         text: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
+    },
+
+    #[serde(rename = "image")]
+    Image {
+        source: ImageSource,
     },
 
     #[serde(rename = "tool_use")]
@@ -819,6 +836,54 @@ mod tests {
 
         let err = ApiClient::status_to_error(StatusCode::BAD_REQUEST, "invalid");
         assert!(matches!(err, AgentError::InvalidRequest(_)));
+    }
+
+    #[test]
+    fn image_content_block_roundtrips() {
+        let block = ApiContentBlock::Image {
+            source: ImageSource {
+                kind: "base64".into(),
+                media_type: "image/png".into(),
+                data: "iVBORw0KGgo=".into(),
+            },
+        };
+        let json = serde_json::to_string(&block).unwrap();
+        assert!(json.contains("\"type\":\"image\""));
+        assert!(json.contains("\"media_type\":\"image/png\""));
+        let back: ApiContentBlock = serde_json::from_str(&json).unwrap();
+        match back {
+            ApiContentBlock::Image { source } => {
+                assert_eq!(source.kind, "base64");
+                assert_eq!(source.media_type, "image/png");
+                assert_eq!(source.data, "iVBORw0KGgo=");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn image_in_user_message_serializes() {
+        let msg = ApiMessage {
+            role: "user".into(),
+            content: vec![
+                ApiContentBlock::Image {
+                    source: ImageSource {
+                        kind: "base64".into(),
+                        media_type: "image/jpeg".into(),
+                        data: "abc123".into(),
+                    },
+                },
+                ApiContentBlock::Text {
+                    text: "What is this?".into(),
+                    cache_control: None,
+                },
+            ],
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        let content = json["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "image");
+        assert_eq!(content[1]["type"], "text");
     }
 
     #[test]

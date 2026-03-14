@@ -43,7 +43,7 @@ pub mod types;
 pub use error::AgentError;
 pub use hooks::{hook_fn, HookCallback, HookCallbackMatcher, HookEvent, HookInput, HookOutput};
 pub use mcp::{McpServerConfig, McpStdioServerConfig, McpHttpServerConfig, McpSseServerConfig};
-pub use options::{CustomToolDefinition, ExternalToolHandlerFn, Options, OptionsBuilder, PermissionMode};
+pub use options::{CustomToolDefinition, ExternalToolHandlerFn, Options, OptionsBuilder, PermissionMode, QueryAttachment};
 pub use query::{query, Query};
 pub use session::{Session, SessionInfo};
 pub use types::agent::{AgentDefinition, AgentInput};

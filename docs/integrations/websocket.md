@@ -26,7 +26,14 @@ Send a JSON message to start a conversation:
   "text": "What files are in this directory?",
   "user_id": "user123",
   "channel_id": "main",
-  "channel_session_key": "550e8400-e29b-41d4-a716-446655440000"
+  "channel_session_key": "550e8400-e29b-41d4-a716-446655440000",
+  "attachments": [
+    {
+      "file_name": "photo.png",
+      "mime_type": "image/png",
+      "data": "<base64-encoded-data>"
+    }
+  ]
 }
 ```
 
@@ -37,6 +44,17 @@ Send a JSON message to start a conversation:
 | `user_id` | string | No | User identifier |
 | `channel_id` | string | No | Channel (`"main"` default) |
 | `channel_session_key` | string | No | Session key (UUID recommended) |
+| `attachments` | array | No | File attachments (base64-encoded, max 20 MB each) |
+
+Each attachment object has:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `file_name` | string | Original filename |
+| `mime_type` | string | MIME type (e.g. `"image/png"`, `"application/pdf"`) |
+| `data` | string | Base64-encoded file content |
+
+Images (`image/png`, `image/jpeg`, `image/gif`, `image/webp`) are sent to Claude for vision analysis. All files are saved to `{data_dir}/downloads/{session_id}/`.
 
 ### Server → Client
 

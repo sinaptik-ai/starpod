@@ -1,16 +1,17 @@
 pub mod tools;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::Local;
 use tokio_stream::StreamExt;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
-use agent_sdk::{ExternalToolHandlerFn, Message, Options, PermissionMode, Query};
+use agent_sdk::{ExternalToolHandlerFn, Message, Options, PermissionMode, Query, QueryAttachment};
 use agent_sdk::options::{SystemPrompt, ThinkingConfig};
 use orion_core::ReasoningEffort;
 
-use orion_core::{ChatMessage, ChatResponse, ChatUsage, OrionConfig, OrionError, Result};
+use orion_core::{Attachment, ChatMessage, ChatResponse, ChatUsage, OrionConfig, OrionError, Result};
 use orion_cron::CronStore;
 use orion_memory::MemoryStore;
 use orion_session::{Channel, SessionDecision, SessionManager, UsageRecord};
@@ -66,6 +67,87 @@ impl OrionAgent {
             cron: Arc::new(cron),
             config,
         })
+    }
+
+    /// Path to the downloads directory.
+    fn downloads_dir(&self) -> PathBuf {
+        self.config.data_dir.join("downloads")
+    }
+
+    /// Save attachments to disk under `{data_dir}/downloads/{session_id}/`.
+    /// Returns a list of saved file paths.
+    async fn save_attachments(
+        &self,
+        session_id: &str,
+        attachments: &[Attachment],
+    ) -> Vec<PathBuf> {
+        if attachments.is_empty() {
+            return Vec::new();
+        }
+
+        let dir = self.downloads_dir().join(session_id);
+        if let Err(e) = tokio::fs::create_dir_all(&dir).await {
+            warn!(error = %e, "Failed to create downloads directory");
+            return Vec::new();
+        }
+
+        let ts = Local::now().format("%Y%m%d_%H%M%S");
+        let mut paths = Vec::new();
+        for att in attachments {
+            let safe_name = att.file_name
+                .replace(['/', '\\', ':', '\0'], "_")
+                .replace("..", "_");
+            let filename = format!("{ts}_{safe_name}");
+            let path = dir.join(&filename);
+
+            // Decode base64 and write
+            use base64::Engine;
+            match base64::engine::general_purpose::STANDARD.decode(&att.data) {
+                Ok(bytes) => {
+                    if let Err(e) = tokio::fs::write(&path, &bytes).await {
+                        warn!(error = %e, file = %filename, "Failed to save attachment");
+                    } else {
+                        debug!(path = %path.display(), "Saved attachment");
+                        paths.push(path);
+                    }
+                }
+                Err(e) => {
+                    warn!(error = %e, file = %filename, "Failed to decode base64 attachment");
+                }
+            }
+        }
+        paths
+    }
+
+    /// Convert chat attachments to agent-sdk query attachments.
+    /// Images are passed through for vision; non-images get a text note instead.
+    fn build_query_attachments(
+        attachments: &[Attachment],
+        saved_paths: &[PathBuf],
+    ) -> (Vec<QueryAttachment>, String) {
+        let mut query_atts = Vec::new();
+        let mut extra_text = String::new();
+
+        for (i, att) in attachments.iter().enumerate() {
+            if att.is_image() {
+                query_atts.push(QueryAttachment {
+                    file_name: att.file_name.clone(),
+                    mime_type: att.mime_type.clone(),
+                    base64_data: att.data.clone(),
+                });
+            } else {
+                // Non-image: tell Claude the file was saved
+                let path = saved_paths.get(i)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "(save failed)".to_string());
+                extra_text.push_str(&format!(
+                    "\n[Attached file: {} ({}) saved to: {}]",
+                    att.file_name, att.mime_type, path
+                ));
+            }
+        }
+
+        (query_atts, extra_text)
     }
 
     /// Build the system prompt from bootstrap context + skills + identity + user.
@@ -159,10 +241,22 @@ impl OrionAgent {
         self.session_mgr.touch_session(&session_id).await?;
         let _ = self.session_mgr.set_title_if_empty(&session_id, &message.text).await;
 
-        // Step 2: Build system prompt
+        // Step 2: Save attachments to downloads/ and build query attachments
+        let saved_paths = self.save_attachments(&session_id, &message.attachments).await;
+        let (query_atts, extra_text) =
+            Self::build_query_attachments(&message.attachments, &saved_paths);
+
+        // Append file info to prompt if there are non-image attachments
+        let prompt = if extra_text.is_empty() {
+            message.text.clone()
+        } else {
+            format!("{}{}", message.text, extra_text)
+        };
+
+        // Step 3: Build system prompt
         let system_prompt = self.build_system_prompt(&session_id)?;
 
-        // Step 3: Build options and run query
+        // Step 4: Build options and run query
         let mut builder = Options::builder()
             .allowed_tools(Self::allowed_tools())
             .system_prompt(SystemPrompt::Custom(system_prompt))
@@ -171,7 +265,8 @@ impl OrionAgent {
             .max_turns(self.config.max_turns)
             .session_id(session_id.clone())
             .external_tool_handler(self.build_tool_handler())
-            .custom_tools(custom_tool_definitions());
+            .custom_tools(custom_tool_definitions())
+            .attachments(query_atts);
 
         if let Some(thinking) = self.thinking_config() {
             builder = builder.thinking(thinking);
@@ -179,7 +274,7 @@ impl OrionAgent {
 
         let options = builder.build();
 
-        let mut stream = agent_sdk::query(&message.text, options);
+        let mut stream = agent_sdk::query(&prompt, options);
 
         // Step 4: Collect result
         let mut result_text = String::new();
@@ -281,6 +376,17 @@ impl OrionAgent {
         self.session_mgr.touch_session(&session_id).await?;
         let _ = self.session_mgr.set_title_if_empty(&session_id, &message.text).await;
 
+        // Save attachments and build query attachments
+        let saved_paths = self.save_attachments(&session_id, &message.attachments).await;
+        let (query_atts, extra_text) =
+            Self::build_query_attachments(&message.attachments, &saved_paths);
+
+        let prompt = if extra_text.is_empty() {
+            message.text.clone()
+        } else {
+            format!("{}{}", message.text, extra_text)
+        };
+
         let system_prompt = self.build_system_prompt(&session_id)?;
 
         let mut builder = Options::builder()
@@ -291,7 +397,8 @@ impl OrionAgent {
             .max_turns(self.config.max_turns)
             .session_id(session_id.clone())
             .external_tool_handler(self.build_tool_handler())
-            .custom_tools(custom_tool_definitions());
+            .custom_tools(custom_tool_definitions())
+            .attachments(query_atts);
 
         if let Some(thinking) = self.thinking_config() {
             builder = builder.thinking(thinking);
@@ -299,7 +406,7 @@ impl OrionAgent {
 
         let options = builder.build();
 
-        let stream = agent_sdk::query(&message.text, options);
+        let stream = agent_sdk::query(&prompt, options);
         Ok((stream, session_id))
     }
 
@@ -593,5 +700,123 @@ mod tests {
         )
         .await;
         assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_save_attachments() {
+        let tmp = TempDir::new().unwrap();
+        let agent = OrionAgent::new(test_config(&tmp)).await.unwrap();
+
+        use base64::Engine;
+        let data = base64::engine::general_purpose::STANDARD.encode(b"hello world");
+        let attachments = vec![Attachment {
+            file_name: "test.txt".into(),
+            mime_type: "text/plain".into(),
+            data,
+        }];
+
+        let paths = agent.save_attachments("test-session", &attachments).await;
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0].exists());
+
+        // Verify content
+        let content = tokio::fs::read(&paths[0]).await.unwrap();
+        assert_eq!(content, b"hello world");
+
+        // Verify directory structure
+        assert!(paths[0].to_string_lossy().contains("downloads"));
+        assert!(paths[0].to_string_lossy().contains("test-session"));
+    }
+
+    #[tokio::test]
+    async fn test_save_attachments_empty() {
+        let tmp = TempDir::new().unwrap();
+        let agent = OrionAgent::new(test_config(&tmp)).await.unwrap();
+
+        let paths = agent.save_attachments("test-session", &[]).await;
+        assert!(paths.is_empty());
+        // downloads dir should not be created for empty attachments
+        assert!(!tmp.path().join("downloads").exists());
+    }
+
+    #[tokio::test]
+    async fn test_save_attachments_sanitizes_filename() {
+        let tmp = TempDir::new().unwrap();
+        let agent = OrionAgent::new(test_config(&tmp)).await.unwrap();
+
+        use base64::Engine;
+        let data = base64::engine::general_purpose::STANDARD.encode(b"data");
+        let attachments = vec![Attachment {
+            file_name: "../../../etc/passwd".into(),
+            mime_type: "text/plain".into(),
+            data,
+        }];
+
+        let paths = agent.save_attachments("test-session", &attachments).await;
+        assert_eq!(paths.len(), 1);
+        // The path should NOT traverse up — slashes replaced with _
+        let name = paths[0].file_name().unwrap().to_string_lossy();
+        assert!(!name.contains('/'));
+        assert!(!name.contains(".."));
+    }
+
+    #[test]
+    fn test_build_query_attachments_images() {
+        let attachments = vec![
+            Attachment {
+                file_name: "photo.png".into(),
+                mime_type: "image/png".into(),
+                data: "base64data".into(),
+            },
+        ];
+        let saved = vec![std::path::PathBuf::from("/tmp/photo.png")];
+
+        let (query_atts, extra_text) = OrionAgent::build_query_attachments(&attachments, &saved);
+        assert_eq!(query_atts.len(), 1);
+        assert_eq!(query_atts[0].mime_type, "image/png");
+        assert!(extra_text.is_empty());
+    }
+
+    #[test]
+    fn test_build_query_attachments_non_images() {
+        let attachments = vec![
+            Attachment {
+                file_name: "doc.pdf".into(),
+                mime_type: "application/pdf".into(),
+                data: "base64data".into(),
+            },
+        ];
+        let saved = vec![std::path::PathBuf::from("/tmp/doc.pdf")];
+
+        let (query_atts, extra_text) = OrionAgent::build_query_attachments(&attachments, &saved);
+        assert!(query_atts.is_empty());
+        assert!(extra_text.contains("doc.pdf"));
+        assert!(extra_text.contains("/tmp/doc.pdf"));
+    }
+
+    #[test]
+    fn test_build_query_attachments_mixed() {
+        let attachments = vec![
+            Attachment {
+                file_name: "photo.jpg".into(),
+                mime_type: "image/jpeg".into(),
+                data: "imgdata".into(),
+            },
+            Attachment {
+                file_name: "report.pdf".into(),
+                mime_type: "application/pdf".into(),
+                data: "pdfdata".into(),
+            },
+        ];
+        let saved = vec![
+            std::path::PathBuf::from("/tmp/photo.jpg"),
+            std::path::PathBuf::from("/tmp/report.pdf"),
+        ];
+
+        let (query_atts, extra_text) = OrionAgent::build_query_attachments(&attachments, &saved);
+        assert_eq!(query_atts.len(), 1);
+        assert_eq!(query_atts[0].file_name, "photo.jpg");
+        assert!(extra_text.contains("report.pdf"));
+        assert!(!extra_text.contains("photo.jpg"));
     }
 }

@@ -36,7 +36,7 @@
 - [ ] **Group followup messages** — Batch rapid user messages into a single agent turn
 - [ ] **Multi-provider implementation** — Trait-based LLM provider abstraction (OpenAI, Gemini, DeepSeek, Ollama, etc.) with runtime provider switching. Config structure is ready.
 - [ ] **Telegram markdown formatting** — Convert agent response markdown to Telegram MarkdownV2 (escape special chars, map code blocks, bold, italic, links). Currently sent as plain text, losing all formatting.
-- [ ] **File attachments** — Support image/file uploads in web UI and Telegram (vision, document analysis)
+- [x] **File attachments** — Image/file uploads in web UI (drag & drop, file picker) and Telegram (photos, documents). Images sent via Claude vision API; non-image files saved to `{data_dir}/downloads/`. 20 MB per-file limit. Claude auto-resizes large images.
 - [ ] **MCP (Model Context Protocol) support** — Allow connecting external MCP servers as tool providers
 
 ### Infrastructure
@@ -54,6 +54,7 @@
 ### Web UI
 - [ ] **Conversation history sidebar** — Browse and resume past sessions
 - [ ] **Settings panel** — Edit config, manage API keys, view usage from the UI
-- [ ] **File upload** — Drag & drop files into chat
+- [x] **File upload** — Drag & drop / paperclip button, base64 over WS, 20 MB limit, preview thumbnails
+- [ ] **Downloads cleanup policy** — Optional config to auto-delete old downloads (e.g. `downloads_retention_days` in config.toml)
 - [ ] **Mobile responsive** — Better layout on small screens
 - [ ] **Markdown rendering** — Full markdown support (tables, lists, headings, etc.)
