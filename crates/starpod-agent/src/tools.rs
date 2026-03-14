@@ -290,11 +290,13 @@ pub async fn handle_custom_tool(
                     Some(ToolResult {
                         content: serde_json::to_string_pretty(&formatted).unwrap_or_default(),
                         is_error: false,
+                        raw_content: None,
                     })
                 }
                 Err(e) => Some(ToolResult {
                     content: format!("Memory search error: {}", e),
                     is_error: true,
+                    raw_content: None,
                 }),
             }
         }
@@ -309,10 +311,12 @@ pub async fn handle_custom_tool(
                 Ok(()) => Some(ToolResult {
                     content: format!("Successfully wrote {}", file),
                     is_error: false,
+                    raw_content: None,
                 }),
                 Err(e) => Some(ToolResult {
                     content: format!("Memory write error: {}", e),
                     is_error: true,
+                    raw_content: None,
                 }),
             }
         }
@@ -326,10 +330,12 @@ pub async fn handle_custom_tool(
                 Ok(()) => Some(ToolResult {
                     content: "Appended to daily log.".into(),
                     is_error: false,
+                    raw_content: None,
                 }),
                 Err(e) => Some(ToolResult {
                     content: format!("Daily append error: {}", e),
                     is_error: true,
+                    raw_content: None,
                 }),
             }
         }
@@ -344,14 +350,17 @@ pub async fn handle_custom_tool(
                 Ok(Some(value)) => Some(ToolResult {
                     content: value,
                     is_error: false,
+                    raw_content: None,
                 }),
                 Ok(None) => Some(ToolResult {
                     content: format!("No vault entry found for key: {}", key),
                     is_error: false,
+                    raw_content: None,
                 }),
                 Err(e) => Some(ToolResult {
                     content: format!("Vault get error: {}", e),
                     is_error: true,
+                    raw_content: None,
                 }),
             }
         }
@@ -366,10 +375,12 @@ pub async fn handle_custom_tool(
                 Ok(()) => Some(ToolResult {
                     content: format!("Stored '{}' in vault.", key),
                     is_error: false,
+                    raw_content: None,
                 }),
                 Err(e) => Some(ToolResult {
                     content: format!("Vault set error: {}", e),
                     is_error: true,
+                    raw_content: None,
                 }),
             }
         }
@@ -385,10 +396,12 @@ pub async fn handle_custom_tool(
                 Ok(()) => Some(ToolResult {
                     content: format!("Created skill '{}'.", name),
                     is_error: false,
+                    raw_content: None,
                 }),
                 Err(e) => Some(ToolResult {
                     content: format!("Skill create error: {}", e),
                     is_error: true,
+                    raw_content: None,
                 }),
             }
         }
@@ -403,10 +416,12 @@ pub async fn handle_custom_tool(
                 Ok(()) => Some(ToolResult {
                     content: format!("Updated skill '{}'.", name),
                     is_error: false,
+                    raw_content: None,
                 }),
                 Err(e) => Some(ToolResult {
                     content: format!("Skill update error: {}", e),
                     is_error: true,
+                    raw_content: None,
                 }),
             }
         }
@@ -420,10 +435,12 @@ pub async fn handle_custom_tool(
                 Ok(()) => Some(ToolResult {
                     content: format!("Deleted skill '{}'.", name),
                     is_error: false,
+                    raw_content: None,
                 }),
                 Err(e) => Some(ToolResult {
                     content: format!("Skill delete error: {}", e),
                     is_error: true,
+                    raw_content: None,
                 }),
             }
         }
@@ -450,11 +467,13 @@ pub async fn handle_custom_tool(
                     Some(ToolResult {
                         content: serde_json::to_string_pretty(&formatted).unwrap_or_default(),
                         is_error: false,
+                        raw_content: None,
                     })
                 }
                 Err(e) => Some(ToolResult {
                     content: format!("Skill list error: {}", e),
                     is_error: true,
+                    raw_content: None,
                 }),
             }
         }
@@ -476,6 +495,7 @@ pub async fn handle_custom_tool(
                     return Some(ToolResult {
                         content: format!("Invalid schedule: {}", e),
                         is_error: true,
+                        raw_content: None,
                     });
                 }
             };
@@ -486,10 +506,12 @@ pub async fn handle_custom_tool(
                 Ok(id) => Some(ToolResult {
                     content: format!("Scheduled job '{}' (id: {})", name, &id[..8]),
                     is_error: false,
+                    raw_content: None,
                 }),
                 Err(e) => Some(ToolResult {
                     content: format!("Cron add error: {}", e),
                     is_error: true,
+                    raw_content: None,
                 }),
             }
         }
@@ -515,11 +537,13 @@ pub async fn handle_custom_tool(
                     Some(ToolResult {
                         content: serde_json::to_string_pretty(&formatted).unwrap_or_default(),
                         is_error: false,
+                        raw_content: None,
                     })
                 }
                 Err(e) => Some(ToolResult {
                     content: format!("Cron list error: {}", e),
                     is_error: true,
+                    raw_content: None,
                 }),
             }
         }
@@ -533,10 +557,12 @@ pub async fn handle_custom_tool(
                 Ok(()) => Some(ToolResult {
                     content: format!("Removed job '{}'.", name),
                     is_error: false,
+                    raw_content: None,
                 }),
                 Err(e) => Some(ToolResult {
                     content: format!("Cron remove error: {}", e),
                     is_error: true,
+                    raw_content: None,
                 }),
             }
         }
@@ -557,6 +583,7 @@ pub async fn handle_custom_tool(
                     return Some(ToolResult {
                         content: format!("Cron error: {}", e),
                         is_error: true,
+                        raw_content: None,
                     });
                 }
             };
@@ -567,6 +594,7 @@ pub async fn handle_custom_tool(
                     return Some(ToolResult {
                         content: format!("No job found with name '{}'", name),
                         is_error: true,
+                        raw_content: None,
                     });
                 }
             };
@@ -587,11 +615,13 @@ pub async fn handle_custom_tool(
                     Some(ToolResult {
                         content: serde_json::to_string_pretty(&formatted).unwrap_or_default(),
                         is_error: false,
+                        raw_content: None,
                     })
                 }
                 Err(e) => Some(ToolResult {
                     content: format!("Cron runs error: {}", e),
                     is_error: true,
+                    raw_content: None,
                 }),
             }
         }

@@ -677,6 +677,7 @@ async fn run_agent_loop(
                                 Err(e) => ToolResult {
                                     content: format!("Tool execution error: {}", e),
                                     is_error: true,
+                                    raw_content: None,
                                 },
                             }
                         }
@@ -686,6 +687,7 @@ async fn run_agent_loop(
                             Err(e) => ToolResult {
                                 content: format!("Tool execution error: {}", e),
                                 is_error: true,
+                                raw_content: None,
                             },
                         }
                     };
@@ -704,9 +706,13 @@ async fn run_agent_loop(
                         .await;
                     }
 
+                    let result_content = tool_result
+                        .raw_content
+                        .unwrap_or_else(|| json!(tool_result.content));
+
                     tool_results.push(ApiContentBlock::ToolResult {
                         tool_use_id: tool_use_id.clone(),
-                        content: json!(tool_result.content),
+                        content: result_content,
                         is_error: if tool_result.is_error {
                             Some(true)
                         } else {

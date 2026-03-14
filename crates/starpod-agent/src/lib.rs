@@ -162,7 +162,10 @@ impl StarpodAgent {
             "You are {agent_name}, a personal AI assistant.\n\n{bootstrap}\n\n---\nCurrent date/time: {date_str}\nSession ID: {session_id}\n\
              You have access to memory tools (MemorySearch, MemoryWrite, MemoryAppendDaily), \
              vault tools (VaultGet, VaultSet), skill tools (SkillCreate, SkillUpdate, SkillDelete, SkillList), \
-             and scheduling tools (CronAdd, CronList, CronRemove, CronRuns).",
+             and scheduling tools (CronAdd, CronList, CronRemove, CronRuns).\n\
+             You can read image files (png, jpg, gif, webp) with the Read tool — the image will be loaded \
+             directly into the conversation so you can see and analyze it. For other file types like CSV or \
+             PDF, use Python via the Bash tool.",
         );
 
         // Inject agent personality
