@@ -157,6 +157,28 @@ fn default_stream_mode() -> String {
     "final_only".to_string()
 }
 
+/// Memory search configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MemoryConfig {
+    /// Half-life in days for temporal decay on daily logs (default: 30.0).
+    pub half_life_days: f64,
+    /// MMR lambda: 0.0 = max diversity, 1.0 = pure relevance (default: 0.7).
+    pub mmr_lambda: f64,
+    /// Enable vector search (requires `embeddings` feature). Default: true.
+    pub vector_search: bool,
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            half_life_days: 30.0,
+            mmr_lambda: 0.7,
+            vector_search: true,
+        }
+    }
+}
+
 /// Attachment handling configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -285,6 +307,10 @@ pub struct StarpodConfig {
     #[serde(default)]
     pub followup_mode: FollowupMode,
 
+    /// Memory search tuning.
+    #[serde(default)]
+    pub memory: MemoryConfig,
+
     /// Attachment handling settings.
     #[serde(default)]
     pub attachments: AttachmentsConfig,
@@ -327,6 +353,7 @@ impl Default for StarpodConfig {
             reasoning_effort: None,
             compaction_model: None,
             followup_mode: FollowupMode::default(),
+            memory: MemoryConfig::default(),
             identity: IdentityConfig::default(),
             user: UserConfig::default(),
             providers: ProvidersConfig::default(),
@@ -562,6 +589,16 @@ server_addr = "127.0.0.1:3000"
 # "inject" (default) integrates them into the next loop iteration;
 # "queue" buffers them and starts a new loop after the current one finishes.
 # followup_mode = "inject"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MEMORY
+# ══════════════════════════════════════════════════════════════════════════════
+# Tune memory search behavior.
+
+[memory]
+# half_life_days = 30.0            # Temporal decay half-life for daily logs
+# mmr_lambda = 0.7                 # 0.0 = max diversity, 1.0 = pure relevance
+# vector_search = true             # Enable vector (semantic) search
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AGENT IDENTITY
@@ -891,5 +928,51 @@ mod tests {
         assert!(config.attachments.enabled);
         assert!(config.attachments.allowed_extensions.is_empty());
         assert_eq!(config.attachments.max_file_size, 20 * 1024 * 1024);
+    }
+
+    // ── Memory config tests ─────────────────────────────────────────────
+
+    #[test]
+    fn memory_config_defaults() {
+        let cfg = MemoryConfig::default();
+        assert_eq!(cfg.half_life_days, 30.0);
+        assert_eq!(cfg.mmr_lambda, 0.7);
+        assert!(cfg.vector_search);
+    }
+
+    #[test]
+    fn memory_config_default_when_missing_from_toml() {
+        let toml = "";
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.memory.half_life_days, 30.0);
+        assert_eq!(config.memory.mmr_lambda, 0.7);
+        assert!(config.memory.vector_search);
+    }
+
+    #[test]
+    fn memory_config_from_toml() {
+        let toml = r#"
+            [memory]
+            half_life_days = 14.0
+            mmr_lambda = 0.5
+            vector_search = false
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.memory.half_life_days, 14.0);
+        assert_eq!(config.memory.mmr_lambda, 0.5);
+        assert!(!config.memory.vector_search);
+    }
+
+    #[test]
+    fn memory_config_partial_from_toml() {
+        // Only set half_life_days, rest should default
+        let toml = r#"
+            [memory]
+            half_life_days = 7.0
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.memory.half_life_days, 7.0);
+        assert_eq!(config.memory.mmr_lambda, 0.7); // default
+        assert!(config.memory.vector_search); // default
     }
 }

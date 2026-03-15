@@ -269,6 +269,10 @@ pub struct Options {
 
     /// LLM provider to use. If `None`, defaults to `AnthropicProvider::from_env()`.
     pub provider: Option<Box<dyn LlmProvider>>,
+
+    /// Pre-compaction handler: called with messages about to be discarded
+    /// during conversation compaction, allowing the host to persist key facts.
+    pub pre_compact_handler: Option<PreCompactHandlerFn>,
 }
 
 /// A custom tool definition to send to the Claude API.
@@ -289,6 +293,19 @@ pub struct QueryAttachment {
     /// Base64-encoded data.
     pub base64_data: String,
 }
+
+/// Type alias for the pre-compaction handler.
+///
+/// Called just before conversation messages are compacted (summarized).
+/// Receives the messages about to be discarded, allowing the host to
+/// extract and persist important information before it's lost.
+pub type PreCompactHandlerFn = Box<
+    dyn Fn(
+            Vec<crate::client::ApiMessage>,
+        ) -> Pin<Box<dyn Future<Output = ()> + Send>>
+        + Send
+        + Sync,
+>;
 
 /// Type alias for external tool handler callback.
 ///
@@ -361,6 +378,7 @@ impl Default for Options {
             api_key: None,
             attachments: Vec::new(),
             provider: None,
+            pre_compact_handler: None,
         }
     }
 }
@@ -564,6 +582,11 @@ impl OptionsBuilder {
         self
     }
 
+    pub fn pre_compact_handler(mut self, handler: PreCompactHandlerFn) -> Self {
+        self.options.pre_compact_handler = Some(handler);
+        self
+    }
+
     pub fn build(self) -> Options {
         self.options
     }
@@ -620,5 +643,22 @@ mod tests {
         assert_eq!(opts.api_key.as_deref(), Some("sk-ant-combined"));
         assert_eq!(opts.model.as_deref(), Some("claude-haiku-4-5"));
         assert_eq!(opts.max_turns, Some(10));
+    }
+
+    #[test]
+    fn builder_pre_compact_handler_default_is_none() {
+        let opts = Options::builder().build();
+        assert!(opts.pre_compact_handler.is_none());
+    }
+
+    #[test]
+    fn builder_pre_compact_handler_sets_field() {
+        let handler: PreCompactHandlerFn = Box::new(|_msgs| {
+            Box::pin(async {})
+        });
+        let opts = Options::builder()
+            .pre_compact_handler(handler)
+            .build();
+        assert!(opts.pre_compact_handler.is_some());
     }
 }

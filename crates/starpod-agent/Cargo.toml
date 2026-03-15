@@ -7,7 +7,7 @@ description = "Orchestrator for Starpod - wires agent-sdk + memory + session + v
 [dependencies]
 agent-sdk = { path = "../agent-sdk" }
 starpod-core = { path = "../starpod-core" }
-starpod-memory = { path = "../starpod-memory" }
+starpod-memory = { path = "../starpod-memory", features = ["embeddings"] }
 starpod-session = { path = "../starpod-session" }
 starpod-vault = { path = "../starpod-vault" }
 starpod-skills = { path = "../starpod-skills" }

@@ -844,6 +844,12 @@ async fn run_agent_loop(
                         .as_deref()
                         .unwrap_or(compact::DEFAULT_COMPACTION_MODEL);
 
+                    // Fire pre-compact handler so the host can persist key facts
+                    if let Some(ref handler) = options.pre_compact_handler {
+                        let msgs_to_compact = conversation[..split_point].to_vec();
+                        handler(msgs_to_compact).await;
+                    }
+
                     let summary_prompt =
                         compact::build_summary_prompt(&conversation[..split_point]);
 

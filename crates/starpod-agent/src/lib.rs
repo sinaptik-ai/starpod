@@ -47,7 +47,18 @@ pub struct StarpodAgent {
 impl StarpodAgent {
     /// Create a new StarpodAgent from config.
     pub async fn new(config: StarpodConfig) -> Result<Self> {
-        let memory = MemoryStore::new(&config.data_dir).await?;
+        let mut memory = MemoryStore::new(&config.data_dir).await?;
+
+        // Apply memory config
+        memory.set_half_life_days(config.memory.half_life_days);
+        memory.set_mmr_lambda(config.memory.mmr_lambda);
+
+        // Set up local embedder for vector search
+        if config.memory.vector_search {
+            use starpod_memory::embedder::LocalEmbedder;
+            memory.set_embedder(Arc::new(LocalEmbedder::new()));
+            debug!("Vector search enabled with local embedder");
+        }
 
         let session_db = config.data_dir.join("session.db");
         let sessions_dir = config.data_dir.join("sessions");
@@ -259,6 +270,43 @@ impl StarpodAgent {
         Ok(provider)
     }
 
+    /// Build the pre-compaction handler that saves key facts before context is discarded.
+    fn build_pre_compact_handler(&self) -> agent_sdk::PreCompactHandlerFn {
+        let memory = Arc::clone(&self.memory);
+
+        Box::new(move |messages: Vec<agent_sdk::client::ApiMessage>| {
+            let memory = Arc::clone(&memory);
+            Box::pin(async move {
+                // Extract text content from messages being compacted
+                let mut text_parts: Vec<String> = Vec::new();
+                for msg in &messages {
+                    for block in &msg.content {
+                        if let agent_sdk::client::ApiContentBlock::Text { text, .. } = block {
+                            text_parts.push(text.clone());
+                        }
+                    }
+                }
+
+                if text_parts.is_empty() {
+                    return;
+                }
+
+                // Truncate to a reasonable size
+                let combined = text_parts.join("\n");
+                let truncated = if combined.len() > 2000 {
+                    format!("{}...", &combined[..2000])
+                } else {
+                    combined
+                };
+
+                let entry = format!("## Pre-compaction save\n{}", truncated);
+                if let Err(e) = memory.append_daily(&entry).await {
+                    warn!("Failed to save pre-compaction context: {}", e);
+                }
+            })
+        })
+    }
+
     /// Build the external tool handler closure.
     fn build_tool_handler(&self) -> ExternalToolHandlerFn {
         let ctx = Arc::new(ToolContext {
@@ -322,6 +370,7 @@ impl StarpodAgent {
             .session_id(session_id.clone())
             .context_budget(160_000)
             .external_tool_handler(self.build_tool_handler())
+            .pre_compact_handler(self.build_pre_compact_handler())
             .custom_tools(custom_tool_definitions())
             .attachments(query_atts)
             .provider(provider)
@@ -481,6 +530,7 @@ impl StarpodAgent {
             .session_id(session_id.clone())
             .context_budget(160_000)
             .external_tool_handler(self.build_tool_handler())
+            .pre_compact_handler(self.build_pre_compact_handler())
             .custom_tools(custom_tool_definitions())
             .followup_rx(followup_rx)
             .attachments(query_atts)

@@ -46,7 +46,7 @@ pub mod types;
 pub use error::AgentError;
 pub use hooks::{hook_fn, HookCallback, HookCallbackMatcher, HookEvent, HookInput, HookOutput, HookRegistry};
 pub use mcp::{McpServerConfig, McpStdioServerConfig, McpHttpServerConfig, McpSseServerConfig};
-pub use options::{CustomToolDefinition, ExternalToolHandlerFn, Options, OptionsBuilder, PermissionMode, QueryAttachment};
+pub use options::{CustomToolDefinition, ExternalToolHandlerFn, Options, OptionsBuilder, PermissionMode, PreCompactHandlerFn, QueryAttachment};
 pub use provider::{CostRates, LlmProvider, ProviderCapabilities};
 pub use providers::{AnthropicProvider, GeminiProvider, OpenAiProvider};
 pub use query::{query, Query};
