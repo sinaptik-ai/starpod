@@ -15,13 +15,15 @@ use crate::types::*;
 /// Manages cron jobs in SQLite.
 pub struct CronStore {
     pool: SqlitePool,
+    default_max_retries: u32,
+    default_timeout_secs: u64,
 }
 
 impl CronStore {
     /// Create a `CronStore` from an existing pool (used in tests with in-memory databases).
     #[cfg(test)]
     pub(crate) fn from_pool(pool: SqlitePool) -> Self {
-        Self { pool }
+        Self { pool, default_max_retries: 3, default_timeout_secs: 7200 }
     }
 
     /// Open or create the cron database.
@@ -50,7 +52,17 @@ impl CronStore {
 
         schema::run_migrations(&pool).await?;
 
-        Ok(Self { pool })
+        Ok(Self { pool, default_max_retries: 3, default_timeout_secs: 7200 })
+    }
+
+    /// Set the default max retries for new jobs added via `add_job()`.
+    pub fn set_default_max_retries(&mut self, v: u32) {
+        self.default_max_retries = v;
+    }
+
+    /// Set the default timeout (in seconds) for new jobs added via `add_job()`.
+    pub fn set_default_timeout_secs(&mut self, v: u64) {
+        self.default_timeout_secs = v;
     }
 
     /// Add a new cron job. Returns the job ID.
@@ -62,7 +74,7 @@ impl CronStore {
         delete_after_run: bool,
         user_tz: Option<&str>,
     ) -> Result<String> {
-        self.add_job_full(name, prompt, schedule, delete_after_run, user_tz, 3, 7200, SessionMode::Isolated).await
+        self.add_job_full(name, prompt, schedule, delete_after_run, user_tz, self.default_max_retries, self.default_timeout_secs as u32, SessionMode::Isolated).await
     }
 
     /// Add a new cron job with full options. Returns the job ID.
@@ -564,7 +576,7 @@ mod tests {
     async fn setup() -> CronStore {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         schema::run_migrations(&pool).await.unwrap();
-        CronStore { pool }
+        CronStore::from_pool(pool)
     }
 
     #[tokio::test]
@@ -1036,6 +1048,30 @@ mod tests {
         // Should not appear in retry jobs (enabled = 0)
         let retry_jobs = store.get_retry_jobs().await.unwrap();
         assert!(retry_jobs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_set_default_max_retries_affects_add_job() {
+        let mut store = setup().await;
+        store.set_default_max_retries(5);
+
+        let schedule = Schedule::Interval { every_ms: 60000 };
+        store.add_job("retry-default", "test", &schedule, false, None).await.unwrap();
+
+        let job = store.get_job_by_name("retry-default").await.unwrap().unwrap();
+        assert_eq!(job.max_retries, 5, "add_job should use the custom default_max_retries");
+    }
+
+    #[tokio::test]
+    async fn test_set_default_timeout_secs_affects_add_job() {
+        let mut store = setup().await;
+        store.set_default_timeout_secs(3600);
+
+        let schedule = Schedule::Interval { every_ms: 60000 };
+        store.add_job("timeout-default", "test", &schedule, false, None).await.unwrap();
+
+        let job = store.get_job_by_name("timeout-default").await.unwrap().unwrap();
+        assert_eq!(job.timeout_secs, 3600, "add_job should use the custom default_timeout_secs");
     }
 
     #[tokio::test]

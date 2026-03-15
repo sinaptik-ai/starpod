@@ -507,14 +507,15 @@ async fn run_agent_loop(
         });
 
         // Increase max_tokens when thinking is enabled
+        let base_max_tokens = options.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS);
         let max_tokens = if let Some(ref tp) = thinking_param {
             if let Some(budget) = tp.budget_tokens {
-                DEFAULT_MAX_TOKENS.max(budget as u32 + 8192)
+                base_max_tokens.max(budget as u32 + 8192)
             } else {
-                DEFAULT_MAX_TOKENS
+                base_max_tokens
             }
         } else {
-            DEFAULT_MAX_TOKENS
+            base_max_tokens
         };
 
         // Build the API request
@@ -830,7 +831,8 @@ async fn run_agent_loop(
         // --- Compaction check (between turns) ---
         if let Some(context_budget) = options.context_budget {
             if compact::should_compact(response.usage.input_tokens, context_budget) {
-                let split_point = compact::find_split_point(&conversation);
+                let min_keep = options.min_keep_messages.unwrap_or(4);
+                let split_point = compact::find_split_point(&conversation, min_keep);
                 if split_point > 0 {
                     debug!(
                         input_tokens = response.usage.input_tokens,
@@ -853,11 +855,13 @@ async fn run_agent_loop(
                     let summary_prompt =
                         compact::build_summary_prompt(&conversation[..split_point]);
 
+                    let summary_max_tokens = options.summary_max_tokens.unwrap_or(4096);
                     match compact::call_summarizer(
                         &api_client,
                         &summary_prompt,
                         compaction_model,
                         &model,
+                        summary_max_tokens,
                     )
                     .await
                     {

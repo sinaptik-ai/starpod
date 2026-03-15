@@ -3,8 +3,9 @@ pub mod error;
 pub mod types;
 
 pub use config::{
-    AttachmentsConfig, FollowupMode, IdentityConfig, MemoryConfig, StarpodConfig,
-    ProviderConfig, ProvidersConfig, ReasoningEffort, TelegramConfig, UserConfig,
+    AttachmentsConfig, ChannelsConfig, CompactionConfig, CronConfig, FollowupMode, IdentityConfig,
+    InstancesConfig, MemoryConfig, StarpodConfig,
+    ProviderConfig, ProvidersConfig, ReasoningEffort, TelegramChannelConfig, UserConfig,
 };
 pub use error::{StarpodError, Result};
 pub use types::{Attachment, ChatMessage, ChatResponse, ChatUsage, MAX_ATTACHMENT_SIZE};

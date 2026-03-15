@@ -52,6 +52,9 @@ impl StarpodAgent {
         // Apply memory config
         memory.set_half_life_days(config.memory.half_life_days);
         memory.set_mmr_lambda(config.memory.mmr_lambda);
+        memory.set_chunk_size(config.memory.chunk_size);
+        memory.set_chunk_overlap(config.memory.chunk_overlap);
+        memory.set_bootstrap_file_cap(config.memory.bootstrap_file_cap);
 
         // Set up local embedder for vector search
         if config.memory.vector_search {
@@ -71,7 +74,9 @@ impl StarpodAgent {
         let skills = SkillStore::new(&config.data_dir)?;
 
         let cron_db = config.data_dir.join("cron.db");
-        let cron = CronStore::new(&cron_db).await?;
+        let mut cron = CronStore::new(&cron_db).await?;
+        cron.set_default_max_retries(config.cron.default_max_retries);
+        cron.set_default_timeout_secs(config.cron.default_timeout_secs);
 
         Ok(Self {
             memory: Arc::new(memory),
@@ -329,7 +334,8 @@ impl StarpodAgent {
     pub async fn chat(&self, message: ChatMessage) -> Result<ChatResponse> {
         // Step 1: Resolve session via channel routing
         let (channel, key) = resolve_channel(&message);
-        let session_id = match self.session_mgr.resolve_session(&channel, &key).await? {
+        let gap = self.config.channel_gap_minutes(channel.as_str());
+        let session_id = match self.session_mgr.resolve_session(&channel, &key, gap).await? {
             SessionDecision::Continue(id) => {
                 debug!(session_id = %id, channel = %channel.as_str(), "Continuing existing session");
                 id
@@ -367,8 +373,11 @@ impl StarpodAgent {
             .permission_mode(PermissionMode::BypassPermissions)
             .model(&self.config.model)
             .max_turns(self.config.max_turns)
+            .max_tokens(self.config.max_tokens)
             .session_id(session_id.clone())
-            .context_budget(160_000)
+            .context_budget(self.config.compaction.context_budget)
+            .summary_max_tokens(self.config.compaction.summary_max_tokens)
+            .min_keep_messages(self.config.compaction.min_keep_messages)
             .external_tool_handler(self.build_tool_handler())
             .pre_compact_handler(self.build_pre_compact_handler())
             .custom_tools(custom_tool_definitions())
@@ -490,7 +499,8 @@ impl StarpodAgent {
         message: &ChatMessage,
     ) -> Result<(Query, String, mpsc::UnboundedSender<String>)> {
         let (channel, key) = resolve_channel(message);
-        let session_id = match self.session_mgr.resolve_session(&channel, &key).await? {
+        let gap = self.config.channel_gap_minutes(channel.as_str());
+        let session_id = match self.session_mgr.resolve_session(&channel, &key, gap).await? {
             SessionDecision::Continue(id) => {
                 debug!(session_id = %id, channel = %channel.as_str(), "Continuing existing session");
                 id
@@ -527,8 +537,11 @@ impl StarpodAgent {
             .permission_mode(PermissionMode::BypassPermissions)
             .model(&self.config.model)
             .max_turns(self.config.max_turns)
+            .max_tokens(self.config.max_tokens)
             .session_id(session_id.clone())
-            .context_budget(160_000)
+            .context_budget(self.config.compaction.context_budget)
+            .summary_max_tokens(self.config.compaction.summary_max_tokens)
+            .min_keep_messages(self.config.compaction.min_keep_messages)
             .external_tool_handler(self.build_tool_handler())
             .pre_compact_handler(self.build_pre_compact_handler())
             .custom_tools(custom_tool_definitions())
@@ -687,7 +700,8 @@ impl StarpodAgent {
         });
 
         let user_tz = self.config.user.timezone.clone();
-        let mut scheduler = starpod_cron::CronScheduler::new(cron_store, executor, 30, user_tz);
+        let mut scheduler = starpod_cron::CronScheduler::new(cron_store, executor, 30, user_tz)
+            .with_max_concurrent_runs(self.config.cron.max_concurrent_runs as u32);
         if let Some(n) = notifier {
             scheduler = scheduler.with_notifier(n);
         }

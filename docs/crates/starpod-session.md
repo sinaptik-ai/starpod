@@ -8,7 +8,7 @@ Channel-aware session lifecycle management with usage tracking and message persi
 let mgr = SessionManager::new(&db_path, &sessions_dir).await?;
 
 // Resolve or create a session
-let decision = mgr.resolve_session(&Channel::Main, "session-key").await?;
+let decision = mgr.resolve_session(&Channel::Main, "session-key", None).await?;
 match decision {
     SessionDecision::Continue(id) => { /* use existing session */ }
     SessionDecision::New => {
@@ -49,7 +49,9 @@ pub enum Channel {
 ## Session Resolution
 
 - **Main**: Always continues if session exists with same key
-- **Telegram**: Continues if last message within 6 hours; otherwise auto-closes old session and returns `New`
+- **Telegram**: Continues if last message within the gap threshold; otherwise auto-closes old session and returns `New`
+
+The Telegram inactivity threshold defaults to 6 hours (360 minutes) and is configurable via `[channels.telegram] gap_minutes` in `.starpod/config.toml`.
 
 ## Types
 

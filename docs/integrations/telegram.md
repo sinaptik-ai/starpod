@@ -17,7 +17,7 @@ Starpod can run as a Telegram bot, sharing the same agent instance as the web UI
 Either in `.starpod/config.toml`:
 
 ```toml
-[telegram]
+[channels.telegram]
 bot_token = "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
 ```
 
@@ -36,7 +36,7 @@ export TELEGRAM_BOT_TOKEN="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
 Send `/start` to your bot — it replies with your user ID. Add it to config:
 
 ```toml
-[telegram]
+[channels.telegram]
 allowed_users = [123456789]
 ```
 
@@ -60,7 +60,7 @@ You should see `Telegram  connected` in the startup banner.
 | `all_messages` | Sends each assistant message immediately as it arrives |
 
 ```toml
-[telegram]
+[channels.telegram]
 stream_mode = "all_messages"
 ```
 
@@ -87,7 +87,7 @@ stream_mode = "all_messages"
 
 ## Session Behavior
 
-Telegram uses **time-gap sessions**: messages within 6 hours continue the same session. After a gap, the old session is auto-closed and a new one starts. The session key is the Telegram chat ID.
+Telegram uses **time-gap sessions**: messages within 6 hours continue the same session. After a gap, the old session is auto-closed and a new one starts. The session key is the Telegram chat ID. The gap is configurable via `gap_minutes` in `[channels.telegram]` (default: 360 minutes / 6 hours).
 
 ## Optional: Customize in BotFather
 

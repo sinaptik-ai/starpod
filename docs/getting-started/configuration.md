@@ -9,6 +9,7 @@ All configuration lives in `.starpod/config.toml` in your project root.
 provider = "anthropic"            # Active LLM provider
 model = "claude-haiku-4-5"        # Model name
 max_turns = 30                    # Max agentic turns per chat
+max_tokens = 16384                # Max tokens for LLM API responses
 server_addr = "127.0.0.1:3000"   # HTTP/WS server bind address
 
 # Extended thinking (optional)
@@ -56,6 +57,27 @@ server_addr = "127.0.0.1:3000"   # HTTP/WS server bind address
 [providers.ollama]
 # base_url = "http://localhost:11434/v1/chat/completions"  # No API key needed
 
+# ─── Memory ───────────────────────────────────────────
+[memory]
+# half_life_days = 30.0           # Temporal decay half-life for daily logs
+# mmr_lambda = 0.7                # 0.0 = max diversity, 1.0 = pure relevance
+# vector_search = true            # Enable vector search (requires embeddings feature)
+# chunk_size = 1600               # Chunk size in chars for indexing (~400 tokens)
+# chunk_overlap = 320             # Overlap in chars between chunks (~80 tokens)
+# bootstrap_file_cap = 20000      # Max chars per file in bootstrap context
+
+# ─── Compaction ───────────────────────────────────────
+[compaction]
+# context_budget = 160000         # Token budget triggering compaction
+# summary_max_tokens = 4096       # Max tokens for the compaction summary
+# min_keep_messages = 4           # Minimum messages to keep (never compact below this)
+
+# ─── Cron ─────────────────────────────────────────────
+[cron]
+# default_max_retries = 3         # Default max retries for failed jobs
+# default_timeout_secs = 7200     # Default job timeout (2h)
+# max_concurrent_runs = 1         # Maximum concurrent job runs
+
 # ─── Attachments ──────────────────────────────────────
 [attachments]
 # enabled = true                   # Set to false to disable attachments
@@ -65,8 +87,15 @@ server_addr = "127.0.0.1:3000"   # HTTP/WS server bind address
 # ─── Instances ─────────────────────────────────────────
 # instance_backend_url = "https://api.starpod.example.com"  # Or set STARPOD_INSTANCE_BACKEND_URL env var
 
-# ─── Telegram ──────────────────────────────────────────
-[telegram]
+[instances]
+# health_check_interval_secs = 30  # Health check polling interval
+# heartbeat_timeout_secs = 90      # Instance unhealthy after this
+# http_timeout_secs = 30           # HTTP request timeout for instance API calls
+
+# ─── Channels ─────────────────────────────────────────
+[channels.telegram]
+# enabled = true                  # Enable/disable the Telegram channel
+# gap_minutes = 360               # Inactivity gap (minutes) before new session (6h)
 # bot_token = "123456:ABC..."     # Or set TELEGRAM_BOT_TOKEN env var
 # allowed_users = [123456789]     # Empty = no one can chat
 # stream_mode = "final_only"      # "final_only" or "all_messages"
@@ -80,6 +109,7 @@ server_addr = "127.0.0.1:3000"   # HTTP/WS server bind address
 | `provider` | string | `"anthropic"` | Active LLM provider |
 | `model` | string | `"claude-haiku-4-5"` | Model identifier |
 | `max_turns` | integer | `30` | Max agentic loop iterations per chat |
+| `max_tokens` | integer | `16384` | Maximum tokens for LLM API responses |
 | `server_addr` | string | `"127.0.0.1:3000"` | Server bind address |
 | `reasoning_effort` | string | — | Extended thinking: `"low"`, `"medium"`, `"high"` |
 | `compaction_model` | string | primary model | Model for conversation compaction summaries |
@@ -130,6 +160,8 @@ Never commit API keys to version control. Use environment variables or add `.sta
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
+| `enabled` | bool | `true` | Enable/disable the Telegram channel |
+| `gap_minutes` | integer | `360` | Inactivity gap (minutes) before new session |
 | `bot_token` | string | — | From BotFather (or `TELEGRAM_BOT_TOKEN` env) |
 | `allowed_users` | array | `[]` | User ID allowlist |
 | `stream_mode` | string | `"final_only"` | `"final_only"` or `"all_messages"` |
@@ -146,6 +178,49 @@ The `[attachments]` section controls file upload handling across all channels (W
 | `max_file_size` | integer | `20971520` (20 MB) | Maximum file size in bytes |
 
 Extension matching is case-insensitive (`"jpg"` matches `photo.JPG`).
+
+## Memory
+
+The `[memory]` section tunes search and indexing behavior.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `half_life_days` | float | `30.0` | Temporal decay half-life (days) for daily logs |
+| `mmr_lambda` | float | `0.7` | MMR diversity trade-off: `0.0` = max diversity, `1.0` = pure relevance |
+| `vector_search` | bool | `true` | Enable vector search (requires `embeddings` feature) |
+| `chunk_size` | integer | `1600` | Chunk size in characters for indexing (~400 tokens) |
+| `chunk_overlap` | integer | `320` | Overlap in characters between chunks (~80 tokens) |
+| `bootstrap_file_cap` | integer | `20000` | Max characters per file included in bootstrap context |
+
+## Compaction
+
+The `[compaction]` section controls conversation compaction (summarizing older messages to stay within the model's context window).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `context_budget` | integer | `160000` | Token budget that triggers compaction (~80% of model context) |
+| `summary_max_tokens` | integer | `4096` | Max tokens for the compaction summary response |
+| `min_keep_messages` | integer | `4` | Minimum recent messages to keep (never compacted) |
+
+## Cron
+
+The `[cron]` section sets defaults for the job scheduling system.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `default_max_retries` | integer | `3` | Default maximum retries for failed jobs |
+| `default_timeout_secs` | integer | `7200` | Default job timeout in seconds (2h) |
+| `max_concurrent_runs` | integer | `1` | Maximum concurrent job runs |
+
+## Instances
+
+The `[instances]` section configures remote instance management.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `health_check_interval_secs` | integer | `30` | Health check polling interval in seconds |
+| `heartbeat_timeout_secs` | integer | `90` | Seconds before an instance is considered unhealthy |
+| `http_timeout_secs` | integer | `30` | HTTP request timeout for instance API calls |
 
 **Examples:**
 
@@ -174,6 +249,6 @@ max_file_size = 5242880
 | `GROQ_API_KEY` | `providers.groq.api_key` |
 | `DEEPSEEK_API_KEY` | `providers.deepseek.api_key` |
 | `OPENROUTER_API_KEY` | `providers.openrouter.api_key` |
-| `TELEGRAM_BOT_TOKEN` | `telegram.bot_token` |
+| `TELEGRAM_BOT_TOKEN` | `channels.telegram.bot_token` |
 | `STARPOD_API_KEY` | API key auth for the HTTP/WS gateway |
 | `STARPOD_INSTANCE_BACKEND_URL` | `instance_backend_url` |

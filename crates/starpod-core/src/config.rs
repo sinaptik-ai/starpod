@@ -101,10 +101,16 @@ pub enum AllowedUser {
     Username(String),
 }
 
-/// Telegram-specific configuration.
+/// Telegram channel configuration (lives under `[channels.telegram]`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub struct TelegramConfig {
+pub struct TelegramChannelConfig {
+    /// Whether this channel is enabled (default: true).
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Inactivity gap (in minutes) before auto-closing a Telegram session (default: 360 = 6h).
+    #[serde(default = "default_gap_minutes")]
+    pub gap_minutes: Option<i64>,
     /// Bot token from @BotFather.
     pub bot_token: Option<String>,
     /// Users allowed to interact with the bot — can be numeric IDs or
@@ -119,9 +125,13 @@ pub struct TelegramConfig {
     pub stream_mode: String,
 }
 
-impl Default for TelegramConfig {
+fn default_gap_minutes() -> Option<i64> { Some(360) }
+
+impl Default for TelegramChannelConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
+            gap_minutes: default_gap_minutes(),
             bot_token: None,
             allowed_users: Vec::new(),
             stream_mode: default_stream_mode(),
@@ -129,7 +139,7 @@ impl Default for TelegramConfig {
     }
 }
 
-impl TelegramConfig {
+impl TelegramChannelConfig {
     /// Extract the numeric user IDs from the allow-list.
     pub fn allowed_user_ids(&self) -> Vec<u64> {
         self.allowed_users
@@ -153,6 +163,15 @@ impl TelegramConfig {
     }
 }
 
+/// Channel configuration namespace (`[channels.*]`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ChannelsConfig {
+    /// Telegram channel settings.
+    pub telegram: Option<TelegramChannelConfig>,
+    // future: discord, whatsapp, etc.
+}
+
 fn default_stream_mode() -> String {
     "final_only".to_string()
 }
@@ -167,7 +186,20 @@ pub struct MemoryConfig {
     pub mmr_lambda: f64,
     /// Enable vector search (requires `embeddings` feature). Default: true.
     pub vector_search: bool,
+    /// Target chunk size in characters for indexing (~400 tokens ≈ 1600 chars).
+    #[serde(default = "default_chunk_size")]
+    pub chunk_size: usize,
+    /// Overlap in characters between chunks (~80 tokens ≈ 320 chars).
+    #[serde(default = "default_chunk_overlap")]
+    pub chunk_overlap: usize,
+    /// Maximum characters to include from a single file in bootstrap context.
+    #[serde(default = "default_bootstrap_file_cap")]
+    pub bootstrap_file_cap: usize,
 }
+
+fn default_chunk_size() -> usize { 1600 }
+fn default_chunk_overlap() -> usize { 320 }
+fn default_bootstrap_file_cap() -> usize { 20_000 }
 
 impl Default for MemoryConfig {
     fn default() -> Self {
@@ -175,6 +207,97 @@ impl Default for MemoryConfig {
             half_life_days: 30.0,
             mmr_lambda: 0.7,
             vector_search: true,
+            chunk_size: default_chunk_size(),
+            chunk_overlap: default_chunk_overlap(),
+            bootstrap_file_cap: default_bootstrap_file_cap(),
+        }
+    }
+}
+
+
+/// Cron scheduling configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CronConfig {
+    /// Default maximum retries for failed jobs (default: 3).
+    #[serde(default = "default_cron_max_retries")]
+    pub default_max_retries: u32,
+    /// Default job timeout in seconds (default: 7200 = 2h).
+    #[serde(default = "default_cron_timeout_secs")]
+    pub default_timeout_secs: u64,
+    /// Maximum concurrent job runs (default: 1).
+    #[serde(default = "default_cron_max_concurrent")]
+    pub max_concurrent_runs: usize,
+}
+
+fn default_cron_max_retries() -> u32 { 3 }
+fn default_cron_timeout_secs() -> u64 { 7200 }
+fn default_cron_max_concurrent() -> usize { 1 }
+
+impl Default for CronConfig {
+    fn default() -> Self {
+        Self {
+            default_max_retries: default_cron_max_retries(),
+            default_timeout_secs: default_cron_timeout_secs(),
+            max_concurrent_runs: default_cron_max_concurrent(),
+        }
+    }
+}
+
+/// Conversation compaction configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CompactionConfig {
+    /// Token budget triggering compaction (~80% of model context window).
+    #[serde(default = "default_context_budget")]
+    pub context_budget: u64,
+    /// Max tokens for the compaction summary response.
+    #[serde(default = "default_summary_max_tokens")]
+    pub summary_max_tokens: u32,
+    /// Minimum messages to keep at the end (never compact below this).
+    #[serde(default = "default_min_keep_messages")]
+    pub min_keep_messages: usize,
+}
+
+fn default_context_budget() -> u64 { 160_000 }
+fn default_summary_max_tokens() -> u32 { 4096 }
+fn default_min_keep_messages() -> usize { 4 }
+
+impl Default for CompactionConfig {
+    fn default() -> Self {
+        Self {
+            context_budget: default_context_budget(),
+            summary_max_tokens: default_summary_max_tokens(),
+            min_keep_messages: default_min_keep_messages(),
+        }
+    }
+}
+
+/// Remote instance management configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InstancesConfig {
+    /// Health check polling interval in seconds (default: 30).
+    #[serde(default = "default_health_check_interval")]
+    pub health_check_interval_secs: u64,
+    /// Heartbeat timeout in seconds — instance is unhealthy after this (default: 90).
+    #[serde(default = "default_heartbeat_timeout")]
+    pub heartbeat_timeout_secs: u64,
+    /// HTTP request timeout in seconds for instance API calls (default: 30).
+    #[serde(default = "default_http_timeout")]
+    pub http_timeout_secs: u64,
+}
+
+fn default_health_check_interval() -> u64 { 30 }
+fn default_heartbeat_timeout() -> u64 { 90 }
+fn default_http_timeout() -> u64 { 30 }
+
+impl Default for InstancesConfig {
+    fn default() -> Self {
+        Self {
+            health_check_interval_secs: default_health_check_interval(),
+            heartbeat_timeout_secs: default_heartbeat_timeout(),
+            http_timeout_secs: default_http_timeout(),
         }
     }
 }
@@ -297,9 +420,13 @@ pub struct StarpodConfig {
     #[serde(default)]
     pub providers: ProvidersConfig,
 
-    /// Telegram bot configuration.
+    /// Channel configurations (e.g. `[channels.telegram]`).
     #[serde(default)]
-    pub telegram: TelegramConfig,
+    pub channels: ChannelsConfig,
+
+    /// Maximum tokens for LLM API responses (default: 16384).
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: u32,
 
     /// How followup messages are handled during an active agent loop.
     /// "inject" (default) integrates them into the next loop iteration;
@@ -311,9 +438,21 @@ pub struct StarpodConfig {
     #[serde(default)]
     pub memory: MemoryConfig,
 
+    /// Cron scheduling settings.
+    #[serde(default)]
+    pub cron: CronConfig,
+
+    /// Conversation compaction settings.
+    #[serde(default)]
+    pub compaction: CompactionConfig,
+
     /// Attachment handling settings.
     #[serde(default)]
     pub attachments: AttachmentsConfig,
+
+    /// Remote instance settings.
+    #[serde(default)]
+    pub instances: InstancesConfig,
 
     /// Remote instance backend URL (e.g. "https://api.starpod.example.com").
     /// If set, `starpod instance` commands will connect to this backend.
@@ -341,6 +480,10 @@ fn default_max_turns() -> u32 {
     30
 }
 
+fn default_max_tokens() -> u32 {
+    16384
+}
+
 impl Default for StarpodConfig {
     fn default() -> Self {
         Self {
@@ -350,15 +493,19 @@ impl Default for StarpodConfig {
             provider: default_provider(),
             model: default_model(),
             max_turns: default_max_turns(),
+            max_tokens: default_max_tokens(),
             reasoning_effort: None,
             compaction_model: None,
             followup_mode: FollowupMode::default(),
             memory: MemoryConfig::default(),
+            cron: CronConfig::default(),
+            compaction: CompactionConfig::default(),
             identity: IdentityConfig::default(),
             user: UserConfig::default(),
             providers: ProvidersConfig::default(),
-            telegram: TelegramConfig::default(),
+            channels: ChannelsConfig::default(),
             attachments: AttachmentsConfig::default(),
+            instances: InstancesConfig::default(),
             instance_backend_url: None,
             project_root: PathBuf::new(),
         }
@@ -430,22 +577,40 @@ impl StarpodConfig {
             .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
     }
 
-    /// Resolved Telegram bot token: checks [telegram] section, then env var.
+    /// Resolved Telegram bot token: checks [channels.telegram] section, then env var.
     pub fn resolved_telegram_token(&self) -> Option<String> {
-        self.telegram
-            .bot_token
-            .clone()
+        self.channels
+            .telegram
+            .as_ref()
+            .and_then(|t| t.bot_token.clone())
             .or_else(|| std::env::var("TELEGRAM_BOT_TOKEN").ok())
     }
 
-    /// Resolved Telegram allowed user IDs from [telegram] section.
+    /// Resolved Telegram allowed user IDs from [channels.telegram] section.
     pub fn resolved_telegram_allowed_user_ids(&self) -> Vec<u64> {
-        self.telegram.allowed_user_ids()
+        self.channels
+            .telegram
+            .as_ref()
+            .map(|t| t.allowed_user_ids())
+            .unwrap_or_default()
     }
 
-    /// Resolved Telegram allowed usernames (lowercased) from [telegram] section.
+    /// Resolved Telegram allowed usernames (lowercased) from [channels.telegram] section.
     pub fn resolved_telegram_allowed_usernames(&self) -> Vec<String> {
-        self.telegram.allowed_usernames()
+        self.channels
+            .telegram
+            .as_ref()
+            .map(|t| t.allowed_usernames())
+            .unwrap_or_default()
+    }
+
+    /// Get the inactivity gap (in minutes) for a channel by name.
+    /// Returns `None` for channels that don't use time-gap sessions.
+    pub fn channel_gap_minutes(&self, channel: &str) -> Option<i64> {
+        match channel {
+            "telegram" => self.channels.telegram.as_ref().and_then(|t| t.gap_minutes),
+            _ => None,
+        }
     }
 
     /// Resolved database path (uses `db_path` if set, otherwise `<data_dir>/memory.db`).
@@ -576,6 +741,9 @@ model = "claude-haiku-4-5"
 # Maximum agentic turns per request
 max_turns = 30
 
+# Maximum tokens for LLM API responses
+# max_tokens = 16384
+
 # Server bind address
 server_addr = "127.0.0.1:3000"
 
@@ -599,6 +767,29 @@ server_addr = "127.0.0.1:3000"
 # half_life_days = 30.0            # Temporal decay half-life for daily logs
 # mmr_lambda = 0.7                 # 0.0 = max diversity, 1.0 = pure relevance
 # vector_search = true             # Enable vector (semantic) search
+# chunk_size = 1600                # Chunk size in characters for indexing (~400 tokens)
+# chunk_overlap = 320              # Overlap in characters between chunks (~80 tokens)
+# bootstrap_file_cap = 20000       # Max chars from a single file in bootstrap context
+
+# ══════════════════════════════════════════════════════════════════════════════
+# COMPACTION
+# ══════════════════════════════════════════════════════════════════════════════
+# Tune conversation compaction (context window management).
+
+[compaction]
+# context_budget = 160000          # Token budget triggering compaction (~80% of context window)
+# summary_max_tokens = 4096        # Max tokens for compaction summary
+# min_keep_messages = 4            # Minimum recent messages to preserve
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CRON
+# ══════════════════════════════════════════════════════════════════════════════
+# Cron job scheduling defaults.
+
+[cron]
+# default_max_retries = 3          # Default max retries for failed jobs
+# default_timeout_secs = 7200      # Default job timeout (2h)
+# max_concurrent_runs = 1          # Maximum concurrent job executions
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AGENT IDENTITY
@@ -635,10 +826,13 @@ server_addr = "127.0.0.1:3000"
 # models = ["gpt-4o", "gpt-4o-mini"]
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TELEGRAM
+# CHANNELS
 # ══════════════════════════════════════════════════════════════════════════════
+# Configure channel-specific settings under [channels.<name>].
 
-[telegram]
+[channels.telegram]
+# enabled = true                   # Set to false to disable the Telegram channel
+# gap_minutes = 360                # Inactivity gap before new session (6h)
 # bot_token = "123456:ABC..."     # Or set TELEGRAM_BOT_TOKEN env var
 # allowed_users = [123456789, "alice"]  # User IDs or usernames (without @)
 # stream_mode = "final_only"      # "final_only" or "all_messages"
@@ -659,6 +853,11 @@ server_addr = "127.0.0.1:3000"
 # ══════════════════════════════════════════════════════════════════════════════
 # Remote instance backend for `starpod instance` commands.
 
+[instances]
+# health_check_interval_secs = 30  # Health check polling interval
+# heartbeat_timeout_secs = 90      # Instance considered unhealthy after this
+# http_timeout_secs = 30           # HTTP request timeout for instance API calls
+
 # instance_backend_url = "https://api.starpod.example.com"  # Or set STARPOD_INSTANCE_BACKEND_URL env var
 "#;
 }
@@ -670,52 +869,79 @@ mod tests {
     #[test]
     fn test_allowed_users_ids_only() {
         let toml = r#"
-            [telegram]
+            [channels.telegram]
             allowed_users = [111, 222]
         "#;
         let config: StarpodConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.telegram.allowed_user_ids(), vec![111, 222]);
-        assert!(config.telegram.allowed_usernames().is_empty());
+        let tg = config.channels.telegram.as_ref().unwrap();
+        assert_eq!(tg.allowed_user_ids(), vec![111, 222]);
+        assert!(tg.allowed_usernames().is_empty());
     }
 
     #[test]
     fn test_allowed_users_usernames_only() {
         let toml = r#"
-            [telegram]
+            [channels.telegram]
             allowed_users = ["alice", "Bob"]
         "#;
         let config: StarpodConfig = toml::from_str(toml).unwrap();
-        assert!(config.telegram.allowed_user_ids().is_empty());
-        assert_eq!(config.telegram.allowed_usernames(), vec!["alice", "bob"]);
+        let tg = config.channels.telegram.as_ref().unwrap();
+        assert!(tg.allowed_user_ids().is_empty());
+        assert_eq!(tg.allowed_usernames(), vec!["alice", "bob"]);
     }
 
     #[test]
     fn test_allowed_users_mixed() {
         let toml = r#"
-            [telegram]
+            [channels.telegram]
             allowed_users = [123456789, "alice", 987654321, "Bob"]
         "#;
         let config: StarpodConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.telegram.allowed_user_ids(), vec![123456789, 987654321]);
-        assert_eq!(config.telegram.allowed_usernames(), vec!["alice", "bob"]);
+        let tg = config.channels.telegram.as_ref().unwrap();
+        assert_eq!(tg.allowed_user_ids(), vec![123456789, 987654321]);
+        assert_eq!(tg.allowed_usernames(), vec!["alice", "bob"]);
     }
 
     #[test]
     fn test_allowed_users_empty() {
         let toml = r#"
-            [telegram]
+            [channels.telegram]
             allowed_users = []
         "#;
         let config: StarpodConfig = toml::from_str(toml).unwrap();
-        assert!(config.telegram.allowed_user_ids().is_empty());
-        assert!(config.telegram.allowed_usernames().is_empty());
+        let tg = config.channels.telegram.as_ref().unwrap();
+        assert!(tg.allowed_user_ids().is_empty());
+        assert!(tg.allowed_usernames().is_empty());
     }
 
     #[test]
     fn test_allowed_users_default() {
         let toml = "";
         let config: StarpodConfig = toml::from_str(toml).unwrap();
-        assert!(config.telegram.allowed_users.is_empty());
+        assert!(config.channels.telegram.is_none());
+    }
+
+    #[test]
+    fn test_channels_telegram_enabled_and_gap_defaults() {
+        let toml = r#"
+            [channels.telegram]
+            bot_token = "test"
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        let tg = config.channels.telegram.as_ref().unwrap();
+        assert!(tg.enabled);
+        assert_eq!(tg.gap_minutes, Some(360));
+    }
+
+    #[test]
+    fn test_channel_gap_minutes_convenience() {
+        let toml = r#"
+            [channels.telegram]
+            gap_minutes = 120
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.channel_gap_minutes("telegram"), Some(120));
+        assert_eq!(config.channel_gap_minutes("main"), None);
     }
 
     #[test]
@@ -974,5 +1200,190 @@ mod tests {
         assert_eq!(config.memory.half_life_days, 7.0);
         assert_eq!(config.memory.mmr_lambda, 0.7); // default
         assert!(config.memory.vector_search); // default
+    }
+
+    // ── Channel gap_minutes tests ──────────────────────────────────────
+
+    #[test]
+    fn channel_gap_minutes_default_when_telegram_missing() {
+        let toml = "";
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        // No [channels.telegram] → None
+        assert_eq!(config.channel_gap_minutes("telegram"), None);
+    }
+
+    #[test]
+    fn channel_gap_minutes_default_when_telegram_present() {
+        let toml = r#"
+            [channels.telegram]
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.channel_gap_minutes("telegram"), Some(360));
+    }
+
+    #[test]
+    fn channel_gap_minutes_custom_from_toml() {
+        let toml = r#"
+            [channels.telegram]
+            gap_minutes = 60
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.channel_gap_minutes("telegram"), Some(60));
+    }
+
+    // ── Compaction config tests ────────────────────────────────────────
+
+    #[test]
+    fn compaction_config_defaults() {
+        let cfg = CompactionConfig::default();
+        assert_eq!(cfg.context_budget, 160_000);
+        assert_eq!(cfg.summary_max_tokens, 4096);
+        assert_eq!(cfg.min_keep_messages, 4);
+    }
+
+    #[test]
+    fn compaction_config_default_when_missing_from_toml() {
+        let toml = "";
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.compaction.context_budget, 160_000);
+        assert_eq!(config.compaction.summary_max_tokens, 4096);
+        assert_eq!(config.compaction.min_keep_messages, 4);
+    }
+
+    #[test]
+    fn compaction_config_from_toml() {
+        let toml = r#"
+            [compaction]
+            context_budget = 80000
+            summary_max_tokens = 2048
+            min_keep_messages = 8
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.compaction.context_budget, 80_000);
+        assert_eq!(config.compaction.summary_max_tokens, 2048);
+        assert_eq!(config.compaction.min_keep_messages, 8);
+    }
+
+    #[test]
+    fn compaction_config_partial_from_toml() {
+        // Only set context_budget, rest should default
+        let toml = r#"
+            [compaction]
+            context_budget = 100000
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.compaction.context_budget, 100_000);
+        assert_eq!(config.compaction.summary_max_tokens, 4096); // default
+        assert_eq!(config.compaction.min_keep_messages, 4); // default
+    }
+
+    // ── Cron config tests ──────────────────────────────────────────────
+
+    #[test]
+    fn cron_config_defaults() {
+        let cfg = CronConfig::default();
+        assert_eq!(cfg.default_max_retries, 3);
+        assert_eq!(cfg.default_timeout_secs, 7200);
+        assert_eq!(cfg.max_concurrent_runs, 1);
+    }
+
+    #[test]
+    fn cron_config_default_when_missing_from_toml() {
+        let toml = "";
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.cron.default_max_retries, 3);
+        assert_eq!(config.cron.default_timeout_secs, 7200);
+        assert_eq!(config.cron.max_concurrent_runs, 1);
+    }
+
+    #[test]
+    fn cron_config_from_toml() {
+        let toml = r#"
+            [cron]
+            default_max_retries = 5
+            default_timeout_secs = 3600
+            max_concurrent_runs = 4
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.cron.default_max_retries, 5);
+        assert_eq!(config.cron.default_timeout_secs, 3600);
+        assert_eq!(config.cron.max_concurrent_runs, 4);
+    }
+
+    #[test]
+    fn cron_config_partial_from_toml() {
+        // Only set default_max_retries, rest should default
+        let toml = r#"
+            [cron]
+            default_max_retries = 10
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.cron.default_max_retries, 10);
+        assert_eq!(config.cron.default_timeout_secs, 7200); // default
+        assert_eq!(config.cron.max_concurrent_runs, 1); // default
+    }
+
+    // ── Instances config tests ─────────────────────────────────────────
+
+    #[test]
+    fn instances_config_defaults() {
+        let cfg = InstancesConfig::default();
+        assert_eq!(cfg.health_check_interval_secs, 30);
+        assert_eq!(cfg.heartbeat_timeout_secs, 90);
+        assert_eq!(cfg.http_timeout_secs, 30);
+    }
+
+    #[test]
+    fn instances_config_default_when_missing_from_toml() {
+        let toml = "";
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.instances.health_check_interval_secs, 30);
+        assert_eq!(config.instances.heartbeat_timeout_secs, 90);
+        assert_eq!(config.instances.http_timeout_secs, 30);
+    }
+
+    #[test]
+    fn instances_config_from_toml() {
+        let toml = r#"
+            [instances]
+            health_check_interval_secs = 60
+            heartbeat_timeout_secs = 180
+            http_timeout_secs = 15
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.instances.health_check_interval_secs, 60);
+        assert_eq!(config.instances.heartbeat_timeout_secs, 180);
+        assert_eq!(config.instances.http_timeout_secs, 15);
+    }
+
+    #[test]
+    fn instances_config_partial_from_toml() {
+        // Only set health_check_interval_secs, rest should default
+        let toml = r#"
+            [instances]
+            health_check_interval_secs = 10
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.instances.health_check_interval_secs, 10);
+        assert_eq!(config.instances.heartbeat_timeout_secs, 90); // default
+        assert_eq!(config.instances.http_timeout_secs, 30); // default
+    }
+
+    // ── max_tokens tests ───────────────────────────────────────────────
+
+    #[test]
+    fn max_tokens_default() {
+        let toml = "";
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.max_tokens, 16384);
+    }
+
+    #[test]
+    fn max_tokens_from_toml() {
+        let toml = r#"
+            max_tokens = 8192
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.max_tokens, 8192);
     }
 }

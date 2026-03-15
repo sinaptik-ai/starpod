@@ -18,10 +18,15 @@ pub struct InstanceClient {
 }
 
 impl InstanceClient {
-    /// Create a new client pointing at the given backend URL.
+    /// Create a new client pointing at the given backend URL (30s default timeout).
     pub fn new(base_url: &str, api_key: Option<String>) -> Result<Self> {
+        Self::new_with_timeout(base_url, api_key, 30)
+    }
+
+    /// Create a new client with a custom HTTP timeout (in seconds).
+    pub fn new_with_timeout(base_url: &str, api_key: Option<String>, timeout_secs: u64) -> Result<Self> {
         let client = Client::builder()
-            .timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(timeout_secs))
             .build()
             .map_err(|e| StarpodError::Config(format!("HTTP client error: {}", e)))?;
 
@@ -527,6 +532,26 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].message, "Server started");
         assert_eq!(entries[1].level, "debug");
+    }
+
+    #[tokio::test]
+    async fn test_new_with_timeout() {
+        let server = MockServer::start().await;
+        let client =
+            InstanceClient::new_with_timeout(&server.uri(), Some("test-key".to_string()), 60);
+        assert!(client.is_ok());
+
+        // Verify it works by making a request
+        let client = client.unwrap();
+        Mock::given(method("GET"))
+            .and(path("/instances"))
+            .and(header("Authorization", "Bearer test-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&Vec::<Instance>::new()))
+            .mount(&server)
+            .await;
+
+        let result = client.list_instances().await.unwrap();
+        assert!(result.is_empty());
     }
 
     #[tokio::test]

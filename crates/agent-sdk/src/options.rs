@@ -273,6 +273,15 @@ pub struct Options {
     /// Pre-compaction handler: called with messages about to be discarded
     /// during conversation compaction, allowing the host to persist key facts.
     pub pre_compact_handler: Option<PreCompactHandlerFn>,
+
+    /// Maximum tokens for LLM API responses. Overrides `DEFAULT_MAX_TOKENS`.
+    pub max_tokens: Option<u32>,
+
+    /// Max tokens for the compaction summary response.
+    pub summary_max_tokens: Option<u32>,
+
+    /// Minimum number of messages to keep at the end during compaction.
+    pub min_keep_messages: Option<usize>,
 }
 
 /// A custom tool definition to send to the Claude API.
@@ -379,6 +388,9 @@ impl Default for Options {
             attachments: Vec::new(),
             provider: None,
             pre_compact_handler: None,
+            max_tokens: None,
+            summary_max_tokens: None,
+            min_keep_messages: None,
         }
     }
 }
@@ -587,6 +599,21 @@ impl OptionsBuilder {
         self
     }
 
+    pub fn max_tokens(mut self, max_tokens: u32) -> Self {
+        self.options.max_tokens = Some(max_tokens);
+        self
+    }
+
+    pub fn summary_max_tokens(mut self, tokens: u32) -> Self {
+        self.options.summary_max_tokens = Some(tokens);
+        self
+    }
+
+    pub fn min_keep_messages(mut self, count: usize) -> Self {
+        self.options.min_keep_messages = Some(count);
+        self
+    }
+
     pub fn build(self) -> Options {
         self.options
     }
@@ -643,6 +670,24 @@ mod tests {
         assert_eq!(opts.api_key.as_deref(), Some("sk-ant-combined"));
         assert_eq!(opts.model.as_deref(), Some("claude-haiku-4-5"));
         assert_eq!(opts.max_turns, Some(10));
+    }
+
+    #[test]
+    fn builder_max_tokens_sets_field() {
+        let opts = Options::builder().max_tokens(8192).build();
+        assert_eq!(opts.max_tokens, Some(8192));
+    }
+
+    #[test]
+    fn builder_summary_max_tokens_sets_field() {
+        let opts = Options::builder().summary_max_tokens(2048).build();
+        assert_eq!(opts.summary_max_tokens, Some(2048));
+    }
+
+    #[test]
+    fn builder_min_keep_messages_sets_field() {
+        let opts = Options::builder().min_keep_messages(6).build();
+        assert_eq!(opts.min_keep_messages, Some(6));
     }
 
     #[test]
