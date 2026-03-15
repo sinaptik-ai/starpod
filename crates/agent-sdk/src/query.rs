@@ -298,8 +298,15 @@ async fn run_agent_loop(
         ToolExecutor::with_allowed_dirs(PathBuf::from(&cwd), additional_dirs)
     };
 
-    // Build hook registry from options
-    let hook_registry = HookRegistry::from_map(std::mem::take(&mut options.hooks));
+    // Build hook registry from options, merging file-discovered hooks
+    let mut hook_registry = HookRegistry::from_map(std::mem::take(&mut options.hooks));
+    if !options.hook_dirs.is_empty() {
+        let dirs: Vec<&std::path::Path> = options.hook_dirs.iter().map(|p| p.as_path()).collect();
+        match crate::hooks::HookDiscovery::discover(&dirs) {
+            Ok(discovered) => hook_registry.merge(discovered),
+            Err(e) => tracing::warn!("Failed to discover hooks from dirs: {}", e),
+        }
+    }
 
     // Take followup_rx out of options before borrowing options immutably
     let mut followup_rx = options.followup_rx.take();

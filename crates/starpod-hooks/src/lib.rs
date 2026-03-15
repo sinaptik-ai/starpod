@@ -2,7 +2,8 @@
 //!
 //! This crate provides the hook infrastructure for the Starpod AI assistant
 //! platform. It defines hook events, input/output types, callback mechanisms,
-//! and an execution engine with timeout and cancellation support.
+//! and an execution engine with timeout, cancellation, circuit breaking,
+//! eligibility checks, and file-based discovery.
 //!
 //! ## Architecture
 //!
@@ -18,8 +19,32 @@
 //! - **[`HookOutput`]** — return value from hooks, either async (fire-and-forget) or
 //!   sync (with decisions like approve/block)
 //! - **[`HookCallback`]** — async function signature for hook implementations
-//! - **[`HookCallbackMatcher`]** — groups callbacks with an optional regex filter
-//! - **[`HookRegistry`]** — manages hooks by event type and runs them
+//! - **[`HookCallbackMatcher`]** — groups callbacks with an optional regex filter,
+//!   identity (`name`), and eligibility requirements
+//! - **[`HookRegistry`]** — manages hooks by event type and runs them, with an
+//!   integrated circuit breaker and eligibility cache
+//!
+//! ## Circuit Breaker
+//!
+//! Named hooks are automatically monitored for failures. After
+//! [`CircuitBreakerConfig::max_consecutive_failures`] (default: 5) consecutive
+//! failures, the hook is "tripped" and skipped for a cooldown period (default:
+//! 60 seconds). After cooldown, one retry is allowed; a success resets the
+//! breaker, a failure re-opens it.
+//!
+//! ## Eligibility Requirements
+//!
+//! Hooks can declare [`HookRequirements`] specifying binaries that must be on
+//! PATH, environment variables that must be set, and allowed operating systems.
+//! Hooks whose requirements are not met are silently skipped. Results are cached
+//! per named hook to avoid repeated `which` syscalls.
+//!
+//! ## File-Based Discovery
+//!
+//! [`HookDiscovery`] scans directories for `<hook-name>/HOOK.md` files with
+//! TOML frontmatter. Each manifest declares the hook's event, matcher, timeout,
+//! requirements, and a shell command. The command receives [`HookInput`] as JSON
+//! on stdin and returns [`HookOutput`] as JSON on stdout.
 //!
 //! ## Quick Start
 //!
@@ -36,6 +61,7 @@
 //!             Ok(HookOutput::default())
 //!         }),
 //!     ])
+//!     .with_name("bash-logger")
 //!     .with_matcher("Bash")
 //!     .with_timeout(30),
 //! ]);
@@ -65,6 +91,9 @@
 //! | `WorktreeRemove` | Git worktree removed | No |
 
 pub mod callback;
+pub mod circuit_breaker;
+pub mod discovery;
+pub mod eligibility;
 pub mod error;
 pub mod event;
 pub mod input;
@@ -74,6 +103,9 @@ pub mod runner;
 
 // Re-export main public API
 pub use callback::{hook_fn, HookCallback, HookCallbackMatcher};
+pub use circuit_breaker::{BreakerStatus, CircuitBreaker, CircuitBreakerConfig};
+pub use discovery::{HookDiscovery, HookManifest};
+pub use eligibility::{EligibilityError, HookRequirements};
 pub use error::HookError;
 pub use event::HookEvent;
 pub use input::{

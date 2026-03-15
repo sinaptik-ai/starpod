@@ -12,5 +12,6 @@ pub mod output {
 }
 
 pub use starpod_hooks::{
-    hook_fn, HookCallback, HookCallbackMatcher, HookEvent, HookInput, HookOutput, HookRegistry,
+    hook_fn, HookCallback, HookCallbackMatcher, HookDiscovery, HookEvent, HookInput, HookOutput,
+    HookRegistry, HookRequirements,
 };
