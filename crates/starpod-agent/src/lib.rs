@@ -157,9 +157,13 @@ impl StarpodAgent {
         let bootstrap = self.memory.bootstrap_context()?;
         let skills_ctx = self.skills.bootstrap_skills()?;
         let date_str = Local::now().format("%A, %B %d, %Y at %H:%M").to_string();
+        let project_root = self.config.project_root.display();
 
         let mut prompt = format!(
-            "You are {agent_name}, a personal AI assistant.\n\n{bootstrap}\n\n---\nCurrent date/time: {date_str}\nSession ID: {session_id}\n\
+            "You are {agent_name}, a personal AI assistant.\n\n{bootstrap}\n\n---\n\
+             Current date/time: {date_str}\nSession ID: {session_id}\n\
+             Project root: {project_root}\n\
+             Working directory: {project_root}\n\n\
              You have access to memory tools (MemorySearch, MemoryWrite, MemoryAppendDaily), \
              vault tools (VaultGet, VaultSet), skill tools (SkillCreate, SkillUpdate, SkillDelete, SkillList), \
              and scheduling tools (CronAdd, CronList, CronRemove, CronRuns).\n\
@@ -170,11 +174,12 @@ impl StarpodAgent {
              • Your personal knowledge, memory, soul, and user profile live inside `.starpod/data/` \
              (SOUL.md, USER.md, MEMORY.md, memory/, knowledge/). Use MemorySearch to query this knowledge \
              and MemoryWrite to persist new information there.\n\
-             • The user's project files (code, documents, data) live in the project root directory. \
+             • The user's project files (code, documents, data) live in the project root directory ({project_root}). \
              Use Read, Glob, Grep, and Bash to explore and work with these files.\n\
              Never confuse the two: `.starpod/` is YOUR persistent brain; the project root is the USER's workspace.\n\
              You may ONLY access files within the project root and the `.starpod/` directory. \
-             Do not read, write, or execute anything outside these boundaries.",
+             Do not read, write, or execute anything outside these boundaries.\n\
+             IMPORTANT: Always create files and run commands within the project root ({project_root}), never in /tmp or other external directories.",
         );
 
         // Inject agent personality
