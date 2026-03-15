@@ -27,3 +27,10 @@ pub const DEFAULT_MEMORY: &str = r#"# Long-Term Memory
 
 No long-term memories recorded yet. This file will be updated as notable information is shared.
 "#;
+
+/// Default HEARTBEAT.md content (empty by default — heartbeat skips when empty).
+pub const DEFAULT_HEARTBEAT: &str = r#"# Heartbeat
+
+Write instructions here for the agent to execute every 30 minutes.
+Leave this file empty to skip heartbeat execution.
+"#;

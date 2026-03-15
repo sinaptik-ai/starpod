@@ -83,6 +83,7 @@ impl MemoryStore {
             ("SOUL.md", defaults::DEFAULT_SOUL),
             ("USER.md", defaults::DEFAULT_USER),
             ("MEMORY.md", defaults::DEFAULT_MEMORY),
+            ("HEARTBEAT.md", defaults::DEFAULT_HEARTBEAT),
         ];
 
         for (name, content) in &files {

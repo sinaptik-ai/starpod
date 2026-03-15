@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use chrono::Local;
 use tokio_stream::StreamExt;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use agent_sdk::{ExternalToolHandlerFn, LlmProvider, Message, Options, PermissionMode, Query, QueryAttachment};
 use agent_sdk::{AnthropicProvider, GeminiProvider, OpenAiProvider};
@@ -28,6 +28,7 @@ const CUSTOM_TOOLS: &[&str] = &[
     "VaultGet", "VaultSet",
     "SkillActivate", "SkillCreate", "SkillUpdate", "SkillDelete", "SkillList",
     "CronAdd", "CronList", "CronRemove", "CronRuns",
+    "CronRun", "CronUpdate", "HeartbeatWake",
 ];
 
 /// The Starpod agent orchestrator.
@@ -166,7 +167,7 @@ impl StarpodAgent {
              Working directory: {project_root}\n\n\
              You have access to memory tools (MemorySearch, MemoryWrite, MemoryAppendDaily), \
              vault tools (VaultGet, VaultSet), skill tools (SkillActivate, SkillCreate, SkillUpdate, SkillDelete, SkillList), \
-             and scheduling tools (CronAdd, CronList, CronRemove, CronRuns).\n\
+             and scheduling tools (CronAdd, CronList, CronRemove, CronRuns, CronRun, CronUpdate, HeartbeatWake).\n\
              You can read image files (png, jpg, gif, webp) with the Read tool — the image will be loaded \
              directly into the conversation so you can see and analyze it. For other file types like CSV or \
              PDF, use Python via the Bash tool.\n\n\
@@ -327,7 +328,8 @@ impl StarpodAgent {
             .cwd(self.config.project_root.to_string_lossy().to_string())
             .additional_directories(vec![
                 self.config.data_dir.to_string_lossy().to_string(),
-            ]);
+            ])
+            .hook_dirs(vec![self.config.data_dir.join("hooks")]);
 
         if let Some(ref cm) = self.config.compaction_model {
             builder = builder.compaction_model(cm);
@@ -486,7 +488,8 @@ impl StarpodAgent {
             .cwd(self.config.project_root.to_string_lossy().to_string())
             .additional_directories(vec![
                 self.config.data_dir.to_string_lossy().to_string(),
-            ]);
+            ])
+            .hook_dirs(vec![self.config.data_dir.join("hooks")]);
 
         if let Some(ref cm) = self.config.compaction_model {
             builder = builder.compaction_model(cm);
@@ -579,6 +582,10 @@ impl StarpodAgent {
     /// Start the cron scheduler as a background task.
     ///
     /// The executor callback sends the job prompt through `chat()`.
+    /// Session routing depends on `JobContext.session_mode`:
+    /// - `Isolated`: channel_id="scheduler", no session key (each run is its own session)
+    /// - `Main`: channel_id="main", channel_session_key="main" (shared main session)
+    ///
     /// An optional `notifier` is called after each job completes to deliver
     /// results to the user (e.g. via Telegram).
     /// Returns a JoinHandle for the background task.
@@ -589,14 +596,37 @@ impl StarpodAgent {
         let cron_store = Arc::clone(&self.cron);
         let agent = Arc::clone(self);
 
-        let executor: starpod_cron::JobExecutor = Arc::new(move |prompt| {
+        // Ensure heartbeat job exists
+        let heartbeat_agent = Arc::clone(&agent);
+        let heartbeat_store = Arc::clone(&cron_store);
+        tokio::spawn(async move {
+            if let Err(e) = ensure_heartbeat(&heartbeat_agent, &heartbeat_store).await {
+                warn!(error = %e, "Failed to ensure heartbeat job");
+            }
+        });
+
+        let executor: starpod_cron::JobExecutor = Arc::new(move |ctx: starpod_cron::JobContext| {
             let agent = Arc::clone(&agent);
             Box::pin(async move {
+                // Special handling for heartbeat
+                if ctx.job_name == "__heartbeat__" {
+                    return execute_heartbeat(&agent, &ctx.prompt).await;
+                }
+
+                let (channel_id, session_key) = match ctx.session_mode {
+                    starpod_cron::SessionMode::Isolated => {
+                        ("scheduler".to_string(), None)
+                    }
+                    starpod_cron::SessionMode::Main => {
+                        ("main".to_string(), Some("main".to_string()))
+                    }
+                };
+
                 let msg = ChatMessage {
-                    text: prompt,
+                    text: ctx.prompt,
                     user_id: Some("cron".into()),
-                    channel_id: Some("scheduler".into()),
-                    channel_session_key: None,
+                    channel_id: Some(channel_id),
+                    channel_session_key: session_key,
                     attachments: Vec::new(),
                 };
                 match agent.chat(msg).await {
@@ -612,6 +642,75 @@ impl StarpodAgent {
             scheduler = scheduler.with_notifier(n);
         }
         scheduler.start()
+    }
+}
+
+/// Default heartbeat prompt when HEARTBEAT.md doesn't exist yet.
+const DEFAULT_HEARTBEAT_PROMPT: &str =
+    "You are running a heartbeat check. Review HEARTBEAT.md in your memory store for any pending tasks or instructions. If empty, do nothing.";
+
+/// Ensure the `__heartbeat__` cron job exists.
+async fn ensure_heartbeat(
+    agent: &StarpodAgent,
+    store: &CronStore,
+) -> Result<()> {
+    if store.get_job_by_name("__heartbeat__").await?.is_some() {
+        return Ok(());
+    }
+
+    // Read HEARTBEAT.md from memory if it exists, otherwise use default
+    let prompt = match agent.memory().read_file("HEARTBEAT.md") {
+        Ok(content) if !content.trim().is_empty() => content,
+        _ => DEFAULT_HEARTBEAT_PROMPT.to_string(),
+    };
+
+    // Create heartbeat job: every 30 minutes, main session
+    let schedule = starpod_cron::Schedule::Cron {
+        expr: "0 */30 * * * *".to_string(),
+    };
+    let user_tz = agent.config().user.timezone.as_deref();
+    store
+        .add_job_full(
+            "__heartbeat__",
+            &prompt,
+            &schedule,
+            false,
+            user_tz,
+            3,
+            7200,
+            starpod_cron::SessionMode::Main,
+        )
+        .await?;
+
+    info!("Created __heartbeat__ cron job (every 30 minutes)");
+    Ok(())
+}
+
+/// Execute the heartbeat: read HEARTBEAT.md and run it if non-empty.
+async fn execute_heartbeat(
+    agent: &StarpodAgent,
+    fallback_prompt: &str,
+) -> std::result::Result<String, String> {
+    let prompt = match agent.memory().read_file("HEARTBEAT.md") {
+        Ok(content) if !content.trim().is_empty() => content,
+        _ => {
+            // Nothing to do — skip silently
+            return Ok("skipped".to_string());
+        }
+    };
+
+    let _ = fallback_prompt; // only used as the stored prompt
+
+    let msg = ChatMessage {
+        text: prompt,
+        user_id: Some("heartbeat".into()),
+        channel_id: Some("main".into()),
+        channel_session_key: Some("main".into()),
+        attachments: Vec::new(),
+    };
+    match agent.chat(msg).await {
+        Ok(resp) => Ok(truncate(&resp.text, 500)),
+        Err(e) => Err(e.to_string()),
     }
 }
 
@@ -720,8 +819,11 @@ mod tests {
         assert!(names.contains(&"CronList"));
         assert!(names.contains(&"CronRemove"));
         assert!(names.contains(&"CronRuns"));
+        assert!(names.contains(&"CronRun"));
+        assert!(names.contains(&"CronUpdate"));
+        assert!(names.contains(&"HeartbeatWake"));
 
-        assert_eq!(defs.len(), 14);
+        assert_eq!(defs.len(), 17);
     }
 
     #[tokio::test]
@@ -793,6 +895,152 @@ mod tests {
         let r = result.unwrap();
         assert!(!r.is_error);
         assert!(r.content.contains("test-job"));
+
+        // Test CronAdd with new params (max_retries, session_mode)
+        let result = handle_custom_tool(
+            &ctx,
+            "CronAdd",
+            &serde_json::json!({
+                "name": "advanced-job",
+                "prompt": "Advanced check",
+                "schedule": {"kind": "interval", "every_ms": 120000},
+                "max_retries": 5,
+                "timeout_secs": 300,
+                "session_mode": "main"
+            }),
+        )
+        .await;
+        assert!(result.is_some());
+        assert!(!result.unwrap().is_error);
+
+        // Verify advanced-job has correct settings via CronList
+        let result = handle_custom_tool(&ctx, "CronList", &serde_json::json!({})).await;
+        let r = result.unwrap();
+        assert!(r.content.contains("advanced-job"));
+        assert!(r.content.contains("\"max_retries\": 5"));
+        assert!(r.content.contains("\"session_mode\": \"main\""));
+
+        // Test CronUpdate
+        let result = handle_custom_tool(
+            &ctx,
+            "CronUpdate",
+            &serde_json::json!({
+                "name": "test-job",
+                "prompt": "Updated prompt",
+                "enabled": false,
+                "session_mode": "main"
+            }),
+        )
+        .await;
+        assert!(result.is_some());
+        assert!(!result.unwrap().is_error);
+
+        // Test CronUpdate on nonexistent job
+        let result = handle_custom_tool(
+            &ctx,
+            "CronUpdate",
+            &serde_json::json!({"name": "no-such-job", "prompt": "x"}),
+        )
+        .await;
+        assert!(result.is_some());
+        assert!(result.unwrap().is_error);
+
+        // Test CronRun (records a run start)
+        let result = handle_custom_tool(
+            &ctx,
+            "CronRun",
+            &serde_json::json!({"name": "test-job"}),
+        )
+        .await;
+        assert!(result.is_some());
+        let r = result.unwrap();
+        assert!(!r.is_error);
+        assert!(r.content.contains("Manual run started"));
+
+        // Test CronRun on nonexistent job
+        let result = handle_custom_tool(
+            &ctx,
+            "CronRun",
+            &serde_json::json!({"name": "nope"}),
+        )
+        .await;
+        assert!(result.is_some());
+        assert!(result.unwrap().is_error);
+
+        // Test CronRuns (should show the run we just created)
+        let result = handle_custom_tool(
+            &ctx,
+            "CronRuns",
+            &serde_json::json!({"name": "test-job", "limit": 5}),
+        )
+        .await;
+        assert!(result.is_some());
+        let r = result.unwrap();
+        assert!(!r.is_error);
+        assert!(r.content.contains("running")); // the run we started
+
+        // Test CronRuns on nonexistent job
+        let result = handle_custom_tool(
+            &ctx,
+            "CronRuns",
+            &serde_json::json!({"name": "nope"}),
+        )
+        .await;
+        assert!(result.is_some());
+        assert!(result.unwrap().is_error);
+
+        // Test HeartbeatWake (no heartbeat job exists, should error)
+        let result = handle_custom_tool(
+            &ctx,
+            "HeartbeatWake",
+            &serde_json::json!({"mode": "now"}),
+        )
+        .await;
+        assert!(result.is_some());
+        assert!(result.unwrap().is_error); // no __heartbeat__ job yet
+
+        // Test HeartbeatWake with mode="next" (always succeeds)
+        let result = handle_custom_tool(
+            &ctx,
+            "HeartbeatWake",
+            &serde_json::json!({"mode": "next"}),
+        )
+        .await;
+        assert!(result.is_some());
+        assert!(!result.unwrap().is_error);
+
+        // Test HeartbeatWake with default mode (no mode specified)
+        let result = handle_custom_tool(
+            &ctx,
+            "HeartbeatWake",
+            &serde_json::json!({}),
+        )
+        .await;
+        assert!(result.is_some());
+        assert!(!result.unwrap().is_error);
+
+        // Create a heartbeat job, then test wake "now"
+        ctx.cron.add_job_full(
+            "__heartbeat__", "heartbeat prompt",
+            &starpod_cron::Schedule::Cron { expr: "0 */30 * * * *".into() },
+            false, None, 3, 7200, starpod_cron::SessionMode::Main,
+        ).await.unwrap();
+
+        let result = handle_custom_tool(
+            &ctx,
+            "HeartbeatWake",
+            &serde_json::json!({"mode": "now", "message": "wake up!"}),
+        )
+        .await;
+        assert!(result.is_some());
+        let r = result.unwrap();
+        assert!(!r.is_error);
+        assert!(r.content.contains("next scheduler tick"));
+
+        // Verify heartbeat's next_run_at was set to ~now
+        let hb = ctx.cron.get_job_by_name("__heartbeat__").await.unwrap().unwrap();
+        let now = chrono::Utc::now().timestamp();
+        assert!(hb.next_run_at.unwrap() <= now + 2);
 
         // Test unknown tool
         let result = handle_custom_tool(

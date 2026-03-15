@@ -231,6 +231,19 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
                     "delete_after_run": {
                         "type": "boolean",
                         "description": "If true, automatically delete the job after it runs once (default: false)"
+                    },
+                    "max_retries": {
+                        "type": "integer",
+                        "description": "Maximum retry attempts on failure with exponential backoff (default: 3)"
+                    },
+                    "timeout_secs": {
+                        "type": "integer",
+                        "description": "Timeout in seconds before a stuck run is killed (default: 7200 = 2 hours)"
+                    },
+                    "session_mode": {
+                        "type": "string",
+                        "enum": ["isolated", "main"],
+                        "description": "Session mode: 'isolated' (default) runs in its own session, 'main' runs in the shared main session"
                     }
                 },
                 "required": ["name", "prompt", "schedule"]
@@ -238,7 +251,7 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
         },
         CustomToolDefinition {
             name: "CronList".into(),
-            description: "List all scheduled cron jobs.".into(),
+            description: "List all scheduled cron jobs with status, retry info, and session mode.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {}
@@ -274,6 +287,73 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
                     }
                 },
                 "required": ["name"]
+            }),
+        },
+        CustomToolDefinition {
+            name: "CronRun".into(),
+            description: "Immediately execute a cron job by name (manual trigger). The job runs as if it were scheduled, with its configured session mode.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Name of the job to run immediately"
+                    }
+                },
+                "required": ["name"]
+            }),
+        },
+        CustomToolDefinition {
+            name: "CronUpdate".into(),
+            description: "Update properties of an existing cron job by name.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Name of the job to update"
+                    },
+                    "prompt": {
+                        "type": "string",
+                        "description": "New prompt for the job"
+                    },
+                    "enabled": {
+                        "type": "boolean",
+                        "description": "Enable or disable the job"
+                    },
+                    "max_retries": {
+                        "type": "integer",
+                        "description": "New max retries"
+                    },
+                    "timeout_secs": {
+                        "type": "integer",
+                        "description": "New timeout in seconds"
+                    },
+                    "session_mode": {
+                        "type": "string",
+                        "enum": ["isolated", "main"],
+                        "description": "New session mode"
+                    }
+                },
+                "required": ["name"]
+            }),
+        },
+        CustomToolDefinition {
+            name: "HeartbeatWake".into(),
+            description: "Wake the heartbeat system. Use 'now' to trigger an immediate heartbeat, or 'next' (default) to wait for the natural schedule.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["now", "next"],
+                        "description": "Wake mode: 'now' triggers immediately, 'next' waits for schedule (default: 'next')"
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Optional message to prepend to the heartbeat prompt"
+                    }
+                }
             }),
         },
     ]
@@ -531,6 +611,18 @@ pub async fn handle_custom_tool(
                 .get("delete_after_run")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
+            let max_retries = input
+                .get("max_retries")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(3) as u32;
+            let timeout_secs = input
+                .get("timeout_secs")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(7200) as u32;
+            let session_mode = match input.get("session_mode").and_then(|v| v.as_str()) {
+                Some("main") => starpod_cron::SessionMode::Main,
+                _ => starpod_cron::SessionMode::Isolated,
+            };
 
             let schedule: starpod_cron::Schedule = match serde_json::from_value(schedule_val.clone())
             {
@@ -546,7 +638,7 @@ pub async fn handle_custom_tool(
 
             debug!(job = %name, "CronAdd");
 
-            match ctx.cron.add_job(name, prompt, &schedule, delete_after_run, ctx.user_tz.as_deref()).await {
+            match ctx.cron.add_job_full(name, prompt, &schedule, delete_after_run, ctx.user_tz.as_deref(), max_retries, timeout_secs, session_mode).await {
                 Ok(id) => Some(ToolResult {
                     content: format!("Scheduled job '{}' (id: {})", name, &id[..8]),
                     is_error: false,
@@ -568,14 +660,28 @@ pub async fn handle_custom_tool(
                     let formatted: Vec<serde_json::Value> = jobs
                         .iter()
                         .map(|j| {
-                            json!({
+                            let mut obj = json!({
                                 "name": j.name,
                                 "prompt": j.prompt,
                                 "schedule": j.schedule,
                                 "enabled": j.enabled,
+                                "session_mode": j.session_mode,
+                                "max_retries": j.max_retries,
+                                "timeout_secs": j.timeout_secs,
                                 "last_run_at": j.last_run_at.map(epoch_to_rfc3339),
                                 "next_run_at": j.next_run_at.map(epoch_to_rfc3339),
-                            })
+                            });
+                            // Show retry info only when relevant
+                            if j.retry_count > 0 {
+                                obj["retry_count"] = json!(j.retry_count);
+                            }
+                            if let Some(ref err) = j.last_error {
+                                obj["last_error"] = json!(err);
+                            }
+                            if let Some(retry_at) = j.retry_at {
+                                obj["retry_at"] = json!(epoch_to_rfc3339(retry_at));
+                            }
+                            obj
                         })
                         .collect();
                     Some(ToolResult {
@@ -620,23 +726,18 @@ pub async fn handle_custom_tool(
 
             debug!(job = %name, "CronRuns");
 
-            // Find job by name first
-            let jobs = match ctx.cron.list_jobs().await {
-                Ok(j) => j,
-                Err(e) => {
+            let job = match ctx.cron.get_job_by_name(name).await {
+                Ok(Some(j)) => j,
+                Ok(None) => {
                     return Some(ToolResult {
-                        content: format!("Cron error: {}", e),
+                        content: format!("No job found with name '{}'", name),
                         is_error: true,
                         raw_content: None,
                     });
                 }
-            };
-
-            let job = match jobs.iter().find(|j| j.name == name) {
-                Some(j) => j,
-                None => {
+                Err(e) => {
                     return Some(ToolResult {
-                        content: format!("No job found with name '{}'", name),
+                        content: format!("Cron error: {}", e),
                         is_error: true,
                         raw_content: None,
                     });
@@ -667,6 +768,157 @@ pub async fn handle_custom_tool(
                     is_error: true,
                     raw_content: None,
                 }),
+            }
+        }
+
+        "CronRun" => {
+            let name = input.get("name")?.as_str()?;
+
+            debug!(job = %name, "CronRun");
+
+            // Look up job by name
+            let job = match ctx.cron.get_job_by_name(name).await {
+                Ok(Some(j)) => j,
+                Ok(None) => {
+                    return Some(ToolResult {
+                        content: format!("No job found with name '{}'", name),
+                        is_error: true,
+                        raw_content: None,
+                    });
+                }
+                Err(e) => {
+                    return Some(ToolResult {
+                        content: format!("Cron error: {}", e),
+                        is_error: true,
+                        raw_content: None,
+                    });
+                }
+            };
+
+            // Record run
+            let run_id = match ctx.cron.record_run_start(&job.id).await {
+                Ok(id) => id,
+                Err(e) => {
+                    return Some(ToolResult {
+                        content: format!("Failed to record run: {}", e),
+                        is_error: true,
+                        raw_content: None,
+                    });
+                }
+            };
+
+            Some(ToolResult {
+                content: format!(
+                    "Manual run started for job '{}' (run_id: {}). The job prompt will now execute with session_mode={}.",
+                    name, &run_id[..8], job.session_mode.as_str()
+                ),
+                is_error: false,
+                raw_content: None,
+            })
+        }
+
+        "CronUpdate" => {
+            let name = input.get("name")?.as_str()?;
+
+            debug!(job = %name, "CronUpdate");
+
+            let job = match ctx.cron.get_job_by_name(name).await {
+                Ok(Some(j)) => j,
+                Ok(None) => {
+                    return Some(ToolResult {
+                        content: format!("No job found with name '{}'", name),
+                        is_error: true,
+                        raw_content: None,
+                    });
+                }
+                Err(e) => {
+                    return Some(ToolResult {
+                        content: format!("Cron error: {}", e),
+                        is_error: true,
+                        raw_content: None,
+                    });
+                }
+            };
+
+            let update = starpod_cron::JobUpdate {
+                prompt: input.get("prompt").and_then(|v| v.as_str()).map(String::from),
+                schedule: None, // schedule updates not exposed via this tool
+                enabled: input.get("enabled").and_then(|v| v.as_bool()),
+                max_retries: input.get("max_retries").and_then(|v| v.as_u64()).map(|v| v as u32),
+                timeout_secs: input.get("timeout_secs").and_then(|v| v.as_u64()).map(|v| v as u32),
+                session_mode: input.get("session_mode").and_then(|v| v.as_str()).map(|s| {
+                    starpod_cron::SessionMode::from_str(s)
+                }),
+            };
+
+            match ctx.cron.update_job(&job.id, &update).await {
+                Ok(()) => Some(ToolResult {
+                    content: format!("Updated job '{}'.", name),
+                    is_error: false,
+                    raw_content: None,
+                }),
+                Err(e) => Some(ToolResult {
+                    content: format!("Cron update error: {}", e),
+                    is_error: true,
+                    raw_content: None,
+                }),
+            }
+        }
+
+        "HeartbeatWake" => {
+            let mode = input.get("mode").and_then(|v| v.as_str()).unwrap_or("next");
+
+            debug!(mode = %mode, "HeartbeatWake");
+
+            if mode == "now" {
+                // Set heartbeat's next_run_at to now
+                let job = match ctx.cron.get_job_by_name("__heartbeat__").await {
+                    Ok(Some(j)) => j,
+                    Ok(None) => {
+                        return Some(ToolResult {
+                            content: "No heartbeat job found. Heartbeat will be created on next server start.".into(),
+                            is_error: true,
+                            raw_content: None,
+                        });
+                    }
+                    Err(e) => {
+                        return Some(ToolResult {
+                            content: format!("Heartbeat error: {}", e),
+                            is_error: true,
+                            raw_content: None,
+                        });
+                    }
+                };
+
+                let now = chrono::Utc::now().timestamp();
+                match ctx.cron.update_next_run(&job.id, Some(now)).await {
+                    Ok(()) => {
+                        // If a message was provided, update the heartbeat prompt
+                        if let Some(message) = input.get("message").and_then(|v| v.as_str()) {
+                            let update = starpod_cron::JobUpdate {
+                                prompt: Some(message.to_string()),
+                                ..Default::default()
+                            };
+                            let _ = ctx.cron.update_job(&job.id, &update).await;
+                        }
+                        Some(ToolResult {
+                            content: "Heartbeat will fire on the next scheduler tick.".into(),
+                            is_error: false,
+                            raw_content: None,
+                        })
+                    }
+                    Err(e) => Some(ToolResult {
+                        content: format!("Heartbeat wake error: {}", e),
+                        is_error: true,
+                        raw_content: None,
+                    }),
+                }
+            } else {
+                Some(ToolResult {
+                    content: "Heartbeat will fire on its natural schedule (every 30 minutes).".into(),
+                    is_error: false,
+                    raw_content: None,
+                })
             }
         }
 
