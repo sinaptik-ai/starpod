@@ -94,13 +94,18 @@ enum ServerMessage {
     /// Tool use started.
     #[serde(rename = "tool_use")]
     ToolUse {
+        id: String,
         name: String,
         input: serde_json::Value,
     },
 
     /// Tool result returned.
     #[serde(rename = "tool_result")]
-    ToolResult { content: String, is_error: bool },
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+        is_error: bool,
+    },
 
     /// Stream completed with final stats.
     #[serde(rename = "stream_end")]
@@ -427,9 +432,10 @@ async fn handle_stream_message(
                             }
                         }
                     }
-                    ContentBlock::ToolUse { name, input, .. } => {
+                    ContentBlock::ToolUse { id, name, input } => {
                         let tool_json = serde_json::json!({
                             "type": "tool_use",
+                            "id": id,
                             "name": name,
                             "input": input,
                         });
@@ -439,6 +445,7 @@ async fn handle_stream_message(
                         ).await;
 
                         if !send_msg(sender, &ServerMessage::ToolUse {
+                            id: id.clone(),
                             name: name.clone(),
                             input: input.clone(),
                         }).await {
@@ -451,7 +458,7 @@ async fn handle_stream_message(
         }
         Message::User(user) => {
             for block in &user.content {
-                if let ContentBlock::ToolResult { content, is_error, .. } = block {
+                if let ContentBlock::ToolResult { tool_use_id, content, is_error } = block {
                     let content_str = content
                         .as_str()
                         .map(|s| s.to_string())
@@ -465,6 +472,7 @@ async fn handle_stream_message(
 
                     let tool_result_json = serde_json::json!({
                         "type": "tool_result",
+                        "tool_use_id": tool_use_id,
                         "content": &preview,
                         "is_error": is_error.unwrap_or(false),
                     });
@@ -474,6 +482,7 @@ async fn handle_stream_message(
                     ).await;
 
                     if !send_msg(sender, &ServerMessage::ToolResult {
+                        tool_use_id: tool_use_id.clone(),
                         content: preview,
                         is_error: is_error.unwrap_or(false),
                     }).await {
@@ -540,5 +549,105 @@ async fn process_stream(
                 return;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_use_serializes_with_id() {
+        let msg = ServerMessage::ToolUse {
+            id: "toolu_abc123".into(),
+            name: "Read".into(),
+            input: serde_json::json!({"path": "/tmp/file.txt"}),
+        };
+        let json: serde_json::Value = serde_json::from_str(
+            &serde_json::to_string(&msg).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(json["type"], "tool_use");
+        assert_eq!(json["id"], "toolu_abc123");
+        assert_eq!(json["name"], "Read");
+        assert_eq!(json["input"]["path"], "/tmp/file.txt");
+    }
+
+    #[test]
+    fn tool_result_serializes_with_tool_use_id() {
+        let msg = ServerMessage::ToolResult {
+            tool_use_id: "toolu_abc123".into(),
+            content: "file contents here".into(),
+            is_error: false,
+        };
+        let json: serde_json::Value = serde_json::from_str(
+            &serde_json::to_string(&msg).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(json["type"], "tool_result");
+        assert_eq!(json["tool_use_id"], "toolu_abc123");
+        assert_eq!(json["content"], "file contents here");
+        assert_eq!(json["is_error"], false);
+    }
+
+    #[test]
+    fn tool_result_error_serializes_correctly() {
+        let msg = ServerMessage::ToolResult {
+            tool_use_id: "toolu_xyz789".into(),
+            content: "permission denied".into(),
+            is_error: true,
+        };
+        let json: serde_json::Value = serde_json::from_str(
+            &serde_json::to_string(&msg).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(json["type"], "tool_result");
+        assert_eq!(json["tool_use_id"], "toolu_xyz789");
+        assert_eq!(json["is_error"], true);
+    }
+
+    #[test]
+    fn parallel_tool_uses_have_distinct_ids_in_json() {
+        let tool_a = ServerMessage::ToolUse {
+            id: "toolu_aaa".into(),
+            name: "Read".into(),
+            input: serde_json::json!({"path": "a.txt"}),
+        };
+        let tool_b = ServerMessage::ToolUse {
+            id: "toolu_bbb".into(),
+            name: "Read".into(),
+            input: serde_json::json!({"path": "b.txt"}),
+        };
+        let result_a = ServerMessage::ToolResult {
+            tool_use_id: "toolu_aaa".into(),
+            content: "contents a".into(),
+            is_error: false,
+        };
+        let result_b = ServerMessage::ToolResult {
+            tool_use_id: "toolu_bbb".into(),
+            content: "contents b".into(),
+            is_error: false,
+        };
+
+        let ja: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&tool_a).unwrap()).unwrap();
+        let jb: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&tool_b).unwrap()).unwrap();
+        let ra: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&result_a).unwrap()).unwrap();
+        let rb: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&result_b).unwrap()).unwrap();
+
+        // Tool uses carry distinct IDs
+        assert_ne!(ja["id"], jb["id"]);
+        assert_eq!(ja["id"], "toolu_aaa");
+        assert_eq!(jb["id"], "toolu_bbb");
+
+        // Results reference the correct tool
+        assert_eq!(ra["tool_use_id"], "toolu_aaa");
+        assert_eq!(rb["tool_use_id"], "toolu_bbb");
     }
 }

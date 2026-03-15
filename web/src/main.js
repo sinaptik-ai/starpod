@@ -203,7 +203,7 @@ function appendText(text) {
   scrollToBottom()
 }
 
-function addToolUse(name, input) {
+function addToolUse(name, input, toolUseId) {
   if (!currentMsg) return
   removeThinking()
   if (currentBubble) {
@@ -211,7 +211,7 @@ function addToolUse(name, input) {
     currentBubble = null
   }
 
-  const id = 'tool-' + (toolCounter++)
+  const id = toolUseId ? 'tool-' + toolUseId : 'tool-' + (toolCounter++)
   const preview = getToolPreview(name, input)
   const inputJson = JSON.stringify(input, null, 2)
 
@@ -241,13 +241,21 @@ function addToolUse(name, input) {
   scrollToBottom()
 }
 
-function addToolResult(content, isError) {
+function addToolResult(content, isError, toolUseId) {
   if (!currentMsg) return
-  const tools = currentMsg.querySelectorAll('[id^="tool-"]')
-  const last = tools[tools.length - 1]
-  if (!last) return
 
-  const badge = last.querySelector('.badge-running, [class*="badge"]')
+  let target
+  if (toolUseId) {
+    target = document.getElementById('tool-' + toolUseId)
+  }
+  if (!target) {
+    // Fallback: find the first tool still showing "running"
+    const running = currentMsg.querySelector('.badge-running')
+    target = running ? running.closest('[id^="tool-"]') : null
+  }
+  if (!target) return
+
+  const badge = target.querySelector('.badge-running, [class*="badge"]')
   if (!badge) return
 
   if (isError) {
@@ -258,8 +266,8 @@ function addToolResult(content, isError) {
     badge.className = 'font-mono text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0 tracking-wide bg-ok-muted text-ok'
   }
 
-  const resultSection = last.querySelector('.tool-result-section')
-  const resultPre = last.querySelector('.tool-result-pre')
+  const resultSection = target.querySelector('.tool-result-section')
+  const resultPre = target.querySelector('.tool-result-pre')
   if (resultSection && resultPre && content) {
     resultPre.textContent = content
     resultSection.classList.remove('hidden')
@@ -344,10 +352,10 @@ function connect() {
         appendText(data.text)
         break
       case 'tool_use':
-        addToolUse(data.name, data.input)
+        addToolUse(data.name, data.input, data.id)
         break
       case 'tool_result':
-        addToolResult(data.content, data.is_error)
+        addToolResult(data.content, data.is_error, data.tool_use_id)
         break
       case 'stream_end':
         endStream(data)
