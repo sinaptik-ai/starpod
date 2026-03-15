@@ -489,40 +489,39 @@ impl ToolExecutor {
             }
         };
 
-        // Take stdout/stderr handles before waiting so we can read concurrently.
+        // Take stdout/stderr handles before waiting.
         let stdout_handle = child.stdout.take();
         let stderr_handle = child.stderr.take();
 
-        // Run wait + stdout/stderr reads concurrently under a single timeout.
-        // Background processes (e.g. `cmd &`) may inherit pipe fds, so the
-        // reads must also be under the timeout — not just child.wait().
-        let result = tokio::time::timeout(timeout_dur, async {
-            use tokio::io::AsyncReadExt;
-            let stdout_fut = async {
-                let mut buf = Vec::new();
-                if let Some(mut out) = stdout_handle {
-                    let _ = out.read_to_end(&mut buf).await;
-                }
-                buf
-            };
-            let stderr_fut = async {
-                let mut buf = Vec::new();
-                if let Some(mut err) = stderr_handle {
-                    let _ = err.read_to_end(&mut buf).await;
-                }
-                buf
-            };
-            let (status, stdout_bytes, stderr_bytes) = tokio::join!(
-                child.wait(),
-                stdout_fut,
-                stderr_fut,
-            );
-            (status, stdout_bytes, stderr_bytes)
-        })
-        .await;
+        // Wait for the shell process under the configured timeout.
+        let wait_result = tokio::time::timeout(timeout_dur, child.wait()).await;
 
-        match result {
-            Ok((Ok(status), stdout_bytes, stderr_bytes)) => {
+        match wait_result {
+            Ok(Ok(status)) => {
+                // Shell exited — drain remaining pipe data with a short grace
+                // period. Background processes (`cmd &`) may hold inherited
+                // pipe fds, so read_to_end could block indefinitely; cap it.
+                use tokio::io::AsyncReadExt;
+                let drain = tokio::time::timeout(Duration::from_secs(1), async {
+                    let stdout_fut = async {
+                        let mut buf = Vec::new();
+                        if let Some(mut out) = stdout_handle {
+                            let _ = out.read_to_end(&mut buf).await;
+                        }
+                        buf
+                    };
+                    let stderr_fut = async {
+                        let mut buf = Vec::new();
+                        if let Some(mut err) = stderr_handle {
+                            let _ = err.read_to_end(&mut buf).await;
+                        }
+                        buf
+                    };
+                    tokio::join!(stdout_fut, stderr_fut)
+                })
+                .await;
+
+                let (stdout_bytes, stderr_bytes) = drain.unwrap_or_default();
                 let stdout = String::from_utf8_lossy(&stdout_bytes);
                 let stderr = String::from_utf8_lossy(&stderr_bytes);
 
@@ -551,7 +550,7 @@ impl ToolExecutor {
                     raw_content: None,
                 })
             }
-            Ok((Err(e), _, _)) => Ok(ToolResult::err(format!("Process IO error: {e}"))),
+            Ok(Err(e)) => Ok(ToolResult::err(format!("Process IO error: {e}"))),
             Err(_) => {
                 // Timeout – attempt to kill the child.
                 let _ = child.kill().await;
