@@ -2,12 +2,13 @@
 name = "starpod-skills"
 version = "0.1.0"
 edition = "2021"
-description = "Self-extension skill system for Starpod"
+description = "AgentSkills-compatible skill system for Starpod"
 
 [dependencies]
 starpod-core = { path = "../starpod-core" }
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
 tracing = "0.1"
 
 [dev-dependencies]

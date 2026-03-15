@@ -123,9 +123,11 @@ starpod agent sessions list --limit 20
 
 ## Skills
 
+Skills follow the [AgentSkills](https://agentskills.io) open format.
+
 ### `starpod agent skills list`
 
-List all skills.
+List all skills with their descriptions.
 
 ```bash
 starpod agent skills list
@@ -133,7 +135,7 @@ starpod agent skills list
 
 ### `starpod agent skills show`
 
-Show a skill's content.
+Show a skill's metadata and full instructions.
 
 ```bash
 starpod agent skills show code-review
@@ -141,21 +143,29 @@ starpod agent skills show code-review
 
 ### `starpod agent skills create`
 
-Create a new skill.
+Create a new AgentSkills-compatible skill with YAML frontmatter.
 
 ```bash
-starpod agent skills create "code-review" --content "Always check for error handling"
-starpod agent skills create "code-review" --file code-review.md
+# With inline instructions
+starpod agent skills create "code-review" \
+  --description "Review code for bugs and style issues." \
+  --body "Check for error handling, edge cases, and security."
+
+# Instructions from a file
+starpod agent skills create "code-review" \
+  --description "Review code for bugs and style issues." \
+  --file code-review-instructions.md
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--content`, `-c` | Inline skill content |
-| `--file`, `-f` | Read content from a file |
+| `--description`, `-d` | What the skill does and when to use it (required) |
+| `--body`, `-b` | Inline markdown instructions |
+| `--file`, `-f` | Read instructions from a file |
 
 ### `starpod agent skills delete`
 
-Delete a skill.
+Delete a skill and its directory.
 
 ```bash
 starpod agent skills delete code-review

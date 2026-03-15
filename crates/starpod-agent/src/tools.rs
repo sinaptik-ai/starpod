@@ -110,26 +110,44 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
         },
         // --- Skill tools ---
         CustomToolDefinition {
-            name: "SkillCreate".into(),
-            description: "Create a new skill that extends your capabilities. Skills are markdown files that get injected into your system prompt.".into(),
+            name: "SkillActivate".into(),
+            description: "Activate a skill to load its full instructions into context. Use this when a task matches a skill's description from the skill catalog. Returns the skill's complete instructions and any bundled resources.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": "Skill name (used as directory name, e.g. 'summarize-pr')"
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "Markdown content describing the skill's instructions and behavior"
+                        "description": "Name of the skill to activate (from the available_skills catalog)"
                     }
                 },
-                "required": ["name", "content"]
+                "required": ["name"]
+            }),
+        },
+        CustomToolDefinition {
+            name: "SkillCreate".into(),
+            description: "Create a new AgentSkills-compatible skill. Skills are SKILL.md files with YAML frontmatter (name, description) and a markdown body containing instructions.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Skill name (lowercase letters, digits, hyphens only, e.g. 'summarize-pr')"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "What the skill does and when to use it (used for skill discovery)"
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Markdown instructions for the skill (the body after frontmatter)"
+                    }
+                },
+                "required": ["name", "description", "body"]
             }),
         },
         CustomToolDefinition {
             name: "SkillUpdate".into(),
-            description: "Update an existing skill's content.".into(),
+            description: "Update an existing skill's description and/or instructions.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -137,12 +155,16 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
                         "type": "string",
                         "description": "Name of the skill to update"
                     },
-                    "content": {
+                    "description": {
                         "type": "string",
-                        "description": "New markdown content for the skill"
+                        "description": "New description for the skill"
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "New markdown instructions for the skill"
                     }
                 },
-                "required": ["name", "content"]
+                "required": ["name", "description", "body"]
             }),
         },
         CustomToolDefinition {
@@ -161,7 +183,7 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
         },
         CustomToolDefinition {
             name: "SkillList".into(),
-            description: "List all available skills.".into(),
+            description: "List all available skills with their descriptions.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {}
@@ -386,13 +408,38 @@ pub async fn handle_custom_tool(
         }
 
         // --- Skill tools ---
+        "SkillActivate" => {
+            let name = input.get("name")?.as_str()?;
+
+            debug!(skill = %name, "SkillActivate");
+
+            match ctx.skills.activate_skill(name) {
+                Ok(Some(content)) => Some(ToolResult {
+                    content,
+                    is_error: false,
+                    raw_content: None,
+                }),
+                Ok(None) => Some(ToolResult {
+                    content: format!("Skill '{}' not found.", name),
+                    is_error: true,
+                    raw_content: None,
+                }),
+                Err(e) => Some(ToolResult {
+                    content: format!("Skill activate error: {}", e),
+                    is_error: true,
+                    raw_content: None,
+                }),
+            }
+        }
+
         "SkillCreate" => {
             let name = input.get("name")?.as_str()?;
-            let content = input.get("content")?.as_str()?;
+            let description = input.get("description")?.as_str()?;
+            let body = input.get("body")?.as_str()?;
 
             debug!(skill = %name, "SkillCreate");
 
-            match ctx.skills.create(name, content) {
+            match ctx.skills.create(name, description, body) {
                 Ok(()) => Some(ToolResult {
                     content: format!("Created skill '{}'.", name),
                     is_error: false,
@@ -408,11 +455,12 @@ pub async fn handle_custom_tool(
 
         "SkillUpdate" => {
             let name = input.get("name")?.as_str()?;
-            let content = input.get("content")?.as_str()?;
+            let description = input.get("description")?.as_str()?;
+            let body = input.get("body")?.as_str()?;
 
             debug!(skill = %name, "SkillUpdate");
 
-            match ctx.skills.update(name, content) {
+            match ctx.skills.update(name, description, body) {
                 Ok(()) => Some(ToolResult {
                     content: format!("Updated skill '{}'.", name),
                     is_error: false,
@@ -455,12 +503,8 @@ pub async fn handle_custom_tool(
                         .map(|s| {
                             json!({
                                 "name": s.name,
+                                "description": s.description,
                                 "created_at": s.created_at,
-                                "content_preview": if s.content.len() > 100 {
-                                    format!("{}...", &s.content[..100])
-                                } else {
-                                    s.content.clone()
-                                },
                             })
                         })
                         .collect();
