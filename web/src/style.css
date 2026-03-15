@@ -218,27 +218,33 @@ html, body {
   width: 0;
   min-width: 0;
   overflow: hidden;
-  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-              min-width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  border-left: 1px solid transparent;
-  background: var(--color-surface);
   flex-shrink: 0;
+  padding: 0;
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              min-width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              padding 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 #preview-panel.open {
-  width: 50%;
-  min-width: 400px;
-  border-left-color: var(--color-border-subtle);
+  width: 55%;
+  min-width: 480px;
+  padding: 10px 10px 10px 0;
 }
 
 #preview-inner {
-  width: 50vw;
-  min-width: 400px;
+  width: calc(55vw - 10px);
+  min-width: 470px;
   height: 100%;
   display: flex;
   flex-direction: column;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-main);
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.35),
+              0 0 0 1px rgba(255,255,255,0.03);
   opacity: 0;
-  transition: opacity 0.15s ease;
+  transition: opacity 0.2s ease;
 }
 
 #preview-panel.open #preview-inner {
@@ -254,13 +260,23 @@ html, body {
     bottom: 0;
     width: 100%;
     min-width: 0;
+    padding: 8px;
     z-index: 100;
-    box-shadow: -20px 0 60px rgba(0,0,0,0.5);
   }
   #preview-inner {
     width: 100%;
     min-width: 0;
   }
+}
+
+/* ── Sidebar transient mode (when preview is open) ── */
+#sidebar.transient {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 150;
+  box-shadow: 20px 0 60px rgba(0,0,0,0.5);
 }
 
 /* ── Session items ── */
