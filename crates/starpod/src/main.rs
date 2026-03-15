@@ -257,6 +257,34 @@ enum CronAction {
         #[arg(short, long, default_value = "10")]
         limit: usize,
     },
+    /// Trigger a cron job immediately.
+    Run {
+        /// Job name.
+        name: String,
+    },
+    /// Edit a cron job's properties.
+    Edit {
+        /// Job name.
+        name: String,
+        /// New prompt.
+        #[arg(long)]
+        prompt: Option<String>,
+        /// New schedule (cron expression).
+        #[arg(long)]
+        schedule: Option<String>,
+        /// Enable or disable the job.
+        #[arg(long)]
+        enabled: Option<bool>,
+        /// Max retries on failure.
+        #[arg(long)]
+        max_retries: Option<u32>,
+        /// Timeout in seconds.
+        #[arg(long)]
+        timeout_secs: Option<u32>,
+        /// Session mode: isolated or main.
+        #[arg(long)]
+        session_mode: Option<String>,
+    },
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -899,9 +927,17 @@ async fn main() -> anyhow::Result<()> {
                                 let next = j.next_run_at
                                     .map(starpod_cron::store::epoch_to_rfc3339)
                                     .unwrap_or_else(|| "none".to_string());
+                                let mode = j.session_mode.as_str();
+                                let mut extra = String::new();
+                                if j.retry_count > 0 {
+                                    extra.push_str(&format!(" retry={}/{}", j.retry_count, j.max_retries));
+                                }
+                                if let Some(ref err) = j.last_error {
+                                    extra.push_str(&format!(" err={}", truncate(err, 30)));
+                                }
                                 println!(
-                                    "  {} [{}] next={} — {}",
-                                    j.name, status, next,
+                                    "  {} [{}] [{}] next={}{} — {}",
+                                    j.name, status, mode, next, extra,
                                     truncate(&j.prompt, 60)
                                 );
                             }
@@ -912,8 +948,7 @@ async fn main() -> anyhow::Result<()> {
                         println!("Removed job '{}'.", name);
                     }
                     CronAction::Runs { name, limit } => {
-                        let jobs = agent.cron().list_jobs().await?;
-                        let job = jobs.iter().find(|j| j.name == name);
+                        let job = agent.cron().get_job_by_name(&name).await?;
                         match job {
                             Some(j) => {
                                 let runs = agent.cron().list_runs(&j.id, limit).await?;
@@ -930,6 +965,57 @@ async fn main() -> anyhow::Result<()> {
                                         );
                                     }
                                 }
+                            }
+                            None => println!("Job '{}' not found.", name),
+                        }
+                    }
+                    CronAction::Run { name } => {
+                        let agent = Arc::new(agent);
+                        let job = agent.cron().get_job_by_name(&name).await?;
+                        match job {
+                            Some(j) => {
+                                println!("Running job '{}'...", name);
+                                let msg = ChatMessage {
+                                    text: j.prompt.clone(),
+                                    user_id: Some("cron-cli".into()),
+                                    channel_id: Some(match j.session_mode {
+                                        starpod_cron::SessionMode::Main => "main".into(),
+                                        starpod_cron::SessionMode::Isolated => "scheduler".into(),
+                                    }),
+                                    channel_session_key: match j.session_mode {
+                                        starpod_cron::SessionMode::Main => Some("main".into()),
+                                        starpod_cron::SessionMode::Isolated => None,
+                                    },
+                                    attachments: Vec::new(),
+                                };
+                                match agent.chat(msg).await {
+                                    Ok(resp) => println!("{}", resp.text),
+                                    Err(e) => eprintln!("Job failed: {}", e),
+                                }
+                            }
+                            None => println!("Job '{}' not found.", name),
+                        }
+                    }
+                    CronAction::Edit { name, prompt, schedule, enabled, max_retries, timeout_secs, session_mode } => {
+                        let job = agent.cron().get_job_by_name(&name).await?;
+                        match job {
+                            Some(j) => {
+                                let schedule_update = schedule.map(|expr| {
+                                    starpod_cron::Schedule::Cron { expr }
+                                });
+                                let session_mode_update = session_mode.map(|s| {
+                                    starpod_cron::SessionMode::from_str(&s)
+                                });
+                                let update = starpod_cron::JobUpdate {
+                                    prompt,
+                                    schedule: schedule_update,
+                                    enabled,
+                                    max_retries,
+                                    timeout_secs,
+                                    session_mode: session_mode_update,
+                                };
+                                agent.cron().update_job(&j.id, &update).await?;
+                                println!("Updated job '{}'.", name);
                             }
                             None => println!("Job '{}' not found.", name),
                         }
