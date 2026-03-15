@@ -23,6 +23,9 @@ const previewOpen = document.getElementById('preview-open')
 const previewClose = document.getElementById('preview-close')
 const previewFallback = document.getElementById('preview-fallback')
 const previewFallbackLink = document.getElementById('preview-fallback-link')
+const previewOgImage = document.getElementById('preview-og-image')
+const previewOgImg = document.getElementById('preview-og-img')
+const previewOgTitle = document.getElementById('preview-og-title')
 
 // ── State ──
 let ws = null
@@ -95,6 +98,7 @@ function formatUserText(text) {
 
 // ── Link preview panel ──
 let previewLoadTimer = null
+let sidebarWasOpen = false
 
 window._openPreview = openPreview
 function openPreview(url) {
@@ -105,37 +109,64 @@ function openPreview(url) {
   previewFallback.classList.remove('flex')
   previewIframe.classList.remove('hidden')
   previewIframe._loaded = false
-  previewIframe.src = url
+  previewIframe.src = 'about:blank'
   previewPanel.classList.add('open')
 
-  // If iframe hasn't fired load after 5s, likely blocked
+  // Collapse sidebar into transient mode
+  sidebarWasOpen = sidebar.classList.contains('open')
+  sidebar.classList.remove('open')
+  sidebar.classList.add('transient')
+
+  // Reset og data
+  previewOgImage.classList.add('hidden')
+  previewOgImg.src = ''
+  previewOgTitle.textContent = 'Connection refused'
+
+  // Check if the URL can be framed before loading it
+  fetch('/api/frame-check?url=' + encodeURIComponent(url))
+    .then(r => r.json())
+    .then(data => {
+      if (data.frameable) {
+        previewIframe.src = url
+      } else {
+        if (data.ogImage) {
+          previewOgImg.src = data.ogImage
+          previewOgImage.classList.remove('hidden')
+        }
+        if (data.ogTitle) {
+          previewOgTitle.textContent = data.ogTitle
+        }
+        showPreviewFallback()
+      }
+    })
+    .catch(() => {
+      // If frame-check endpoint isn't available, load anyway with timeout fallback
+      previewIframe.src = url
+    })
+
+  // Safety timeout
   clearTimeout(previewLoadTimer)
   previewLoadTimer = setTimeout(() => {
     if (!previewIframe._loaded) showPreviewFallback()
-  }, 5000)
+  }, 6000)
 }
 
 function closePreview() {
   previewPanel.classList.remove('open')
   clearTimeout(previewLoadTimer)
   setTimeout(() => { previewIframe.src = 'about:blank' }, 300)
+
+  // Restore sidebar state
+  sidebar.classList.remove('transient')
+  if (sidebarWasOpen) sidebar.classList.add('open')
 }
 
 previewClose.addEventListener('click', closePreview)
 
-// Detect iframe load — fires for both success and X-Frame-Options blocks
 previewIframe.addEventListener('load', () => {
+  if (previewIframe.src === 'about:blank') return
   previewIframe._loaded = true
   clearTimeout(previewLoadTimer)
-  try {
-    const doc = previewIframe.contentDocument || previewIframe.contentWindow.document
-    // Same-origin blank page = blocked by browser
-    if (doc && doc.body && doc.body.innerHTML === '') {
-      showPreviewFallback()
-    }
-  } catch {
-    // Cross-origin — loaded fine, we just can't inspect it
-  }
 })
 
 previewIframe.addEventListener('error', showPreviewFallback)
@@ -601,6 +632,13 @@ sidebarClose.addEventListener('click', closeSidebar)
 sidebarOverlay.addEventListener('click', closeSidebar)
 newChatBtn.addEventListener('click', newChat)
 
+// Close transient sidebar when clicking outside it
+document.addEventListener('mousedown', (e) => {
+  if (sidebar.classList.contains('transient') && sidebar.classList.contains('open') && !sidebar.contains(e.target) && e.target !== menuBtn && !menuBtn.contains(e.target)) {
+    closeSidebar()
+  }
+})
+
 // ── Sessions ──
 function formatSessionDate(isoStr) {
   const d = new Date(isoStr)
@@ -659,6 +697,7 @@ function renderSessions(sessions) {
 }
 
 function selectSession(session) {
+  if (sidebar.classList.contains('transient')) closeSidebar()
   currentSessionId = session.id
   currentSessionKey = session.channel_session_key || crypto.randomUUID()
   // Update active state in sidebar
