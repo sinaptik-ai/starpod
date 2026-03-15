@@ -226,13 +226,13 @@ html, body {
 }
 
 #preview-panel.open {
-  width: 55%;
+  width: 65%;
   min-width: 480px;
   padding: 10px 10px 10px 0;
 }
 
 #preview-inner {
-  width: calc(55vw - 10px);
+  width: calc(65vw - 10px);
   min-width: 470px;
   height: 100%;
   display: flex;
