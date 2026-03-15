@@ -489,26 +489,40 @@ impl ToolExecutor {
             }
         };
 
-        // Take stdout/stderr handles before waiting so we can still kill on timeout.
+        // Take stdout/stderr handles before waiting so we can read concurrently.
         let stdout_handle = child.stdout.take();
         let stderr_handle = child.stderr.take();
 
-        let wait_result = tokio::time::timeout(timeout_dur, child.wait()).await;
-
-        match wait_result {
-            Ok(Ok(status)) => {
-                let mut stdout_bytes = Vec::new();
-                let mut stderr_bytes = Vec::new();
-
+        // Run wait + stdout/stderr reads concurrently under a single timeout.
+        // Background processes (e.g. `cmd &`) may inherit pipe fds, so the
+        // reads must also be under the timeout — not just child.wait().
+        let result = tokio::time::timeout(timeout_dur, async {
+            use tokio::io::AsyncReadExt;
+            let stdout_fut = async {
+                let mut buf = Vec::new();
                 if let Some(mut out) = stdout_handle {
-                    use tokio::io::AsyncReadExt;
-                    let _ = out.read_to_end(&mut stdout_bytes).await;
+                    let _ = out.read_to_end(&mut buf).await;
                 }
+                buf
+            };
+            let stderr_fut = async {
+                let mut buf = Vec::new();
                 if let Some(mut err) = stderr_handle {
-                    use tokio::io::AsyncReadExt;
-                    let _ = err.read_to_end(&mut stderr_bytes).await;
+                    let _ = err.read_to_end(&mut buf).await;
                 }
+                buf
+            };
+            let (status, stdout_bytes, stderr_bytes) = tokio::join!(
+                child.wait(),
+                stdout_fut,
+                stderr_fut,
+            );
+            (status, stdout_bytes, stderr_bytes)
+        })
+        .await;
 
+        match result {
+            Ok((Ok(status), stdout_bytes, stderr_bytes)) => {
                 let stdout = String::from_utf8_lossy(&stdout_bytes);
                 let stderr = String::from_utf8_lossy(&stderr_bytes);
 
@@ -537,7 +551,7 @@ impl ToolExecutor {
                     raw_content: None,
                 })
             }
-            Ok(Err(e)) => Ok(ToolResult::err(format!("Process IO error: {e}"))),
+            Ok((Err(e), _, _)) => Ok(ToolResult::err(format!("Process IO error: {e}"))),
             Err(_) => {
                 // Timeout – attempt to kill the child.
                 let _ = child.kill().await;

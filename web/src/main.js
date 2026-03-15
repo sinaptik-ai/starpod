@@ -195,6 +195,7 @@ function toolIconSymbol(name) {
 function getToolPreview(name, input) {
   if (input.file_path) return input.file_path
   if (input.pattern) return input.pattern
+  if (input.description) return input.description.length > 80 ? input.description.slice(0, 80) + '\u2026' : input.description
   if (input.command) return input.command.length > 60 ? input.command.slice(0, 60) + '\u2026' : input.command
   if (input.query) return input.query.length > 60 ? input.query.slice(0, 60) + '\u2026' : input.query
   if (input.key) return input.key
