@@ -9,12 +9,17 @@ license = "MIT"
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+toml = "0.8"
 
 # Regex for hook matchers
 regex = "1"
 
-# Async runtime (for CancellationToken + timeout)
-tokio = { version = "1", features = ["time"] }
+# File discovery
+glob = "0.3"
+which = "7"
+
+# Async runtime (for CancellationToken + timeout + process)
+tokio = { version = "1", features = ["time", "process", "io-util"] }
 tokio-util = "0.7"
 
 # Error handling

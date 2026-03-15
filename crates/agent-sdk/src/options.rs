@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::future::Future;
+use std::path::PathBuf;
 use std::pin::Pin;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -181,6 +182,10 @@ pub struct Options {
     /// Hook callbacks for events.
     pub hooks: HashMap<HookEvent, Vec<HookCallbackMatcher>>,
 
+    /// Directories to scan for HOOK.md-based hooks. Discovered hooks are
+    /// merged into the programmatic `hooks` map at query time.
+    pub hook_dirs: Vec<PathBuf>,
+
     /// MCP server configurations.
     pub mcp_servers: HashMap<String, McpServerConfig>,
 
@@ -330,6 +335,7 @@ impl Default for Options {
             system_prompt: None,
             thinking: None,
             hooks: HashMap::new(),
+            hook_dirs: Vec::new(),
             mcp_servers: HashMap::new(),
             agents: HashMap::new(),
             continue_session: false,
@@ -445,6 +451,11 @@ impl OptionsBuilder {
 
     pub fn hook(mut self, event: HookEvent, matchers: Vec<HookCallbackMatcher>) -> Self {
         self.options.hooks.insert(event, matchers);
+        self
+    }
+
+    pub fn hook_dirs(mut self, dirs: Vec<PathBuf>) -> Self {
+        self.options.hook_dirs = dirs;
         self
     }
 

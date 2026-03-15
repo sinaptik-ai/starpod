@@ -3118,6 +3118,7 @@ dependencies = [
 name = "starpod-hooks"
 version = "0.1.0"
 dependencies = [
+ "glob",
  "pretty_assertions",
  "regex",
  "serde",
@@ -3125,7 +3126,9 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
+ "toml",
  "tracing",
+ "which",
 ]
 
 [[package]]

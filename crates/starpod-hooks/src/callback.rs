@@ -85,6 +85,9 @@ where
 /// ```
 #[derive(Clone)]
 pub struct HookCallbackMatcher {
+    /// Human-readable name for this hook group (used by circuit breaker and logging).
+    pub name: Option<String>,
+
     /// Regex pattern to match against the event's filter field (e.g., tool name).
     /// If None, the hook runs for every event of its type.
     pub matcher: Option<String>,
@@ -94,15 +97,25 @@ pub struct HookCallbackMatcher {
 
     /// Timeout in seconds for all hooks in this matcher.
     pub timeout: Option<u64>,
+
+    /// Eligibility requirements (binaries, env vars, OS).
+    pub requires: Option<crate::eligibility::HookRequirements>,
 }
 
 impl HookCallbackMatcher {
     pub fn new(hooks: Vec<HookCallback>) -> Self {
         Self {
+            name: None,
             matcher: None,
             hooks,
             timeout: None,
+            requires: None,
         }
+    }
+
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
     }
 
     pub fn with_matcher(mut self, matcher: impl Into<String>) -> Self {
@@ -112,6 +125,11 @@ impl HookCallbackMatcher {
 
     pub fn with_timeout(mut self, timeout: u64) -> Self {
         self.timeout = Some(timeout);
+        self
+    }
+
+    pub fn with_requirements(mut self, requires: crate::eligibility::HookRequirements) -> Self {
+        self.requires = Some(requires);
         self
     }
 
@@ -133,9 +151,11 @@ impl HookCallbackMatcher {
 impl fmt::Debug for HookCallbackMatcher {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("HookCallbackMatcher")
+            .field("name", &self.name)
             .field("matcher", &self.matcher)
             .field("hooks_count", &self.hooks.len())
             .field("timeout", &self.timeout)
+            .field("requires", &self.requires)
             .finish()
     }
 }
@@ -178,12 +198,59 @@ mod tests {
     }
 
     #[test]
+    fn matcher_with_name() {
+        let m = HookCallbackMatcher::new(vec![noop_hook()]).with_name("my-hook");
+        assert_eq!(m.name.as_deref(), Some("my-hook"));
+    }
+
+    #[test]
+    fn matcher_with_requirements() {
+        use crate::eligibility::HookRequirements;
+        let req = HookRequirements {
+            bins: vec!["sh".into()],
+            ..Default::default()
+        };
+        let m = HookCallbackMatcher::new(vec![noop_hook()]).with_requirements(req);
+        assert!(m.requires.is_some());
+        assert_eq!(m.requires.unwrap().bins, vec!["sh"]);
+    }
+
+    #[test]
+    fn matcher_builder_chaining() {
+        use crate::eligibility::HookRequirements;
+        let m = HookCallbackMatcher::new(vec![noop_hook()])
+            .with_name("lint")
+            .with_matcher("Write|Edit")
+            .with_timeout(10)
+            .with_requirements(HookRequirements {
+                os: vec!["macos".into()],
+                ..Default::default()
+            });
+
+        assert_eq!(m.name.as_deref(), Some("lint"));
+        assert_eq!(m.matcher.as_deref(), Some("Write|Edit"));
+        assert_eq!(m.timeout, Some(10));
+        assert!(m.requires.is_some());
+    }
+
+    #[test]
     fn matcher_debug_shows_hook_count() {
         let m = HookCallbackMatcher::new(vec![noop_hook(), noop_hook()])
             .with_matcher("test");
         let debug = format!("{:?}", m);
         assert!(debug.contains("hooks_count: 2"));
         assert!(debug.contains("test"));
+    }
+
+    #[test]
+    fn matcher_debug_includes_name_and_requires() {
+        use crate::eligibility::HookRequirements;
+        let m = HookCallbackMatcher::new(vec![noop_hook()])
+            .with_name("my-hook")
+            .with_requirements(HookRequirements::default());
+        let debug = format!("{:?}", m);
+        assert!(debug.contains("my-hook"), "debug should contain name: {}", debug);
+        assert!(debug.contains("requires"), "debug should contain requires: {}", debug);
     }
 
     #[tokio::test]
