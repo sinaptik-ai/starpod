@@ -25,11 +25,6 @@ fn build_web_ui(manifest_dir: &str, npm: &str) {
     let web_dir = Path::new(manifest_dir).join("../../web");
     let dist_dir = Path::new(manifest_dir).join("static/dist");
 
-    // If dist already has index.html, skip (allows CI to pre-build)
-    if dist_dir.join("index.html").exists() {
-        return;
-    }
-
     if Command::new(npm).arg("--version").output().is_err() {
         eprintln!(
             "warning: npm not found — web UI will not be included. \
@@ -89,11 +84,6 @@ fn build_docs(manifest_dir: &str, npm: &str) {
 
     let docs_dir = Path::new(manifest_dir).join("../../docs");
     let dist_dir = docs_dir.join(".vitepress/dist");
-
-    // If dist already has index.html, skip (allows CI to pre-build)
-    if dist_dir.join("index.html").exists() {
-        return;
-    }
 
     if Command::new(npm).arg("--version").output().is_err() {
         eprintln!(
