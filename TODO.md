@@ -39,6 +39,10 @@
 - [ ] **Telegram markdown formatting** — Convert agent response markdown to Telegram MarkdownV2 (escape special chars, map code blocks, bold, italic, links). Currently sent as plain text, losing all formatting.
 - [x] **File attachments** — Image/file uploads in web UI (drag & drop, file picker) and Telegram (photos, documents). Images sent via Claude vision API; non-image files saved to `{data_dir}/downloads/`. 20 MB per-file limit. Claude auto-resizes large images.
 - [ ] **MCP (Model Context Protocol) support** — Allow connecting external MCP servers as tool providers
+- [ ] **Loop detection** — Detect repetitive no-progress tool patterns in the agent loop (same tool+params repeated, ping-pong alternation, identical polling outputs). Configurable warning/critical/circuit-breaker thresholds to prevent token waste. Inspired by OpenClaw's guardrail system.
+- [ ] **Structured exec approval flow** — Built-in `ask: off | on-miss | always` mode for Bash tool with command allowlists, beyond what hooks can do today. Provides a clear approval UX for shell command execution.
+- [ ] **Background process manager** — Dedicated tool to list, poll, log, and kill long-running background Bash sessions. Currently `run_in_background` fires and forgets; this would give the agent visibility into running processes.
+- [ ] **Per-provider tool policies** — Restrict which tools are available per provider/model (e.g. give a weaker model fewer tools). Applied after tool presets but before allow/deny lists. Useful for multi-model routing scenarios.
 
 ### Infrastructure
 - [x] **Hooks crate** — Extract hook logic from agent-sdk into a standalone `starpod-hooks` crate so Starpod can define its own lifecycle hooks independently of the SDK
