@@ -138,12 +138,16 @@ impl SessionManager {
     /// Resolve session for a given channel and key.
     ///
     /// - **Main** (explicit): always continues the matching open session if one exists.
-    /// - **Telegram** (time-gap): continues if last message was within 6h, otherwise
-    ///   auto-closes the old session and returns `New`.
+    /// - **Telegram** (time-gap): continues if last message was within the gap threshold,
+    ///   otherwise auto-closes the old session and returns `New`.
+    ///
+    /// `gap_minutes` overrides the channel's default inactivity gap. Pass `None`
+    /// to use the channel's built-in default (e.g. 360 min for Telegram).
     pub async fn resolve_session(
         &self,
         channel: &Channel,
         key: &str,
+        gap_minutes: Option<i64>,
     ) -> Result<SessionDecision> {
         let row = sqlx::query(
             "SELECT id, last_message_at
@@ -165,8 +169,9 @@ impl SessionManager {
 
         let session_id: String = row.get("id");
 
-        // For explicit channels (no gap), always continue
-        let gap_threshold = match channel.gap_minutes() {
+        // For explicit channels (no gap), always continue.
+        // If the caller provided an override, use it; otherwise fall back to the channel default.
+        let gap_threshold = match gap_minutes.or_else(|| channel.gap_minutes()) {
             None => {
                 debug!(session_id = %session_id, channel = %channel.as_str(), "Continuing session (explicit channel)");
                 return Ok(SessionDecision::Continue(session_id));
@@ -517,7 +522,7 @@ mod tests {
     async fn test_resolve_session_new_when_empty() {
         let (_tmp, mgr) = setup().await;
 
-        match mgr.resolve_session(&Channel::Main, "some-key").await.unwrap() {
+        match mgr.resolve_session(&Channel::Main, "some-key", None).await.unwrap() {
             SessionDecision::New => {} // expected
             SessionDecision::Continue(_) => panic!("Should be New when no sessions exist"),
         }
@@ -529,7 +534,7 @@ mod tests {
         let id = mgr.create_session(&Channel::Main, "key-1").await.unwrap();
         mgr.touch_session(&id).await.unwrap();
 
-        match mgr.resolve_session(&Channel::Main, "key-1").await.unwrap() {
+        match mgr.resolve_session(&Channel::Main, "key-1", None).await.unwrap() {
             SessionDecision::Continue(sid) => assert_eq!(sid, id),
             SessionDecision::New => panic!("Should continue recent session"),
         }
@@ -542,7 +547,7 @@ mod tests {
         mgr.touch_session(&id).await.unwrap();
         mgr.close_session(&id, "done").await.unwrap();
 
-        match mgr.resolve_session(&Channel::Main, "key-1").await.unwrap() {
+        match mgr.resolve_session(&Channel::Main, "key-1", None).await.unwrap() {
             SessionDecision::New => {} // expected
             SessionDecision::Continue(_) => panic!("Should not continue closed session"),
         }
@@ -612,13 +617,13 @@ mod tests {
         mgr.touch_session(&id).await.unwrap();
 
         // Same key → continue
-        match mgr.resolve_session(&Channel::Main, "abc").await.unwrap() {
+        match mgr.resolve_session(&Channel::Main, "abc", None).await.unwrap() {
             SessionDecision::Continue(sid) => assert_eq!(sid, id),
             SessionDecision::New => panic!("Should continue with same key"),
         }
 
         // Different key → new
-        match mgr.resolve_session(&Channel::Main, "xyz").await.unwrap() {
+        match mgr.resolve_session(&Channel::Main, "xyz", None).await.unwrap() {
             SessionDecision::New => {} // expected
             SessionDecision::Continue(_) => panic!("Different key should get new session"),
         }
@@ -633,7 +638,7 @@ mod tests {
         mgr.touch_session(&id).await.unwrap();
 
         // Within 6h → continue
-        match mgr.resolve_session(&Channel::Telegram, "chat-123").await.unwrap() {
+        match mgr.resolve_session(&Channel::Telegram, "chat-123", None).await.unwrap() {
             SessionDecision::Continue(sid) => assert_eq!(sid, id),
             SessionDecision::New => panic!("Should continue within gap"),
         }
@@ -648,7 +653,7 @@ mod tests {
             .unwrap();
 
         // Beyond 6h → new (old session auto-closed)
-        match mgr.resolve_session(&Channel::Telegram, "chat-123").await.unwrap() {
+        match mgr.resolve_session(&Channel::Telegram, "chat-123", None).await.unwrap() {
             SessionDecision::New => {} // expected
             SessionDecision::Continue(_) => panic!("Should start new session after 7h gap"),
         }
@@ -694,11 +699,11 @@ mod tests {
         mgr.touch_session(&tg_id).await.unwrap();
 
         // Each channel resolves to its own session
-        match mgr.resolve_session(&Channel::Main, "shared-key").await.unwrap() {
+        match mgr.resolve_session(&Channel::Main, "shared-key", None).await.unwrap() {
             SessionDecision::Continue(sid) => assert_eq!(sid, main_id),
             SessionDecision::New => panic!("Main should find its session"),
         }
-        match mgr.resolve_session(&Channel::Telegram, "shared-key").await.unwrap() {
+        match mgr.resolve_session(&Channel::Telegram, "shared-key", None).await.unwrap() {
             SessionDecision::Continue(sid) => assert_eq!(sid, tg_id),
             SessionDecision::New => panic!("Telegram should find its session"),
         }

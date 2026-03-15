@@ -12,11 +12,11 @@ use crate::error::Result;
 /// Default model for compaction summaries.
 pub const DEFAULT_COMPACTION_MODEL: &str = "claude-haiku-4-5";
 
-/// Minimum number of messages to keep at the end (never compact below this).
-const MIN_KEEP_MESSAGES: usize = 4;
+/// Default minimum number of messages to keep at the end (never compact below this).
+pub const DEFAULT_MIN_KEEP_MESSAGES: usize = 4;
 
-/// Max tokens for the summarization response.
-const SUMMARY_MAX_TOKENS: u32 = 4096;
+/// Default max tokens for the summarization response.
+pub const DEFAULT_SUMMARY_MAX_TOKENS: u32 = 4096;
 
 /// Check whether compaction should trigger.
 pub fn should_compact(input_tokens: u64, context_budget: u64) -> bool {
@@ -26,17 +26,17 @@ pub fn should_compact(input_tokens: u64, context_budget: u64) -> bool {
 /// Find the split point — index where old messages end and recent messages begin.
 ///
 /// Rules:
-/// - Keep at least `MIN_KEEP_MESSAGES` at the end.
+/// - Keep at least `min_keep` messages at the end (falls back to `DEFAULT_MIN_KEEP_MESSAGES`).
 /// - Never split inside a tool-use cycle (assistant with tool_use followed by
 ///   user with tool_result must stay together).
 /// - Returns 0 if the conversation is too short to compact.
-pub fn find_split_point(conversation: &[ApiMessage]) -> usize {
-    if conversation.len() <= MIN_KEEP_MESSAGES {
+pub fn find_split_point(conversation: &[ApiMessage], min_keep: usize) -> usize {
+    if conversation.len() <= min_keep {
         return 0;
     }
 
-    // Start candidate: keep MIN_KEEP_MESSAGES from the end
-    let mut split = conversation.len() - MIN_KEEP_MESSAGES;
+    // Start candidate: keep min_keep from the end
+    let mut split = conversation.len() - min_keep;
 
     // Walk backwards to find a clean boundary (not inside a tool cycle).
     // A tool cycle is: assistant message with ToolUse blocks followed by a user
@@ -123,10 +123,11 @@ pub async fn call_summarizer(
     summary_prompt: &str,
     compaction_model: &str,
     fallback_model: &str,
+    summary_max_tokens: u32,
 ) -> Result<String> {
     let request = CreateMessageRequest {
         model: compaction_model.to_string(),
-        max_tokens: SUMMARY_MAX_TOKENS,
+        max_tokens: summary_max_tokens,
         messages: vec![ApiMessage {
             role: "user".to_string(),
             content: vec![ApiContentBlock::Text {
@@ -280,9 +281,9 @@ mod tests {
             })
             .collect();
 
-        let split = find_split_point(&conv);
-        // Should keep at least MIN_KEEP_MESSAGES (4) at the end
-        assert!(conv.len() - split >= MIN_KEEP_MESSAGES);
+        let split = find_split_point(&conv, DEFAULT_MIN_KEEP_MESSAGES);
+        // Should keep at least DEFAULT_MIN_KEEP_MESSAGES (4) at the end
+        assert!(conv.len() - split >= DEFAULT_MIN_KEEP_MESSAGES);
         assert_eq!(split, 6); // 10 - 4 = 6
     }
 
@@ -303,7 +304,7 @@ mod tests {
             text_msg("user", "thanks"),           // 6
         ];
 
-        let split = find_split_point(&conv);
+        let split = find_split_point(&conv, DEFAULT_MIN_KEEP_MESSAGES);
         // split candidate = 7 - 4 = 3
         // index 3 is assistant(tool_use), index 4 is user(tool_result)
         // The kept portion [3..] includes both, so split=3 is clean
@@ -323,7 +324,7 @@ mod tests {
             text_msg("assistant", "ok"),  // 3
             text_msg("user", "next"),     // 4
         ];
-        let split = find_split_point(&conv);
+        let split = find_split_point(&conv, DEFAULT_MIN_KEEP_MESSAGES);
         assert_eq!(split, 1);
 
         // Now: 6 messages where split=2 lands on tool_result
@@ -335,7 +336,7 @@ mod tests {
             text_msg("user", "q1"),        // 4
             text_msg("assistant", "a1"),   // 5
         ];
-        let split2 = find_split_point(&conv2);
+        let split2 = find_split_point(&conv2, DEFAULT_MIN_KEEP_MESSAGES);
         // candidate = 6 - 4 = 2, which is a tool_result user msg
         // prev (index 1) is assistant but no tool_use → no cycle, so split stays at 2
         assert_eq!(split2, 2);
@@ -348,7 +349,7 @@ mod tests {
             text_msg("assistant", "hello"),
             text_msg("user", "bye"),
         ];
-        assert_eq!(find_split_point(&conv), 0);
+        assert_eq!(find_split_point(&conv, DEFAULT_MIN_KEEP_MESSAGES), 0);
     }
 
     #[test]

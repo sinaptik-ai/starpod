@@ -12,7 +12,7 @@ use starpod_core::{StarpodError, Result};
 use crate::defaults;
 use crate::embedder::{self, Embedder};
 use crate::fusion;
-use crate::indexer::{self, reindex_source};
+use crate::indexer::{self, reindex_source, CHUNK_SIZE, CHUNK_OVERLAP};
 use crate::schema;
 use crate::scoring;
 
@@ -70,6 +70,12 @@ pub struct MemoryStore {
     mmr_lambda: f64,
     /// Optional embedder for vector search (enabled with `embeddings` feature).
     embedder: Option<Arc<dyn Embedder>>,
+    /// Target chunk size in characters for indexing.
+    chunk_size: usize,
+    /// Overlap in characters between chunks.
+    chunk_overlap: usize,
+    /// Maximum characters to include from a single file in bootstrap context.
+    bootstrap_file_cap: usize,
 }
 
 impl MemoryStore {
@@ -105,6 +111,9 @@ impl MemoryStore {
             half_life_days: DEFAULT_HALF_LIFE_DAYS,
             mmr_lambda: 0.7,
             embedder: None,
+            chunk_size: CHUNK_SIZE,
+            chunk_overlap: CHUNK_OVERLAP,
+            bootstrap_file_cap: BOOTSTRAP_FILE_CAP,
         };
 
         // Seed default files if they don't exist
@@ -138,15 +147,15 @@ impl MemoryStore {
 
     /// Build bootstrap context from SOUL.md + USER.md + MEMORY.md + recent daily logs.
     ///
-    /// Each file is capped at `BOOTSTRAP_FILE_CAP` characters.
+    /// Each file is capped at `bootstrap_file_cap` characters.
     pub fn bootstrap_context(&self) -> Result<String> {
         let mut parts = Vec::new();
 
         // Core files
         for name in &["SOUL.md", "USER.md", "MEMORY.md"] {
             let content = self.read_file(name)?;
-            let capped = if content.len() > BOOTSTRAP_FILE_CAP {
-                &content[..BOOTSTRAP_FILE_CAP]
+            let capped = if content.len() > self.bootstrap_file_cap {
+                &content[..self.bootstrap_file_cap]
             } else {
                 &content
             };
@@ -172,8 +181,8 @@ impl MemoryStore {
             for entry in entries {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                    let capped = if content.len() > BOOTSTRAP_FILE_CAP {
-                        &content[..BOOTSTRAP_FILE_CAP]
+                    let capped = if content.len() > self.bootstrap_file_cap {
+                        &content[..self.bootstrap_file_cap]
                     } else {
                         &content
                     };
@@ -195,6 +204,21 @@ impl MemoryStore {
     /// Set the MMR lambda for diversity vs relevance balance.
     pub fn set_mmr_lambda(&mut self, lambda: f64) {
         self.mmr_lambda = lambda;
+    }
+
+    /// Set the target chunk size in characters for indexing.
+    pub fn set_chunk_size(&mut self, size: usize) {
+        self.chunk_size = size;
+    }
+
+    /// Set the overlap in characters between chunks.
+    pub fn set_chunk_overlap(&mut self, overlap: usize) {
+        self.chunk_overlap = overlap;
+    }
+
+    /// Set the maximum characters to include from a single file in bootstrap context.
+    pub fn set_bootstrap_file_cap(&mut self, cap: usize) {
+        self.bootstrap_file_cap = cap;
     }
 
     /// Full-text search across all indexed content.
@@ -413,7 +437,7 @@ impl MemoryStore {
             .map_err(|e| StarpodError::Database(format!("Failed to delete old vectors: {}", e)))?;
 
         // Chunk the text
-        let chunks = indexer::chunk_text(source, text);
+        let chunks = indexer::chunk_text(source, text, self.chunk_size, self.chunk_overlap);
         if chunks.is_empty() {
             return Ok(());
         }
@@ -467,7 +491,7 @@ impl MemoryStore {
         std::fs::write(&path, content)?;
 
         // Reindex this file (FTS5 + vectors)
-        reindex_source(&self.pool, name, content).await?;
+        reindex_source(&self.pool, name, content, self.chunk_size, self.chunk_overlap).await?;
         self.embed_and_store_source(name, content).await?;
 
         Ok(())
@@ -492,7 +516,7 @@ impl MemoryStore {
         std::fs::write(&path, &content)?;
 
         // Reindex the daily file (FTS5 + vectors)
-        reindex_source(&self.pool, &filename, &content).await?;
+        reindex_source(&self.pool, &filename, &content, self.chunk_size, self.chunk_overlap).await?;
         self.embed_and_store_source(&filename, &content).await?;
 
         Ok(())
@@ -541,7 +565,7 @@ impl MemoryStore {
                 let filename = entry.file_name().to_string_lossy().to_string();
                 let source = format!("{}{}", prefix, filename);
                 let content = std::fs::read_to_string(&path)?;
-                reindex_source(&self.pool, &source, &content).await?;
+                reindex_source(&self.pool, &source, &content, self.chunk_size, self.chunk_overlap).await?;
                 self.embed_and_store_source(&source, &content).await?;
             }
         }

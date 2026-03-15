@@ -167,7 +167,20 @@ pub struct MemoryConfig {
     pub mmr_lambda: f64,
     /// Enable vector search (requires `embeddings` feature). Default: true.
     pub vector_search: bool,
+    /// Target chunk size in characters for indexing (~400 tokens ≈ 1600 chars).
+    #[serde(default = "default_chunk_size")]
+    pub chunk_size: usize,
+    /// Overlap in characters between chunks (~80 tokens ≈ 320 chars).
+    #[serde(default = "default_chunk_overlap")]
+    pub chunk_overlap: usize,
+    /// Maximum characters to include from a single file in bootstrap context.
+    #[serde(default = "default_bootstrap_file_cap")]
+    pub bootstrap_file_cap: usize,
 }
+
+fn default_chunk_size() -> usize { 1600 }
+fn default_chunk_overlap() -> usize { 320 }
+fn default_bootstrap_file_cap() -> usize { 20_000 }
 
 impl Default for MemoryConfig {
     fn default() -> Self {
@@ -175,6 +188,115 @@ impl Default for MemoryConfig {
             half_life_days: 30.0,
             mmr_lambda: 0.7,
             vector_search: true,
+            chunk_size: default_chunk_size(),
+            chunk_overlap: default_chunk_overlap(),
+            bootstrap_file_cap: default_bootstrap_file_cap(),
+        }
+    }
+}
+
+/// Session management configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SessionConfig {
+    /// Inactivity gap (in minutes) before auto-closing a Telegram session (default: 360 = 6h).
+    #[serde(default = "default_telegram_gap_minutes")]
+    pub telegram_gap_minutes: i64,
+}
+
+fn default_telegram_gap_minutes() -> i64 { 360 }
+
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self {
+            telegram_gap_minutes: default_telegram_gap_minutes(),
+        }
+    }
+}
+
+/// Cron scheduling configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CronConfig {
+    /// Default maximum retries for failed jobs (default: 3).
+    #[serde(default = "default_cron_max_retries")]
+    pub default_max_retries: u32,
+    /// Default job timeout in seconds (default: 7200 = 2h).
+    #[serde(default = "default_cron_timeout_secs")]
+    pub default_timeout_secs: u64,
+    /// Maximum concurrent job runs (default: 1).
+    #[serde(default = "default_cron_max_concurrent")]
+    pub max_concurrent_runs: usize,
+}
+
+fn default_cron_max_retries() -> u32 { 3 }
+fn default_cron_timeout_secs() -> u64 { 7200 }
+fn default_cron_max_concurrent() -> usize { 1 }
+
+impl Default for CronConfig {
+    fn default() -> Self {
+        Self {
+            default_max_retries: default_cron_max_retries(),
+            default_timeout_secs: default_cron_timeout_secs(),
+            max_concurrent_runs: default_cron_max_concurrent(),
+        }
+    }
+}
+
+/// Conversation compaction configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CompactionConfig {
+    /// Token budget triggering compaction (~80% of model context window).
+    #[serde(default = "default_context_budget")]
+    pub context_budget: u64,
+    /// Max tokens for the compaction summary response.
+    #[serde(default = "default_summary_max_tokens")]
+    pub summary_max_tokens: u32,
+    /// Minimum messages to keep at the end (never compact below this).
+    #[serde(default = "default_min_keep_messages")]
+    pub min_keep_messages: usize,
+}
+
+fn default_context_budget() -> u64 { 160_000 }
+fn default_summary_max_tokens() -> u32 { 4096 }
+fn default_min_keep_messages() -> usize { 4 }
+
+impl Default for CompactionConfig {
+    fn default() -> Self {
+        Self {
+            context_budget: default_context_budget(),
+            summary_max_tokens: default_summary_max_tokens(),
+            min_keep_messages: default_min_keep_messages(),
+        }
+    }
+}
+
+/// Remote instance management configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InstancesConfig {
+    /// Health check polling interval in seconds (default: 30).
+    #[serde(default = "default_health_check_interval")]
+    pub health_check_interval_secs: u64,
+    /// Heartbeat timeout in seconds — instance is unhealthy after this (default: 90).
+    #[serde(default = "default_heartbeat_timeout")]
+    pub heartbeat_timeout_secs: u64,
+    /// HTTP request timeout in seconds for instance API calls (default: 30).
+    #[serde(default = "default_http_timeout")]
+    pub http_timeout_secs: u64,
+}
+
+fn default_health_check_interval() -> u64 { 30 }
+fn default_heartbeat_timeout() -> u64 { 90 }
+fn default_http_timeout() -> u64 { 30 }
+
+impl Default for InstancesConfig {
+    fn default() -> Self {
+        Self {
+            health_check_interval_secs: default_health_check_interval(),
+            heartbeat_timeout_secs: default_heartbeat_timeout(),
+            http_timeout_secs: default_http_timeout(),
         }
     }
 }
@@ -301,6 +423,10 @@ pub struct StarpodConfig {
     #[serde(default)]
     pub telegram: TelegramConfig,
 
+    /// Maximum tokens for LLM API responses (default: 16384).
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: u32,
+
     /// How followup messages are handled during an active agent loop.
     /// "inject" (default) integrates them into the next loop iteration;
     /// "queue" buffers them and starts a new loop after the current one finishes.
@@ -311,9 +437,25 @@ pub struct StarpodConfig {
     #[serde(default)]
     pub memory: MemoryConfig,
 
+    /// Session management settings.
+    #[serde(default)]
+    pub session: SessionConfig,
+
+    /// Cron scheduling settings.
+    #[serde(default)]
+    pub cron: CronConfig,
+
+    /// Conversation compaction settings.
+    #[serde(default)]
+    pub compaction: CompactionConfig,
+
     /// Attachment handling settings.
     #[serde(default)]
     pub attachments: AttachmentsConfig,
+
+    /// Remote instance settings.
+    #[serde(default)]
+    pub instances: InstancesConfig,
 
     /// Remote instance backend URL (e.g. "https://api.starpod.example.com").
     /// If set, `starpod instance` commands will connect to this backend.
@@ -341,6 +483,10 @@ fn default_max_turns() -> u32 {
     30
 }
 
+fn default_max_tokens() -> u32 {
+    16384
+}
+
 impl Default for StarpodConfig {
     fn default() -> Self {
         Self {
@@ -350,15 +496,20 @@ impl Default for StarpodConfig {
             provider: default_provider(),
             model: default_model(),
             max_turns: default_max_turns(),
+            max_tokens: default_max_tokens(),
             reasoning_effort: None,
             compaction_model: None,
             followup_mode: FollowupMode::default(),
             memory: MemoryConfig::default(),
+            session: SessionConfig::default(),
+            cron: CronConfig::default(),
+            compaction: CompactionConfig::default(),
             identity: IdentityConfig::default(),
             user: UserConfig::default(),
             providers: ProvidersConfig::default(),
             telegram: TelegramConfig::default(),
             attachments: AttachmentsConfig::default(),
+            instances: InstancesConfig::default(),
             instance_backend_url: None,
             project_root: PathBuf::new(),
         }
@@ -576,6 +727,9 @@ model = "claude-haiku-4-5"
 # Maximum agentic turns per request
 max_turns = 30
 
+# Maximum tokens for LLM API responses
+# max_tokens = 16384
+
 # Server bind address
 server_addr = "127.0.0.1:3000"
 
@@ -599,6 +753,37 @@ server_addr = "127.0.0.1:3000"
 # half_life_days = 30.0            # Temporal decay half-life for daily logs
 # mmr_lambda = 0.7                 # 0.0 = max diversity, 1.0 = pure relevance
 # vector_search = true             # Enable vector (semantic) search
+# chunk_size = 1600                # Chunk size in characters for indexing (~400 tokens)
+# chunk_overlap = 320              # Overlap in characters between chunks (~80 tokens)
+# bootstrap_file_cap = 20000       # Max chars from a single file in bootstrap context
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SESSION
+# ══════════════════════════════════════════════════════════════════════════════
+# Control session lifecycle behavior.
+
+[session]
+# telegram_gap_minutes = 360       # Inactivity gap before new Telegram session (6h)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# COMPACTION
+# ══════════════════════════════════════════════════════════════════════════════
+# Tune conversation compaction (context window management).
+
+[compaction]
+# context_budget = 160000          # Token budget triggering compaction (~80% of context window)
+# summary_max_tokens = 4096        # Max tokens for compaction summary
+# min_keep_messages = 4            # Minimum recent messages to preserve
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CRON
+# ══════════════════════════════════════════════════════════════════════════════
+# Cron job scheduling defaults.
+
+[cron]
+# default_max_retries = 3          # Default max retries for failed jobs
+# default_timeout_secs = 7200      # Default job timeout (2h)
+# max_concurrent_runs = 1          # Maximum concurrent job executions
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AGENT IDENTITY
@@ -658,6 +843,11 @@ server_addr = "127.0.0.1:3000"
 # INSTANCES
 # ══════════════════════════════════════════════════════════════════════════════
 # Remote instance backend for `starpod instance` commands.
+
+[instances]
+# health_check_interval_secs = 30  # Health check polling interval
+# heartbeat_timeout_secs = 90      # Instance considered unhealthy after this
+# http_timeout_secs = 30           # HTTP request timeout for instance API calls
 
 # instance_backend_url = "https://api.starpod.example.com"  # Or set STARPOD_INSTANCE_BACKEND_URL env var
 "#;

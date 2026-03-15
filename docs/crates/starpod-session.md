@@ -8,7 +8,7 @@ Channel-aware session lifecycle management with usage tracking and message persi
 let mgr = SessionManager::new(&db_path, &sessions_dir).await?;
 
 // Resolve or create a session
-let decision = mgr.resolve_session(&Channel::Main, "session-key").await?;
+let decision = mgr.resolve_session(&Channel::Main, "session-key", None).await?;
 match decision {
     SessionDecision::Continue(id) => { /* use existing session */ }
     SessionDecision::New => {

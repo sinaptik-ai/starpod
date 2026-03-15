@@ -65,10 +65,15 @@ impl CronScheduler {
         self
     }
 
-    /// Set the maximum number of concurrent job runs.
+    /// Set the maximum number of concurrent job runs (builder style).
     pub fn with_max_concurrent_runs(mut self, max: u32) -> Self {
         self.max_concurrent_runs = max;
         self
+    }
+
+    /// Set the maximum number of concurrent job runs (setter style).
+    pub fn set_max_concurrent_runs(&mut self, max: u32) {
+        self.max_concurrent_runs = max;
     }
 
     /// Start the scheduler background loop. Returns a JoinHandle.

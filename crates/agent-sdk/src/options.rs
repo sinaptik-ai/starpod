@@ -273,6 +273,15 @@ pub struct Options {
     /// Pre-compaction handler: called with messages about to be discarded
     /// during conversation compaction, allowing the host to persist key facts.
     pub pre_compact_handler: Option<PreCompactHandlerFn>,
+
+    /// Maximum tokens for LLM API responses. Overrides `DEFAULT_MAX_TOKENS`.
+    pub max_tokens: Option<u32>,
+
+    /// Max tokens for the compaction summary response.
+    pub summary_max_tokens: Option<u32>,
+
+    /// Minimum number of messages to keep at the end during compaction.
+    pub min_keep_messages: Option<usize>,
 }
 
 /// A custom tool definition to send to the Claude API.
@@ -379,6 +388,9 @@ impl Default for Options {
             attachments: Vec::new(),
             provider: None,
             pre_compact_handler: None,
+            max_tokens: None,
+            summary_max_tokens: None,
+            min_keep_messages: None,
         }
     }
 }
@@ -584,6 +596,21 @@ impl OptionsBuilder {
 
     pub fn pre_compact_handler(mut self, handler: PreCompactHandlerFn) -> Self {
         self.options.pre_compact_handler = Some(handler);
+        self
+    }
+
+    pub fn max_tokens(mut self, max_tokens: u32) -> Self {
+        self.options.max_tokens = Some(max_tokens);
+        self
+    }
+
+    pub fn summary_max_tokens(mut self, tokens: u32) -> Self {
+        self.options.summary_max_tokens = Some(tokens);
+        self
+    }
+
+    pub fn min_keep_messages(mut self, count: usize) -> Self {
+        self.options.min_keep_messages = Some(count);
         self
     }
 

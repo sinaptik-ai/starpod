@@ -1044,7 +1044,7 @@ async fn main() -> anyhow::Result<()> {
             };
 
             let api_key = config.resolved_api_key();
-            let client = InstanceClient::new(&backend_url, api_key)?;
+            let client = InstanceClient::new_with_timeout(&backend_url, api_key, config.instances.http_timeout_secs)?;
 
             match action {
                 InstanceCommand::Create { name, region } => {

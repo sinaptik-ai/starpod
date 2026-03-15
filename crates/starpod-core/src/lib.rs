@@ -3,7 +3,8 @@ pub mod error;
 pub mod types;
 
 pub use config::{
-    AttachmentsConfig, FollowupMode, IdentityConfig, MemoryConfig, StarpodConfig,
+    AttachmentsConfig, CompactionConfig, CronConfig, FollowupMode, IdentityConfig,
+    InstancesConfig, MemoryConfig, SessionConfig, StarpodConfig,
     ProviderConfig, ProvidersConfig, ReasoningEffort, TelegramConfig, UserConfig,
 };
 pub use error::{StarpodError, Result};
