@@ -26,7 +26,7 @@ use crate::tools::{custom_tool_definitions, handle_custom_tool, ToolContext};
 const CUSTOM_TOOLS: &[&str] = &[
     "MemorySearch", "MemoryWrite", "MemoryAppendDaily",
     "VaultGet", "VaultSet",
-    "SkillCreate", "SkillUpdate", "SkillDelete", "SkillList",
+    "SkillActivate", "SkillCreate", "SkillUpdate", "SkillDelete", "SkillList",
     "CronAdd", "CronList", "CronRemove", "CronRuns",
 ];
 
@@ -151,11 +151,11 @@ impl StarpodAgent {
         (query_atts, extra_text)
     }
 
-    /// Build the system prompt from bootstrap context + skills + identity + user.
+    /// Build the system prompt from bootstrap context + skill catalog + identity + user.
     fn build_system_prompt(&self, session_id: &str) -> Result<String> {
         let agent_name = self.config.identity.display_name();
         let bootstrap = self.memory.bootstrap_context()?;
-        let skills_ctx = self.skills.bootstrap_skills()?;
+        let skill_catalog = self.skills.skill_catalog()?;
         let date_str = Local::now().format("%A, %B %d, %Y at %H:%M").to_string();
         let project_root = self.config.project_root.display();
 
@@ -165,7 +165,7 @@ impl StarpodAgent {
              Project root: {project_root}\n\
              Working directory: {project_root}\n\n\
              You have access to memory tools (MemorySearch, MemoryWrite, MemoryAppendDaily), \
-             vault tools (VaultGet, VaultSet), skill tools (SkillCreate, SkillUpdate, SkillDelete, SkillList), \
+             vault tools (VaultGet, VaultSet), skill tools (SkillActivate, SkillCreate, SkillUpdate, SkillDelete, SkillList), \
              and scheduling tools (CronAdd, CronList, CronRemove, CronRuns).\n\
              You can read image files (png, jpg, gif, webp) with the Read tool — the image will be loaded \
              directly into the conversation so you can see and analyze it. For other file types like CSV or \
@@ -197,9 +197,12 @@ impl StarpodAgent {
             prompt.push_str(&format!("\nUser's timezone: {tz}"));
         }
 
-        if !skills_ctx.is_empty() {
-            prompt.push_str("\n\n");
-            prompt.push_str(&skills_ctx);
+        // Inject skill catalog (progressive disclosure — names + descriptions only)
+        if !skill_catalog.is_empty() {
+            prompt.push_str("\n\nThe following skills provide specialized instructions for specific tasks.\n\
+                             When a task matches a skill's description, call the SkillActivate tool \
+                             with the skill's name to load its full instructions before proceeding.\n\n");
+            prompt.push_str(&skill_catalog);
         }
 
         Ok(prompt)
@@ -707,6 +710,7 @@ mod tests {
         assert!(names.contains(&"VaultGet"));
         assert!(names.contains(&"VaultSet"));
         // Skill tools
+        assert!(names.contains(&"SkillActivate"));
         assert!(names.contains(&"SkillCreate"));
         assert!(names.contains(&"SkillUpdate"));
         assert!(names.contains(&"SkillDelete"));
@@ -717,7 +721,7 @@ mod tests {
         assert!(names.contains(&"CronRemove"));
         assert!(names.contains(&"CronRuns"));
 
-        assert_eq!(defs.len(), 13);
+        assert_eq!(defs.len(), 14);
     }
 
     #[tokio::test]
@@ -748,7 +752,7 @@ mod tests {
         let result = handle_custom_tool(
             &ctx,
             "SkillCreate",
-            &serde_json::json!({"name": "test-skill", "content": "Do testing."}),
+            &serde_json::json!({"name": "test-skill", "description": "A test skill.", "body": "Do testing."}),
         )
         .await;
         assert!(result.is_some());

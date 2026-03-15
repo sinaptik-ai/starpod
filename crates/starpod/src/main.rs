@@ -219,14 +219,17 @@ enum SkillAction {
         /// Skill name.
         name: String,
     },
-    /// Create a new skill from a file or inline content.
+    /// Create a new AgentSkills-compatible skill.
     Create {
-        /// Skill name.
+        /// Skill name (lowercase, hyphens, e.g. 'code-review').
         name: String,
-        /// Markdown content (or use --file).
+        /// Description of what the skill does and when to use it.
         #[arg(short, long)]
-        content: Option<String>,
-        /// Read content from a file.
+        description: String,
+        /// Markdown instructions (or use --file for the body).
+        #[arg(short, long)]
+        body: Option<String>,
+        /// Read instructions from a file.
         #[arg(short, long)]
         file: Option<String>,
     },
@@ -279,6 +282,7 @@ fn tool_icon(name: &str) -> &str {
         "MemoryAppendDaily" => "📅",
         "VaultGet" => "🔐",
         "VaultSet" => "🔑",
+        "SkillActivate" => "⚡",
         "SkillCreate" => "🛠️",
         "SkillUpdate" => "🛠️",
         "SkillDelete" => "🗑️",
@@ -845,30 +849,33 @@ async fn main() -> anyhow::Result<()> {
                             println!("No skills found.");
                         } else {
                             for s in &skills {
-                                let preview = if s.content.len() > 60 {
-                                    format!("{}...", &s.content[..60])
-                                } else {
-                                    s.content.clone()
-                                };
-                                println!("  {} — {}", s.name, preview.replace('\n', " "));
+                                println!("  {} — {}", s.name, s.description.replace('\n', " "));
                             }
                         }
                     }
                     SkillAction::Show { name } => {
                         match agent.skills().get(&name)? {
-                            Some(skill) => println!("{}", skill.content),
+                            Some(skill) => {
+                                println!("Name: {}", skill.name);
+                                println!("Description: {}", skill.description);
+                                if let Some(ref compat) = skill.compatibility {
+                                    println!("Compatibility: {}", compat);
+                                }
+                                println!("---");
+                                println!("{}", skill.body);
+                            }
                             None => println!("Skill '{}' not found.", name),
                         }
                     }
-                    SkillAction::Create { name, content, file } => {
-                        let content = if let Some(path) = file {
+                    SkillAction::Create { name, description, body, file } => {
+                        let body = if let Some(path) = file {
                             std::fs::read_to_string(&path)?
-                        } else if let Some(c) = content {
-                            c
+                        } else if let Some(b) = body {
+                            b
                         } else {
-                            anyhow::bail!("Provide --content or --file");
+                            anyhow::bail!("Provide --body or --file");
                         };
-                        agent.skills().create(&name, &content)?;
+                        agent.skills().create(&name, &description, &body)?;
                         println!("Created skill '{}'.", name);
                     }
                     SkillAction::Delete { name } => {
