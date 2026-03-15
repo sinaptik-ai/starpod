@@ -10,6 +10,7 @@ use std::time::Duration;
 use glob::glob as glob_match;
 use regex::{Regex, RegexBuilder};
 use serde_json::Value;
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tracing::{debug, warn};
 
@@ -48,6 +49,26 @@ impl ToolResult {
             raw_content: None,
         }
     }
+}
+
+/// Non-blocking drain of a pipe handle. Reads all immediately available data
+/// without waiting for EOF — background processes that inherited the pipe fd
+/// won't cause us to block.
+async fn drain_pipe<R: tokio::io::AsyncRead + Unpin>(handle: Option<R>) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let Some(mut reader) = handle else {
+        return buf;
+    };
+    let mut chunk = [0u8; 65536];
+    loop {
+        match tokio::time::timeout(Duration::from_millis(10), reader.read(&mut chunk)).await {
+            Ok(Ok(0)) => break,                // EOF — pipe fully closed
+            Ok(Ok(n)) => buf.extend_from_slice(&chunk[..n]),
+            Ok(Err(_)) => break,               // read error
+            Err(_) => break,                   // no data within 10ms — pipe held by bg process
+        }
+    }
+    buf
 }
 
 /// Executes built-in tools (Read, Write, Edit, Bash, Glob, Grep).
@@ -498,30 +519,14 @@ impl ToolExecutor {
 
         match wait_result {
             Ok(Ok(status)) => {
-                // Shell exited — drain remaining pipe data with a short grace
-                // period. Background processes (`cmd &`) may hold inherited
-                // pipe fds, so read_to_end could block indefinitely; cap it.
-                use tokio::io::AsyncReadExt;
-                let drain = tokio::time::timeout(Duration::from_secs(1), async {
-                    let stdout_fut = async {
-                        let mut buf = Vec::new();
-                        if let Some(mut out) = stdout_handle {
-                            let _ = out.read_to_end(&mut buf).await;
-                        }
-                        buf
-                    };
-                    let stderr_fut = async {
-                        let mut buf = Vec::new();
-                        if let Some(mut err) = stderr_handle {
-                            let _ = err.read_to_end(&mut buf).await;
-                        }
-                        buf
-                    };
-                    tokio::join!(stdout_fut, stderr_fut)
-                })
-                .await;
+                // Shell exited — drain whatever data is already buffered in
+                // the pipe without blocking. Background processes (`cmd &`)
+                // may hold inherited pipe fds, so we must not wait for EOF.
+                let (stdout_bytes, stderr_bytes) = tokio::join!(
+                    drain_pipe(stdout_handle),
+                    drain_pipe(stderr_handle),
+                );
 
-                let (stdout_bytes, stderr_bytes) = drain.unwrap_or_default();
                 let stdout = String::from_utf8_lossy(&stdout_bytes);
                 let stderr = String::from_utf8_lossy(&stderr_bytes);
 
