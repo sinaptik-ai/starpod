@@ -689,6 +689,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_telegram_custom_gap_override() {
+        let (_tmp, mgr) = setup().await;
+
+        // Create a Telegram session
+        let id = mgr.create_session(&Channel::Telegram, "chat-gap").await.unwrap();
+        mgr.touch_session(&id).await.unwrap();
+
+        // Set last_message_at to 2 hours ago
+        let two_hours_ago = (Utc::now() - Duration::hours(2)).to_rfc3339();
+        sqlx::query("UPDATE session_metadata SET last_message_at = ?1 WHERE id = ?2")
+            .bind(&two_hours_ago)
+            .bind(&id)
+            .execute(&mgr.pool)
+            .await
+            .unwrap();
+
+        // gap_minutes=60 (1h) — 2h ago exceeds 1h → should be New
+        match mgr.resolve_session(&Channel::Telegram, "chat-gap", Some(60)).await.unwrap() {
+            SessionDecision::New => {} // expected
+            SessionDecision::Continue(_) => panic!("Should start new session when 2h > 1h gap"),
+        }
+
+        // The old session was auto-closed, create a fresh one and backdate it again
+        let id2 = mgr.create_session(&Channel::Telegram, "chat-gap").await.unwrap();
+        mgr.touch_session(&id2).await.unwrap();
+        let two_hours_ago = (Utc::now() - Duration::hours(2)).to_rfc3339();
+        sqlx::query("UPDATE session_metadata SET last_message_at = ?1 WHERE id = ?2")
+            .bind(&two_hours_ago)
+            .bind(&id2)
+            .execute(&mgr.pool)
+            .await
+            .unwrap();
+
+        // gap_minutes=180 (3h) — 2h ago is within 3h → should Continue
+        match mgr.resolve_session(&Channel::Telegram, "chat-gap", Some(180)).await.unwrap() {
+            SessionDecision::Continue(sid) => assert_eq!(sid, id2),
+            SessionDecision::New => panic!("Should continue session when 2h < 3h gap"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_main_channel_ignores_gap() {
+        let (_tmp, mgr) = setup().await;
+
+        // Create a Main session
+        let id = mgr.create_session(&Channel::Main, "main-gap").await.unwrap();
+        mgr.touch_session(&id).await.unwrap();
+
+        // Without a gap_minutes override, Main channel always continues (explicit)
+        match mgr.resolve_session(&Channel::Main, "main-gap", None).await.unwrap() {
+            SessionDecision::Continue(sid) => assert_eq!(sid, id),
+            SessionDecision::New => panic!("Main channel should always continue without gap override"),
+        }
+
+        // Even backdating last_message_at to 24h ago, Main without gap override still continues
+        let old = (Utc::now() - Duration::hours(24)).to_rfc3339();
+        sqlx::query("UPDATE session_metadata SET last_message_at = ?1 WHERE id = ?2")
+            .bind(&old)
+            .bind(&id)
+            .execute(&mgr.pool)
+            .await
+            .unwrap();
+
+        match mgr.resolve_session(&Channel::Main, "main-gap", None).await.unwrap() {
+            SessionDecision::Continue(sid) => assert_eq!(sid, id),
+            SessionDecision::New => panic!("Main channel should continue even with old last_message_at when gap_minutes is None"),
+        }
+    }
+
+    #[tokio::test]
     async fn test_channel_isolation() {
         let (_tmp, mgr) = setup().await;
 

@@ -1051,6 +1051,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_set_default_max_retries_affects_add_job() {
+        let mut store = setup().await;
+        store.set_default_max_retries(5);
+
+        let schedule = Schedule::Interval { every_ms: 60000 };
+        store.add_job("retry-default", "test", &schedule, false, None).await.unwrap();
+
+        let job = store.get_job_by_name("retry-default").await.unwrap().unwrap();
+        assert_eq!(job.max_retries, 5, "add_job should use the custom default_max_retries");
+    }
+
+    #[tokio::test]
+    async fn test_set_default_timeout_secs_affects_add_job() {
+        let mut store = setup().await;
+        store.set_default_timeout_secs(3600);
+
+        let schedule = Schedule::Interval { every_ms: 60000 };
+        store.add_job("timeout-default", "test", &schedule, false, None).await.unwrap();
+
+        let job = store.get_job_by_name("timeout-default").await.unwrap().unwrap();
+        assert_eq!(job.timeout_secs, 3600, "add_job should use the custom default_timeout_secs");
+    }
+
+    #[tokio::test]
     async fn test_get_retry_jobs_future_not_due() {
         let store = setup().await;
 

@@ -1165,4 +1165,196 @@ mod tests {
         assert_eq!(config.memory.mmr_lambda, 0.7); // default
         assert!(config.memory.vector_search); // default
     }
+
+    // ── Session config tests ───────────────────────────────────────────
+
+    #[test]
+    fn session_config_defaults() {
+        let cfg = SessionConfig::default();
+        assert_eq!(cfg.telegram_gap_minutes, 360);
+    }
+
+    #[test]
+    fn session_config_default_when_missing_from_toml() {
+        let toml = "";
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.session.telegram_gap_minutes, 360);
+    }
+
+    #[test]
+    fn session_config_from_toml() {
+        let toml = r#"
+            [session]
+            telegram_gap_minutes = 120
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.session.telegram_gap_minutes, 120);
+    }
+
+    #[test]
+    fn session_config_partial_from_toml() {
+        // Only 1 field, but good for consistency with other sections
+        let toml = r#"
+            [session]
+            telegram_gap_minutes = 60
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.session.telegram_gap_minutes, 60);
+    }
+
+    // ── Compaction config tests ────────────────────────────────────────
+
+    #[test]
+    fn compaction_config_defaults() {
+        let cfg = CompactionConfig::default();
+        assert_eq!(cfg.context_budget, 160_000);
+        assert_eq!(cfg.summary_max_tokens, 4096);
+        assert_eq!(cfg.min_keep_messages, 4);
+    }
+
+    #[test]
+    fn compaction_config_default_when_missing_from_toml() {
+        let toml = "";
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.compaction.context_budget, 160_000);
+        assert_eq!(config.compaction.summary_max_tokens, 4096);
+        assert_eq!(config.compaction.min_keep_messages, 4);
+    }
+
+    #[test]
+    fn compaction_config_from_toml() {
+        let toml = r#"
+            [compaction]
+            context_budget = 80000
+            summary_max_tokens = 2048
+            min_keep_messages = 8
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.compaction.context_budget, 80_000);
+        assert_eq!(config.compaction.summary_max_tokens, 2048);
+        assert_eq!(config.compaction.min_keep_messages, 8);
+    }
+
+    #[test]
+    fn compaction_config_partial_from_toml() {
+        // Only set context_budget, rest should default
+        let toml = r#"
+            [compaction]
+            context_budget = 100000
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.compaction.context_budget, 100_000);
+        assert_eq!(config.compaction.summary_max_tokens, 4096); // default
+        assert_eq!(config.compaction.min_keep_messages, 4); // default
+    }
+
+    // ── Cron config tests ──────────────────────────────────────────────
+
+    #[test]
+    fn cron_config_defaults() {
+        let cfg = CronConfig::default();
+        assert_eq!(cfg.default_max_retries, 3);
+        assert_eq!(cfg.default_timeout_secs, 7200);
+        assert_eq!(cfg.max_concurrent_runs, 1);
+    }
+
+    #[test]
+    fn cron_config_default_when_missing_from_toml() {
+        let toml = "";
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.cron.default_max_retries, 3);
+        assert_eq!(config.cron.default_timeout_secs, 7200);
+        assert_eq!(config.cron.max_concurrent_runs, 1);
+    }
+
+    #[test]
+    fn cron_config_from_toml() {
+        let toml = r#"
+            [cron]
+            default_max_retries = 5
+            default_timeout_secs = 3600
+            max_concurrent_runs = 4
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.cron.default_max_retries, 5);
+        assert_eq!(config.cron.default_timeout_secs, 3600);
+        assert_eq!(config.cron.max_concurrent_runs, 4);
+    }
+
+    #[test]
+    fn cron_config_partial_from_toml() {
+        // Only set default_max_retries, rest should default
+        let toml = r#"
+            [cron]
+            default_max_retries = 10
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.cron.default_max_retries, 10);
+        assert_eq!(config.cron.default_timeout_secs, 7200); // default
+        assert_eq!(config.cron.max_concurrent_runs, 1); // default
+    }
+
+    // ── Instances config tests ─────────────────────────────────────────
+
+    #[test]
+    fn instances_config_defaults() {
+        let cfg = InstancesConfig::default();
+        assert_eq!(cfg.health_check_interval_secs, 30);
+        assert_eq!(cfg.heartbeat_timeout_secs, 90);
+        assert_eq!(cfg.http_timeout_secs, 30);
+    }
+
+    #[test]
+    fn instances_config_default_when_missing_from_toml() {
+        let toml = "";
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.instances.health_check_interval_secs, 30);
+        assert_eq!(config.instances.heartbeat_timeout_secs, 90);
+        assert_eq!(config.instances.http_timeout_secs, 30);
+    }
+
+    #[test]
+    fn instances_config_from_toml() {
+        let toml = r#"
+            [instances]
+            health_check_interval_secs = 60
+            heartbeat_timeout_secs = 180
+            http_timeout_secs = 15
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.instances.health_check_interval_secs, 60);
+        assert_eq!(config.instances.heartbeat_timeout_secs, 180);
+        assert_eq!(config.instances.http_timeout_secs, 15);
+    }
+
+    #[test]
+    fn instances_config_partial_from_toml() {
+        // Only set health_check_interval_secs, rest should default
+        let toml = r#"
+            [instances]
+            health_check_interval_secs = 10
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.instances.health_check_interval_secs, 10);
+        assert_eq!(config.instances.heartbeat_timeout_secs, 90); // default
+        assert_eq!(config.instances.http_timeout_secs, 30); // default
+    }
+
+    // ── max_tokens tests ───────────────────────────────────────────────
+
+    #[test]
+    fn max_tokens_default() {
+        let toml = "";
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.max_tokens, 16384);
+    }
+
+    #[test]
+    fn max_tokens_from_toml() {
+        let toml = r#"
+            max_tokens = 8192
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.max_tokens, 8192);
+    }
 }

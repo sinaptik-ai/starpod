@@ -754,6 +754,59 @@ mod tests {
         assert_eq!(store.mmr_lambda, 0.5);
     }
 
+    #[tokio::test]
+    async fn set_chunk_size_is_applied() {
+        let tmp = TempDir::new().unwrap();
+        let mut store = MemoryStore::new(tmp.path()).await.unwrap();
+        store.set_chunk_size(800);
+        assert_eq!(store.chunk_size, 800);
+    }
+
+    #[tokio::test]
+    async fn set_chunk_overlap_is_applied() {
+        let tmp = TempDir::new().unwrap();
+        let mut store = MemoryStore::new(tmp.path()).await.unwrap();
+        store.set_chunk_overlap(160);
+        assert_eq!(store.chunk_overlap, 160);
+    }
+
+    #[tokio::test]
+    async fn set_bootstrap_file_cap_is_applied() {
+        let tmp = TempDir::new().unwrap();
+        let mut store = MemoryStore::new(tmp.path()).await.unwrap();
+        store.set_bootstrap_file_cap(5000);
+        assert_eq!(store.bootstrap_file_cap, 5000);
+    }
+
+    #[tokio::test]
+    async fn bootstrap_file_cap_limits_output() {
+        let tmp = TempDir::new().unwrap();
+        let mut store = MemoryStore::new(tmp.path()).await.unwrap();
+
+        // Write a large file (well above the cap we'll set)
+        let large_content = "x".repeat(10_000);
+        store.write_file("SOUL.md", &large_content).await.unwrap();
+
+        // Set a small bootstrap_file_cap
+        store.set_bootstrap_file_cap(500);
+
+        let ctx = store.bootstrap_context().unwrap();
+        // The SOUL.md section should be capped at 500 chars of content.
+        // Find the SOUL.md section and verify its content portion is truncated.
+        let soul_section = ctx
+            .split("--- SOUL.md ---\n")
+            .nth(1)
+            .unwrap_or("")
+            .split("\n\n--- ")
+            .next()
+            .unwrap_or("");
+        assert!(
+            soul_section.len() <= 500,
+            "SOUL.md section should be capped at 500 chars, got {}",
+            soul_section.len(),
+        );
+    }
+
     // ── Vector search without embedder ──────────────────────────────────
 
     #[tokio::test]

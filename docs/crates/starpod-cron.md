@@ -90,6 +90,16 @@ pub enum RunStatus {
 }
 ```
 
+## Configuration
+
+Default retry, timeout, and concurrency settings are configurable via `[cron]` in `.starpod/config.toml`:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `default_max_retries` | `3` | Max retries for failed jobs |
+| `default_timeout_secs` | `7200` | Job timeout in seconds (2h) |
+| `max_concurrent_runs` | `1` | Max concurrent job runs |
+
 ## Tests
 
 11 unit tests.

@@ -673,6 +673,24 @@ mod tests {
     }
 
     #[test]
+    fn builder_max_tokens_sets_field() {
+        let opts = Options::builder().max_tokens(8192).build();
+        assert_eq!(opts.max_tokens, Some(8192));
+    }
+
+    #[test]
+    fn builder_summary_max_tokens_sets_field() {
+        let opts = Options::builder().summary_max_tokens(2048).build();
+        assert_eq!(opts.summary_max_tokens, Some(2048));
+    }
+
+    #[test]
+    fn builder_min_keep_messages_sets_field() {
+        let opts = Options::builder().min_keep_messages(6).build();
+        assert_eq!(opts.min_keep_messages, Some(6));
+    }
+
+    #[test]
     fn builder_pre_compact_handler_default_is_none() {
         let opts = Options::builder().build();
         assert!(opts.pre_compact_handler.is_none());

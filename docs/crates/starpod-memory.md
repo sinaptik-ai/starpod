@@ -40,20 +40,24 @@ pub struct SearchResult {
 
 Text is split into chunks for the FTS5 index:
 
-| Parameter | Value |
-|-----------|-------|
-| Chunk size | ~400 tokens |
-| Overlap | 80 tokens |
-| Splitting | Line-aware |
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| Chunk size | 1600 chars (~400 tokens) | Configurable via `[memory] chunk_size` |
+| Overlap | 320 chars (~80 tokens) | Configurable via `[memory] chunk_overlap` |
+| Splitting | Line-aware | Splits on line boundaries |
+
+All chunking parameters are configurable in `.starpod/config.toml` under the `[memory]` section.
 
 ## Bootstrap Context
 
 `bootstrap_context()` assembles:
 
-1. `SOUL.md` (capped at 20K chars)
-2. `USER.md` (capped at 20K chars)
-3. `MEMORY.md` (capped at 20K chars)
+1. `SOUL.md` (capped at 20K chars by default)
+2. `USER.md` (capped at 20K chars by default)
+3. `MEMORY.md` (capped at 20K chars by default)
 4. Last 3 daily logs (most recent first)
+
+The per-file character cap is configurable via `[memory] bootstrap_file_cap` in `config.toml` (default: 20000).
 
 Returns a single string for injection into the system prompt.
 

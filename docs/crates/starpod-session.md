@@ -49,7 +49,9 @@ pub enum Channel {
 ## Session Resolution
 
 - **Main**: Always continues if session exists with same key
-- **Telegram**: Continues if last message within 6 hours; otherwise auto-closes old session and returns `New`
+- **Telegram**: Continues if last message within the gap threshold; otherwise auto-closes old session and returns `New`
+
+The Telegram inactivity threshold defaults to 6 hours (360 minutes) and is configurable via `[session] telegram_gap_minutes` in `.starpod/config.toml`.
 
 ## Types
 

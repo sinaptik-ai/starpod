@@ -135,4 +135,39 @@ mod tests {
             assert!(!chunk.text.trim().is_empty());
         }
     }
+
+    #[test]
+    fn test_chunk_text_custom_sizes() {
+        // Build a long text (~4000 chars): 20 lines of 200 chars each
+        let line = "a".repeat(200);
+        let long_text: String = (0..20).map(|_| line.as_str()).collect::<Vec<_>>().join("\n");
+
+        let chunks_default = chunk_text("test.md", &long_text, CHUNK_SIZE, CHUNK_OVERLAP);
+        let chunks_small = chunk_text("test.md", &long_text, 200, 50);
+
+        // A smaller chunk_size must produce MORE chunks
+        assert!(
+            chunks_small.len() > chunks_default.len(),
+            "Small chunk_size ({} chunks) should produce more chunks than default ({} chunks)",
+            chunks_small.len(),
+            chunks_default.len(),
+        );
+
+        // Verify overlap is respected: consecutive chunks should share some text.
+        // With overlap=50, the tail of chunk N should appear at the start of chunk N+1.
+        if chunks_small.len() >= 2 {
+            for i in 0..chunks_small.len() - 1 {
+                let current_lines: Vec<&str> = chunks_small[i].text.lines().collect();
+                let next_lines: Vec<&str> = chunks_small[i + 1].text.lines().collect();
+                // The first line of the next chunk should be present somewhere in the current chunk
+                let first_next_line = next_lines[0];
+                assert!(
+                    current_lines.contains(&first_next_line),
+                    "Overlap not respected between chunk {} and chunk {}: first line of next chunk not found in current chunk",
+                    i,
+                    i + 1,
+                );
+            }
+        }
+    }
 }

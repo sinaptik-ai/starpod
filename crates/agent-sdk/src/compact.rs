@@ -381,6 +381,25 @@ mod tests {
     }
 
     #[test]
+    fn test_find_split_point_custom_min_keep() {
+        let conv: Vec<ApiMessage> = (0..10)
+            .map(|i| {
+                let role = if i % 2 == 0 { "user" } else { "assistant" };
+                text_msg(role, &format!("message {i}"))
+            })
+            .collect();
+
+        // min_keep=2 → split at 8 (keeps last 2)
+        assert_eq!(find_split_point(&conv, 2), 8);
+
+        // min_keep=6 → split at 4 (keeps last 6)
+        assert_eq!(find_split_point(&conv, 6), 4);
+
+        // min_keep=1 → split at 9 (keeps last 1)
+        assert_eq!(find_split_point(&conv, 1), 9);
+    }
+
+    #[test]
     fn test_build_summary_prompt_format() {
         let msgs = vec![
             text_msg("user", "Tell me about Rust"),

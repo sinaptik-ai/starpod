@@ -535,6 +535,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_new_with_timeout() {
+        let server = MockServer::start().await;
+        let client =
+            InstanceClient::new_with_timeout(&server.uri(), Some("test-key".to_string()), 60);
+        assert!(client.is_ok());
+
+        // Verify it works by making a request
+        let client = client.unwrap();
+        Mock::given(method("GET"))
+            .and(path("/instances"))
+            .and(header("Authorization", "Bearer test-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&Vec::<Instance>::new()))
+            .mount(&server)
+            .await;
+
+        let result = client.list_instances().await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
     async fn test_no_auth_header_when_no_key() {
         let server = MockServer::start().await;
         let client = InstanceClient::new(&server.uri(), None).unwrap();
