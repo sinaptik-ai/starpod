@@ -715,7 +715,9 @@ async fn main() -> anyhow::Result<()> {
                     "  {} {}",
                     "Telegram".dimmed(),
                     if telegram_active {
-                        let mode = &config.telegram.stream_mode;
+                        let mode = config.channels.telegram.as_ref()
+                            .map(|t| t.stream_mode.as_str())
+                            .unwrap_or("final_only");
                         format!("connected (stream: {})", mode).green().to_string()
                     } else {
                         "not configured".yellow().to_string()

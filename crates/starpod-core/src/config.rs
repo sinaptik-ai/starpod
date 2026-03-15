@@ -101,10 +101,16 @@ pub enum AllowedUser {
     Username(String),
 }
 
-/// Telegram-specific configuration.
+/// Telegram channel configuration (lives under `[channels.telegram]`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub struct TelegramConfig {
+pub struct TelegramChannelConfig {
+    /// Whether this channel is enabled (default: true).
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Inactivity gap (in minutes) before auto-closing a Telegram session (default: 360 = 6h).
+    #[serde(default = "default_gap_minutes")]
+    pub gap_minutes: Option<i64>,
     /// Bot token from @BotFather.
     pub bot_token: Option<String>,
     /// Users allowed to interact with the bot — can be numeric IDs or
@@ -119,9 +125,13 @@ pub struct TelegramConfig {
     pub stream_mode: String,
 }
 
-impl Default for TelegramConfig {
+fn default_gap_minutes() -> Option<i64> { Some(360) }
+
+impl Default for TelegramChannelConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
+            gap_minutes: default_gap_minutes(),
             bot_token: None,
             allowed_users: Vec::new(),
             stream_mode: default_stream_mode(),
@@ -129,7 +139,7 @@ impl Default for TelegramConfig {
     }
 }
 
-impl TelegramConfig {
+impl TelegramChannelConfig {
     /// Extract the numeric user IDs from the allow-list.
     pub fn allowed_user_ids(&self) -> Vec<u64> {
         self.allowed_users
@@ -151,6 +161,15 @@ impl TelegramConfig {
             })
             .collect()
     }
+}
+
+/// Channel configuration namespace (`[channels.*]`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ChannelsConfig {
+    /// Telegram channel settings.
+    pub telegram: Option<TelegramChannelConfig>,
+    // future: discord, whatsapp, etc.
 }
 
 fn default_stream_mode() -> String {
@@ -195,24 +214,6 @@ impl Default for MemoryConfig {
     }
 }
 
-/// Session management configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct SessionConfig {
-    /// Inactivity gap (in minutes) before auto-closing a Telegram session (default: 360 = 6h).
-    #[serde(default = "default_telegram_gap_minutes")]
-    pub telegram_gap_minutes: i64,
-}
-
-fn default_telegram_gap_minutes() -> i64 { 360 }
-
-impl Default for SessionConfig {
-    fn default() -> Self {
-        Self {
-            telegram_gap_minutes: default_telegram_gap_minutes(),
-        }
-    }
-}
 
 /// Cron scheduling configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -419,9 +420,9 @@ pub struct StarpodConfig {
     #[serde(default)]
     pub providers: ProvidersConfig,
 
-    /// Telegram bot configuration.
+    /// Channel configurations (e.g. `[channels.telegram]`).
     #[serde(default)]
-    pub telegram: TelegramConfig,
+    pub channels: ChannelsConfig,
 
     /// Maximum tokens for LLM API responses (default: 16384).
     #[serde(default = "default_max_tokens")]
@@ -436,10 +437,6 @@ pub struct StarpodConfig {
     /// Memory search tuning.
     #[serde(default)]
     pub memory: MemoryConfig,
-
-    /// Session management settings.
-    #[serde(default)]
-    pub session: SessionConfig,
 
     /// Cron scheduling settings.
     #[serde(default)]
@@ -501,13 +498,12 @@ impl Default for StarpodConfig {
             compaction_model: None,
             followup_mode: FollowupMode::default(),
             memory: MemoryConfig::default(),
-            session: SessionConfig::default(),
             cron: CronConfig::default(),
             compaction: CompactionConfig::default(),
             identity: IdentityConfig::default(),
             user: UserConfig::default(),
             providers: ProvidersConfig::default(),
-            telegram: TelegramConfig::default(),
+            channels: ChannelsConfig::default(),
             attachments: AttachmentsConfig::default(),
             instances: InstancesConfig::default(),
             instance_backend_url: None,
@@ -581,22 +577,40 @@ impl StarpodConfig {
             .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
     }
 
-    /// Resolved Telegram bot token: checks [telegram] section, then env var.
+    /// Resolved Telegram bot token: checks [channels.telegram] section, then env var.
     pub fn resolved_telegram_token(&self) -> Option<String> {
-        self.telegram
-            .bot_token
-            .clone()
+        self.channels
+            .telegram
+            .as_ref()
+            .and_then(|t| t.bot_token.clone())
             .or_else(|| std::env::var("TELEGRAM_BOT_TOKEN").ok())
     }
 
-    /// Resolved Telegram allowed user IDs from [telegram] section.
+    /// Resolved Telegram allowed user IDs from [channels.telegram] section.
     pub fn resolved_telegram_allowed_user_ids(&self) -> Vec<u64> {
-        self.telegram.allowed_user_ids()
+        self.channels
+            .telegram
+            .as_ref()
+            .map(|t| t.allowed_user_ids())
+            .unwrap_or_default()
     }
 
-    /// Resolved Telegram allowed usernames (lowercased) from [telegram] section.
+    /// Resolved Telegram allowed usernames (lowercased) from [channels.telegram] section.
     pub fn resolved_telegram_allowed_usernames(&self) -> Vec<String> {
-        self.telegram.allowed_usernames()
+        self.channels
+            .telegram
+            .as_ref()
+            .map(|t| t.allowed_usernames())
+            .unwrap_or_default()
+    }
+
+    /// Get the inactivity gap (in minutes) for a channel by name.
+    /// Returns `None` for channels that don't use time-gap sessions.
+    pub fn channel_gap_minutes(&self, channel: &str) -> Option<i64> {
+        match channel {
+            "telegram" => self.channels.telegram.as_ref().and_then(|t| t.gap_minutes),
+            _ => None,
+        }
     }
 
     /// Resolved database path (uses `db_path` if set, otherwise `<data_dir>/memory.db`).
@@ -758,14 +772,6 @@ server_addr = "127.0.0.1:3000"
 # bootstrap_file_cap = 20000       # Max chars from a single file in bootstrap context
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SESSION
-# ══════════════════════════════════════════════════════════════════════════════
-# Control session lifecycle behavior.
-
-[session]
-# telegram_gap_minutes = 360       # Inactivity gap before new Telegram session (6h)
-
-# ══════════════════════════════════════════════════════════════════════════════
 # COMPACTION
 # ══════════════════════════════════════════════════════════════════════════════
 # Tune conversation compaction (context window management).
@@ -820,10 +826,13 @@ server_addr = "127.0.0.1:3000"
 # models = ["gpt-4o", "gpt-4o-mini"]
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TELEGRAM
+# CHANNELS
 # ══════════════════════════════════════════════════════════════════════════════
+# Configure channel-specific settings under [channels.<name>].
 
-[telegram]
+[channels.telegram]
+# enabled = true                   # Set to false to disable the Telegram channel
+# gap_minutes = 360                # Inactivity gap before new session (6h)
 # bot_token = "123456:ABC..."     # Or set TELEGRAM_BOT_TOKEN env var
 # allowed_users = [123456789, "alice"]  # User IDs or usernames (without @)
 # stream_mode = "final_only"      # "final_only" or "all_messages"
@@ -860,52 +869,79 @@ mod tests {
     #[test]
     fn test_allowed_users_ids_only() {
         let toml = r#"
-            [telegram]
+            [channels.telegram]
             allowed_users = [111, 222]
         "#;
         let config: StarpodConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.telegram.allowed_user_ids(), vec![111, 222]);
-        assert!(config.telegram.allowed_usernames().is_empty());
+        let tg = config.channels.telegram.as_ref().unwrap();
+        assert_eq!(tg.allowed_user_ids(), vec![111, 222]);
+        assert!(tg.allowed_usernames().is_empty());
     }
 
     #[test]
     fn test_allowed_users_usernames_only() {
         let toml = r#"
-            [telegram]
+            [channels.telegram]
             allowed_users = ["alice", "Bob"]
         "#;
         let config: StarpodConfig = toml::from_str(toml).unwrap();
-        assert!(config.telegram.allowed_user_ids().is_empty());
-        assert_eq!(config.telegram.allowed_usernames(), vec!["alice", "bob"]);
+        let tg = config.channels.telegram.as_ref().unwrap();
+        assert!(tg.allowed_user_ids().is_empty());
+        assert_eq!(tg.allowed_usernames(), vec!["alice", "bob"]);
     }
 
     #[test]
     fn test_allowed_users_mixed() {
         let toml = r#"
-            [telegram]
+            [channels.telegram]
             allowed_users = [123456789, "alice", 987654321, "Bob"]
         "#;
         let config: StarpodConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.telegram.allowed_user_ids(), vec![123456789, 987654321]);
-        assert_eq!(config.telegram.allowed_usernames(), vec!["alice", "bob"]);
+        let tg = config.channels.telegram.as_ref().unwrap();
+        assert_eq!(tg.allowed_user_ids(), vec![123456789, 987654321]);
+        assert_eq!(tg.allowed_usernames(), vec!["alice", "bob"]);
     }
 
     #[test]
     fn test_allowed_users_empty() {
         let toml = r#"
-            [telegram]
+            [channels.telegram]
             allowed_users = []
         "#;
         let config: StarpodConfig = toml::from_str(toml).unwrap();
-        assert!(config.telegram.allowed_user_ids().is_empty());
-        assert!(config.telegram.allowed_usernames().is_empty());
+        let tg = config.channels.telegram.as_ref().unwrap();
+        assert!(tg.allowed_user_ids().is_empty());
+        assert!(tg.allowed_usernames().is_empty());
     }
 
     #[test]
     fn test_allowed_users_default() {
         let toml = "";
         let config: StarpodConfig = toml::from_str(toml).unwrap();
-        assert!(config.telegram.allowed_users.is_empty());
+        assert!(config.channels.telegram.is_none());
+    }
+
+    #[test]
+    fn test_channels_telegram_enabled_and_gap_defaults() {
+        let toml = r#"
+            [channels.telegram]
+            bot_token = "test"
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        let tg = config.channels.telegram.as_ref().unwrap();
+        assert!(tg.enabled);
+        assert_eq!(tg.gap_minutes, Some(360));
+    }
+
+    #[test]
+    fn test_channel_gap_minutes_convenience() {
+        let toml = r#"
+            [channels.telegram]
+            gap_minutes = 120
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.channel_gap_minutes("telegram"), Some(120));
+        assert_eq!(config.channel_gap_minutes("main"), None);
     }
 
     #[test]
@@ -1166,40 +1202,33 @@ mod tests {
         assert!(config.memory.vector_search); // default
     }
 
-    // ── Session config tests ───────────────────────────────────────────
+    // ── Channel gap_minutes tests ──────────────────────────────────────
 
     #[test]
-    fn session_config_defaults() {
-        let cfg = SessionConfig::default();
-        assert_eq!(cfg.telegram_gap_minutes, 360);
-    }
-
-    #[test]
-    fn session_config_default_when_missing_from_toml() {
+    fn channel_gap_minutes_default_when_telegram_missing() {
         let toml = "";
         let config: StarpodConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.session.telegram_gap_minutes, 360);
+        // No [channels.telegram] → None
+        assert_eq!(config.channel_gap_minutes("telegram"), None);
     }
 
     #[test]
-    fn session_config_from_toml() {
+    fn channel_gap_minutes_default_when_telegram_present() {
         let toml = r#"
-            [session]
-            telegram_gap_minutes = 120
+            [channels.telegram]
         "#;
         let config: StarpodConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.session.telegram_gap_minutes, 120);
+        assert_eq!(config.channel_gap_minutes("telegram"), Some(360));
     }
 
     #[test]
-    fn session_config_partial_from_toml() {
-        // Only 1 field, but good for consistency with other sections
+    fn channel_gap_minutes_custom_from_toml() {
         let toml = r#"
-            [session]
-            telegram_gap_minutes = 60
+            [channels.telegram]
+            gap_minutes = 60
         "#;
         let config: StarpodConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.session.telegram_gap_minutes, 60);
+        assert_eq!(config.channel_gap_minutes("telegram"), Some(60));
     }
 
     // ── Compaction config tests ────────────────────────────────────────

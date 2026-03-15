@@ -65,13 +65,28 @@ pub struct AttachmentsConfig {
 config.attachments.validate("photo.jpg", raw_size)?;
 ```
 
-## SessionConfig
+## ChannelsConfig
 
-Controls session lifecycle behavior:
+Container for per-channel configuration:
 
 ```rust
-pub struct SessionConfig {
-    pub telegram_gap_minutes: i64,   // default: 360 (6h)
+pub struct ChannelsConfig {
+    pub telegram: TelegramChannelConfig,
+}
+```
+
+## TelegramChannelConfig
+
+Controls the Telegram channel:
+
+```rust
+pub struct TelegramChannelConfig {
+    pub enabled: bool,               // default: true
+    pub gap_minutes: i64,            // default: 360 (6h)
+    pub bot_token: Option<String>,
+    pub allowed_users: Vec<u64>,
+    pub stream_mode: String,         // default: "final_only"
+    pub edit_throttle_ms: u64,       // default: 300
 }
 ```
 

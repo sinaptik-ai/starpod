@@ -334,10 +334,7 @@ impl StarpodAgent {
     pub async fn chat(&self, message: ChatMessage) -> Result<ChatResponse> {
         // Step 1: Resolve session via channel routing
         let (channel, key) = resolve_channel(&message);
-        let gap = match channel {
-            Channel::Telegram => Some(self.config.session.telegram_gap_minutes),
-            _ => None,
-        };
+        let gap = self.config.channel_gap_minutes(channel.as_str());
         let session_id = match self.session_mgr.resolve_session(&channel, &key, gap).await? {
             SessionDecision::Continue(id) => {
                 debug!(session_id = %id, channel = %channel.as_str(), "Continuing existing session");
@@ -502,10 +499,7 @@ impl StarpodAgent {
         message: &ChatMessage,
     ) -> Result<(Query, String, mpsc::UnboundedSender<String>)> {
         let (channel, key) = resolve_channel(message);
-        let gap = match channel {
-            Channel::Telegram => Some(self.config.session.telegram_gap_minutes),
-            _ => None,
-        };
+        let gap = self.config.channel_gap_minutes(channel.as_str());
         let session_id = match self.session_mgr.resolve_session(&channel, &key, gap).await? {
             SessionDecision::Continue(id) => {
                 debug!(session_id = %id, channel = %channel.as_str(), "Continuing existing session");

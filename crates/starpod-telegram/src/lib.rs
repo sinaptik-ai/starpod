@@ -54,7 +54,7 @@ pub async fn run_with_agent_filtered(
     allowed_usernames: Vec<String>,
 ) -> starpod_core::Result<()> {
     if allowed_users.is_empty() && allowed_usernames.is_empty() {
-        warn!("Telegram bot has no allowed_users or allowed_usernames configured — no one can chat. Send /start to the bot to get your user ID/username, then add it to [telegram] in config.toml");
+        warn!("Telegram bot has no allowed_users or allowed_usernames configured — no one can chat. Send /start to the bot to get your user ID/username, then add it to [channels.telegram] in config.toml");
     } else {
         info!(
             allowed_users = ?allowed_users,
@@ -70,7 +70,9 @@ pub async fn run_with_agent_filtered(
         usernames: Arc::new(allowed_usernames.into_iter().map(|u| u.to_lowercase()).collect()),
     };
     let stream_cfg = StreamConfig {
-        stream_mode: agent.config().telegram.stream_mode.clone(),
+        stream_mode: agent.config().channels.telegram.as_ref()
+            .map(|t| t.stream_mode.clone())
+            .unwrap_or_else(|| "final_only".to_string()),
     };
     let agent_name = AgentName(agent.config().identity.display_name().to_string());
 
@@ -226,13 +228,13 @@ async fn handle_message(
         if let Some(ref uname) = username {
             greeting.push_str(&format!("\nYour username: `{}`", escape_md(uname)));
         }
-        greeting.push_str("\nAdd your ID to `\\[telegram\\] allowed_users` or your username to `allowed_usernames` in config to start chatting\\.");
+        greeting.push_str("\nAdd your ID to `\\[channels\\.telegram\\] allowed_users` or your username to `allowed_usernames` in config to start chatting\\.");
         bot.send_message(chat_id, &greeting)
             .parse_mode(ParseMode::MarkdownV2)
             .await
             .or_else(|_| {
                 let fallback = format!(
-                    "Hello! I'm {}, your personal AI assistant.\n\nYour user ID: {}\nYour username: {}\nAdd your ID to [telegram] allowed_users or username to allowed_usernames in config to start chatting.",
+                    "Hello! I'm {}, your personal AI assistant.\n\nYour user ID: {}\nYour username: {}\nAdd your ID to [channels.telegram] allowed_users or username to allowed_usernames in config to start chatting.",
                     name,
                     user_id.map(|id| id.to_string()).unwrap_or_default(),
                     username.as_deref().unwrap_or("(not set)")

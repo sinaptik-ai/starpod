@@ -36,14 +36,6 @@ impl Channel {
         }
     }
 
-    /// Inactivity gap (in minutes) that triggers a new session.
-    /// `None` means no time-gap logic (explicit sessions).
-    pub fn gap_minutes(&self) -> Option<i64> {
-        match self {
-            Channel::Main => None,
-            Channel::Telegram => Some(360), // 6 hours
-        }
-    }
 }
 
 /// Decision from session resolution on whether to continue or start a new session.
@@ -141,8 +133,8 @@ impl SessionManager {
     /// - **Telegram** (time-gap): continues if last message was within the gap threshold,
     ///   otherwise auto-closes the old session and returns `New`.
     ///
-    /// `gap_minutes` overrides the channel's default inactivity gap. Pass `None`
-    /// to use the channel's built-in default (e.g. 360 min for Telegram).
+    /// `gap_minutes` is the inactivity gap from config. Pass `None` for explicit
+    /// channels that don't use time-gap sessions.
     pub async fn resolve_session(
         &self,
         channel: &Channel,
@@ -170,8 +162,7 @@ impl SessionManager {
         let session_id: String = row.get("id");
 
         // For explicit channels (no gap), always continue.
-        // If the caller provided an override, use it; otherwise fall back to the channel default.
-        let gap_threshold = match gap_minutes.or_else(|| channel.gap_minutes()) {
+        let gap_threshold = match gap_minutes {
             None => {
                 debug!(session_id = %session_id, channel = %channel.as_str(), "Continuing session (explicit channel)");
                 return Ok(SessionDecision::Continue(session_id));
@@ -632,13 +623,14 @@ mod tests {
     #[tokio::test]
     async fn test_telegram_time_gap() {
         let (_tmp, mgr) = setup().await;
+        let gap = Some(360); // 6h, as configured via [channels.telegram] gap_minutes
 
         // Create a telegram session
         let id = mgr.create_session(&Channel::Telegram, "chat-123").await.unwrap();
         mgr.touch_session(&id).await.unwrap();
 
         // Within 6h → continue
-        match mgr.resolve_session(&Channel::Telegram, "chat-123", None).await.unwrap() {
+        match mgr.resolve_session(&Channel::Telegram, "chat-123", gap).await.unwrap() {
             SessionDecision::Continue(sid) => assert_eq!(sid, id),
             SessionDecision::New => panic!("Should continue within gap"),
         }
@@ -653,7 +645,7 @@ mod tests {
             .unwrap();
 
         // Beyond 6h → new (old session auto-closed)
-        match mgr.resolve_session(&Channel::Telegram, "chat-123", None).await.unwrap() {
+        match mgr.resolve_session(&Channel::Telegram, "chat-123", gap).await.unwrap() {
             SessionDecision::New => {} // expected
             SessionDecision::Continue(_) => panic!("Should start new session after 7h gap"),
         }

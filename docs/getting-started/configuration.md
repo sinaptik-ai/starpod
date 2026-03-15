@@ -66,10 +66,6 @@ server_addr = "127.0.0.1:3000"   # HTTP/WS server bind address
 # chunk_overlap = 320             # Overlap in chars between chunks (~80 tokens)
 # bootstrap_file_cap = 20000      # Max chars per file in bootstrap context
 
-# ─── Session ──────────────────────────────────────────
-[session]
-# telegram_gap_minutes = 360      # Inactivity gap before auto-closing Telegram sessions (6h)
-
 # ─── Compaction ───────────────────────────────────────
 [compaction]
 # context_budget = 160000         # Token budget triggering compaction
@@ -96,8 +92,10 @@ server_addr = "127.0.0.1:3000"   # HTTP/WS server bind address
 # heartbeat_timeout_secs = 90      # Instance unhealthy after this
 # http_timeout_secs = 30           # HTTP request timeout for instance API calls
 
-# ─── Telegram ──────────────────────────────────────────
-[telegram]
+# ─── Channels ─────────────────────────────────────────
+[channels.telegram]
+# enabled = true                  # Enable/disable the Telegram channel
+# gap_minutes = 360               # Inactivity gap (minutes) before new session (6h)
 # bot_token = "123456:ABC..."     # Or set TELEGRAM_BOT_TOKEN env var
 # allowed_users = [123456789]     # Empty = no one can chat
 # stream_mode = "final_only"      # "final_only" or "all_messages"
@@ -162,6 +160,8 @@ Never commit API keys to version control. Use environment variables or add `.sta
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
+| `enabled` | bool | `true` | Enable/disable the Telegram channel |
+| `gap_minutes` | integer | `360` | Inactivity gap (minutes) before new session |
 | `bot_token` | string | — | From BotFather (or `TELEGRAM_BOT_TOKEN` env) |
 | `allowed_users` | array | `[]` | User ID allowlist |
 | `stream_mode` | string | `"final_only"` | `"final_only"` or `"all_messages"` |
@@ -191,14 +191,6 @@ The `[memory]` section tunes search and indexing behavior.
 | `chunk_size` | integer | `1600` | Chunk size in characters for indexing (~400 tokens) |
 | `chunk_overlap` | integer | `320` | Overlap in characters between chunks (~80 tokens) |
 | `bootstrap_file_cap` | integer | `20000` | Max characters per file included in bootstrap context |
-
-## Session
-
-The `[session]` section controls session lifecycle.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `telegram_gap_minutes` | integer | `360` | Inactivity gap (minutes) before auto-closing a Telegram session (default = 6h) |
 
 ## Compaction
 
@@ -257,6 +249,6 @@ max_file_size = 5242880
 | `GROQ_API_KEY` | `providers.groq.api_key` |
 | `DEEPSEEK_API_KEY` | `providers.deepseek.api_key` |
 | `OPENROUTER_API_KEY` | `providers.openrouter.api_key` |
-| `TELEGRAM_BOT_TOKEN` | `telegram.bot_token` |
+| `TELEGRAM_BOT_TOKEN` | `channels.telegram.bot_token` |
 | `STARPOD_API_KEY` | API key auth for the HTTP/WS gateway |
 | `STARPOD_INSTANCE_BACKEND_URL` | `instance_backend_url` |
