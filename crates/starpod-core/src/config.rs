@@ -7,38 +7,28 @@ use crate::error::StarpodError;
 /// Project directory name (created by `starpod agent init`).
 const PROJECT_DIR: &str = ".starpod";
 const CONFIG_FILE: &str = "config.toml";
+const INSTANCE_CONFIG_FILE: &str = "instance.toml";
 
-// ── Sub-config types ─────────────────────────────────────────────────────
-
-/// Agent identity (name, emoji, personality).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct IdentityConfig {
-    /// Agent's display name (default: "Aster").
-    pub name: Option<String>,
-    /// Agent's emoji/avatar (e.g. "🤖").
-    pub emoji: Option<String>,
-    /// Freeform personality text injected into system prompt.
-    /// Use this for custom instructions, tone, or behavior.
-    pub soul: Option<String>,
-}
-
-impl IdentityConfig {
-    /// The resolved agent name (falls back to "Aster").
-    pub fn display_name(&self) -> &str {
-        self.name.as_deref().unwrap_or("Aster")
+/// Deep-merge `overlay` into `base`. Keys in `overlay` take precedence.
+fn deep_merge(base: &mut toml::Value, overlay: toml::Value) {
+    match (base, overlay) {
+        (toml::Value::Table(base_table), toml::Value::Table(overlay_table)) => {
+            for (key, value) in overlay_table {
+                match base_table.entry(key) {
+                    toml::map::Entry::Occupied(mut e) => {
+                        deep_merge(e.get_mut(), value);
+                    }
+                    toml::map::Entry::Vacant(e) => {
+                        e.insert(value);
+                    }
+                }
+            }
+        }
+        (base, overlay) => *base = overlay,
     }
 }
 
-/// User profile (set during onboarding or in config).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct UserConfig {
-    /// User's name (used in conversations).
-    pub name: Option<String>,
-    /// User's timezone (IANA format, e.g. "Europe/Rome").
-    pub timezone: Option<String>,
-}
+// ── Sub-config types ─────────────────────────────────────────────────────
 
 /// Reasoning effort level for models that support extended thinking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -408,13 +398,16 @@ pub struct StarpodConfig {
     #[serde(default)]
     pub compaction_model: Option<String>,
 
-    /// Agent identity (name, emoji, personality).
-    #[serde(default)]
-    pub identity: IdentityConfig,
+    /// Agent display name (default: "Aster").
+    /// Used in CLI headers, daily logs, and Telegram display.
+    /// Personality and soul live in SOUL.md; user profile in USER.md.
+    #[serde(default = "default_agent_name")]
+    pub agent_name: String,
 
-    /// User profile.
+    /// User's timezone (IANA format, e.g. "Europe/Rome").
+    /// Used for cron scheduling. User profile details live in USER.md.
     #[serde(default)]
-    pub user: UserConfig,
+    pub timezone: Option<String>,
 
     /// Multi-provider configuration.
     #[serde(default)]
@@ -484,6 +477,10 @@ fn default_max_tokens() -> u32 {
     16384
 }
 
+fn default_agent_name() -> String {
+    "Aster".to_string()
+}
+
 impl Default for StarpodConfig {
     fn default() -> Self {
         Self {
@@ -500,8 +497,8 @@ impl Default for StarpodConfig {
             memory: MemoryConfig::default(),
             cron: CronConfig::default(),
             compaction: CompactionConfig::default(),
-            identity: IdentityConfig::default(),
-            user: UserConfig::default(),
+            agent_name: default_agent_name(),
+            timezone: None,
             providers: ProvidersConfig::default(),
             channels: ChannelsConfig::default(),
             attachments: AttachmentsConfig::default(),
@@ -527,8 +524,13 @@ impl StarpodConfig {
         }
     }
 
-    /// Load config from `.starpod/config.toml` in the current project.
-    /// Walks up from CWD to find the project root.
+    /// Load config from `.starpod/config.toml` + `.starpod/instance.toml`.
+    ///
+    /// `config.toml` is the shared base config. `instance.toml` is an optional
+    /// instance-specific overlay (superset — can override any shared setting and
+    /// is the **only** place where `[channels]` config is valid).
+    ///
+    /// If `config.toml` contains a `[channels]` section it is stripped with a warning.
     pub async fn load() -> Result<Self, StarpodError> {
         let project_root = Self::find_project_root().ok_or_else(|| {
             StarpodError::Config(
@@ -537,8 +539,43 @@ impl StarpodConfig {
             )
         })?;
 
-        let config_path = project_root.join(PROJECT_DIR).join(CONFIG_FILE);
-        let mut config = Self::load_from(&config_path).await?;
+        let starpod_dir = project_root.join(PROJECT_DIR);
+
+        // 1. Load base config.toml as a TOML value tree
+        let config_path = starpod_dir.join(CONFIG_FILE);
+        let mut base_value = if config_path.exists() {
+            let content = tokio::fs::read_to_string(&config_path).await.map_err(|e| {
+                StarpodError::Config(format!("Failed to read config at {}: {}", config_path.display(), e))
+            })?;
+            toml::from_str::<toml::Value>(&content)
+                .map_err(|e| StarpodError::Config(format!("Invalid config TOML: {}", e)))?
+        } else {
+            toml::Value::Table(Default::default())
+        };
+
+        // 2. Warn and strip channels from config.toml (channels belong in instance.toml)
+        if let Some(table) = base_value.as_table_mut() {
+            if table.remove("channels").is_some() {
+                tracing::warn!(
+                    "Channels config found in config.toml — channels should only be in instance.toml. Ignoring."
+                );
+            }
+        }
+
+        // 3. Overlay instance.toml if it exists
+        let instance_path = starpod_dir.join(INSTANCE_CONFIG_FILE);
+        if instance_path.exists() {
+            let content = tokio::fs::read_to_string(&instance_path).await.map_err(|e| {
+                StarpodError::Config(format!("Failed to read instance config at {}: {}", instance_path.display(), e))
+            })?;
+            let instance_value: toml::Value = toml::from_str(&content)
+                .map_err(|e| StarpodError::Config(format!("Invalid instance TOML: {}", e)))?;
+            deep_merge(&mut base_value, instance_value);
+        }
+
+        // 4. Deserialize merged value into StarpodConfig
+        let mut config: StarpodConfig = base_value.try_into()
+            .map_err(|e| StarpodError::Config(format!("Invalid config: {}", e)))?;
         config.project_root = project_root;
 
         // Resolve data_dir relative to project root if not absolute
@@ -551,7 +588,7 @@ impl StarpodConfig {
         Ok(config)
     }
 
-    /// Load config from a specific path.
+    /// Load config from a specific path (no instance overlay — used for testing).
     pub async fn load_from(path: &Path) -> Result<Self, StarpodError> {
         if !path.exists() {
             return Ok(Self::default());
@@ -695,11 +732,18 @@ impl StarpodConfig {
     }
 
     /// Initialize a new Starpod project in the given directory.
-    /// Creates `.starpod/config.toml` and `.starpod/data/`.
+    /// Creates `.starpod/config.toml`, `.starpod/instance.toml`, and `.starpod/data/`.
     ///
-    /// If `config_content` is provided, it is written as the config file.
+    /// If `config_content` is provided, it is written as the shared config file.
     /// Otherwise a commented default template is used.
-    pub async fn init(dir: &Path, config_content: Option<&str>) -> Result<(), StarpodError> {
+    ///
+    /// If `instance_content` is provided, it is written as the instance config file.
+    /// Otherwise a commented default template is used.
+    pub async fn init(
+        dir: &Path,
+        config_content: Option<&str>,
+        instance_content: Option<&str>,
+    ) -> Result<(), StarpodError> {
         let starpod_dir = dir.join(PROJECT_DIR);
 
         if starpod_dir.exists() {
@@ -715,18 +759,28 @@ impl StarpodConfig {
             .await
             .map_err(|e| StarpodError::Io(e))?;
 
+        // Write shared config
         let content = config_content.unwrap_or(Self::DEFAULT_CONFIG);
-
         tokio::fs::write(starpod_dir.join(CONFIG_FILE), content)
+            .await
+            .map_err(|e| StarpodError::Io(e))?;
+
+        // Write instance config
+        let instance = instance_content.unwrap_or(Self::DEFAULT_INSTANCE_CONFIG);
+        tokio::fs::write(starpod_dir.join(INSTANCE_CONFIG_FILE), instance)
             .await
             .map_err(|e| StarpodError::Io(e))?;
 
         Ok(())
     }
 
-    /// Default config template (well-commented, all values commented out or set to defaults).
-    pub const DEFAULT_CONFIG: &str = r#"# Starpod agent configuration
+    /// Default shared config template (no channels — those go in instance.toml).
+    pub const DEFAULT_CONFIG: &str = r#"# Starpod agent configuration (shared across instances)
 # See: https://github.com/gventuri/starpod-rs
+#
+# Instance-specific settings (channels, overrides) go in instance.toml.
+# Agent personality lives in .starpod/data/SOUL.md.
+# User profile lives in .starpod/data/USER.md.
 
 # ══════════════════════════════════════════════════════════════════════════════
 # GENERAL
@@ -746,6 +800,13 @@ max_turns = 30
 
 # Server bind address
 server_addr = "127.0.0.1:3000"
+
+# Agent display name (personality and soul live in SOUL.md)
+agent_name = "Aster"
+
+# User timezone for cron scheduling (IANA format, e.g. "Europe/Rome")
+# User profile details live in USER.md
+# timezone = "America/New_York"
 
 # Reasoning effort for extended thinking: "low", "medium", "high"
 # reasoning_effort = "medium"
@@ -792,26 +853,6 @@ server_addr = "127.0.0.1:3000"
 # max_concurrent_runs = 1          # Maximum concurrent job executions
 
 # ══════════════════════════════════════════════════════════════════════════════
-# AGENT IDENTITY
-# ══════════════════════════════════════════════════════════════════════════════
-# Customize your agent's personality.
-
-[identity]
-# name = "Aster"                  # Agent's display name
-# emoji = "🤖"                    # Agent's emoji/avatar
-# soul = ""                       # Freeform personality text injected into system prompt
-                                  # Use this for custom instructions, tone, or behavior
-
-# ══════════════════════════════════════════════════════════════════════════════
-# USER PROFILE
-# ══════════════════════════════════════════════════════════════════════════════
-# Information about you.
-
-[user]
-# name = "Your Name"              # Your name (used in conversations)
-# timezone = "America/New_York"   # Your timezone (IANA format)
-
-# ══════════════════════════════════════════════════════════════════════════════
 # LLM PROVIDERS
 # ══════════════════════════════════════════════════════════════════════════════
 # Configure API keys and settings for each LLM provider.
@@ -824,18 +865,6 @@ server_addr = "127.0.0.1:3000"
 # [providers.openai]
 # api_key = "sk-..."                          # Or set OPENAI_API_KEY env var
 # models = ["gpt-4o", "gpt-4o-mini"]
-
-# ══════════════════════════════════════════════════════════════════════════════
-# CHANNELS
-# ══════════════════════════════════════════════════════════════════════════════
-# Configure channel-specific settings under [channels.<name>].
-
-[channels.telegram]
-# enabled = true                   # Set to false to disable the Telegram channel
-# gap_minutes = 360                # Inactivity gap before new session (6h)
-# bot_token = "123456:ABC..."     # Or set TELEGRAM_BOT_TOKEN env var
-# allowed_users = [123456789, "alice"]  # User IDs or usernames (without @)
-# stream_mode = "final_only"      # "final_only" or "all_messages"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ATTACHMENTS
@@ -859,6 +888,26 @@ server_addr = "127.0.0.1:3000"
 # http_timeout_secs = 30           # HTTP request timeout for instance API calls
 
 # instance_backend_url = "https://api.starpod.example.com"  # Or set STARPOD_INSTANCE_BACKEND_URL env var
+"#;
+
+    /// Default instance config template (instance-specific overrides + channels).
+    pub const DEFAULT_INSTANCE_CONFIG: &str = r#"# Instance-specific configuration (overrides config.toml)
+#
+# This file can contain any setting from config.toml as an override,
+# plus channel configurations which are ONLY valid here.
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CHANNELS
+# ══════════════════════════════════════════════════════════════════════════════
+# Channel-specific settings. Channels are instance-specific and cannot be
+# set in config.toml.
+
+[channels.telegram]
+# enabled = true                   # Set to false to disable the Telegram channel
+# gap_minutes = 360                # Inactivity gap before new session (6h)
+# bot_token = "123456:ABC..."     # Or set TELEGRAM_BOT_TOKEN env var
+# allowed_users = [123456789, "alice"]  # User IDs or usernames (without @)
+# stream_mode = "final_only"      # "final_only" or "all_messages"
 "#;
 }
 
@@ -1385,5 +1434,202 @@ mod tests {
         "#;
         let config: StarpodConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.max_tokens, 8192);
+    }
+
+    // ── agent_name and timezone tests ───────────────────────────────────
+
+    #[test]
+    fn agent_name_default() {
+        let config: StarpodConfig = toml::from_str("").unwrap();
+        assert_eq!(config.agent_name, "Aster");
+    }
+
+    #[test]
+    fn agent_name_from_toml() {
+        let toml = r#"agent_name = "Nova""#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.agent_name, "Nova");
+    }
+
+    #[test]
+    fn timezone_default_is_none() {
+        let config: StarpodConfig = toml::from_str("").unwrap();
+        assert!(config.timezone.is_none());
+    }
+
+    #[test]
+    fn timezone_from_toml() {
+        let toml = r#"timezone = "Europe/Rome""#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.timezone.as_deref(), Some("Europe/Rome"));
+    }
+
+    // ── deep_merge tests ────────────────────────────────────────────────
+
+    #[test]
+    fn deep_merge_overlay_adds_new_keys() {
+        let mut base: toml::Value = toml::from_str(r#"model = "haiku""#).unwrap();
+        let overlay: toml::Value = toml::from_str(r#"agent_name = "Nova""#).unwrap();
+        deep_merge(&mut base, overlay);
+        let config: StarpodConfig = base.try_into().unwrap();
+        assert_eq!(config.model, "haiku");
+        assert_eq!(config.agent_name, "Nova");
+    }
+
+    #[test]
+    fn deep_merge_overlay_overrides_existing() {
+        let mut base: toml::Value = toml::from_str(r#"model = "haiku""#).unwrap();
+        let overlay: toml::Value = toml::from_str(r#"model = "sonnet""#).unwrap();
+        deep_merge(&mut base, overlay);
+        let config: StarpodConfig = base.try_into().unwrap();
+        assert_eq!(config.model, "sonnet");
+    }
+
+    #[test]
+    fn deep_merge_nested_tables() {
+        let mut base: toml::Value = toml::from_str(r#"
+            [memory]
+            half_life_days = 30.0
+        "#).unwrap();
+        let overlay: toml::Value = toml::from_str(r#"
+            [memory]
+            mmr_lambda = 0.5
+            [channels.telegram]
+            bot_token = "test"
+        "#).unwrap();
+        deep_merge(&mut base, overlay);
+        let config: StarpodConfig = base.try_into().unwrap();
+        assert_eq!(config.memory.half_life_days, 30.0); // kept from base
+        assert_eq!(config.memory.mmr_lambda, 0.5); // from overlay
+        assert!(config.channels.telegram.is_some()); // from overlay
+    }
+
+    // ── old identity/user sections are silently ignored ─────────────────
+
+    #[test]
+    fn old_identity_section_silently_ignored() {
+        let toml = r#"
+            [identity]
+            name = "OldName"
+        "#;
+        // serde(default) + no deny_unknown_fields → old sections are just ignored
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.agent_name, "Aster"); // default, not "OldName"
+    }
+
+    #[test]
+    fn old_user_section_silently_ignored() {
+        let toml = r#"
+            [user]
+            name = "OldUser"
+            timezone = "UTC"
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert!(config.timezone.is_none()); // not read from [user]
+    }
+
+    // ── init creates both files ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn init_creates_config_and_instance_files() {
+        let dir = tempfile::tempdir().unwrap();
+        StarpodConfig::init(dir.path(), None, None).await.unwrap();
+
+        assert!(dir.path().join(".starpod/config.toml").exists());
+        assert!(dir.path().join(".starpod/instance.toml").exists());
+        assert!(dir.path().join(".starpod/data").is_dir());
+    }
+
+    #[tokio::test]
+    async fn init_with_custom_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = r#"model = "claude-sonnet-4-6""#;
+        let inst = r#"
+            [channels.telegram]
+            bot_token = "test:token"
+        "#;
+        StarpodConfig::init(dir.path(), Some(cfg), Some(inst)).await.unwrap();
+
+        let config_content = std::fs::read_to_string(dir.path().join(".starpod/config.toml")).unwrap();
+        assert!(config_content.contains("claude-sonnet-4-6"));
+
+        let instance_content = std::fs::read_to_string(dir.path().join(".starpod/instance.toml")).unwrap();
+        assert!(instance_content.contains("test:token"));
+    }
+
+    #[tokio::test]
+    async fn init_rejects_double_init() {
+        let dir = tempfile::tempdir().unwrap();
+        StarpodConfig::init(dir.path(), None, None).await.unwrap();
+        let err = StarpodConfig::init(dir.path(), None, None).await;
+        assert!(err.is_err());
+    }
+
+    // ── default templates parse cleanly ─────────────────────────────
+
+    #[test]
+    fn default_config_template_parses() {
+        let config: StarpodConfig = toml::from_str(StarpodConfig::DEFAULT_CONFIG).unwrap();
+        assert_eq!(config.model, "claude-haiku-4-5");
+        assert_eq!(config.agent_name, "Aster");
+        // Channels should NOT be in the shared config template
+        assert!(config.channels.telegram.is_none());
+    }
+
+    #[test]
+    fn default_instance_template_parses() {
+        let config: StarpodConfig = toml::from_str(StarpodConfig::DEFAULT_INSTANCE_CONFIG).unwrap();
+        // Instance template has commented-out telegram, so it parses as empty
+        assert!(config.channels.telegram.is_some()); // section exists but all values default
+    }
+
+    // ── deep_merge edge cases ───────────────────────────────────────
+
+    #[test]
+    fn deep_merge_overlay_replaces_scalar_with_table() {
+        // Edge case: base has a scalar, overlay has a table at the same key
+        let mut base: toml::Value = toml::from_str(r#"memory = "flat""#).unwrap();
+        let overlay: toml::Value = toml::from_str(r#"
+            [memory]
+            half_life_days = 7.0
+        "#).unwrap();
+        deep_merge(&mut base, overlay);
+        // The table should win
+        let table = base.get("memory").unwrap().as_table().unwrap();
+        assert_eq!(table.get("half_life_days").unwrap().as_float().unwrap(), 7.0);
+    }
+
+    #[test]
+    fn deep_merge_empty_overlay_preserves_base() {
+        let mut base: toml::Value = toml::from_str(r#"
+            model = "haiku"
+            agent_name = "Aster"
+        "#).unwrap();
+        let overlay: toml::Value = toml::from_str("").unwrap();
+        deep_merge(&mut base, overlay);
+        let config: StarpodConfig = base.try_into().unwrap();
+        assert_eq!(config.model, "haiku");
+        assert_eq!(config.agent_name, "Aster");
+    }
+
+    #[test]
+    fn deep_merge_instance_overrides_model_but_keeps_other_fields() {
+        let mut base: toml::Value = toml::from_str(r#"
+            model = "haiku"
+            max_turns = 30
+            agent_name = "Aster"
+        "#).unwrap();
+        let overlay: toml::Value = toml::from_str(r#"
+            model = "sonnet"
+            [channels.telegram]
+            bot_token = "123:ABC"
+        "#).unwrap();
+        deep_merge(&mut base, overlay);
+        let config: StarpodConfig = base.try_into().unwrap();
+        assert_eq!(config.model, "sonnet"); // overridden
+        assert_eq!(config.max_turns, 30); // preserved
+        assert_eq!(config.agent_name, "Aster"); // preserved
+        let tg = config.channels.telegram.unwrap();
+        assert_eq!(tg.bot_token.as_deref(), Some("123:ABC")); // added
     }
 }

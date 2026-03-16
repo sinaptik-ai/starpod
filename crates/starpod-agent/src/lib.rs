@@ -211,9 +211,9 @@ impl StarpodAgent {
         )
     }
 
-    /// Build the system prompt from bootstrap context + skill catalog + identity + user.
+    /// Build the system prompt from bootstrap context + skill catalog.
     fn build_system_prompt(&self, session_id: &str) -> Result<String> {
-        let agent_name = self.config.identity.display_name();
+        let agent_name = &self.config.agent_name;
         let bootstrap = self.memory.bootstrap_context()?;
         let skill_catalog = self.skills.skill_catalog()?;
         let date_str = Local::now().format("%A, %B %d, %Y at %H:%M").to_string();
@@ -243,21 +243,6 @@ impl StarpodAgent {
              Do not read, write, or execute anything outside these boundaries.\n\
              IMPORTANT: Always create files and run commands within the project root ({project_root}), never in /tmp or other external directories.",
         );
-
-        // Inject agent personality
-        if let Some(ref soul) = self.config.identity.soul {
-            if !soul.is_empty() {
-                prompt.push_str(&format!("\n\nPersonality: {soul}"));
-            }
-        }
-
-        // Inject user context
-        if let Some(ref name) = self.config.user.name {
-            prompt.push_str(&format!("\nUser's name: {name}"));
-        }
-        if let Some(ref tz) = self.config.user.timezone {
-            prompt.push_str(&format!("\nUser's timezone: {tz}"));
-        }
 
         // Inject skill catalog (progressive disclosure — names + descriptions only)
         if !skill_catalog.is_empty() {
@@ -364,7 +349,7 @@ impl StarpodAgent {
             vault: Arc::clone(&self.vault),
             skills: Arc::clone(&self.skills),
             cron: Arc::clone(&self.cron),
-            user_tz: self.config.user.timezone.clone(),
+            user_tz: self.config.timezone.clone(),
         });
 
         Box::new(move |tool_name, input| {
@@ -527,7 +512,7 @@ impl StarpodAgent {
         } else {
             result_text.clone()
         };
-        let agent_name = self.config.identity.display_name();
+        let agent_name = &self.config.agent_name;
         let _ = self.memory.append_daily(&format!(
             "**User**: {}\n**{agent_name}**: {}",
             truncate(&message.text, 200),
@@ -673,7 +658,7 @@ impl StarpodAgent {
         } else {
             result_text.to_string()
         };
-        let agent_name = self.config.identity.display_name();
+        let agent_name = &self.config.agent_name;
         let _ = self.memory.append_daily(&format!(
             "**User**: {}\n**{agent_name}**: {}",
             truncate(user_text, 200),
@@ -778,7 +763,7 @@ impl StarpodAgent {
             })
         });
 
-        let user_tz = self.config.user.timezone.clone();
+        let user_tz = self.config.timezone.clone();
         let mut scheduler = starpod_cron::CronScheduler::new(cron_store, executor, 30, user_tz)
             .with_max_concurrent_runs(self.config.cron.max_concurrent_runs as u32);
         if let Some(n) = notifier {
@@ -874,7 +859,7 @@ async fn ensure_heartbeat(
     let schedule = starpod_cron::Schedule::Cron {
         expr: "0 */30 * * * *".to_string(),
     };
-    let user_tz = agent.config().user.timezone.as_deref();
+    let user_tz = agent.config().timezone.as_deref();
     store
         .add_job_full(
             "__heartbeat__",

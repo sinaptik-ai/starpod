@@ -1,8 +1,15 @@
 # Configuration
 
-All configuration lives in `.starpod/config.toml` in your project root.
+Starpod uses a two-file configuration model:
+
+- **`config.toml`** — shared settings (model, provider, memory, compaction, cron, etc.). Deploy the same file across all instances.
+- **`instance.toml`** — instance-specific overrides. Can contain any setting from `config.toml` as an override, plus **channels** (which can _only_ be configured here).
+
+Agent personality lives in `.starpod/data/SOUL.md`. User profile lives in `.starpod/data/USER.md`. These are not part of the config files.
 
 ## Full Reference
+
+### config.toml (shared)
 
 ```toml
 # ─── General ────────────────────────────────────────────
@@ -11,6 +18,8 @@ model = "claude-haiku-4-5"        # Model name
 max_turns = 30                    # Max agentic turns per chat
 max_tokens = 16384                # Max tokens for LLM API responses
 server_addr = "127.0.0.1:3000"   # HTTP/WS server bind address
+agent_name = "Aster"              # Agent display name (personality in SOUL.md)
+# timezone = "America/New_York"   # IANA timezone for cron scheduling
 
 # Extended thinking (optional)
 # reasoning_effort = "medium"     # "low", "medium", or "high"
@@ -20,17 +29,6 @@ server_addr = "127.0.0.1:3000"   # HTTP/WS server bind address
 
 # Followup message handling during active agent loops
 # followup_mode = "inject"        # "inject" or "queue"
-
-# ─── Agent Identity ────────────────────────────────────
-[identity]
-# name = "Aster"                  # Agent's display name
-# emoji = "🤖"                    # Agent's avatar emoji
-# soul = ""                       # Personality injected into system prompt
-
-# ─── User Profile ──────────────────────────────────────
-[user]
-# name = "Your Name"
-# timezone = "America/New_York"   # IANA timezone
 
 # ─── Providers ─────────────────────────────────────────
 [providers.anthropic]
@@ -91,6 +89,16 @@ server_addr = "127.0.0.1:3000"   # HTTP/WS server bind address
 # health_check_interval_secs = 30  # Health check polling interval
 # heartbeat_timeout_secs = 90      # Instance unhealthy after this
 # http_timeout_secs = 30           # HTTP request timeout for instance API calls
+```
+
+### instance.toml (per-instance)
+
+```toml
+# Instance-specific overrides — can contain any config.toml key,
+# plus channels which are ONLY valid here.
+
+# Override model for this instance:
+# model = "claude-sonnet-4-6"
 
 # ─── Channels ─────────────────────────────────────────
 [channels.telegram]
@@ -99,7 +107,6 @@ server_addr = "127.0.0.1:3000"   # HTTP/WS server bind address
 # bot_token = "123456:ABC..."     # Or set TELEGRAM_BOT_TOKEN env var
 # allowed_users = [123456789]     # Empty = no one can chat
 # stream_mode = "final_only"      # "final_only" or "all_messages"
-# edit_throttle_ms = 300
 ```
 
 ## General Settings
@@ -111,37 +118,22 @@ server_addr = "127.0.0.1:3000"   # HTTP/WS server bind address
 | `max_turns` | integer | `30` | Max agentic loop iterations per chat |
 | `max_tokens` | integer | `16384` | Maximum tokens for LLM API responses |
 | `server_addr` | string | `"127.0.0.1:3000"` | Server bind address |
+| `agent_name` | string | `"Aster"` | Agent display name (personality lives in `SOUL.md`) |
+| `timezone` | string | — | IANA timezone for cron scheduling (user profile lives in `USER.md`) |
 | `reasoning_effort` | string | — | Extended thinking: `"low"`, `"medium"`, `"high"` |
 | `compaction_model` | string | primary model | Model for conversation compaction summaries |
 | `followup_mode` | string | `"inject"` | How followup messages are handled during an active agent loop: `"inject"` or `"queue"` |
 
-## Identity
+## Agent Personality & User Profile
 
-The `[identity]` section controls how the agent presents itself.
+Personality and user profile are **not** config settings — they live in markdown files:
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `name` | string | `"Aster"` | Display name in system prompt |
-| `emoji` | string | — | Avatar emoji for the web UI |
-| `soul` | string | — | Personality/instructions for every turn |
+| File | Purpose |
+|------|---------|
+| `.starpod/data/SOUL.md` | Agent personality, tone, and instructions. Loaded into every system prompt via bootstrap context. |
+| `.starpod/data/USER.md` | User name, timezone, preferences. Loaded into every system prompt via bootstrap context. |
 
-The `soul` field is injected directly into the system prompt:
-
-```toml
-[identity]
-soul = """
-You are a senior Rust developer. Always prefer idiomatic Rust.
-When reviewing code, focus on safety and performance.
-Never suggest using unwrap() in production code.
-"""
-```
-
-## User Profile
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `user.name` | string | — | Your display name |
-| `user.timezone` | string | — | IANA timezone for cron and timestamps |
+Edit these files directly to customize agent behavior or update user info. The agent can also update them itself through memory tools.
 
 ## API Key Resolution
 
@@ -158,6 +150,8 @@ Never commit API keys to version control. Use environment variables or add `.sta
 
 ## Telegram Settings
 
+Telegram settings live in `instance.toml` under `[channels.telegram]`:
+
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | bool | `true` | Enable/disable the Telegram channel |
@@ -165,7 +159,6 @@ Never commit API keys to version control. Use environment variables or add `.sta
 | `bot_token` | string | — | From BotFather (or `TELEGRAM_BOT_TOKEN` env) |
 | `allowed_users` | array | `[]` | User ID allowlist |
 | `stream_mode` | string | `"final_only"` | `"final_only"` or `"all_messages"` |
-| `edit_throttle_ms` | integer | `300` | Edit-in-place throttle |
 
 ## Attachments
 
@@ -221,6 +214,16 @@ The `[instances]` section configures remote instance management.
 | `health_check_interval_secs` | integer | `30` | Health check polling interval in seconds |
 | `heartbeat_timeout_secs` | integer | `90` | Seconds before an instance is considered unhealthy |
 | `http_timeout_secs` | integer | `30` | HTTP request timeout for instance API calls |
+
+## Config Layering
+
+When Starpod loads config, it:
+
+1. Reads `.starpod/config.toml` as the base
+2. Strips any `[channels]` section from `config.toml` (with a warning — channels belong in `instance.toml`)
+3. If `.starpod/instance.toml` exists, deep-merges it on top (instance values win on conflicts)
+
+This means you can deploy the same `config.toml` to every VM and only vary `instance.toml` per machine.
 
 **Examples:**
 

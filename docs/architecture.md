@@ -116,7 +116,8 @@ SQLite connections use `Mutex<Connection>` for safe concurrent access.
 
 ```
 .starpod/
-├── config.toml          Project configuration
+├── config.toml          Shared configuration (model, provider, etc.)
+├── instance.toml        Instance-specific config (channels, overrides)
 └── data/
     ├── SOUL.md          Agent personality
     ├── USER.md          User information

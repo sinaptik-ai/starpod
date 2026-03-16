@@ -74,7 +74,7 @@ pub async fn run_with_agent_filtered(
             .map(|t| t.stream_mode.clone())
             .unwrap_or_else(|| "final_only".to_string()),
     };
-    let agent_name = AgentName(agent.config().identity.display_name().to_string());
+    let agent_name = AgentName(agent.config().agent_name.clone());
 
     let bot = Bot::new(&token);
 
