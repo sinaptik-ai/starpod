@@ -61,6 +61,10 @@ The per-file character cap is configurable via `[memory] bootstrap_file_cap` in 
 
 Returns a single string for injection into the system prompt.
 
+## Session Transcript Export
+
+The memory store indexes `knowledge/sessions/` — a subdirectory where session transcripts are written when sessions close. These transcripts are searchable via `MemorySearch` like any other knowledge file, but are not included in the bootstrap context (they're retrieved on demand).
+
 ## Tests
 
-8 unit tests.
+25+ unit tests covering seeding, search, chunking, temporal decay, vector search, hybrid search, path validation, content size limits, and session transcript indexing.

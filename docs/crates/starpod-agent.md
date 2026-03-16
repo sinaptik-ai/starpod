@@ -28,9 +28,10 @@ agent.finalize_chat(&session_id, &user_text, &result_text, &result).await;
 
 ## Chat Pipeline
 
-1. **Resolve channel** — map `ChatMessage` → `(Channel, key)`
-2. **Resolve session** — find or create session via `SessionManager`
-3. **Bootstrap context** — memory files + daily logs
+1. **Snapshot config** — take a cheap clone of the current config (supports hot reload)
+2. **Resolve channel** — map `ChatMessage` → `(Channel, key)`
+3. **Resolve session** — find or create session via `SessionManager`; export closed session transcript to memory if applicable
+4. **Bootstrap context** — memory files + daily logs
 4. **Build system prompt** — identity + context + skills + tools + time
 5. **Build provider** — construct `LlmProvider` from `config.provider` (anthropic, openai, gemini, groq, deepseek, openrouter, ollama)
 6. **Run agent-sdk query** — agentic loop with custom tools via the selected provider + automatic conversation compaction
@@ -54,7 +55,8 @@ Conversation compaction is enabled by default with a 160k token context budget. 
 | Memory | `MemorySearch`, `MemoryWrite`, `MemoryAppendDaily` |
 | Vault | `VaultGet`, `VaultSet` |
 | Skills | `SkillCreate`, `SkillUpdate`, `SkillDelete`, `SkillList` |
-| Cron | `CronAdd`, `CronList`, `CronRemove`, `CronRuns` |
+| Cron | `CronAdd`, `CronList`, `CronRemove`, `CronRuns`, `CronRun`, `CronUpdate` |
+| Heartbeat | `HeartbeatWake` |
 
 ## Scheduler Integration
 
@@ -64,6 +66,22 @@ let handle = agent.start_scheduler(Some(notifier));
 // Runs in background, executing due cron jobs through agent.chat()
 ```
 
+## Config Hot Reload
+
+The agent's config is wrapped in `RwLock` for hot reload support. Each request snapshots the config at the start, so config changes take effect on the next request.
+
+```rust
+// Reload config (called by the gateway's file watcher)
+agent.reload_config(new_config);
+
+// Get current config snapshot
+let config = agent.config(); // returns owned StarpodConfig
+```
+
+## Session Transcript Export
+
+When a session is auto-closed (e.g. Telegram time-gap), the agent exports the full transcript to `knowledge/sessions/` in the memory store. This is controlled by `[memory] export_sessions` in config (default: `true`).
+
 ## Component Accessors
 
 ```rust
@@ -72,9 +90,9 @@ agent.session_mgr() // &Arc<SessionManager>
 agent.vault()       // &Arc<Vault>
 agent.skills()      // &Arc<SkillStore>
 agent.cron()        // &Arc<CronStore>
-agent.config()      // &StarpodConfig
+agent.config()      // StarpodConfig (owned snapshot)
 ```
 
 ## Tests
 
-3 unit tests.
+11+ unit tests covering agent construction, custom tools, attachments, config reload, and session export.

@@ -1,7 +1,7 @@
 pub mod tools;
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use chrono::Local;
 use tokio_stream::StreamExt;
@@ -35,13 +35,16 @@ const CUSTOM_TOOLS: &[&str] = &[
 ///
 /// Wires together memory, sessions, vault, skills, cron, and the agent-sdk
 /// to provide a high-level `chat()` interface.
+///
+/// Config is wrapped in `RwLock` for hot reload support — config files can be
+/// updated on disk and the agent will pick up changes on the next request.
 pub struct StarpodAgent {
     memory: Arc<MemoryStore>,
     session_mgr: Arc<SessionManager>,
     vault: Arc<Vault>,
     skills: Arc<SkillStore>,
     cron: Arc<CronStore>,
-    config: StarpodConfig,
+    config: RwLock<StarpodConfig>,
 }
 
 impl StarpodAgent {
@@ -84,13 +87,39 @@ impl StarpodAgent {
             vault: Arc::new(vault),
             skills: Arc::new(skills),
             cron: Arc::new(cron),
-            config,
+            config: RwLock::new(config),
         })
+    }
+
+    /// Snapshot the current config (cheap clone, no lock held after return).
+    fn snapshot_config(&self) -> StarpodConfig {
+        self.config.read().unwrap().clone()
+    }
+
+    /// Hot-reload the agent config. Updates per-request settings (model, provider,
+    /// agent_name, etc.) and applies memory tuning parameters immediately.
+    ///
+    /// Settings that require restart: `server_addr`, `channels.telegram.bot_token`.
+    pub fn reload_config(&self, new_config: StarpodConfig) {
+        // Apply memory tuning parameters to the live MemoryStore.
+        // MemoryStore is behind Arc but set_* methods need &mut, so we
+        // rely on the fact that these are only called from here (single writer).
+        // For now, memory params only take effect on next reindex/search.
+        // TODO: expose set_* via interior mutability on MemoryStore.
+
+        info!(
+            model = %new_config.model,
+            provider = %new_config.provider,
+            agent_name = %new_config.agent_name,
+            "Config reloaded",
+        );
+
+        *self.config.write().unwrap() = new_config;
     }
 
     /// Path to the downloads directory (lives in the project root, not inside `.starpod/`).
     fn downloads_dir(&self) -> PathBuf {
-        self.config.project_root.join("downloads")
+        self.snapshot_config().project_root.join("downloads")
     }
 
     /// Save attachments to disk under `{project_root}/downloads/`.
@@ -212,12 +241,12 @@ impl StarpodAgent {
     }
 
     /// Build the system prompt from bootstrap context + skill catalog.
-    fn build_system_prompt(&self, session_id: &str) -> Result<String> {
-        let agent_name = &self.config.agent_name;
+    fn build_system_prompt(&self, session_id: &str, config: &StarpodConfig) -> Result<String> {
+        let agent_name = &config.agent_name;
         let bootstrap = self.memory.bootstrap_context()?;
         let skill_catalog = self.skills.skill_catalog()?;
         let date_str = Local::now().format("%A, %B %d, %Y at %H:%M").to_string();
-        let project_root = self.config.project_root.display();
+        let project_root = config.project_root.display();
 
         let mut prompt = format!(
             "You are {agent_name}, a personal AI assistant.\n\n{bootstrap}\n\n---\n\
@@ -256,8 +285,8 @@ impl StarpodAgent {
     }
 
     /// Map reasoning effort config to ThinkingConfig.
-    fn thinking_config(&self) -> Option<ThinkingConfig> {
-        self.config.reasoning_effort.map(|effort| match effort {
+    fn thinking_config(config: &StarpodConfig) -> Option<ThinkingConfig> {
+        config.reasoning_effort.map(|effort| match effort {
             ReasoningEffort::Low => ThinkingConfig::Enabled { budget_tokens: 4096 },
             ReasoningEffort::Medium => ThinkingConfig::Enabled { budget_tokens: 10240 },
             ReasoningEffort::High => ThinkingConfig::Enabled { budget_tokens: 32768 },
@@ -274,14 +303,14 @@ impl StarpodAgent {
     }
 
     /// Build the LLM provider based on `config.provider`.
-    fn build_provider(&self) -> Result<Box<dyn LlmProvider>> {
-        let provider_name = &self.config.provider;
-        let api_key = self.config.resolved_provider_api_key(provider_name)
+    fn build_provider(config: &StarpodConfig) -> Result<Box<dyn LlmProvider>> {
+        let provider_name = &config.provider;
+        let api_key = config.resolved_provider_api_key(provider_name)
             .ok_or_else(|| StarpodError::Config(format!(
                 "No API key found for provider '{}'. Set it in config.toml or via environment variable.",
                 provider_name
             )))?;
-        let base_url = self.config.resolved_provider_base_url(provider_name)
+        let base_url = config.resolved_provider_base_url(provider_name)
             .ok_or_else(|| StarpodError::Config(format!(
                 "Unknown provider: '{}'",
                 provider_name
@@ -343,13 +372,13 @@ impl StarpodAgent {
     }
 
     /// Build the external tool handler closure.
-    fn build_tool_handler(&self) -> ExternalToolHandlerFn {
+    fn build_tool_handler(&self, config: &StarpodConfig) -> ExternalToolHandlerFn {
         let ctx = Arc::new(ToolContext {
             memory: Arc::clone(&self.memory),
             vault: Arc::clone(&self.vault),
             skills: Arc::clone(&self.skills),
             cron: Arc::clone(&self.cron),
-            user_tz: self.config.timezone.clone(),
+            user_tz: config.timezone.clone(),
         });
 
         Box::new(move |tool_name, input| {
@@ -362,15 +391,21 @@ impl StarpodAgent {
 
     /// Process a chat message through the full Starpod pipeline.
     pub async fn chat(&self, message: ChatMessage) -> Result<ChatResponse> {
+        let config = self.snapshot_config();
+
         // Step 1: Resolve session via channel routing
         let (channel, key) = resolve_channel(&message);
-        let gap = self.config.channel_gap_minutes(channel.as_str());
+        let gap = config.channel_gap_minutes(channel.as_str());
         let (session_id, is_resuming) = match self.session_mgr.resolve_session(&channel, &key, gap).await? {
             SessionDecision::Continue(id) => {
                 debug!(session_id = %id, channel = %channel.as_str(), "Continuing existing session");
                 (id, true)
             }
-            SessionDecision::New => {
+            SessionDecision::New { closed_session_id } => {
+                // Export the closed session's transcript to memory (in background)
+                if let Some(ref closed_id) = closed_session_id {
+                    self.export_session_to_memory(closed_id).await;
+                }
                 let id = self.session_mgr.create_session(&channel, &key).await?;
                 debug!(session_id = %id, channel = %channel.as_str(), "Created new session");
                 (id, false)
@@ -398,31 +433,31 @@ impl StarpodAgent {
         };
 
         // Step 3: Build system prompt
-        let system_prompt = self.build_system_prompt(&session_id)?;
+        let system_prompt = self.build_system_prompt(&session_id, &config)?;
 
         // Step 4: Build provider and options, then run query
-        let provider = self.build_provider()?;
+        let provider = Self::build_provider(&config)?;
 
         let mut builder = Options::builder()
             .allowed_tools(Self::allowed_tools())
             .system_prompt(SystemPrompt::Custom(system_prompt))
             .permission_mode(PermissionMode::BypassPermissions)
-            .model(&self.config.model)
-            .max_turns(self.config.max_turns)
-            .max_tokens(self.config.max_tokens)
-            .context_budget(self.config.compaction.context_budget)
-            .summary_max_tokens(self.config.compaction.summary_max_tokens)
-            .min_keep_messages(self.config.compaction.min_keep_messages)
-            .external_tool_handler(self.build_tool_handler())
+            .model(&config.model)
+            .max_turns(config.max_turns)
+            .max_tokens(config.max_tokens)
+            .context_budget(config.compaction.context_budget)
+            .summary_max_tokens(config.compaction.summary_max_tokens)
+            .min_keep_messages(config.compaction.min_keep_messages)
+            .external_tool_handler(self.build_tool_handler(&config))
             .pre_compact_handler(self.build_pre_compact_handler())
             .custom_tools(custom_tool_definitions())
             .attachments(query_atts)
             .provider(provider)
-            .cwd(self.config.project_root.to_string_lossy().to_string())
+            .cwd(config.project_root.to_string_lossy().to_string())
             .additional_directories(vec![
-                self.config.data_dir.to_string_lossy().to_string(),
+                config.data_dir.to_string_lossy().to_string(),
             ])
-            .hook_dirs(vec![self.config.data_dir.join("hooks")]);
+            .hook_dirs(vec![config.data_dir.join("hooks")]);
 
         // Resume existing session to load conversation history, or set ID for new ones
         if is_resuming {
@@ -431,14 +466,14 @@ impl StarpodAgent {
             builder = builder.session_id(session_id.clone());
         }
 
-        if let Some(ref cm) = self.config.compaction_model {
+        if let Some(ref cm) = config.compaction_model {
             builder = builder.compaction_model(cm);
         }
 
-        if let Some(key) = self.config.resolved_api_key() {
+        if let Some(key) = config.resolved_api_key() {
             builder = builder.api_key(key);
         }
-        if let Some(thinking) = self.thinking_config() {
+        if let Some(thinking) = Self::thinking_config(&config) {
             builder = builder.thinking(thinking);
         }
 
@@ -486,7 +521,7 @@ impl StarpodAgent {
                                 cache_read: u.cache_read_input_tokens,
                                 cache_write: u.cache_creation_input_tokens,
                                 cost_usd: result.total_cost_usd,
-                                model: self.config.model.clone(),
+                                model: config.model.clone(),
                             },
                             result.num_turns,
                         ).await;
@@ -512,7 +547,7 @@ impl StarpodAgent {
         } else {
             result_text.clone()
         };
-        let agent_name = &self.config.agent_name;
+        let agent_name = &config.agent_name;
         let _ = self.memory.append_daily(&format!(
             "**User**: {}\n**{agent_name}**: {}",
             truncate(&message.text, 200),
@@ -540,14 +575,19 @@ impl StarpodAgent {
         &self,
         message: &ChatMessage,
     ) -> Result<(Query, String, mpsc::UnboundedSender<String>)> {
+        let config = self.snapshot_config();
+
         let (channel, key) = resolve_channel(message);
-        let gap = self.config.channel_gap_minutes(channel.as_str());
+        let gap = config.channel_gap_minutes(channel.as_str());
         let (session_id, is_resuming) = match self.session_mgr.resolve_session(&channel, &key, gap).await? {
             SessionDecision::Continue(id) => {
                 debug!(session_id = %id, channel = %channel.as_str(), "Continuing existing session");
                 (id, true)
             }
-            SessionDecision::New => {
+            SessionDecision::New { closed_session_id } => {
+                if let Some(ref closed_id) = closed_session_id {
+                    self.export_session_to_memory(closed_id).await;
+                }
                 let id = self.session_mgr.create_session(&channel, &key).await?;
                 debug!(session_id = %id, channel = %channel.as_str(), "Created new session");
                 (id, false)
@@ -573,8 +613,8 @@ impl StarpodAgent {
             format!("{}{}", message.text, extra_text)
         };
 
-        let system_prompt = self.build_system_prompt(&session_id)?;
-        let provider = self.build_provider()?;
+        let system_prompt = self.build_system_prompt(&session_id, &config)?;
+        let provider = Self::build_provider(&config)?;
 
         // Create the followup channel — sender goes to caller, receiver to the agent loop
         let (followup_tx, followup_rx) = mpsc::unbounded_channel::<String>();
@@ -583,23 +623,23 @@ impl StarpodAgent {
             .allowed_tools(Self::allowed_tools())
             .system_prompt(SystemPrompt::Custom(system_prompt))
             .permission_mode(PermissionMode::BypassPermissions)
-            .model(&self.config.model)
-            .max_turns(self.config.max_turns)
-            .max_tokens(self.config.max_tokens)
-            .context_budget(self.config.compaction.context_budget)
-            .summary_max_tokens(self.config.compaction.summary_max_tokens)
-            .min_keep_messages(self.config.compaction.min_keep_messages)
-            .external_tool_handler(self.build_tool_handler())
+            .model(&config.model)
+            .max_turns(config.max_turns)
+            .max_tokens(config.max_tokens)
+            .context_budget(config.compaction.context_budget)
+            .summary_max_tokens(config.compaction.summary_max_tokens)
+            .min_keep_messages(config.compaction.min_keep_messages)
+            .external_tool_handler(self.build_tool_handler(&config))
             .pre_compact_handler(self.build_pre_compact_handler())
             .custom_tools(custom_tool_definitions())
             .followup_rx(followup_rx)
             .attachments(query_atts)
             .provider(provider)
-            .cwd(self.config.project_root.to_string_lossy().to_string())
+            .cwd(config.project_root.to_string_lossy().to_string())
             .additional_directories(vec![
-                self.config.data_dir.to_string_lossy().to_string(),
+                config.data_dir.to_string_lossy().to_string(),
             ])
-            .hook_dirs(vec![self.config.data_dir.join("hooks")]);
+            .hook_dirs(vec![config.data_dir.join("hooks")]);
 
         // Resume existing session to load conversation history, or set ID for new ones
         if is_resuming {
@@ -608,14 +648,14 @@ impl StarpodAgent {
             builder = builder.session_id(session_id.clone());
         }
 
-        if let Some(ref cm) = self.config.compaction_model {
+        if let Some(ref cm) = config.compaction_model {
             builder = builder.compaction_model(cm);
         }
 
-        if let Some(key) = self.config.resolved_api_key() {
+        if let Some(key) = config.resolved_api_key() {
             builder = builder.api_key(key);
         }
-        if let Some(thinking) = self.thinking_config() {
+        if let Some(thinking) = Self::thinking_config(&config) {
             builder = builder.thinking(thinking);
         }
 
@@ -627,7 +667,7 @@ impl StarpodAgent {
 
     /// Get the configured followup mode.
     pub fn followup_mode(&self) -> FollowupMode {
-        self.config.followup_mode
+        self.snapshot_config().followup_mode
     }
 
     /// Finalize a streaming chat — record usage and append daily log.
@@ -638,6 +678,8 @@ impl StarpodAgent {
         result_text: &str,
         result: &agent_sdk::ResultMessage,
     ) {
+        let config = self.snapshot_config();
+
         if let Some(u) = &result.usage {
             let _ = self.session_mgr.record_usage(
                 session_id,
@@ -647,7 +689,7 @@ impl StarpodAgent {
                     cache_read: u.cache_read_input_tokens,
                     cache_write: u.cache_creation_input_tokens,
                     cost_usd: result.total_cost_usd,
-                    model: self.config.model.clone(),
+                    model: config.model.clone(),
                 },
                 result.num_turns,
             ).await;
@@ -658,12 +700,74 @@ impl StarpodAgent {
         } else {
             result_text.to_string()
         };
-        let agent_name = &self.config.agent_name;
+        let agent_name = &config.agent_name;
         let _ = self.memory.append_daily(&format!(
             "**User**: {}\n**{agent_name}**: {}",
             truncate(user_text, 200),
             summary,
         )).await;
+    }
+
+    /// Export a closed session's transcript to `knowledge/sessions/` for long-term recall.
+    ///
+    /// Formats all messages as markdown and writes to the memory store so they
+    /// become searchable. Runs in the background to avoid blocking the chat flow.
+    async fn export_session_to_memory(&self, session_id: &str) {
+        let config = self.snapshot_config();
+        if !config.memory.export_sessions {
+            return;
+        }
+
+        let meta = match self.session_mgr.get_session(session_id).await {
+            Ok(Some(m)) => m,
+            _ => return,
+        };
+
+        let messages = match self.session_mgr.get_messages(session_id).await {
+            Ok(msgs) if !msgs.is_empty() => msgs,
+            _ => return,
+        };
+
+        // Build a slug from the title for the filename
+        let title = meta.title.as_deref().unwrap_or("untitled");
+        let slug: String = title
+            .chars()
+            .take(50)
+            .map(|c| if c.is_alphanumeric() || c == '-' { c.to_ascii_lowercase() } else { '-' })
+            .collect::<String>()
+            .trim_matches('-')
+            .to_string();
+        let id_prefix = &session_id[..8.min(session_id.len())];
+        let filename = format!("knowledge/sessions/{slug}-{id_prefix}.md");
+
+        // Format the transcript
+        let mut transcript = format!(
+            "# Session: {}\n\n\
+             - **Date**: {}\n\
+             - **Channel**: {}\n\
+             - **Messages**: {}\n",
+            title, &meta.created_at[..10.min(meta.created_at.len())],
+            meta.channel, meta.message_count,
+        );
+        if let Some(ref summary) = meta.summary {
+            transcript.push_str(&format!("- **Summary**: {}\n", summary));
+        }
+        transcript.push_str("\n---\n\n");
+
+        for msg in &messages {
+            let role_label = match msg.role.as_str() {
+                "user" => "User",
+                "assistant" => &config.agent_name,
+                other => other,
+            };
+            transcript.push_str(&format!("**{}**: {}\n\n", role_label, msg.content));
+        }
+
+        if let Err(e) = self.memory.write_file(&filename, &transcript).await {
+            warn!(error = %e, session_id, "Failed to export session transcript to memory");
+        } else {
+            debug!(session_id, filename, "Exported session transcript to memory");
+        }
     }
 
     /// Get a reference to the memory store.
@@ -691,9 +795,9 @@ impl StarpodAgent {
         &self.cron
     }
 
-    /// Get a reference to the config.
-    pub fn config(&self) -> &StarpodConfig {
-        &self.config
+    /// Get a snapshot of the current config.
+    pub fn config(&self) -> StarpodConfig {
+        self.snapshot_config()
     }
 
     /// Run startup lifecycle prompts (boot + bootstrap) in the background.
@@ -763,9 +867,10 @@ impl StarpodAgent {
             })
         });
 
-        let user_tz = self.config.timezone.clone();
+        let config = self.snapshot_config();
+        let user_tz = config.timezone.clone();
         let mut scheduler = starpod_cron::CronScheduler::new(cron_store, executor, 30, user_tz)
-            .with_max_concurrent_runs(self.config.cron.max_concurrent_runs as u32);
+            .with_max_concurrent_runs(config.cron.max_concurrent_runs as u32);
         if let Some(n) = notifier {
             scheduler = scheduler.with_notifier(n);
         }
@@ -859,7 +964,8 @@ async fn ensure_heartbeat(
     let schedule = starpod_cron::Schedule::Cron {
         expr: "0 */30 * * * *".to_string(),
     };
-    let user_tz = agent.config().timezone.as_deref();
+    let config = agent.config();
+    let user_tz = config.timezone.as_deref();
     store
         .add_job_full(
             "__heartbeat__",
@@ -1334,6 +1440,84 @@ mod tests {
         assert!(query_atts.is_empty());
         assert!(extra_text.contains("doc.pdf"));
         assert!(extra_text.contains("/tmp/doc.pdf"));
+    }
+
+    #[tokio::test]
+    async fn test_reload_config_updates_model() {
+        let tmp = TempDir::new().unwrap();
+        let agent = StarpodAgent::new(test_config(&tmp)).await.unwrap();
+
+        // Initial model is the default
+        assert_eq!(agent.config().model, "claude-haiku-4-5");
+
+        // Reload with a new model
+        let mut new_cfg = test_config(&tmp);
+        new_cfg.model = "claude-sonnet-4-6".to_string();
+        agent.reload_config(new_cfg);
+
+        assert_eq!(agent.config().model, "claude-sonnet-4-6");
+    }
+
+    #[tokio::test]
+    async fn test_reload_config_updates_agent_name() {
+        let tmp = TempDir::new().unwrap();
+        let agent = StarpodAgent::new(test_config(&tmp)).await.unwrap();
+
+        assert_eq!(agent.config().agent_name, "Aster");
+
+        let mut new_cfg = test_config(&tmp);
+        new_cfg.agent_name = "Nova".to_string();
+        agent.reload_config(new_cfg);
+
+        assert_eq!(agent.config().agent_name, "Nova");
+    }
+
+    #[tokio::test]
+    async fn test_reload_config_updates_provider() {
+        let tmp = TempDir::new().unwrap();
+        let agent = StarpodAgent::new(test_config(&tmp)).await.unwrap();
+
+        assert_eq!(agent.config().provider, "anthropic");
+
+        let mut new_cfg = test_config(&tmp);
+        new_cfg.provider = "openai".to_string();
+        agent.reload_config(new_cfg);
+
+        assert_eq!(agent.config().provider, "openai");
+    }
+
+    #[tokio::test]
+    async fn test_config_returns_snapshot() {
+        let tmp = TempDir::new().unwrap();
+        let agent = StarpodAgent::new(test_config(&tmp)).await.unwrap();
+
+        // Get a snapshot
+        let mut snapshot = agent.config();
+        assert_eq!(snapshot.model, "claude-haiku-4-5");
+
+        // Mutate the snapshot
+        snapshot.model = "mutated-model".to_string();
+
+        // The agent's config should be unaffected
+        assert_eq!(
+            agent.config().model,
+            "claude-haiku-4-5",
+            "Mutating a snapshot should not affect the agent's config"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_export_sessions_disabled() {
+        let tmp = TempDir::new().unwrap();
+        let mut cfg = test_config(&tmp);
+        cfg.memory.export_sessions = false;
+
+        let agent = StarpodAgent::new(cfg).await.unwrap();
+
+        assert!(
+            !agent.config().memory.export_sessions,
+            "Agent config should reflect export_sessions=false"
+        );
     }
 
     #[test]

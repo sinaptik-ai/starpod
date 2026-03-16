@@ -23,8 +23,11 @@ config.project_root()   // PathBuf to project root
 // Walk up to find nearest .starpod/ directory
 StarpodConfig::find_project_root()   // -> Option<PathBuf>
 
-// Load from discovered location
+// Load from discovered location (async)
 StarpodConfig::load()                // -> Result<StarpodConfig>
+
+// Load synchronously (for config file watcher thread)
+StarpodConfig::load_sync()           // -> Result<StarpodConfig>
 
 // Load from specific path
 StarpodConfig::load_from(path)       // -> Result<StarpodConfig>

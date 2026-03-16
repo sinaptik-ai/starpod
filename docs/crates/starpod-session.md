@@ -11,7 +11,8 @@ let mgr = SessionManager::new(&db_path, &sessions_dir).await?;
 let decision = mgr.resolve_session(&Channel::Main, "session-key", None).await?;
 match decision {
     SessionDecision::Continue(id) => { /* use existing session */ }
-    SessionDecision::New => {
+    SessionDecision::New { closed_session_id } => {
+        // closed_session_id is Some(id) when a previous session was auto-closed
         let id = mgr.create_session(&Channel::Main, "session-key").await?;
     }
 }
@@ -49,9 +50,13 @@ pub enum Channel {
 ## Session Resolution
 
 - **Main**: Always continues if session exists with same key
-- **Telegram**: Continues if last message within the gap threshold; otherwise auto-closes old session and returns `New`
+- **Telegram**: Continues if last message within the gap threshold; otherwise auto-closes old session and returns `New { closed_session_id: Some(id) }`
 
-The Telegram inactivity threshold defaults to 6 hours (360 minutes) and is configurable via `[channels.telegram] gap_minutes` in `.starpod/config.toml`.
+The Telegram inactivity threshold defaults to 6 hours (360 minutes) and is configurable via `[channels.telegram] gap_minutes` in `.starpod/instance.toml`.
+
+### Session Export on Close
+
+When a session is auto-closed, `closed_session_id` is returned so the caller (typically `StarpodAgent`) can export the transcript to memory. See [Memory — Session Transcript Export](/concepts/memory#session-transcript-export).
 
 ## Types
 
@@ -89,4 +94,4 @@ pub struct UsageSummary {
 
 ## Tests
 
-12 unit tests.
+15+ unit tests covering channel resolution, time-gap auto-close, session isolation, usage tracking, compaction logging, and closed session ID propagation.

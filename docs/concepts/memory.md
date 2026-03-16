@@ -9,12 +9,17 @@ Starpod's memory system combines **markdown files on disk** with a **SQLite FTS5
 ├── SOUL.md          Agent personality and instructions
 ├── USER.md          User information and preferences
 ├── MEMORY.md        General long-term knowledge
+├── HEARTBEAT.md     Heartbeat task instructions (periodic proactive behavior)
+├── BOOT.md          Boot lifecycle prompt (runs every server start)
+├── BOOTSTRAP.md     First-init bootstrap (runs once, then cleared)
 ├── memory/          Daily conversation logs
 │   ├── 2026-03-12.md
 │   ├── 2026-03-13.md
 │   └── 2026-03-14.md
 ├── knowledge/       Knowledge base documents
-│   └── *.md
+│   ├── *.md
+│   └── sessions/    Auto-exported session transcripts
+│       └── *.md
 └── memory.db        SQLite FTS5 index
 ```
 
@@ -33,6 +38,10 @@ The `memory/` directory contains daily logs named `YYYY-MM-DD.md`. After each co
 ### Knowledge Base
 
 The `knowledge/` directory holds topical documents. These are indexed for search but **not** automatically included in the system prompt — the agent uses `MemorySearch` to retrieve relevant chunks on demand.
+
+### Session Transcripts
+
+The `knowledge/sessions/` subdirectory stores auto-exported session transcripts. See [Session Transcript Export](#session-transcript-export) below.
 
 ## Context Bootstrap
 
@@ -100,6 +109,35 @@ starpod agent memory search "database migrations" --limit 5
 # Rebuild FTS5 index after manual edits
 starpod agent memory reindex
 ```
+
+## Session Transcript Export
+
+When a session is closed (e.g. auto-closed after Telegram inactivity), Starpod exports the full conversation transcript to `knowledge/sessions/` as a markdown file. This makes past conversations searchable via `MemorySearch`.
+
+Each transcript includes:
+- **Metadata header**: date, channel, message count, summary
+- **Full message history**: every user and assistant message
+
+Exported files are named `{title-slug}-{session-id-prefix}.md` and are immediately indexed for search.
+
+### Configuration
+
+Session export is enabled by default. To disable it:
+
+```toml
+[memory]
+export_sessions = false
+```
+
+### How It Works
+
+1. A session is auto-closed (e.g. Telegram time-gap exceeded)
+2. `SessionDecision::New { closed_session_id: Some(id) }` is returned
+3. The agent fetches all messages from the closed session
+4. Messages are formatted as markdown and written to `knowledge/sessions/`
+5. The file is indexed (FTS5 + optional vector embeddings) immediately
+
+Unlike daily logs, session transcripts in `knowledge/` are **evergreen** — they are not subject to temporal decay in search ranking.
 
 ## Manual Editing
 

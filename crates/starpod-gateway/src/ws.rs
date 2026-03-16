@@ -143,7 +143,7 @@ async fn send_msg(
 ///   the current stream finishes.
 async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     let (mut sender, mut receiver) = socket.split();
-    let followup_mode = state.config.followup_mode;
+    let followup_mode = state.config.read().unwrap().followup_mode;
 
     debug!("WebSocket client connected");
 
@@ -226,7 +226,8 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 attachments,
             } => {
                 // Validate and convert attachments
-                let att_config = &state.config.attachments;
+                let ws_config = state.config.read().unwrap().clone();
+                let att_config = &ws_config.attachments;
                 let mut chat_attachments = Vec::new();
                 for att in attachments {
                     let raw_size = att.data.len() * 3 / 4;

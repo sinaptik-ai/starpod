@@ -88,6 +88,8 @@ impl MemoryStore {
             .map_err(StarpodError::Io)?;
         std::fs::create_dir_all(data_dir.join("knowledge"))
             .map_err(StarpodError::Io)?;
+        std::fs::create_dir_all(data_dir.join("knowledge").join("sessions"))
+            .map_err(StarpodError::Io)?;
 
         // Open SQLite pool
         let db_path = data_dir.join("memory.db");
@@ -577,6 +579,12 @@ impl MemoryStore {
             self.index_dir(&knowledge_dir, "knowledge/").await?;
         }
 
+        // Index knowledge/sessions/ subdirectory (session transcripts)
+        let sessions_dir = self.data_dir.join("knowledge").join("sessions");
+        if sessions_dir.exists() {
+            self.index_dir(&sessions_dir, "knowledge/sessions/").await?;
+        }
+
         Ok(())
     }
 
@@ -995,6 +1003,72 @@ mod tests {
     }
 
     // ── Search with temporal decay test ─────────────────────────────────
+
+    // ── Session export / knowledge/sessions tests ─────────────────────
+
+    #[tokio::test]
+    async fn test_knowledge_sessions_dir_created() {
+        let tmp = TempDir::new().unwrap();
+        let _store = MemoryStore::new(tmp.path()).await.unwrap();
+
+        let sessions_dir = tmp.path().join("knowledge").join("sessions");
+        assert!(
+            sessions_dir.exists() && sessions_dir.is_dir(),
+            "MemoryStore::new() should create knowledge/sessions/ directory"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_write_and_search_knowledge_sessions() {
+        let tmp = TempDir::new().unwrap();
+        let store = MemoryStore::new(tmp.path()).await.unwrap();
+
+        let content = "Session transcript about quantum entanglement and teleportation experiments.";
+        store
+            .write_file("knowledge/sessions/test-session.md", content)
+            .await
+            .unwrap();
+
+        // Verify the file was written to disk
+        let path = tmp.path().join("knowledge/sessions/test-session.md");
+        assert!(path.exists(), "File should exist on disk");
+
+        // Verify it's searchable
+        let results = store.search("quantum entanglement teleportation", 5).await.unwrap();
+        assert!(!results.is_empty(), "Session transcript should be searchable");
+        assert!(
+            results.iter().any(|r| r.source == "knowledge/sessions/test-session.md"),
+            "Search results should include the session transcript"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_reindex_includes_knowledge_sessions() {
+        let tmp = TempDir::new().unwrap();
+        let store = MemoryStore::new(tmp.path()).await.unwrap();
+
+        // Write directly to disk (bypassing write_file), simulating external export
+        let sessions_dir = tmp.path().join("knowledge").join("sessions");
+        std::fs::write(
+            sessions_dir.join("exported-chat.md"),
+            "Discussion about neural network architectures and transformer models.",
+        )
+        .unwrap();
+
+        // Before reindex, the file shouldn't be found (it was written directly)
+        let before = store.search("neural network transformer", 5).await.unwrap();
+        let found_before = before.iter().any(|r| r.source == "knowledge/sessions/exported-chat.md");
+        assert!(!found_before, "Directly written file should not be indexed yet");
+
+        // Reindex should pick it up
+        store.reindex().await.unwrap();
+
+        let after = store.search("neural network transformer", 5).await.unwrap();
+        assert!(
+            after.iter().any(|r| r.source == "knowledge/sessions/exported-chat.md"),
+            "Reindex should index files in knowledge/sessions/"
+        );
+    }
 
     #[tokio::test]
     async fn search_applies_temporal_decay() {

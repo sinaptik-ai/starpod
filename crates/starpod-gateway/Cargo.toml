@@ -23,6 +23,8 @@ mime_guess = "2"
 include_dir = "0.7"
 reqwest = { version = "0.12" }
 regex = "1"
+notify = "7"
+notify-debouncer-mini = "0.5"
 
 [dev-dependencies]
 http-body-util = "0.1"

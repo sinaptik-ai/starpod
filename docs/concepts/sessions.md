@@ -43,7 +43,12 @@ Look up session by (channel, key)
     │
     └── Not found or gap exceeded → Create new session
                                      (auto-close old if Telegram)
+                                     (export transcript to memory)
 ```
+
+### Transcript Export on Close
+
+When a session is auto-closed, its full transcript is exported to `knowledge/sessions/` in the memory store. This allows the agent to recall past conversations via `MemorySearch`. See [Memory — Session Transcript Export](/concepts/memory#session-transcript-export) for details.
 
 ## Session Data
 

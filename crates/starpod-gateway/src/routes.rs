@@ -339,7 +339,8 @@ struct ErrorResponse {
 // ── Instance routes ──────────────────────────────────────────────────────
 
 fn get_instance_client(state: &AppState) -> Result<starpod_instances::InstanceClient, (StatusCode, Json<ErrorResponse>)> {
-    let config = &state.config;
+    let config = state.config.read().unwrap();
+    let config = &*config;
     let backend_url = config.resolved_instance_backend_url().ok_or_else(|| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
