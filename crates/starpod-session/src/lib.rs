@@ -43,8 +43,9 @@ impl Channel {
 pub enum SessionDecision {
     /// Continue an existing session (contains session ID).
     Continue(String),
-    /// Start a new session.
-    New,
+    /// Start a new session. If a previous session was auto-closed (e.g. time-gap),
+    /// `closed_session_id` carries its ID so callers can export it.
+    New { closed_session_id: Option<String> },
 }
 
 /// Metadata for a session.
@@ -156,7 +157,7 @@ impl SessionManager {
 
         let row = match row {
             Some(r) => r,
-            None => return Ok(SessionDecision::New),
+            None => return Ok(SessionDecision::New { closed_session_id: None }),
         };
 
         let session_id: String = row.get("id");
@@ -184,7 +185,7 @@ impl SessionManager {
         } else {
             debug!(session_id = %session_id, gap_mins = gap.num_minutes(), "Auto-closing session (gap exceeded)");
             self.close_session(&session_id, "Auto-closed: inactivity").await?;
-            Ok(SessionDecision::New)
+            Ok(SessionDecision::New { closed_session_id: Some(session_id) })
         }
     }
 
@@ -514,7 +515,7 @@ mod tests {
         let (_tmp, mgr) = setup().await;
 
         match mgr.resolve_session(&Channel::Main, "some-key", None).await.unwrap() {
-            SessionDecision::New => {} // expected
+            SessionDecision::New { .. } => {} // expected
             SessionDecision::Continue(_) => panic!("Should be New when no sessions exist"),
         }
     }
@@ -527,7 +528,7 @@ mod tests {
 
         match mgr.resolve_session(&Channel::Main, "key-1", None).await.unwrap() {
             SessionDecision::Continue(sid) => assert_eq!(sid, id),
-            SessionDecision::New => panic!("Should continue recent session"),
+            SessionDecision::New { .. } => panic!("Should continue recent session"),
         }
     }
 
@@ -539,7 +540,7 @@ mod tests {
         mgr.close_session(&id, "done").await.unwrap();
 
         match mgr.resolve_session(&Channel::Main, "key-1", None).await.unwrap() {
-            SessionDecision::New => {} // expected
+            SessionDecision::New { .. } => {} // expected
             SessionDecision::Continue(_) => panic!("Should not continue closed session"),
         }
     }
@@ -610,12 +611,12 @@ mod tests {
         // Same key → continue
         match mgr.resolve_session(&Channel::Main, "abc", None).await.unwrap() {
             SessionDecision::Continue(sid) => assert_eq!(sid, id),
-            SessionDecision::New => panic!("Should continue with same key"),
+            SessionDecision::New { .. } => panic!("Should continue with same key"),
         }
 
         // Different key → new
         match mgr.resolve_session(&Channel::Main, "xyz", None).await.unwrap() {
-            SessionDecision::New => {} // expected
+            SessionDecision::New { .. } => {} // expected
             SessionDecision::Continue(_) => panic!("Different key should get new session"),
         }
     }
@@ -632,7 +633,7 @@ mod tests {
         // Within 6h → continue
         match mgr.resolve_session(&Channel::Telegram, "chat-123", gap).await.unwrap() {
             SessionDecision::Continue(sid) => assert_eq!(sid, id),
-            SessionDecision::New => panic!("Should continue within gap"),
+            SessionDecision::New { .. } => panic!("Should continue within gap"),
         }
 
         // Manually set last_message_at to 7h ago to simulate inactivity
@@ -646,7 +647,7 @@ mod tests {
 
         // Beyond 6h → new (old session auto-closed)
         match mgr.resolve_session(&Channel::Telegram, "chat-123", gap).await.unwrap() {
-            SessionDecision::New => {} // expected
+            SessionDecision::New { .. } => {} // expected
             SessionDecision::Continue(_) => panic!("Should start new session after 7h gap"),
         }
 
@@ -699,7 +700,7 @@ mod tests {
 
         // gap_minutes=60 (1h) — 2h ago exceeds 1h → should be New
         match mgr.resolve_session(&Channel::Telegram, "chat-gap", Some(60)).await.unwrap() {
-            SessionDecision::New => {} // expected
+            SessionDecision::New { .. } => {} // expected
             SessionDecision::Continue(_) => panic!("Should start new session when 2h > 1h gap"),
         }
 
@@ -717,7 +718,7 @@ mod tests {
         // gap_minutes=180 (3h) — 2h ago is within 3h → should Continue
         match mgr.resolve_session(&Channel::Telegram, "chat-gap", Some(180)).await.unwrap() {
             SessionDecision::Continue(sid) => assert_eq!(sid, id2),
-            SessionDecision::New => panic!("Should continue session when 2h < 3h gap"),
+            SessionDecision::New { .. } => panic!("Should continue session when 2h < 3h gap"),
         }
     }
 
@@ -732,7 +733,7 @@ mod tests {
         // Without a gap_minutes override, Main channel always continues (explicit)
         match mgr.resolve_session(&Channel::Main, "main-gap", None).await.unwrap() {
             SessionDecision::Continue(sid) => assert_eq!(sid, id),
-            SessionDecision::New => panic!("Main channel should always continue without gap override"),
+            SessionDecision::New { .. } => panic!("Main channel should always continue without gap override"),
         }
 
         // Even backdating last_message_at to 24h ago, Main without gap override still continues
@@ -746,7 +747,7 @@ mod tests {
 
         match mgr.resolve_session(&Channel::Main, "main-gap", None).await.unwrap() {
             SessionDecision::Continue(sid) => assert_eq!(sid, id),
-            SessionDecision::New => panic!("Main channel should continue even with old last_message_at when gap_minutes is None"),
+            SessionDecision::New { .. } => panic!("Main channel should continue even with old last_message_at when gap_minutes is None"),
         }
     }
 
@@ -763,11 +764,154 @@ mod tests {
         // Each channel resolves to its own session
         match mgr.resolve_session(&Channel::Main, "shared-key", None).await.unwrap() {
             SessionDecision::Continue(sid) => assert_eq!(sid, main_id),
-            SessionDecision::New => panic!("Main should find its session"),
+            SessionDecision::New { .. } => panic!("Main should find its session"),
         }
         match mgr.resolve_session(&Channel::Telegram, "shared-key", None).await.unwrap() {
             SessionDecision::Continue(sid) => assert_eq!(sid, tg_id),
-            SessionDecision::New => panic!("Telegram should find its session"),
+            SessionDecision::New { .. } => panic!("Telegram should find its session"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_auto_close_returns_closed_session_id() {
+        let (_tmp, mgr) = setup().await;
+        let gap = Some(60); // 1h
+
+        // Create and backdate a Telegram session
+        let id = mgr.create_session(&Channel::Telegram, "export-test").await.unwrap();
+        mgr.touch_session(&id).await.unwrap();
+        mgr.save_message(&id, "user", "Hello!").await.unwrap();
+        mgr.save_message(&id, "assistant", "Hi there!").await.unwrap();
+
+        let two_hours_ago = (Utc::now() - Duration::hours(2)).to_rfc3339();
+        sqlx::query("UPDATE session_metadata SET last_message_at = ?1 WHERE id = ?2")
+            .bind(&two_hours_ago)
+            .bind(&id)
+            .execute(&mgr.pool)
+            .await
+            .unwrap();
+
+        // Resolve should return New with the closed session's ID
+        match mgr.resolve_session(&Channel::Telegram, "export-test", gap).await.unwrap() {
+            SessionDecision::New { closed_session_id } => {
+                assert_eq!(closed_session_id, Some(id.clone()), "Should return the closed session ID");
+            }
+            SessionDecision::Continue(_) => panic!("Should start new session after 2h > 1h gap"),
+        }
+
+        // First resolve with no prior session → New without closed ID
+        match mgr.resolve_session(&Channel::Main, "fresh-key", None).await.unwrap() {
+            SessionDecision::New { closed_session_id } => {
+                assert!(closed_session_id.is_none(), "No prior session means no closed ID");
+            }
+            SessionDecision::Continue(_) => panic!("Should be new"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_auto_close_closed_id_is_correct_session() {
+        let (_tmp, mgr) = setup().await;
+        let gap = Some(60); // 1h
+
+        // Create two Telegram sessions for different keys
+        let id_a = mgr.create_session(&Channel::Telegram, "chat-a").await.unwrap();
+        mgr.touch_session(&id_a).await.unwrap();
+        mgr.save_message(&id_a, "user", "Message in chat A").await.unwrap();
+        mgr.save_message(&id_a, "assistant", "Reply in chat A").await.unwrap();
+
+        let id_b = mgr.create_session(&Channel::Telegram, "chat-b").await.unwrap();
+        mgr.touch_session(&id_b).await.unwrap();
+        mgr.save_message(&id_b, "user", "Message in chat B").await.unwrap();
+
+        // Backdate only chat-a beyond the gap
+        let old_time = (Utc::now() - Duration::hours(2)).to_rfc3339();
+        sqlx::query("UPDATE session_metadata SET last_message_at = ?1 WHERE id = ?2")
+            .bind(&old_time)
+            .bind(&id_a)
+            .execute(&mgr.pool)
+            .await
+            .unwrap();
+
+        // Resolve chat-a → should auto-close and return its ID
+        match mgr.resolve_session(&Channel::Telegram, "chat-a", gap).await.unwrap() {
+            SessionDecision::New { closed_session_id } => {
+                assert_eq!(
+                    closed_session_id,
+                    Some(id_a.clone()),
+                    "closed_session_id must match the session that was auto-closed"
+                );
+            }
+            SessionDecision::Continue(_) => panic!("Should start new session after gap"),
+        }
+
+        // Verify the closed session's messages are still accessible
+        let messages = mgr.get_messages(&id_a).await.unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].content, "Message in chat A");
+        assert_eq!(messages[1].content, "Reply in chat A");
+
+        // Verify chat-b is unaffected (still open, still continuable)
+        match mgr.resolve_session(&Channel::Telegram, "chat-b", gap).await.unwrap() {
+            SessionDecision::Continue(sid) => assert_eq!(sid, id_b),
+            SessionDecision::New { .. } => panic!("chat-b should still be continuable"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_no_closed_id_for_main_channel() {
+        let (_tmp, mgr) = setup().await;
+
+        // Create a Main session and backdate it far in the past
+        let id = mgr.create_session(&Channel::Main, "main-key").await.unwrap();
+        mgr.touch_session(&id).await.unwrap();
+
+        let old_time = (Utc::now() - Duration::hours(48)).to_rfc3339();
+        sqlx::query("UPDATE session_metadata SET last_message_at = ?1 WHERE id = ?2")
+            .bind(&old_time)
+            .bind(&id)
+            .execute(&mgr.pool)
+            .await
+            .unwrap();
+
+        // Main channel uses gap_minutes=None → never auto-closes
+        match mgr.resolve_session(&Channel::Main, "main-key", None).await.unwrap() {
+            SessionDecision::Continue(sid) => assert_eq!(sid, id),
+            SessionDecision::New { .. } => panic!("Main channel should never auto-close"),
+        }
+
+        // Even with a fresh key (no session), New should have closed_session_id=None
+        match mgr.resolve_session(&Channel::Main, "new-main-key", None).await.unwrap() {
+            SessionDecision::New { closed_session_id } => {
+                assert!(
+                    closed_session_id.is_none(),
+                    "Main channel should never produce a closed_session_id"
+                );
+            }
+            SessionDecision::Continue(_) => panic!("No session for this key, should be New"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_no_closed_id_when_session_manually_closed() {
+        let (_tmp, mgr) = setup().await;
+        let gap = Some(60); // 1h
+
+        // Create a Telegram session and manually close it
+        let id = mgr.create_session(&Channel::Telegram, "manual-close").await.unwrap();
+        mgr.touch_session(&id).await.unwrap();
+        mgr.save_message(&id, "user", "Hello").await.unwrap();
+        mgr.close_session(&id, "Manually closed by user").await.unwrap();
+
+        // Resolve should return New with closed_session_id=None because
+        // there's no open session to auto-close
+        match mgr.resolve_session(&Channel::Telegram, "manual-close", gap).await.unwrap() {
+            SessionDecision::New { closed_session_id } => {
+                assert!(
+                    closed_session_id.is_none(),
+                    "Manually closed session should not produce closed_session_id on resolve"
+                );
+            }
+            SessionDecision::Continue(_) => panic!("Closed session should not be continued"),
         }
     }
 }

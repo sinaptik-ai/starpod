@@ -1,7 +1,8 @@
 mod routes;
 mod ws;
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{header, StatusCode, Uri};
@@ -9,19 +10,22 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use include_dir::{include_dir, Dir};
+use notify_debouncer_mini::{new_debouncer, DebouncedEventKind};
 use rust_embed::Embed;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
-use tracing::info;
+use tracing::{info, warn, debug};
 
 use starpod_agent::StarpodAgent;
 use starpod_core::StarpodConfig;
 
 /// Shared application state.
+///
+/// Config is wrapped in `RwLock` for hot reload support.
 pub struct AppState {
     pub agent: Arc<StarpodAgent>,
     pub api_key: Option<String>,
-    pub config: StarpodConfig,
+    pub config: RwLock<StarpodConfig>,
 }
 
 /// Embedded web UI assets (built by Vite into static/dist/).
@@ -142,8 +146,11 @@ pub async fn serve_with_agent(
     let state = Arc::new(AppState {
         agent,
         api_key,
-        config: config.clone(),
+        config: RwLock::new(config.clone()),
     });
+
+    // Start config file watcher in background
+    let _watcher_handle = start_config_watcher(Arc::clone(&state), &config);
 
     let app = build_router(state);
 
@@ -159,4 +166,101 @@ pub async fn serve_with_agent(
         .map_err(|e| starpod_core::StarpodError::Config(format!("Server error: {}", e)))?;
 
     Ok(())
+}
+
+/// Start a file watcher on config.toml and instance.toml that hot-reloads config on change.
+///
+/// Returns a handle that keeps the watcher alive. The watcher is dropped
+/// (and stops) when the handle is dropped.
+fn start_config_watcher(
+    state: Arc<AppState>,
+    config: &StarpodConfig,
+) -> Option<notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>> {
+    let project_root = config.project_root.clone();
+    let starpod_dir = project_root.join(".starpod");
+    let config_path = starpod_dir.join("config.toml");
+    let instance_path = starpod_dir.join("instance.toml");
+
+    if !starpod_dir.exists() {
+        debug!("No .starpod/ directory found, skipping config watcher");
+        return None;
+    }
+
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    let mut debouncer = match new_debouncer(Duration::from_secs(2), tx) {
+        Ok(d) => d,
+        Err(e) => {
+            warn!(error = %e, "Failed to create config file watcher");
+            return None;
+        }
+    };
+
+    // Watch the .starpod/ directory for changes
+    if let Err(e) = debouncer.watcher().watch(
+        &starpod_dir,
+        notify::RecursiveMode::NonRecursive,
+    ) {
+        warn!(error = %e, "Failed to watch .starpod/ directory");
+        return None;
+    }
+
+    info!("Config hot reload enabled — watching .starpod/config.toml and instance.toml");
+
+    // Spawn a background thread (not async — notify uses std channels)
+    let config_path_clone = config_path.clone();
+    let instance_path_clone = instance_path.clone();
+    std::thread::spawn(move || {
+        for events in rx {
+            match events {
+                Ok(events) => {
+                    let config_changed = events.iter().any(|e| {
+                        e.kind == DebouncedEventKind::Any
+                            && (e.path == config_path_clone || e.path == instance_path_clone)
+                    });
+
+                    if config_changed {
+                        info!("Config file changed, reloading...");
+                        match StarpodConfig::load_sync() {
+                            Ok(new_config) => {
+                                let old_config = state.config.read().unwrap().clone();
+
+                                // Log what changed
+                                if old_config.model != new_config.model {
+                                    info!(old = %old_config.model, new = %new_config.model, "Model changed");
+                                }
+                                if old_config.provider != new_config.provider {
+                                    info!(old = %old_config.provider, new = %new_config.provider, "Provider changed");
+                                }
+                                if old_config.agent_name != new_config.agent_name {
+                                    info!(old = %old_config.agent_name, new = %new_config.agent_name, "Agent name changed");
+                                }
+                                if old_config.server_addr != new_config.server_addr {
+                                    warn!(
+                                        old = %old_config.server_addr,
+                                        new = %new_config.server_addr,
+                                        "server_addr changed — restart required to take effect"
+                                    );
+                                }
+
+                                // Update the agent's config (affects next chat request)
+                                state.agent.reload_config(new_config.clone());
+
+                                // Update the gateway's config
+                                *state.config.write().unwrap() = new_config;
+                            }
+                            Err(e) => {
+                                warn!(error = %e, "Failed to reload config (keeping previous config)");
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(error = ?e, "Config watcher error");
+                }
+            }
+        }
+    });
+
+    Some(debouncer)
 }

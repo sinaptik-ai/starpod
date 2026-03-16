@@ -152,7 +152,8 @@ async fn handle_message(
         .to_string();
 
     // Extract attachments from photos and documents
-    let att_config = &agent.config().attachments;
+    let agent_config = agent.config();
+    let att_config = &agent_config.attachments;
     let mut attachments: Vec<Attachment> = Vec::new();
 
     // Handle photos (Telegram sends multiple sizes; pick the largest)

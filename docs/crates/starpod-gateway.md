@@ -42,11 +42,15 @@ Optional API key auth via `STARPOD_API_KEY` environment variable:
 pub struct AppState {
     pub agent: Arc<StarpodAgent>,
     pub api_key: Option<String>,
-    pub config: StarpodConfig,
+    pub config: RwLock<StarpodConfig>,
 }
 ```
 
-Shared across all routes via Axum's state extraction.
+Shared across all routes via Axum's state extraction. Config is wrapped in `RwLock` for hot reload support.
+
+## Config Hot Reload
+
+The gateway watches `.starpod/config.toml` and `instance.toml` for changes. When either file is modified, the config is reloaded and applied to both the agent and gateway state. See [Configuration — Hot Reload](/getting-started/configuration#hot-reload) for details.
 
 ## WebSocket Protocol
 

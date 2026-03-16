@@ -63,6 +63,7 @@ agent_name = "Aster"              # Agent display name (personality in SOUL.md)
 # chunk_size = 1600               # Chunk size in chars for indexing (~400 tokens)
 # chunk_overlap = 320             # Overlap in chars between chunks (~80 tokens)
 # bootstrap_file_cap = 20000      # Max chars per file in bootstrap context
+# export_sessions = true          # Export closed session transcripts to knowledge/sessions/
 
 # ─── Compaction ───────────────────────────────────────
 [compaction]
@@ -184,6 +185,7 @@ The `[memory]` section tunes search and indexing behavior.
 | `chunk_size` | integer | `1600` | Chunk size in characters for indexing (~400 tokens) |
 | `chunk_overlap` | integer | `320` | Overlap in characters between chunks (~80 tokens) |
 | `bootstrap_file_cap` | integer | `20000` | Max characters per file included in bootstrap context |
+| `export_sessions` | bool | `true` | Export closed session transcripts to `knowledge/sessions/` for long-term recall |
 
 ## Compaction
 
@@ -214,6 +216,31 @@ The `[instances]` section configures remote instance management.
 | `health_check_interval_secs` | integer | `30` | Health check polling interval in seconds |
 | `heartbeat_timeout_secs` | integer | `90` | Seconds before an instance is considered unhealthy |
 | `http_timeout_secs` | integer | `30` | HTTP request timeout for instance API calls |
+
+## Hot Reload
+
+Starpod watches `config.toml` and `instance.toml` for changes while the server is running. When a file is modified, the new config is loaded and applied automatically — no restart needed.
+
+### What reloads instantly
+
+- `model` and `provider` — switch models on the fly
+- `agent_name` — update the agent's display name
+- `max_turns`, `max_tokens` — adjust limits
+- `reasoning_effort` — change thinking budget
+- `compaction` settings — adjust context budget
+- `memory.export_sessions` — toggle session export
+- `followup_mode` — switch between inject and queue
+
+### What requires a restart
+
+- `server_addr` — the TCP listener is already bound
+- `channels.telegram.bot_token` — the Telegram bot is already running
+
+When a restart-required setting changes, Starpod logs a warning but continues running with the new values for everything else.
+
+### How it works
+
+A file watcher (debounced at 2 seconds) monitors the `.starpod/` directory. On change, it reloads both config files with the same layering logic as startup, then atomically swaps the config in both the agent and gateway. The next chat request uses the new settings.
 
 ## Config Layering
 

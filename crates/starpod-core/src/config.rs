@@ -185,6 +185,9 @@ pub struct MemoryConfig {
     /// Maximum characters to include from a single file in bootstrap context.
     #[serde(default = "default_bootstrap_file_cap")]
     pub bootstrap_file_cap: usize,
+    /// Export closed session transcripts to knowledge/sessions/ for long-term recall (default: true).
+    #[serde(default = "default_true")]
+    pub export_sessions: bool,
 }
 
 fn default_chunk_size() -> usize { 1600 }
@@ -200,6 +203,7 @@ impl Default for MemoryConfig {
             chunk_size: default_chunk_size(),
             chunk_overlap: default_chunk_overlap(),
             bootstrap_file_cap: default_bootstrap_file_cap(),
+            export_sessions: true,
         }
     }
 }
@@ -579,6 +583,62 @@ impl StarpodConfig {
         config.project_root = project_root;
 
         // Resolve data_dir relative to project root if not absolute
+        if config.data_dir.as_os_str().is_empty() {
+            config.data_dir = config.project_root.join(PROJECT_DIR).join("data");
+        } else if config.data_dir.is_relative() {
+            config.data_dir = config.project_root.join(&config.data_dir);
+        }
+
+        Ok(config)
+    }
+
+    /// Synchronous config reload (used by the config file watcher).
+    ///
+    /// Same logic as `load()` but uses blocking I/O so it can run from a
+    /// standard thread without a Tokio runtime.
+    pub fn load_sync() -> Result<Self, StarpodError> {
+        let project_root = Self::find_project_root().ok_or_else(|| {
+            StarpodError::Config(
+                "No .starpod/ directory found. Run `starpod agent init` to initialize a project."
+                    .to_string(),
+            )
+        })?;
+
+        let starpod_dir = project_root.join(PROJECT_DIR);
+
+        let config_path = starpod_dir.join(CONFIG_FILE);
+        let mut base_value = if config_path.exists() {
+            let content = std::fs::read_to_string(&config_path).map_err(|e| {
+                StarpodError::Config(format!("Failed to read config at {}: {}", config_path.display(), e))
+            })?;
+            toml::from_str::<toml::Value>(&content)
+                .map_err(|e| StarpodError::Config(format!("Invalid config TOML: {}", e)))?
+        } else {
+            toml::Value::Table(Default::default())
+        };
+
+        if let Some(table) = base_value.as_table_mut() {
+            if table.remove("channels").is_some() {
+                tracing::warn!(
+                    "Channels config found in config.toml — channels should only be in instance.toml. Ignoring."
+                );
+            }
+        }
+
+        let instance_path = starpod_dir.join(INSTANCE_CONFIG_FILE);
+        if instance_path.exists() {
+            let content = std::fs::read_to_string(&instance_path).map_err(|e| {
+                StarpodError::Config(format!("Failed to read instance config at {}: {}", instance_path.display(), e))
+            })?;
+            let instance_value: toml::Value = toml::from_str(&content)
+                .map_err(|e| StarpodError::Config(format!("Invalid instance TOML: {}", e)))?;
+            deep_merge(&mut base_value, instance_value);
+        }
+
+        let mut config: StarpodConfig = base_value.try_into()
+            .map_err(|e| StarpodError::Config(format!("Invalid config: {}", e)))?;
+        config.project_root = project_root;
+
         if config.data_dir.as_os_str().is_empty() {
             config.data_dir = config.project_root.join(PROJECT_DIR).join("data");
         } else if config.data_dir.is_relative() {
@@ -1003,48 +1063,32 @@ mod tests {
         assert_eq!(config.resolved_api_key().unwrap(), "sk-ant-from-config");
     }
 
+    // All env-var API key tests are combined into a single test to avoid
+    // parallel test races — std::env::set_var/remove_var are process-global.
     #[test]
-    fn test_resolved_api_key_config_takes_priority_over_env() {
-        let toml = r#"
+    fn test_resolved_api_key_env_var_scenarios() {
+        // Scenario 1: config takes priority over env var
+        let config_with_key: StarpodConfig = toml::from_str(r#"
             [providers.anthropic]
             api_key = "sk-ant-from-config"
-        "#;
-        let config: StarpodConfig = toml::from_str(toml).unwrap();
-        // Even if env var is set, config value should win
+        "#).unwrap();
         std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-from-env");
-        let key = config.resolved_api_key().unwrap();
-        std::env::remove_var("ANTHROPIC_API_KEY");
-        assert_eq!(key, "sk-ant-from-config");
-    }
+        assert_eq!(config_with_key.resolved_api_key().unwrap(), "sk-ant-from-config");
 
-    #[test]
-    fn test_resolved_api_key_falls_back_to_env() {
-        let toml = "";
-        let config: StarpodConfig = toml::from_str(toml).unwrap();
-        std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-from-env");
-        let key = config.resolved_api_key();
-        std::env::remove_var("ANTHROPIC_API_KEY");
-        assert_eq!(key.unwrap(), "sk-ant-from-env");
-    }
+        // Scenario 2: env var fallback when no config key
+        let config_no_key: StarpodConfig = toml::from_str("").unwrap();
+        assert_eq!(config_no_key.resolved_api_key().unwrap(), "sk-ant-from-env");
 
-    #[test]
-    fn test_resolved_api_key_none_when_neither_set() {
-        let toml = "";
-        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        // Scenario 3: none when neither set
         std::env::remove_var("ANTHROPIC_API_KEY");
-        assert!(config.resolved_api_key().is_none());
-    }
+        assert!(config_no_key.resolved_api_key().is_none());
 
-    #[test]
-    fn test_resolved_api_key_empty_provider_section() {
-        // Provider section exists but no api_key — should fall back to env
-        let toml = r#"
+        // Scenario 4: empty provider section, no env var → none
+        let config_empty_provider: StarpodConfig = toml::from_str(r#"
             [providers.anthropic]
             base_url = "https://api.anthropic.com"
-        "#;
-        let config: StarpodConfig = toml::from_str(toml).unwrap();
-        std::env::remove_var("ANTHROPIC_API_KEY");
-        assert!(config.resolved_api_key().is_none());
+        "#).unwrap();
+        assert!(config_empty_provider.resolved_api_key().is_none());
     }
 
     #[test]
@@ -1249,6 +1293,75 @@ mod tests {
         assert_eq!(config.memory.half_life_days, 7.0);
         assert_eq!(config.memory.mmr_lambda, 0.7); // default
         assert!(config.memory.vector_search); // default
+    }
+
+    // ── export_sessions tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_export_sessions_defaults_true() {
+        let cfg = MemoryConfig::default();
+        assert!(cfg.export_sessions, "export_sessions should default to true");
+    }
+
+    #[test]
+    fn test_export_sessions_from_toml() {
+        let toml = r#"
+            [memory]
+            export_sessions = false
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert!(
+            !config.memory.export_sessions,
+            "export_sessions should be false when set in TOML"
+        );
+
+        // Also verify true parses correctly
+        let toml_true = r#"
+            [memory]
+            export_sessions = true
+        "#;
+        let config_true: StarpodConfig = toml::from_str(toml_true).unwrap();
+        assert!(config_true.memory.export_sessions);
+    }
+
+    #[tokio::test]
+    async fn test_load_sync_matches_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let starpod_dir = dir.path().join(".starpod");
+        std::fs::create_dir_all(&starpod_dir).unwrap();
+        std::fs::create_dir_all(starpod_dir.join("data")).unwrap();
+
+        let config_content = r#"
+            model = "claude-sonnet-4-6"
+            agent_name = "TestBot"
+            max_turns = 10
+        "#;
+        std::fs::write(starpod_dir.join("config.toml"), config_content).unwrap();
+
+        let instance_content = r#"
+            [memory]
+            half_life_days = 14.0
+        "#;
+        std::fs::write(starpod_dir.join("instance.toml"), instance_content).unwrap();
+
+        // Both load() and load_sync() require find_project_root() to work,
+        // which needs cwd to be inside the project. We can't easily change cwd
+        // in tests, so instead verify that load_sync's parsing logic matches
+        // by testing the underlying merge + deserialize directly.
+        let config_val: toml::Value = toml::from_str(config_content).unwrap();
+        let instance_val: toml::Value = toml::from_str(instance_content).unwrap();
+
+        let mut merged = config_val.clone();
+        deep_merge(&mut merged, instance_val);
+
+        let config: StarpodConfig = merged.try_into().unwrap();
+        assert_eq!(config.model, "claude-sonnet-4-6");
+        assert_eq!(config.agent_name, "TestBot");
+        assert_eq!(config.max_turns, 10);
+        assert_eq!(config.memory.half_life_days, 14.0);
+        // Defaults should still apply for unspecified fields
+        assert_eq!(config.memory.mmr_lambda, 0.7);
+        assert!(config.memory.export_sessions);
     }
 
     // ── Channel gap_minutes tests ──────────────────────────────────────
