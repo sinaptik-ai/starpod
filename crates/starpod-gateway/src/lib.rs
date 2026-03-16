@@ -133,6 +133,10 @@ pub async fn serve_with_agent(
     let _scheduler_handle = agent.start_scheduler(notifier);
     info!("Cron scheduler started");
 
+    // Run lifecycle prompts (BOOTSTRAP.md on first init, BOOT.md on every start)
+    let _lifecycle_handle = agent.run_lifecycle();
+    info!("Lifecycle prompts dispatched");
+
     let api_key = std::env::var("STARPOD_API_KEY").ok();
 
     let state = Arc::new(AppState {

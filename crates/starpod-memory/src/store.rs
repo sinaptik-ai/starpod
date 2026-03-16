@@ -126,15 +126,25 @@ impl MemoryStore {
     }
 
     /// Seed default markdown files on first run.
-    fn seed_defaults(&self) -> Result<()> {
-        let files = [
+    ///
+    /// Returns `true` if this is a fresh data directory (core files didn't exist yet).
+    fn seed_defaults(&self) -> Result<bool> {
+        let core_files = [
             ("SOUL.md", defaults::DEFAULT_SOUL),
             ("USER.md", defaults::DEFAULT_USER),
             ("MEMORY.md", defaults::DEFAULT_MEMORY),
-            ("HEARTBEAT.md", defaults::DEFAULT_HEARTBEAT),
         ];
 
-        for (name, content) in &files {
+        let lifecycle_files = [
+            ("HEARTBEAT.md", defaults::DEFAULT_HEARTBEAT),
+            ("BOOT.md", defaults::DEFAULT_BOOT),
+            ("BOOTSTRAP.md", defaults::DEFAULT_BOOTSTRAP),
+        ];
+
+        // Track whether core files already existed (indicates fresh init).
+        let fresh = !self.data_dir.join("SOUL.md").exists();
+
+        for (name, content) in core_files.iter().chain(lifecycle_files.iter()) {
             let path = self.data_dir.join(name);
             if !path.exists() {
                 debug!(file = %name, "Seeding default file");
@@ -142,6 +152,22 @@ impl MemoryStore {
             }
         }
 
+        Ok(fresh)
+    }
+
+    /// Returns `true` if BOOTSTRAP.md exists and has non-empty content.
+    pub fn has_bootstrap(&self) -> bool {
+        self.read_file("BOOTSTRAP.md")
+            .map(|c| !c.trim().is_empty())
+            .unwrap_or(false)
+    }
+
+    /// Delete BOOTSTRAP.md (called after successful bootstrap execution).
+    pub fn clear_bootstrap(&self) -> Result<()> {
+        let path = self.data_dir.join("BOOTSTRAP.md");
+        if path.exists() {
+            std::fs::write(&path, "")?;
+        }
         Ok(())
     }
 

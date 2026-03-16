@@ -32,13 +32,13 @@
 - [x] **Instance health monitoring** — `HealthMonitor` with configurable heartbeat polling, auto-restart on stale heartbeat, status change callbacks. `starpod instance health <id>` CLI command + `GET /api/instances/:id/health` gateway route.
 
 ### Agent Capabilities
-- [ ] **Conversation compaction** — Summarize/compress older messages when approaching context window limits. Preserve system prompt + recent turns, store full transcript on disk via `starpod-session`.
+- [x] **Conversation compaction** — Summarize/compress older messages when approaching context window limits. Full implementation in `agent-sdk/src/compact.rs` with tool-cycle-aware splitting, configurable `compaction_model`, integrated into agent query loop.
 - [ ] **Conversation history / context carry-over** — Load previous session context into new sessions for continuity
 - [x] **Group followup messages** — Batch rapid user messages into a single agent turn. Configurable via `followup_mode` (`"inject"` or `"queue"`)
 - [x] **Multi-provider implementation** — Trait-based `LlmProvider` abstraction with `AnthropicProvider`, `OpenAiProvider` (also Groq, DeepSeek, OpenRouter, Ollama), and `GeminiProvider`. Runtime switching via `config.provider`. Per-provider cost rates, capabilities, and streaming support.
-- [ ] **Telegram markdown formatting** — Convert agent response markdown to Telegram MarkdownV2 (escape special chars, map code blocks, bold, italic, links). Currently sent as plain text, losing all formatting.
+- [x] **Telegram markdown formatting** — Convert agent response markdown to Telegram MarkdownV2 (escape special chars, map code blocks, bold, italic, links). Uses `ParseMode::MarkdownV2` in starpod-telegram.
 - [x] **File attachments** — Image/file uploads in web UI (drag & drop, file picker) and Telegram (photos, documents). Images sent via Claude vision API; non-image files saved to `{data_dir}/downloads/`. 20 MB per-file limit. Claude auto-resizes large images.
-- [ ] **MCP (Model Context Protocol) support** — Allow connecting external MCP servers as tool providers
+- [ ] **MCP (Model Context Protocol) support** — Allow connecting external MCP servers as tool providers. Config structs and builder plumbing exist in `agent-sdk/src/mcp/` but no runtime (no process spawning, connection management, or tool routing).
 - [ ] **Loop detection** — Detect repetitive no-progress tool patterns in the agent loop (same tool+params repeated, ping-pong alternation, identical polling outputs). Configurable warning/critical/circuit-breaker thresholds to prevent token waste. Inspired by OpenClaw's guardrail system.
 - [ ] **Structured exec approval flow** — Built-in `ask: off | on-miss | always` mode for Bash tool with command allowlists, beyond what hooks can do today. Provides a clear approval UX for shell command execution.
 - [ ] **Background process manager** — Dedicated tool to list, poll, log, and kill long-running background Bash sessions. Currently `run_in_background` fires and forgets; this would give the agent visibility into running processes.
@@ -61,5 +61,5 @@
 - [ ] **Settings panel** — Edit config, manage API keys, view usage from the UI
 - [x] **File upload** — Drag & drop / paperclip button, base64 over WS, 20 MB limit, preview thumbnails
 - [ ] **Downloads cleanup policy** — Optional config to auto-delete old downloads (e.g. `downloads_retention_days` in config.toml)
-- [ ] **Mobile responsive** — Better layout on small screens
+- [x] **Mobile responsive** — Media queries at 768px breakpoint, sidebar/preview as full-screen overlays on mobile, Tailwind responsive utilities, `100dvh` for mobile viewports.
 - [ ] **Markdown rendering** — Full markdown support (tables, lists, headings, etc.)

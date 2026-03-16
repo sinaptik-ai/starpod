@@ -50,6 +50,7 @@ export default defineConfig({
             { text: 'Sessions', link: '/concepts/sessions' },
             { text: 'Skills', link: '/concepts/skills' },
             { text: 'Cron & Scheduling', link: '/concepts/cron' },
+            { text: 'Lifecycle Prompts', link: '/concepts/heartbeat' },
             { text: 'Vault', link: '/concepts/vault' },
             { text: 'Agent Tools', link: '/concepts/tools' },
             { text: 'Instances', link: '/concepts/instances' },

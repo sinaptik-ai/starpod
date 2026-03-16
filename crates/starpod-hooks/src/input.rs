@@ -269,8 +269,12 @@ pub enum CompactTriggerType {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum SetupTrigger {
+    /// First-time initialization (BOOTSTRAP.md).
     Init,
+    /// Routine maintenance.
     Maintenance,
+    /// Server boot (BOOT.md) — fires on every server start.
+    Boot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

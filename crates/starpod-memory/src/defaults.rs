@@ -28,9 +28,16 @@ pub const DEFAULT_MEMORY: &str = r#"# Long-Term Memory
 No long-term memories recorded yet. This file will be updated as notable information is shared.
 "#;
 
-/// Default HEARTBEAT.md content (empty by default — heartbeat skips when empty).
-pub const DEFAULT_HEARTBEAT: &str = r#"# Heartbeat
+/// Default HEARTBEAT.md content (empty by default — heartbeat is disabled until the user adds instructions).
+pub const DEFAULT_HEARTBEAT: &str = "";
 
-Write instructions here for the agent to execute every 30 minutes.
-Leave this file empty to skip heartbeat execution.
-"#;
+/// Default BOOT.md content (empty by default — boot is disabled until the user adds instructions).
+///
+/// When non-empty, its content is sent as a prompt to the agent on every server start.
+pub const DEFAULT_BOOT: &str = "";
+
+/// Default BOOTSTRAP.md content (empty by default — bootstrap is disabled until the user adds instructions).
+///
+/// When non-empty, its content is sent as a prompt to the agent on first init only.
+/// The file is deleted after execution so it runs exactly once.
+pub const DEFAULT_BOOTSTRAP: &str = "";

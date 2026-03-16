@@ -82,6 +82,12 @@ starpod agent cron remove "morning-reminder"    # Remove a job
 starpod agent cron runs "morning-reminder" -l 10 # View run history
 ```
 
+## Lifecycle Prompts
+
+Starpod also includes **lifecycle prompts** — files that trigger agent behavior at key moments: `BOOTSTRAP.md` (first init), `BOOT.md` (every server start), and `HEARTBEAT.md` (every 30 minutes). The heartbeat is implemented as a reserved cron job, but unlike regular cron jobs it reads a holistic prompt from disk rather than running a discrete task.
+
+See [Lifecycle Prompts](/concepts/heartbeat) for full details.
+
 ## Timezone
 
 Cron expressions use the user's timezone from `config.toml`:

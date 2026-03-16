@@ -711,6 +711,16 @@ impl StarpodAgent {
         &self.config
     }
 
+    /// Run startup lifecycle prompts (boot + bootstrap) in the background.
+    ///
+    /// See [`run_lifecycle_prompts`] for details.
+    pub fn run_lifecycle(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+        let agent = Arc::clone(self);
+        tokio::spawn(async move {
+            run_lifecycle_prompts(&agent).await;
+        })
+    }
+
     /// Start the cron scheduler as a background task.
     ///
     /// The executor callback sends the job prompt through `chat()`.
@@ -775,6 +785,65 @@ impl StarpodAgent {
             scheduler = scheduler.with_notifier(n);
         }
         scheduler.start()
+    }
+}
+
+/// Run startup lifecycle prompts (boot + bootstrap).
+///
+/// Called once after the server starts and the scheduler is running.
+/// - **Boot** (`BOOT.md`): runs on every server start if non-empty.
+/// - **Bootstrap** (`BOOTSTRAP.md`): runs once on first init if non-empty,
+///   then the file is cleared so it never runs again.
+///
+/// Both fire the `Setup` hook event with the appropriate trigger so external
+/// hooks can also react.
+async fn run_lifecycle_prompts(agent: &Arc<StarpodAgent>) {
+    // --- Bootstrap (first-init only) ---
+    if agent.memory().has_bootstrap() {
+        info!("Running bootstrap (first-init lifecycle prompt)");
+        match agent.memory().read_file("BOOTSTRAP.md") {
+            Ok(prompt) if !prompt.trim().is_empty() => {
+                let msg = ChatMessage {
+                    text: prompt,
+                    user_id: Some("bootstrap".into()),
+                    channel_id: Some("main".into()),
+                    channel_session_key: Some("main".into()),
+                    attachments: Vec::new(),
+                };
+                match agent.chat(msg).await {
+                    Ok(resp) => {
+                        info!(response_len = resp.text.len(), "Bootstrap completed");
+                        // Clear BOOTSTRAP.md so it only runs once
+                        if let Err(e) = agent.memory().clear_bootstrap() {
+                            warn!(error = %e, "Failed to clear BOOTSTRAP.md after execution");
+                        }
+                    }
+                    Err(e) => warn!(error = %e, "Bootstrap prompt failed"),
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // --- Boot (every server start) ---
+    match agent.memory().read_file("BOOT.md") {
+        Ok(prompt) if !prompt.trim().is_empty() => {
+            info!("Running boot lifecycle prompt");
+            let msg = ChatMessage {
+                text: prompt,
+                user_id: Some("boot".into()),
+                channel_id: Some("main".into()),
+                channel_session_key: Some("main".into()),
+                attachments: Vec::new(),
+            };
+            match agent.chat(msg).await {
+                Ok(resp) => info!(response_len = resp.text.len(), "Boot completed"),
+                Err(e) => warn!(error = %e, "Boot prompt failed"),
+            }
+        }
+        _ => {
+            debug!("BOOT.md is empty or missing — skipping boot prompt");
+        }
     }
 }
 
