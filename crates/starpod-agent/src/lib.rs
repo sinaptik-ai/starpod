@@ -139,6 +139,7 @@ impl StarpodAgent {
 
     /// Convert chat attachments to agent-sdk query attachments.
     /// Images are passed through for vision; non-images get a text note instead.
+    /// Also includes the saved path for all attachments so the agent knows where to find them.
     fn build_query_attachments(
         attachments: &[Attachment],
         saved_paths: &[PathBuf],
@@ -147,25 +148,67 @@ impl StarpodAgent {
         let mut extra_text = String::new();
 
         for (i, att) in attachments.iter().enumerate() {
+            let path = saved_paths.get(i)
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "(save failed)".to_string());
+
             if att.is_image() {
                 query_atts.push(QueryAttachment {
                     file_name: att.file_name.clone(),
                     mime_type: att.mime_type.clone(),
                     base64_data: att.data.clone(),
                 });
-            } else {
-                // Non-image: tell Claude the file was saved
-                let path = saved_paths.get(i)
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "(save failed)".to_string());
+                // Still tell the agent where the image was saved on disk
                 extra_text.push_str(&format!(
-                    "\n[Attached file: {} ({}) saved to: {}]",
+                    "\n[Uploaded image: {} ({}) saved to: {}]",
+                    att.file_name, att.mime_type, path
+                ));
+            } else {
+                extra_text.push_str(&format!(
+                    "\n[Uploaded file: {} ({}) saved to: {}]",
                     att.file_name, att.mime_type, path
                 ));
             }
         }
 
         (query_atts, extra_text)
+    }
+
+    /// List files currently in the downloads directory (up to 20, most recent first).
+    async fn list_downloads_context(&self) -> String {
+        let dir = self.downloads_dir();
+        let mut entries = match tokio::fs::read_dir(&dir).await {
+            Ok(rd) => rd,
+            Err(_) => return String::new(),
+        };
+
+        let mut files: Vec<(String, u64)> = Vec::new();
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if let Ok(meta) = entry.metadata().await {
+                if meta.is_file() {
+                    let modified = meta.modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    files.push((entry.file_name().to_string_lossy().to_string(), modified));
+                }
+            }
+        }
+
+        if files.is_empty() {
+            return String::new();
+        }
+
+        // Sort by modified time descending (most recent first)
+        files.sort_by(|a, b| b.1.cmp(&a.1));
+        files.truncate(20);
+
+        let list: Vec<&str> = files.iter().map(|(name, _)| name.as_str()).collect();
+        format!(
+            "\n[Files already in downloads/: {}]",
+            list.join(", ")
+        )
     }
 
     /// Build the system prompt from bootstrap context + skill catalog + identity + user.
@@ -193,6 +236,8 @@ impl StarpodAgent {
              and MemoryWrite to persist new information there.\n\
              • The user's project files (code, documents, data) live in the project root directory ({project_root}). \
              Use Read, Glob, Grep, and Bash to explore and work with these files.\n\
+             • Files uploaded by the user (from any channel: Telegram, web, API) are saved to `{project_root}/downloads/`. \
+             When the user references a previously uploaded file, always check this directory first with Glob or Bash.\n\
              Never confuse the two: `.starpod/` is YOUR persistent brain; the project root is the USER's workspace.\n\
              You may ONLY access files within the project root and the `.starpod/` directory. \
              Do not read, write, or execute anything outside these boundaries.\n\
@@ -335,15 +380,15 @@ impl StarpodAgent {
         // Step 1: Resolve session via channel routing
         let (channel, key) = resolve_channel(&message);
         let gap = self.config.channel_gap_minutes(channel.as_str());
-        let session_id = match self.session_mgr.resolve_session(&channel, &key, gap).await? {
+        let (session_id, is_resuming) = match self.session_mgr.resolve_session(&channel, &key, gap).await? {
             SessionDecision::Continue(id) => {
                 debug!(session_id = %id, channel = %channel.as_str(), "Continuing existing session");
-                id
+                (id, true)
             }
             SessionDecision::New => {
                 let id = self.session_mgr.create_session(&channel, &key).await?;
                 debug!(session_id = %id, channel = %channel.as_str(), "Created new session");
-                id
+                (id, false)
             }
         };
         self.session_mgr.touch_session(&session_id).await?;
@@ -351,10 +396,16 @@ impl StarpodAgent {
 
         // Step 2: Save attachments to downloads/ and build query attachments
         let saved_paths = self.save_attachments(&message.attachments).await;
-        let (query_atts, extra_text) =
+        let (query_atts, mut extra_text) =
             Self::build_query_attachments(&message.attachments, &saved_paths);
 
-        // Append file info to prompt if there are non-image attachments
+        // When files are uploaded, also list existing downloads for context
+        if !message.attachments.is_empty() {
+            let dl_ctx = self.list_downloads_context().await;
+            extra_text.push_str(&dl_ctx);
+        }
+
+        // Append upload context to prompt
         let prompt = if extra_text.is_empty() {
             message.text.clone()
         } else {
@@ -374,7 +425,6 @@ impl StarpodAgent {
             .model(&self.config.model)
             .max_turns(self.config.max_turns)
             .max_tokens(self.config.max_tokens)
-            .session_id(session_id.clone())
             .context_budget(self.config.compaction.context_budget)
             .summary_max_tokens(self.config.compaction.summary_max_tokens)
             .min_keep_messages(self.config.compaction.min_keep_messages)
@@ -388,6 +438,13 @@ impl StarpodAgent {
                 self.config.data_dir.to_string_lossy().to_string(),
             ])
             .hook_dirs(vec![self.config.data_dir.join("hooks")]);
+
+        // Resume existing session to load conversation history, or set ID for new ones
+        if is_resuming {
+            builder = builder.resume(session_id.clone());
+        } else {
+            builder = builder.session_id(session_id.clone());
+        }
 
         if let Some(ref cm) = self.config.compaction_model {
             builder = builder.compaction_model(cm);
@@ -500,15 +557,15 @@ impl StarpodAgent {
     ) -> Result<(Query, String, mpsc::UnboundedSender<String>)> {
         let (channel, key) = resolve_channel(message);
         let gap = self.config.channel_gap_minutes(channel.as_str());
-        let session_id = match self.session_mgr.resolve_session(&channel, &key, gap).await? {
+        let (session_id, is_resuming) = match self.session_mgr.resolve_session(&channel, &key, gap).await? {
             SessionDecision::Continue(id) => {
                 debug!(session_id = %id, channel = %channel.as_str(), "Continuing existing session");
-                id
+                (id, true)
             }
             SessionDecision::New => {
                 let id = self.session_mgr.create_session(&channel, &key).await?;
                 debug!(session_id = %id, channel = %channel.as_str(), "Created new session");
-                id
+                (id, false)
             }
         };
         self.session_mgr.touch_session(&session_id).await?;
@@ -516,8 +573,14 @@ impl StarpodAgent {
 
         // Save attachments and build query attachments
         let saved_paths = self.save_attachments(&message.attachments).await;
-        let (query_atts, extra_text) =
+        let (query_atts, mut extra_text) =
             Self::build_query_attachments(&message.attachments, &saved_paths);
+
+        // When files are uploaded, also list existing downloads for context
+        if !message.attachments.is_empty() {
+            let dl_ctx = self.list_downloads_context().await;
+            extra_text.push_str(&dl_ctx);
+        }
 
         let prompt = if extra_text.is_empty() {
             message.text.clone()
@@ -538,7 +601,6 @@ impl StarpodAgent {
             .model(&self.config.model)
             .max_turns(self.config.max_turns)
             .max_tokens(self.config.max_tokens)
-            .session_id(session_id.clone())
             .context_budget(self.config.compaction.context_budget)
             .summary_max_tokens(self.config.compaction.summary_max_tokens)
             .min_keep_messages(self.config.compaction.min_keep_messages)
@@ -553,6 +615,13 @@ impl StarpodAgent {
                 self.config.data_dir.to_string_lossy().to_string(),
             ])
             .hook_dirs(vec![self.config.data_dir.join("hooks")]);
+
+        // Resume existing session to load conversation history, or set ID for new ones
+        if is_resuming {
+            builder = builder.resume(session_id.clone());
+        } else {
+            builder = builder.session_id(session_id.clone());
+        }
 
         if let Some(ref cm) = self.config.compaction_model {
             builder = builder.compaction_model(cm);
@@ -709,11 +778,11 @@ impl StarpodAgent {
     }
 }
 
-/// Default heartbeat prompt when HEARTBEAT.md doesn't exist yet.
-const DEFAULT_HEARTBEAT_PROMPT: &str =
-    "You are running a heartbeat check. Review HEARTBEAT.md in your memory store for any pending tasks or instructions. If empty, do nothing.";
-
 /// Ensure the `__heartbeat__` cron job exists.
+///
+/// The heartbeat is opt-in: the job is only created if HEARTBEAT.md exists
+/// and has content. If the user later clears HEARTBEAT.md, execution will
+/// be silently skipped (see `execute_heartbeat`).
 async fn ensure_heartbeat(
     agent: &StarpodAgent,
     store: &CronStore,
@@ -722,10 +791,14 @@ async fn ensure_heartbeat(
         return Ok(());
     }
 
-    // Read HEARTBEAT.md from memory if it exists, otherwise use default
+    // Only create the heartbeat job if HEARTBEAT.md has actual content.
+    // This makes the feature opt-in: no HEARTBEAT.md → no heartbeat job.
     let prompt = match agent.memory().read_file("HEARTBEAT.md") {
         Ok(content) if !content.trim().is_empty() => content,
-        _ => DEFAULT_HEARTBEAT_PROMPT.to_string(),
+        _ => {
+            debug!("HEARTBEAT.md is empty or missing — skipping heartbeat job creation");
+            return Ok(());
+        }
     };
 
     // Create heartbeat job: every 30 minutes, main session
@@ -1187,7 +1260,9 @@ mod tests {
         let (query_atts, extra_text) = StarpodAgent::build_query_attachments(&attachments, &saved);
         assert_eq!(query_atts.len(), 1);
         assert_eq!(query_atts[0].mime_type, "image/png");
-        assert!(extra_text.is_empty());
+        // Images now also get a save-path note in extra_text
+        assert!(extra_text.contains("photo.png"));
+        assert!(extra_text.contains("/tmp/photo.png"));
     }
 
     #[test]
@@ -1229,7 +1304,8 @@ mod tests {
         let (query_atts, extra_text) = StarpodAgent::build_query_attachments(&attachments, &saved);
         assert_eq!(query_atts.len(), 1);
         assert_eq!(query_atts[0].file_name, "photo.jpg");
+        // Both image and non-image files now get save-path notes
         assert!(extra_text.contains("report.pdf"));
-        assert!(!extra_text.contains("photo.jpg"));
+        assert!(extra_text.contains("photo.jpg"));
     }
 }
