@@ -110,10 +110,13 @@ fn format_skill_md(name: &str, description: &str, body: &str) -> String {
 
 /// Manages skills as markdown files on disk.
 ///
-/// Skills live at `<data_dir>/skills/<name>/SKILL.md` and follow the
+/// Skills live at `<skills_dir>/<name>/SKILL.md` and follow the
 /// [AgentSkills](https://agentskills.io) open format — each skill is a
 /// directory containing a `SKILL.md` file with YAML frontmatter
 /// (`name`, `description`) and a markdown body with instructions.
+///
+/// In workspace mode, `skills_dir` is `<workspace>/skills/` (shared across agents).
+/// In single-agent mode, it's `.starpod/skills/`.
 ///
 /// # Progressive disclosure
 ///
@@ -147,14 +150,30 @@ fn format_skill_md(name: &str, description: &str, body: &str) -> String {
 /// ```
 pub struct SkillStore {
     skills_dir: PathBuf,
+    /// Optional filter: when set, only skills whose names appear here are visible.
+    filter: Option<Vec<String>>,
 }
 
 impl SkillStore {
-    /// Create a new SkillStore rooted at `<data_dir>/skills/`.
-    pub fn new(data_dir: &Path) -> Result<Self> {
-        let skills_dir = data_dir.join("skills");
-        std::fs::create_dir_all(&skills_dir)?;
-        Ok(Self { skills_dir })
+    /// Create a new SkillStore from a skills directory.
+    pub fn new(skills_dir: &Path) -> Result<Self> {
+        std::fs::create_dir_all(skills_dir)?;
+        Ok(Self {
+            skills_dir: skills_dir.to_path_buf(),
+            filter: None,
+        })
+    }
+
+    /// Set an optional skill filter. When set, `list()`, `skill_catalog()`, and
+    /// `skill_names()` only return skills whose names are in `names`.
+    /// An empty list means "all skills" (no filtering).
+    pub fn with_filter(mut self, names: Vec<String>) -> Self {
+        if names.is_empty() {
+            self.filter = None;
+        } else {
+            self.filter = Some(names);
+        }
+        self
     }
 
     /// Load a single skill from a directory entry.
@@ -227,6 +246,11 @@ impl SkillStore {
                     }
                 }
             }
+        }
+
+        // Apply filter if set
+        if let Some(ref allowed) = self.filter {
+            skills.retain(|s| allowed.iter().any(|a| a == &s.name));
         }
 
         skills.sort_by(|a, b| a.name.cmp(&b.name));
@@ -564,7 +588,7 @@ mod tests {
         store.create("my-skill", "A useful skill.", "Step 1: Do this.\nStep 2: Do that.").unwrap();
 
         // Verify the file on disk is a valid AgentSkills SKILL.md
-        let path = tmp.path().join("skills").join("my-skill").join("SKILL.md");
+        let path = tmp.path().join("my-skill").join("SKILL.md");
         let raw = std::fs::read_to_string(&path).unwrap();
         assert!(raw.starts_with("---\n"));
         assert!(raw.contains("name: my-skill"));
@@ -584,7 +608,7 @@ mod tests {
         assert_eq!(skill.description, "Does useful things.");
         assert_eq!(skill.body.trim(), "Do something useful.");
         assert!(!skill.created_at.is_empty());
-        assert!(skill.skill_dir.ends_with("skills/my-skill"));
+        assert!(skill.skill_dir.ends_with("my-skill"));
 
         assert!(store.get("nonexistent").unwrap().is_none());
     }
@@ -613,7 +637,7 @@ mod tests {
         assert!(store.get("my-skill").unwrap().is_none());
         assert_eq!(store.list().unwrap().len(), 0);
         // Directory should be gone
-        assert!(!tmp.path().join("skills").join("my-skill").exists());
+        assert!(!tmp.path().join("my-skill").exists());
     }
 
     #[test]
@@ -657,14 +681,14 @@ mod tests {
         let store = SkillStore::new(tmp.path()).unwrap();
 
         // Dir without SKILL.md — should be ignored
-        std::fs::create_dir_all(tmp.path().join("skills").join("not-a-skill")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("not-a-skill")).unwrap();
         std::fs::write(
-            tmp.path().join("skills").join("not-a-skill").join("README.md"),
+            tmp.path().join("not-a-skill").join("README.md"),
             "not a skill",
         ).unwrap();
 
         // Regular file in skills dir — should be ignored
-        std::fs::write(tmp.path().join("skills").join("stray-file.txt"), "stray").unwrap();
+        std::fs::write(tmp.path().join("stray-file.txt"), "stray").unwrap();
 
         store.create("real-skill", "A real skill.", "Content.").unwrap();
 
@@ -814,7 +838,7 @@ mod tests {
         store.create("my-skill", "A skill.", "Instructions.").unwrap();
 
         // Create resource files in all three standard directories
-        let skill_dir = tmp.path().join("skills").join("my-skill");
+        let skill_dir = tmp.path().join("my-skill");
         std::fs::create_dir_all(skill_dir.join("scripts")).unwrap();
         std::fs::write(skill_dir.join("scripts").join("run.py"), "print('hi')").unwrap();
         std::fs::create_dir_all(skill_dir.join("references")).unwrap();
@@ -838,7 +862,7 @@ mod tests {
         let store = SkillStore::new(tmp.path()).unwrap();
 
         // Manually create a skill without frontmatter (old format)
-        let skill_dir = tmp.path().join("skills").join("old-skill");
+        let skill_dir = tmp.path().join("old-skill");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(skill_dir.join("SKILL.md"), "Just plain instructions.").unwrap();
 
@@ -857,7 +881,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        let skill_dir = tmp.path().join("skills").join("empty-skill");
+        let skill_dir = tmp.path().join("empty-skill");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(skill_dir.join("SKILL.md"), "").unwrap();
 
@@ -873,7 +897,7 @@ mod tests {
         let store = SkillStore::new(tmp.path()).unwrap();
 
         let long_line = "x".repeat(200);
-        let skill_dir = tmp.path().join("skills").join("long-desc");
+        let skill_dir = tmp.path().join("long-desc");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(skill_dir.join("SKILL.md"), &long_line).unwrap();
 
@@ -910,8 +934,75 @@ mod tests {
         let store = SkillStore::new(tmp.path()).unwrap();
         store.create("bare", "Bare skill.", "No resources.").unwrap();
 
-        let skill_dir = tmp.path().join("skills").join("bare");
+        let skill_dir = tmp.path().join("bare");
         assert!(list_skill_resources(&skill_dir).is_empty());
+    }
+
+    // ── Filter ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_filter_restricts_list() {
+        let tmp = TempDir::new().unwrap();
+        let store = SkillStore::new(tmp.path()).unwrap();
+
+        store.create("alpha", "A.", "a").unwrap();
+        store.create("beta", "B.", "b").unwrap();
+        store.create("gamma", "G.", "g").unwrap();
+
+        let filtered = SkillStore::new(tmp.path())
+            .unwrap()
+            .with_filter(vec!["alpha".into(), "gamma".into()]);
+
+        let skills = filtered.list().unwrap();
+        assert_eq!(skills.len(), 2);
+        assert_eq!(skills[0].name, "alpha");
+        assert_eq!(skills[1].name, "gamma");
+    }
+
+    #[test]
+    fn test_filter_affects_catalog() {
+        let tmp = TempDir::new().unwrap();
+        let store = SkillStore::new(tmp.path()).unwrap();
+
+        store.create("alpha", "A.", "a").unwrap();
+        store.create("beta", "B.", "b").unwrap();
+
+        let filtered = SkillStore::new(tmp.path())
+            .unwrap()
+            .with_filter(vec!["beta".into()]);
+
+        let catalog = filtered.skill_catalog().unwrap();
+        assert!(catalog.contains("beta"));
+        assert!(!catalog.contains("alpha"));
+    }
+
+    #[test]
+    fn test_filter_affects_skill_names() {
+        let tmp = TempDir::new().unwrap();
+        let store = SkillStore::new(tmp.path()).unwrap();
+
+        store.create("alpha", "A.", "a").unwrap();
+        store.create("beta", "B.", "b").unwrap();
+
+        let filtered = SkillStore::new(tmp.path())
+            .unwrap()
+            .with_filter(vec!["alpha".into()]);
+
+        let names = filtered.skill_names().unwrap();
+        assert_eq!(names, vec!["alpha"]);
+    }
+
+    #[test]
+    fn test_empty_filter_means_all() {
+        let tmp = TempDir::new().unwrap();
+        let store = SkillStore::new(tmp.path())
+            .unwrap()
+            .with_filter(vec![]);
+
+        store.create("alpha", "A.", "a").unwrap();
+        store.create("beta", "B.", "b").unwrap();
+
+        assert_eq!(store.list().unwrap().len(), 2);
     }
 
     #[test]
@@ -920,7 +1011,7 @@ mod tests {
         let store = SkillStore::new(tmp.path()).unwrap();
         store.create("res", "Has resources.", "Content.").unwrap();
 
-        let skill_dir = tmp.path().join("skills").join("res");
+        let skill_dir = tmp.path().join("res");
         std::fs::create_dir_all(skill_dir.join("scripts")).unwrap();
         std::fs::write(skill_dir.join("scripts").join("z.sh"), "").unwrap();
         std::fs::write(skill_dir.join("scripts").join("a.py"), "").unwrap();

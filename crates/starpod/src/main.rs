@@ -10,7 +10,10 @@ use tracing_subscriber::EnvFilter;
 
 use agent_sdk::{ContentBlock, Message};
 use starpod_agent::StarpodAgent;
-use starpod_core::{ChatMessage, StarpodConfig};
+use starpod_core::{
+    ChatMessage, StarpodConfig, ResolvedPaths,
+    detect_mode, load_agent_config,
+};
 use starpod_instances::InstanceClient;
 
 #[derive(Parser)]
@@ -22,16 +25,94 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Agent management — init, serve, chat, repl.
+    /// Initialize a new workspace in the current directory.
+    Init {
+        /// Skip the interactive wizard and use defaults.
+        #[arg(long)]
+        default: bool,
+    },
+
+    /// Agent management — create new agents, list existing ones.
     Agent {
         #[command(subcommand)]
         action: AgentCommand,
     },
 
-    /// Remote instance management — create, list, kill, pause, restart, logs, ssh, health.
+    /// Start the gateway HTTP/WS server (+ Telegram bot if configured).
+    Serve {
+        /// Agent name (required in workspace mode, optional in single-agent).
+        #[arg(short, long)]
+        agent: Option<String>,
+    },
+
+    /// Send a one-shot chat message.
+    Chat {
+        /// Agent name.
+        #[arg(short, long)]
+        agent: Option<String>,
+        /// The message to send.
+        message: String,
+    },
+
+    /// Start an interactive REPL session.
+    Repl {
+        /// Agent name.
+        #[arg(short, long)]
+        agent: Option<String>,
+    },
+
+    /// Memory management commands.
+    Memory {
+        /// Agent name.
+        #[arg(short, long)]
+        agent: Option<String>,
+        #[command(subcommand)]
+        action: MemoryAction,
+    },
+
+    /// Vault credential management.
+    Vault {
+        /// Agent name.
+        #[arg(short, long)]
+        agent: Option<String>,
+        #[command(subcommand)]
+        action: VaultAction,
+    },
+
+    /// Session management.
+    Sessions {
+        /// Agent name.
+        #[arg(short, long)]
+        agent: Option<String>,
+        #[command(subcommand)]
+        action: SessionAction,
+    },
+
+    /// Skill management.
+    Skill {
+        #[command(subcommand)]
+        action: SkillAction,
+    },
+
+    /// Cron job management.
+    Cron {
+        /// Agent name.
+        #[arg(short, long)]
+        agent: Option<String>,
+        #[command(subcommand)]
+        action: CronAction,
+    },
+
+    /// Remote instance management.
     Instance {
         #[command(subcommand)]
         action: InstanceCommand,
+    },
+
+    /// Deploy stub (future).
+    Deploy {
+        /// Agent name.
+        agent_name: String,
     },
 }
 
@@ -39,76 +120,25 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum AgentCommand {
-    /// Initialize a new Starpod project in the current directory.
-    Init {
+    /// Create a new agent in the workspace.
+    New {
+        /// Agent name (lowercase, hyphens).
+        name: String,
         /// Skip the interactive wizard and use defaults.
-        #[arg(long, alias = "skip-onboarding")]
+        #[arg(long)]
         default: bool,
-
-        /// Your name (used in conversations).
-        #[arg(long)]
-        name: Option<String>,
-
-        /// IANA timezone (e.g. "Europe/Rome"). Auto-detected if omitted.
-        #[arg(long)]
-        timezone: Option<String>,
-
         /// Agent display name.
-        #[arg(long, default_value = "Aster")]
-        agent_name: String,
-
+        #[arg(long)]
+        agent_name: Option<String>,
         /// Agent personality text.
         #[arg(long)]
         soul: Option<String>,
-
         /// Claude model to use.
         #[arg(long, default_value = "claude-sonnet-4-6")]
         model: String,
     },
-
-    /// Start the gateway HTTP/WS server (+ Telegram bot if configured).
-    Serve,
-
-    /// Send a one-shot chat message.
-    Chat {
-        /// The message to send.
-        message: String,
-    },
-
-    /// Start an interactive REPL session.
-    Repl,
-
-    // ── Utility subcommands ──
-
-    /// Memory management commands.
-    Memory {
-        #[command(subcommand)]
-        action: MemoryAction,
-    },
-
-    /// Vault credential management.
-    Vault {
-        #[command(subcommand)]
-        action: VaultAction,
-    },
-
-    /// Session management.
-    Sessions {
-        #[command(subcommand)]
-        action: SessionAction,
-    },
-
-    /// Skill management.
-    Skills {
-        #[command(subcommand)]
-        action: SkillAction,
-    },
-
-    /// Cron job management.
-    Cron {
-        #[command(subcommand)]
-        action: CronAction,
-    },
+    /// List agents in the workspace.
+    List,
 }
 
 // ── Instance subcommands ────────────────────────────────────────────────────
@@ -532,6 +562,21 @@ fn print_result(result_text: &str, result_msg: &agent_sdk::ResultMessage, start:
     print_separator();
 }
 
+// ── Agent resolution helper ─────────────────────────────────────────────
+
+/// Resolve mode, paths, config, and build agent from an optional agent name flag.
+/// This is the standard flow for all commands that need an agent.
+async fn resolve_agent(
+    agent_name: Option<String>,
+) -> anyhow::Result<(StarpodAgent, StarpodConfig, ResolvedPaths)> {
+    let mode = detect_mode(agent_name.as_deref())?;
+    let paths = ResolvedPaths::resolve(&mode)?;
+    let agent_config = load_agent_config(&paths)?;
+    let starpod_config = agent_config.clone().into_starpod_config(&paths);
+    let agent = StarpodAgent::with_paths(agent_config, paths.clone()).await?;
+    Ok((agent, starpod_config, paths))
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -545,398 +590,521 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        // ── Agent commands ─────────────────────────────────────────────
+        // ── Init: scaffold a new workspace ────────────────────────────
+        Commands::Init { default: _ } => {
+            let cwd = std::env::current_dir()?;
+
+            if cwd.join("starpod.toml").exists() {
+                eprintln!(
+                    "  {} Already initialized: {} exists.",
+                    "✗".red().bold(),
+                    "starpod.toml".bright_white()
+                );
+                std::process::exit(1);
+            }
+
+            // Create workspace scaffold
+            tokio::fs::write(
+                cwd.join("starpod.toml"),
+                onboarding::generate_workspace_config(),
+            ).await?;
+            tokio::fs::create_dir_all(cwd.join("agents")).await?;
+            tokio::fs::create_dir_all(cwd.join("skills")).await?;
+            tokio::fs::write(cwd.join(".env"), "# ANTHROPIC_API_KEY=sk-ant-...\n").await?;
+
+            // Add .env to .gitignore if not already there
+            let gitignore_path = cwd.join(".gitignore");
+            let gitignore_content = if gitignore_path.exists() {
+                let existing = tokio::fs::read_to_string(&gitignore_path).await?;
+                if existing.contains(".env") {
+                    existing
+                } else {
+                    format!("{}\n.env\n*/data/\n", existing)
+                }
+            } else {
+                ".env\n*/data/\n".to_string()
+            };
+            tokio::fs::write(&gitignore_path, gitignore_content).await?;
+
+            println!();
+            println!(
+                "  {} Initialized Starpod workspace in {}",
+                "✓".green().bold(),
+                cwd.display()
+            );
+            println!(
+                "  {} Edit {} for workspace defaults.",
+                "→".dimmed(),
+                "starpod.toml".bright_white()
+            );
+            println!(
+                "  {} Put secrets in {}.",
+                "→".dimmed(),
+                ".env".bright_white()
+            );
+            println!(
+                "  {} Run {} to create your first agent.",
+                "→".dimmed(),
+                "starpod agent new <name>".bright_white()
+            );
+            println!();
+        }
+
+        // ── Agent management ──────────────────────────────────────────
         Commands::Agent { action } => match action {
-            AgentCommand::Init {
-                default,
+            AgentCommand::New {
                 name,
-                timezone,
+                default: _use_default,
                 agent_name,
                 soul,
                 model,
             } => {
                 let cwd = std::env::current_dir()?;
 
-                // Check if already initialized — show a friendly error
-                if cwd.join(".starpod").exists() {
+                // Find workspace root
+                let mut workspace_root = None;
+                let mut dir = cwd.clone();
+                loop {
+                    if dir.join("starpod.toml").is_file() {
+                        workspace_root = Some(dir);
+                        break;
+                    }
+                    if !dir.pop() { break; }
+                }
+
+                let root = workspace_root.ok_or_else(|| {
+                    anyhow::anyhow!("No starpod.toml found. Run `starpod init` first.")
+                })?;
+
+                let agent_dir = root.join("agents").join(&name);
+                if agent_dir.exists() {
                     eprintln!(
-                        "  {} Already initialized: {} exists.",
+                        "  {} Agent '{}' already exists at {}.",
                         "✗".red().bold(),
-                        ".starpod/".bright_white()
-                    );
-                    eprintln!(
-                        "  {} Edit {} to reconfigure.",
-                        "→".dimmed(),
-                        ".starpod/config.toml".bright_white()
+                        name,
+                        agent_dir.display()
                     );
                     std::process::exit(1);
                 }
 
-                // Check if any CLI params were explicitly provided
-                let has_cli_params = name.is_some()
-                    || timezone.is_some()
-                    || agent_name != "Aster"
-                    || soul.is_some()
-                    || model != "claude-sonnet-4-6";
+                // Create agent scaffold
+                let data_dir = agent_dir.join("data");
+                let memory_dir = agent_dir.join("memory");
+                let knowledge_dir = agent_dir.join("knowledge");
+                tokio::fs::create_dir_all(&data_dir).await?;
+                tokio::fs::create_dir_all(&memory_dir).await?;
+                tokio::fs::create_dir_all(&knowledge_dir).await?;
 
-                let (config_content, instance_content, onboarding_result) = if default || has_cli_params {
-                    // Non-interactive: build from CLI args
-                    let tz = timezone.or_else(onboarding::detect_system_timezone);
-                    let result = onboarding::OnboardingResult {
-                        user_name: name,
-                        timezone: tz,
-                        agent_name: if agent_name == "Aster" {
-                            None
-                        } else {
-                            Some(agent_name)
-                        },
-                        agent_soul: soul,
-                        telegram_token: None,
-                        telegram_user_id: None,
-                        provider: "anthropic".to_string(),
-                        model,
-                    };
-                    let cfg = onboarding::generate_config(&result);
-                    let inst = onboarding::generate_instance_config(&result);
-                    (Some(cfg), Some(inst), Some(result))
+                // Generate agent.toml
+                let display_name = agent_name.as_deref().unwrap_or("Aster");
+                let agent_toml = format!(
+                    "# Agent configuration for {}\n\
+                     agent_name = \"{}\"\n\
+                     model = \"{}\"\n\
+                     # skills = []  # Empty = all workspace skills\n",
+                    name,
+                    display_name,
+                    model,
+                );
+                tokio::fs::write(agent_dir.join("agent.toml"), agent_toml).await?;
+
+                // Generate SOUL.md
+                let soul_content = if let Some(ref soul_text) = soul {
+                    format!(
+                        "# Soul\n\nYou are {}, a personal AI assistant. {}\n",
+                        display_name, soul_text
+                    )
                 } else {
-                    // Interactive onboarding wizard
-                    match onboarding::run() {
-                        Ok(result) => {
-                            let cfg = onboarding::generate_config(&result);
-                            let inst = onboarding::generate_instance_config(&result);
-                            (Some(cfg), Some(inst), Some(result))
-                        }
-                        Err(_) => {
-                            println!(
-                                "\n  {} Using default configuration.",
-                                "→".dimmed()
-                            );
-                            (None, None, None)
-                        }
-                    }
+                    format!(
+                        "# Soul\n\nYou are {}, a personal AI assistant. \
+                         You are helpful, direct, and thoughtful.\n",
+                        display_name
+                    )
                 };
+                tokio::fs::write(agent_dir.join("SOUL.md"), soul_content).await?;
 
-                StarpodConfig::init(&cwd, config_content.as_deref(), instance_content.as_deref()).await?;
-
-                // Write custom SOUL.md and USER.md if onboarding collected data
-                if let Some(ref result) = onboarding_result {
-                    let data_dir = cwd.join(".starpod").join("data");
-                    if let Some(soul_content) = onboarding::generate_soul_md(result) {
-                        tokio::fs::write(data_dir.join("SOUL.md"), soul_content).await?;
-                    }
-                    if let Some(user_content) = onboarding::generate_user_md(result) {
-                        tokio::fs::write(data_dir.join("USER.md"), user_content).await?;
-                    }
-                }
+                // Generate USER.md and MEMORY.md
+                tokio::fs::write(
+                    agent_dir.join("USER.md"),
+                    "# User Profile\n\n",
+                ).await?;
+                tokio::fs::write(
+                    agent_dir.join("MEMORY.md"),
+                    "# Memory Index\n\n",
+                ).await?;
 
                 println!();
                 println!(
-                    "  {} Initialized Starpod project in {}",
+                    "  {} Created agent '{}' at {}",
                     "✓".green().bold(),
-                    cwd.join(".starpod").display()
+                    name.bright_white(),
+                    agent_dir.display()
                 );
                 println!(
-                    "  {} Edit {} (shared) or {} (instance-specific).",
+                    "  {} Edit {} for agent-specific config.",
                     "→".dimmed(),
-                    ".starpod/config.toml".bright_white(),
-                    ".starpod/instance.toml".bright_white()
+                    agent_dir.join("agent.toml").display().to_string().bright_white()
                 );
                 println!(
-                    "  {} Run {} to start your agent.",
+                    "  {} Run {} to start.",
                     "→".dimmed(),
-                    "starpod agent serve".bright_white()
-                );
-                println!(
-                    "  {} Docs available at {} when serving.",
-                    "→".dimmed(),
-                    "/docs".bright_white()
+                    format!("starpod serve -a {}", name).bright_white()
                 );
                 println!();
             }
 
-            AgentCommand::Serve => {
-                let config = StarpodConfig::load().await?;
-                let addr = &config.server_addr;
-                let agent_name = config.agent_name.clone();
-                let agent = Arc::new(StarpodAgent::new(config.clone()).await?);
+            AgentCommand::List => {
+                let cwd = std::env::current_dir()?;
+                let mut workspace_root = None;
+                let mut dir = cwd.clone();
+                loop {
+                    if dir.join("starpod.toml").is_file() {
+                        workspace_root = Some(dir);
+                        break;
+                    }
+                    if !dir.pop() { break; }
+                }
 
-                // Start Telegram bot in background if token is configured
-                let telegram_token = config.resolved_telegram_token();
-                let telegram_allowed = config.resolved_telegram_allowed_user_ids();
-                let telegram_allowed_usernames = config.resolved_telegram_allowed_usernames();
+                let root = workspace_root.ok_or_else(|| {
+                    anyhow::anyhow!("No starpod.toml found. Run `starpod init` first.")
+                })?;
 
-                let telegram_active = telegram_token.is_some();
+                let agents_dir = root.join("agents");
+                if !agents_dir.is_dir() {
+                    println!("  No agents/ directory.");
+                    return Ok(());
+                }
 
-                // Build a cron notification sender for Telegram (if configured)
-                let cron_notifier: Option<starpod_cron::NotificationSender> =
-                    if let Some(ref token) = telegram_token {
-                        if !telegram_allowed.is_empty() {
+                let mut entries = tokio::fs::read_dir(&agents_dir).await?;
+                let mut agents = Vec::new();
+                while let Some(entry) = entries.next_entry().await? {
+                    if entry.path().is_dir() {
+                        agents.push(entry.file_name().to_string_lossy().to_string());
+                    }
+                }
+                agents.sort();
+
+                if agents.is_empty() {
+                    println!("  No agents found. Run {} to create one.", "starpod agent new <name>".bright_white());
+                } else {
+                    for name in &agents {
+                        let agent_toml = agents_dir.join(name).join("agent.toml");
+                        let has_config = agent_toml.is_file();
+                        let status = if has_config { "✓".green() } else { "?".yellow() };
+                        println!("  {} {}", status, name);
+                    }
+                }
+            }
+
+        },
+
+        // ── Serve ─────────────────────────────────────────────────────
+        Commands::Serve { agent: agent_name } => {
+            let (agent, config, paths) = resolve_agent(agent_name).await?;
+            let addr = config.server_addr.clone();
+            let display_name = config.agent_name.clone();
+            let agent = Arc::new(agent);
+
+            // Telegram setup
+            let telegram_token = config.resolved_telegram_token();
+            let telegram_allowed = config.resolved_telegram_allowed_user_ids();
+            let telegram_allowed_usernames = config.resolved_telegram_allowed_usernames();
+            let telegram_active = telegram_token.is_some();
+
+            let cron_notifier: Option<starpod_cron::NotificationSender> =
+                if let Some(ref token) = telegram_token {
+                    if !telegram_allowed.is_empty() {
+                        let token = token.clone();
+                        let users = telegram_allowed.clone();
+                        Some(Arc::new(move |_job_name, result_text, _success| {
                             let token = token.clone();
-                            let users = telegram_allowed.clone();
-                            Some(Arc::new(move |_job_name, result_text, _success| {
-                                let token = token.clone();
-                                let users = users.clone();
-                                Box::pin(async move {
-                                    starpod_telegram::send_notification(&token, &users, &result_text).await;
-                                })
-                            }))
-                        } else {
-                            None
-                        }
+                            let users = users.clone();
+                            Box::pin(async move {
+                                starpod_telegram::send_notification(&token, &users, &result_text).await;
+                            })
+                        }))
                     } else {
                         None
-                    };
-
-                if let Some(token) = telegram_token.clone() {
-                    let tg_agent = Arc::clone(&agent);
-                    let allowed = telegram_allowed.clone();
-                    let allowed_names = telegram_allowed_usernames.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) =
-                            starpod_telegram::run_with_agent_filtered(tg_agent, token, allowed, allowed_names).await
-                        {
-                            tracing::error!(error = %e, "Telegram bot error");
-                        }
-                    });
-                }
-
-                // Print startup banner
-                println!();
-                println!(
-                    "  {} {}",
-                    agent_name.bright_cyan().bold(),
-                    "is running".bright_white()
-                );
-                println!();
-                println!(
-                    "  {} {}",
-                    "Frontend".dimmed(),
-                    format!("http://{}", addr).bright_white()
-                );
-                println!(
-                    "  {} {}",
-                    "API     ".dimmed(),
-                    format!("http://{}/api", addr).bright_white()
-                );
-                println!(
-                    "  {} {}",
-                    "WS      ".dimmed(),
-                    format!("ws://{}/ws", addr).bright_white()
-                );
-                println!(
-                    "  {} {}",
-                    "Docs    ".dimmed(),
-                    format!("http://{}/docs", addr).bright_white()
-                );
-                println!(
-                    "  {} {}",
-                    "Telegram".dimmed(),
-                    if telegram_active {
-                        let mode = config.channels.telegram.as_ref()
-                            .map(|t| t.stream_mode.as_str())
-                            .unwrap_or("final_only");
-                        format!("connected (stream: {})", mode).green().to_string()
-                    } else {
-                        "not configured".yellow().to_string()
                     }
-                );
-                println!(
-                    "  {} {}",
-                    "Provider".dimmed(),
-                    config.provider.bright_white()
-                );
-                println!(
-                    "  {} {}",
-                    "Model   ".dimmed(),
-                    config.model.bright_white()
-                );
-                if let Some(ref effort) = config.reasoning_effort {
-                    println!(
-                        "  {} {:?}",
-                        "Thinking".dimmed(),
-                        effort
-                    );
-                }
-                println!(
-                    "  {} {}",
-                    "Project ".dimmed(),
-                    config.project_root.display().to_string().bright_white()
-                );
-                println!();
-
-                starpod_gateway::serve_with_agent(agent, config, cron_notifier).await?;
-            }
-
-            AgentCommand::Chat { message } => {
-                let config = StarpodConfig::load().await?;
-                let name = config.agent_name.clone();
-                print_header_with_name(&name);
-                let start = Instant::now();
-                let agent = StarpodAgent::new(config).await?;
-
-                let chat_msg = ChatMessage {
-                    text: message.clone(),
-                    user_id: None,
-                    channel_id: Some("main".into()),
-                    channel_session_key: Some(uuid::Uuid::new_v4().to_string()),
-                    attachments: Vec::new(),
+                } else {
+                    None
                 };
-                let (mut stream, session_id, _followup_tx) = agent.chat_stream(&chat_msg).await?;
-                let (result_text, result_msg) = process_stream(&mut stream, &start).await?;
 
-                if let Some(ref result) = result_msg {
-                    agent
-                        .finalize_chat(&session_id, &message, &result_text, result)
-                        .await;
-                    print_result(&result_text, result, &start);
+            if let Some(token) = telegram_token.clone() {
+                let tg_agent = Arc::clone(&agent);
+                let allowed = telegram_allowed.clone();
+                let allowed_names = telegram_allowed_usernames.clone();
+                tokio::spawn(async move {
+                    if let Err(e) =
+                        starpod_telegram::run_with_agent_filtered(tg_agent, token, allowed, allowed_names).await
+                    {
+                        tracing::error!(error = %e, "Telegram bot error");
+                    }
+                });
+            }
+
+            // Print startup banner
+            println!();
+            println!(
+                "  {} {}",
+                display_name.bright_cyan().bold(),
+                "is running".bright_white()
+            );
+            println!();
+            println!(
+                "  {} {}",
+                "Frontend".dimmed(),
+                format!("http://{}", addr).bright_white()
+            );
+            println!(
+                "  {} {}",
+                "API     ".dimmed(),
+                format!("http://{}/api", addr).bright_white()
+            );
+            println!(
+                "  {} {}",
+                "WS      ".dimmed(),
+                format!("ws://{}/ws", addr).bright_white()
+            );
+            println!(
+                "  {} {}",
+                "Docs    ".dimmed(),
+                format!("http://{}/docs", addr).bright_white()
+            );
+            println!(
+                "  {} {}",
+                "Telegram".dimmed(),
+                if telegram_active {
+                    let mode = config.channels.telegram.as_ref()
+                        .map(|t| t.stream_mode.as_str())
+                        .unwrap_or("final_only");
+                    format!("connected (stream: {})", mode).green().to_string()
+                } else {
+                    "not configured".yellow().to_string()
                 }
-                println!();
+            );
+            println!(
+                "  {} {}",
+                "Provider".dimmed(),
+                config.provider.bright_white()
+            );
+            println!(
+                "  {} {}",
+                "Model   ".dimmed(),
+                config.model.bright_white()
+            );
+            if let Some(ref effort) = config.reasoning_effort {
+                println!(
+                    "  {} {:?}",
+                    "Thinking".dimmed(),
+                    effort
+                );
             }
+            println!(
+                "  {} {}",
+                "Project ".dimmed(),
+                config.project_root.display().to_string().bright_white()
+            );
+            println!();
 
-            AgentCommand::Repl => {
-                let config = StarpodConfig::load().await?;
-                let name = config.agent_name.clone();
-                run_repl(config, &name).await?;
+            starpod_gateway::serve_with_agent(agent, config, cron_notifier, paths).await?;
+        }
+
+        // ── Chat ──────────────────────────────────────────────────────
+        Commands::Chat { agent: agent_name, message } => {
+            let (agent, config, _paths) = resolve_agent(agent_name).await?;
+            let name = config.agent_name.clone();
+            print_header_with_name(&name);
+            let start = Instant::now();
+
+            let chat_msg = ChatMessage {
+                text: message.clone(),
+                user_id: None,
+                channel_id: Some("main".into()),
+                channel_session_key: Some(uuid::Uuid::new_v4().to_string()),
+                attachments: Vec::new(),
+            };
+            let (mut stream, session_id, _followup_tx) = agent.chat_stream(&chat_msg).await?;
+            let (result_text, result_msg) = process_stream(&mut stream, &start).await?;
+
+            if let Some(ref result) = result_msg {
+                agent
+                    .finalize_chat(&session_id, &message, &result_text, result)
+                    .await;
+                print_result(&result_text, result, &start);
             }
+            println!();
+        }
 
-            // ── Utility commands ──────────────────────────────────────
-            AgentCommand::Memory { action } => {
-                let config = StarpodConfig::load().await?;
-                let agent = StarpodAgent::new(config).await?;
-                match action {
-                    MemoryAction::Search { query, limit } => {
-                        let results = agent.memory().search(&query, limit).await?;
-                        if results.is_empty() {
-                            println!("No results found.");
-                        } else {
-                            for (i, r) in results.iter().enumerate() {
-                                println!(
-                                    "--- [{}/{}] {} (lines {}-{}) ---",
-                                    i + 1,
-                                    results.len(),
-                                    r.source,
-                                    r.line_start,
-                                    r.line_end
-                                );
-                                println!("{}\n", r.text);
-                            }
+        // ── Repl ──────────────────────────────────────────────────────
+        Commands::Repl { agent: agent_name } => {
+            let (agent, config, _paths) = resolve_agent(agent_name).await?;
+            let name = config.agent_name.clone();
+            run_repl(agent, &name).await?;
+        }
+
+        // ── Memory ────────────────────────────────────────────────────
+        Commands::Memory { agent: agent_name, action } => {
+            let (agent, _config, _paths) = resolve_agent(agent_name).await?;
+            match action {
+                MemoryAction::Search { query, limit } => {
+                    let results = agent.memory().search(&query, limit).await?;
+                    if results.is_empty() {
+                        println!("No results found.");
+                    } else {
+                        for (i, r) in results.iter().enumerate() {
+                            println!(
+                                "--- [{}/{}] {} (lines {}-{}) ---",
+                                i + 1,
+                                results.len(),
+                                r.source,
+                                r.line_start,
+                                r.line_end
+                            );
+                            println!("{}\n", r.text);
                         }
                     }
-                    MemoryAction::Reindex => {
-                        agent.memory().reindex().await?;
-                        println!("Memory index rebuilt.");
-                    }
+                }
+                MemoryAction::Reindex => {
+                    agent.memory().reindex().await?;
+                    println!("Memory index rebuilt.");
                 }
             }
+        }
 
-            AgentCommand::Vault { action } => {
-                let config = StarpodConfig::load().await?;
-                let agent = StarpodAgent::new(config).await?;
-                match action {
-                    VaultAction::Get { key } => match agent.vault().get(&key).await? {
-                        Some(value) => println!("{}", value),
-                        None => println!("No value found for key: {}", key),
-                    },
-                    VaultAction::Set { key, value } => {
-                        agent.vault().set(&key, &value).await?;
-                        println!("Stored '{}'.", key);
-                    }
-                    VaultAction::Delete { key } => {
-                        agent.vault().delete(&key).await?;
-                        println!("Deleted '{}'.", key);
-                    }
-                    VaultAction::List => {
-                        let keys = agent.vault().list_keys().await?;
-                        if keys.is_empty() {
-                            println!("Vault is empty.");
-                        } else {
-                            for key in &keys {
-                                println!("  {}", key);
-                            }
+        // ── Vault ─────────────────────────────────────────────────────
+        Commands::Vault { agent: agent_name, action } => {
+            let (agent, _config, _paths) = resolve_agent(agent_name).await?;
+            match action {
+                VaultAction::Get { key } => match agent.vault().get(&key).await? {
+                    Some(value) => println!("{}", value),
+                    None => println!("No value found for key: {}", key),
+                },
+                VaultAction::Set { key, value } => {
+                    agent.vault().set(&key, &value).await?;
+                    println!("Stored '{}'.", key);
+                }
+                VaultAction::Delete { key } => {
+                    agent.vault().delete(&key).await?;
+                    println!("Deleted '{}'.", key);
+                }
+                VaultAction::List => {
+                    let keys = agent.vault().list_keys().await?;
+                    if keys.is_empty() {
+                        println!("Vault is empty.");
+                    } else {
+                        for key in &keys {
+                            println!("  {}", key);
                         }
                     }
                 }
             }
+        }
 
-            AgentCommand::Sessions { action } => {
-                let config = StarpodConfig::load().await?;
-                let agent = StarpodAgent::new(config).await?;
-                match action {
-                    SessionAction::List { limit } => {
-                        let sessions = agent.session_mgr().list_sessions(limit).await?;
-                        if sessions.is_empty() {
-                            println!("No sessions found.");
-                        } else {
-                            for s in &sessions {
-                                let status = if s.is_closed { "closed" } else { "open" };
-                                let summary = s
-                                    .summary
-                                    .as_deref()
-                                    .unwrap_or("(no summary)");
-                                println!(
-                                    "  {} [{}] msgs={} {}",
-                                    &s.id[..8],
-                                    status,
-                                    s.message_count,
-                                    summary
-                                );
-                            }
+        // ── Sessions ──────────────────────────────────────────────────
+        Commands::Sessions { agent: agent_name, action } => {
+            let (agent, _config, _paths) = resolve_agent(agent_name).await?;
+            match action {
+                SessionAction::List { limit } => {
+                    let sessions = agent.session_mgr().list_sessions(limit).await?;
+                    if sessions.is_empty() {
+                        println!("No sessions found.");
+                    } else {
+                        for s in &sessions {
+                            let status = if s.is_closed { "closed" } else { "open" };
+                            let summary = s
+                                .summary
+                                .as_deref()
+                                .unwrap_or("(no summary)");
+                            println!(
+                                "  {} [{}] msgs={} {}",
+                                &s.id[..8],
+                                status,
+                                s.message_count,
+                                summary
+                            );
                         }
                     }
                 }
             }
+        }
 
-            AgentCommand::Skills { action } => {
-                let config = StarpodConfig::load().await?;
-                let agent = StarpodAgent::new(config).await?;
-                match action {
-                    SkillAction::List => {
-                        let skills = agent.skills().list()?;
-                        if skills.is_empty() {
-                            println!("No skills found.");
-                        } else {
-                            for s in &skills {
-                                println!("  {} — {}", s.name, s.description.replace('\n', " "));
-                            }
+        // ── Skills ────────────────────────────────────────────────────
+        Commands::Skill { action } => {
+            // Skills are workspace-level, resolve from workspace root
+            let cwd = std::env::current_dir()?;
+            let skills_dir = if cwd.join("starpod.toml").is_file() {
+                cwd.join("skills")
+            } else {
+                // Walk up
+                let mut dir = cwd.clone();
+                let mut found = None;
+                loop {
+                    if dir.join("starpod.toml").is_file() {
+                        found = Some(dir.join("skills"));
+                        break;
+                    }
+                    if !dir.pop() { break; }
+                }
+                found.unwrap_or_else(|| {
+                    // Fall back to .starpod/data for legacy
+                    if cwd.join(".starpod").is_dir() {
+                        cwd.join(".starpod").join("data")
+                    } else {
+                        cwd.join("skills")
+                    }
+                })
+            };
+
+            let store = starpod_skills::SkillStore::new(&skills_dir)?;
+
+            match action {
+                SkillAction::List => {
+                    let skills = store.list()?;
+                    if skills.is_empty() {
+                        println!("No skills found.");
+                    } else {
+                        for s in &skills {
+                            println!("  {} — {}", s.name, s.description.replace('\n', " "));
                         }
-                    }
-                    SkillAction::Show { name } => {
-                        match agent.skills().get(&name)? {
-                            Some(skill) => {
-                                println!("Name: {}", skill.name);
-                                println!("Description: {}", skill.description);
-                                if let Some(ref compat) = skill.compatibility {
-                                    println!("Compatibility: {}", compat);
-                                }
-                                println!("---");
-                                println!("{}", skill.body);
-                            }
-                            None => println!("Skill '{}' not found.", name),
-                        }
-                    }
-                    SkillAction::Create { name, description, body, file } => {
-                        let body = if let Some(path) = file {
-                            std::fs::read_to_string(&path)?
-                        } else if let Some(b) = body {
-                            b
-                        } else {
-                            anyhow::bail!("Provide --body or --file");
-                        };
-                        agent.skills().create(&name, &description, &body)?;
-                        println!("Created skill '{}'.", name);
-                    }
-                    SkillAction::Delete { name } => {
-                        agent.skills().delete(&name)?;
-                        println!("Deleted skill '{}'.", name);
                     }
                 }
+                SkillAction::Show { name } => {
+                    match store.get(&name)? {
+                        Some(skill) => {
+                            println!("Name: {}", skill.name);
+                            println!("Description: {}", skill.description);
+                            if let Some(ref compat) = skill.compatibility {
+                                println!("Compatibility: {}", compat);
+                            }
+                            println!("---");
+                            println!("{}", skill.body);
+                        }
+                        None => println!("Skill '{}' not found.", name),
+                    }
+                }
+                SkillAction::Create { name, description, body, file } => {
+                    let body = if let Some(path) = file {
+                        std::fs::read_to_string(&path)?
+                    } else if let Some(b) = body {
+                        b
+                    } else {
+                        anyhow::bail!("Provide --body or --file");
+                    };
+                    store.create(&name, &description, &body)?;
+                    println!("Created skill '{}'.", name);
+                }
+                SkillAction::Delete { name } => {
+                    store.delete(&name)?;
+                    println!("Deleted skill '{}'.", name);
+                }
             }
+        }
 
-            AgentCommand::Cron { action } => {
-                let config = StarpodConfig::load().await?;
-                let agent = StarpodAgent::new(config).await?;
-                match action {
+        // ── Cron ──────────────────────────────────────────────────────
+        Commands::Cron { agent: agent_name, action } => {
+            let (agent, _config, _paths) = resolve_agent(agent_name).await?;
+            match action {
                     CronAction::List => {
                         let jobs = agent.cron().list_jobs().await?;
                         if jobs.is_empty() {
@@ -1040,14 +1208,12 @@ async fn main() -> anyhow::Result<()> {
                             None => println!("Job '{}' not found.", name),
                         }
                     }
-                }
             }
-        },
+        }
 
         // ── Instance commands ──────────────────────────────────────────
         Commands::Instance { action } => {
-            let config = StarpodConfig::load().await?;
-            let backend_url = config.resolved_instance_backend_url();
+            let backend_url = std::env::var("STARPOD_INSTANCE_BACKEND_URL").ok();
 
             let Some(backend_url) = backend_url else {
                 eprintln!(
@@ -1055,16 +1221,15 @@ async fn main() -> anyhow::Result<()> {
                     "✗".red().bold()
                 );
                 eprintln!(
-                    "  {} Set {} in .starpod/config.toml or env var {}.",
+                    "  {} Set env var {}.",
                     "→".dimmed(),
-                    "instance_backend_url".bright_white(),
                     "STARPOD_INSTANCE_BACKEND_URL".bright_white()
                 );
                 std::process::exit(1);
             };
 
-            let api_key = config.resolved_api_key();
-            let client = InstanceClient::new_with_timeout(&backend_url, api_key, config.instances.http_timeout_secs)?;
+            let api_key = std::env::var("ANTHROPIC_API_KEY").ok();
+            let client = InstanceClient::new_with_timeout(&backend_url, api_key, 30)?;
 
             match action {
                 InstanceCommand::Create { name, region } => {
@@ -1269,14 +1434,22 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
+        // ── Deploy stub ───────────────────────────────────────────────
+        Commands::Deploy { agent_name } => {
+            println!(
+                "  {} Deploy is not yet implemented. Agent: {}",
+                "ℹ".bright_cyan(),
+                agent_name
+            );
+        }
+
     }
 
     Ok(())
 }
 
 /// Interactive REPL mode with rich output.
-async fn run_repl(config: StarpodConfig, name: &str) -> anyhow::Result<()> {
-    let agent = StarpodAgent::new(config).await?;
+async fn run_repl(agent: StarpodAgent, name: &str) -> anyhow::Result<()> {
     let session_key = uuid::Uuid::new_v4().to_string();
 
     print_header_with_name(name);
