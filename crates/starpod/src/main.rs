@@ -579,7 +579,7 @@ async fn main() -> anyhow::Result<()> {
                     || soul.is_some()
                     || model != "claude-sonnet-4-6";
 
-                let config_content = if default || has_cli_params {
+                let (config_content, instance_content, onboarding_result) = if default || has_cli_params {
                     // Non-interactive: build from CLI args
                     let tz = timezone.or_else(onboarding::detect_system_timezone);
                     let result = onboarding::OnboardingResult {
@@ -596,22 +596,39 @@ async fn main() -> anyhow::Result<()> {
                         provider: "anthropic".to_string(),
                         model,
                     };
-                    Some(onboarding::generate_config(&result))
+                    let cfg = onboarding::generate_config(&result);
+                    let inst = onboarding::generate_instance_config(&result);
+                    (Some(cfg), Some(inst), Some(result))
                 } else {
                     // Interactive onboarding wizard
                     match onboarding::run() {
-                        Ok(result) => Some(onboarding::generate_config(&result)),
+                        Ok(result) => {
+                            let cfg = onboarding::generate_config(&result);
+                            let inst = onboarding::generate_instance_config(&result);
+                            (Some(cfg), Some(inst), Some(result))
+                        }
                         Err(_) => {
                             println!(
                                 "\n  {} Using default configuration.",
                                 "→".dimmed()
                             );
-                            None
+                            (None, None, None)
                         }
                     }
                 };
 
-                StarpodConfig::init(&cwd, config_content.as_deref()).await?;
+                StarpodConfig::init(&cwd, config_content.as_deref(), instance_content.as_deref()).await?;
+
+                // Write custom SOUL.md and USER.md if onboarding collected data
+                if let Some(ref result) = onboarding_result {
+                    let data_dir = cwd.join(".starpod").join("data");
+                    if let Some(soul_content) = onboarding::generate_soul_md(result) {
+                        tokio::fs::write(data_dir.join("SOUL.md"), soul_content).await?;
+                    }
+                    if let Some(user_content) = onboarding::generate_user_md(result) {
+                        tokio::fs::write(data_dir.join("USER.md"), user_content).await?;
+                    }
+                }
 
                 println!();
                 println!(
@@ -620,9 +637,10 @@ async fn main() -> anyhow::Result<()> {
                     cwd.join(".starpod").display()
                 );
                 println!(
-                    "  {} Edit {} to fine-tune your config.",
+                    "  {} Edit {} (shared) or {} (instance-specific).",
                     "→".dimmed(),
-                    ".starpod/config.toml".bright_white()
+                    ".starpod/config.toml".bright_white(),
+                    ".starpod/instance.toml".bright_white()
                 );
                 println!(
                     "  {} Run {} to start your agent.",
@@ -640,7 +658,7 @@ async fn main() -> anyhow::Result<()> {
             AgentCommand::Serve => {
                 let config = StarpodConfig::load().await?;
                 let addr = &config.server_addr;
-                let agent_name = config.identity.display_name().to_string();
+                let agent_name = config.agent_name.clone();
                 let agent = Arc::new(StarpodAgent::new(config.clone()).await?);
 
                 // Start Telegram bot in background if token is configured
@@ -752,7 +770,7 @@ async fn main() -> anyhow::Result<()> {
 
             AgentCommand::Chat { message } => {
                 let config = StarpodConfig::load().await?;
-                let name = config.identity.display_name().to_string();
+                let name = config.agent_name.clone();
                 print_header_with_name(&name);
                 let start = Instant::now();
                 let agent = StarpodAgent::new(config).await?;
@@ -778,7 +796,7 @@ async fn main() -> anyhow::Result<()> {
 
             AgentCommand::Repl => {
                 let config = StarpodConfig::load().await?;
-                let name = config.identity.display_name().to_string();
+                let name = config.agent_name.clone();
                 run_repl(config, &name).await?;
             }
 

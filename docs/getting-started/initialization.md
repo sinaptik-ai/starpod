@@ -47,7 +47,8 @@ starpod agent init \
 
 ```
 .starpod/
-├── config.toml      Project configuration
+├── config.toml      Shared configuration (model, provider, memory, etc.)
+├── instance.toml    Instance-specific config (channels, overrides)
 └── data/
     ├── SOUL.md      Agent personality (from --soul or wizard)
     ├── USER.md      Your name and info
@@ -56,6 +57,11 @@ starpod agent init \
     ├── knowledge/   Knowledge base documents
     └── skills/      Skill definitions
 ```
+
+- **`config.toml`** contains shared settings — deploy the same file to every instance.
+- **`instance.toml`** contains instance-specific settings (channels, overrides) — varies per machine.
+- **`SOUL.md`** defines the agent personality and instructions.
+- **`USER.md`** stores user profile info (name, timezone, preferences).
 
 ## Multiple Projects
 
