@@ -340,12 +340,11 @@ struct ErrorResponse {
 
 fn get_instance_client(state: &AppState) -> Result<starpod_instances::InstanceClient, (StatusCode, Json<ErrorResponse>)> {
     let config = state.config.read().unwrap();
-    let config = &*config;
-    let backend_url = config.resolved_instance_backend_url().ok_or_else(|| {
+    let backend_url = std::env::var("STARPOD_INSTANCE_BACKEND_URL").ok().ok_or_else(|| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(ErrorResponse {
-                error: "Instance backend not configured".into(),
+                error: "Instance backend not configured (set STARPOD_INSTANCE_BACKEND_URL)".into(),
             }),
         )
     })?;

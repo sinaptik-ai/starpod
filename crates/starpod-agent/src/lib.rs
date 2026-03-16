@@ -13,7 +13,10 @@ use agent_sdk::options::{SystemPrompt, ThinkingConfig};
 use starpod_core::{FollowupMode, ReasoningEffort};
 use tokio::sync::mpsc;
 
-use starpod_core::{Attachment, ChatMessage, ChatResponse, ChatUsage, StarpodConfig, StarpodError, Result};
+use starpod_core::{
+    Attachment, ChatMessage, ChatResponse, ChatUsage, StarpodConfig, StarpodError, Result,
+    AgentConfig, ResolvedPaths,
+};
 use starpod_cron::CronStore;
 use starpod_memory::MemoryStore;
 use starpod_session::{Channel, SessionDecision, SessionManager, UsageRecord};
@@ -44,39 +47,93 @@ pub struct StarpodAgent {
     vault: Arc<Vault>,
     skills: Arc<SkillStore>,
     cron: Arc<CronStore>,
+    paths: ResolvedPaths,
     config: RwLock<StarpodConfig>,
 }
 
 impl StarpodAgent {
-    /// Create a new StarpodAgent from config.
+    /// Create a new StarpodAgent from a `StarpodConfig`.
+    ///
+    /// Constructs synthetic `ResolvedPaths` from the config's `data_dir` and `project_root`.
+    /// Prefer `with_paths()` for workspace-aware construction.
     pub async fn new(config: StarpodConfig) -> Result<Self> {
-        let mut memory = MemoryStore::new(&config.data_dir).await?;
+        let agent_config = AgentConfig {
+            name: config.agent_name.clone(),
+            skills: Vec::new(),
+            server_addr: config.server_addr.clone(),
+            provider: config.provider.clone(),
+            model: config.model.clone(),
+            max_turns: config.max_turns,
+            max_tokens: config.max_tokens,
+            reasoning_effort: config.reasoning_effort,
+            compaction_model: config.compaction_model.clone(),
+            agent_name: config.agent_name.clone(),
+            timezone: config.timezone.clone(),
+            followup_mode: config.followup_mode,
+            providers: config.providers.clone(),
+            channels: config.channels.clone(),
+            memory: config.memory.clone(),
+            cron: config.cron.clone(),
+            compaction: config.compaction.clone(),
+            attachments: config.attachments.clone(),
+        };
 
-        // Apply memory config
+        let paths = ResolvedPaths {
+            mode: starpod_core::Mode::SingleAgent {
+                starpod_dir: config.data_dir.parent().unwrap_or(&config.data_dir).to_path_buf(),
+            },
+            agent_toml: config.data_dir.parent().unwrap_or(&config.data_dir).join("agent.toml"),
+            agent_home: config.data_dir.clone(),
+            data_dir: config.data_dir.clone(),
+            skills_dir: config.data_dir.join("skills"),
+            project_root: config.project_root.clone(),
+            env_file: None,
+        };
+
+        Self::with_paths(agent_config, paths).await
+    }
+
+    /// Create a new StarpodAgent from an `AgentConfig` and `ResolvedPaths`.
+    ///
+    /// This is the workspace-aware constructor that uses resolved paths for
+    /// all file locations instead of deriving them from `data_dir`.
+    pub async fn with_paths(agent_config: AgentConfig, paths: ResolvedPaths) -> Result<Self> {
+        // Convert AgentConfig → StarpodConfig for the config RwLock
+        let config = agent_config.clone().into_starpod_config(&paths);
+
+        // Memory: agent_home contains SOUL.md, USER.md, MEMORY.md, memory/, knowledge/
+        let mut memory = MemoryStore::new(&paths.agent_home).await?;
         memory.set_half_life_days(config.memory.half_life_days);
         memory.set_mmr_lambda(config.memory.mmr_lambda);
         memory.set_chunk_size(config.memory.chunk_size);
         memory.set_chunk_overlap(config.memory.chunk_overlap);
         memory.set_bootstrap_file_cap(config.memory.bootstrap_file_cap);
 
-        // Set up local embedder for vector search
         if config.memory.vector_search {
             use starpod_memory::embedder::LocalEmbedder;
             memory.set_embedder(Arc::new(LocalEmbedder::new()));
             debug!("Vector search enabled with local embedder");
         }
 
-        let session_db = config.data_dir.join("session.db");
-        let sessions_dir = config.data_dir.join("sessions");
+        // Session DB in data_dir
+        std::fs::create_dir_all(&paths.data_dir).map_err(|e| {
+            StarpodError::Config(format!("Failed to create data dir {}: {}", paths.data_dir.display(), e))
+        })?;
+        let session_db = paths.data_dir.join("session.db");
+        let sessions_dir = paths.agent_home.join("sessions");
         let session_mgr = SessionManager::new(&session_db, &sessions_dir).await?;
 
-        let vault_db = config.data_dir.join("vault.db");
+        // Vault in data_dir
+        let vault_db = paths.data_dir.join("vault.db");
         let master_key = derive_vault_key(&config);
         let vault = Vault::new(&vault_db, &master_key).await?;
 
-        let skills = SkillStore::new(&config.data_dir)?;
+        // Skills from resolved skills_dir, with optional filter
+        let skills = SkillStore::new(&paths.skills_dir)?
+            .with_filter(agent_config.skills.clone());
 
-        let cron_db = config.data_dir.join("cron.db");
+        // Cron in data_dir
+        let cron_db = paths.data_dir.join("cron.db");
         let mut cron = CronStore::new(&cron_db).await?;
         cron.set_default_max_retries(config.cron.default_max_retries);
         cron.set_default_timeout_secs(config.cron.default_timeout_secs);
@@ -87,8 +144,14 @@ impl StarpodAgent {
             vault: Arc::new(vault),
             skills: Arc::new(skills),
             cron: Arc::new(cron),
+            paths,
             config: RwLock::new(config),
         })
+    }
+
+    /// Get the resolved paths.
+    pub fn paths(&self) -> &ResolvedPaths {
+        &self.paths
     }
 
     /// Snapshot the current config (cheap clone, no lock held after return).
@@ -248,6 +311,8 @@ impl StarpodAgent {
         let date_str = Local::now().format("%A, %B %d, %Y at %H:%M").to_string();
         let project_root = config.project_root.display();
 
+        let agent_home_display = self.paths.agent_home.display().to_string();
+
         let mut prompt = format!(
             "You are {agent_name}, a personal AI assistant.\n\n{bootstrap}\n\n---\n\
              Current date/time: {date_str}\nSession ID: {session_id}\n\
@@ -260,15 +325,15 @@ impl StarpodAgent {
              directly into the conversation so you can see and analyze it. For other file types like CSV or \
              PDF, use Python via the Bash tool.\n\n\
              IMPORTANT — two separate domains of information:\n\
-             • Your personal knowledge, memory, soul, and user profile live inside `.starpod/data/` \
+             • Your personal knowledge, memory, soul, and user profile live inside `{agent_home_display}` \
              (SOUL.md, USER.md, MEMORY.md, memory/, knowledge/). Use MemorySearch to query this knowledge \
              and MemoryWrite to persist new information there.\n\
              • The user's project files (code, documents, data) live in the project root directory ({project_root}). \
              Use Read, Glob, Grep, and Bash to explore and work with these files.\n\
              • Files uploaded by the user (from any channel: Telegram, web, API) are saved to `{project_root}/downloads/`. \
              When the user references a previously uploaded file, always check this directory first with Glob or Bash.\n\
-             Never confuse the two: `.starpod/` is YOUR persistent brain; the project root is the USER's workspace.\n\
-             You may ONLY access files within the project root and the `.starpod/` directory. \
+             Never confuse the two: your agent home is YOUR persistent brain; the project root is the USER's workspace.\n\
+             You may ONLY access files within the project root and the agent home directory. \
              Do not read, write, or execute anything outside these boundaries.\n\
              IMPORTANT: Always create files and run commands within the project root ({project_root}), never in /tmp or other external directories.",
         );
@@ -1091,6 +1156,108 @@ mod tests {
 
         // Cron db should exist
         assert!(tmp.path().join("cron.db").exists());
+    }
+
+    #[tokio::test]
+    async fn test_agent_with_paths() {
+        let tmp = TempDir::new().unwrap();
+        let agent_home = tmp.path().join("agents").join("test-bot");
+        let data_dir = agent_home.join("data");
+        let skills_dir = tmp.path().join("skills");
+        std::fs::create_dir_all(&agent_home).unwrap();
+        std::fs::create_dir_all(&data_dir).unwrap();
+        std::fs::create_dir_all(&skills_dir).unwrap();
+
+        let paths = ResolvedPaths {
+            mode: starpod_core::Mode::Workspace {
+                root: tmp.path().to_path_buf(),
+                agent_name: "test-bot".to_string(),
+            },
+            agent_toml: agent_home.join("agent.toml"),
+            agent_home: agent_home.clone(),
+            data_dir: data_dir.clone(),
+            skills_dir: skills_dir.clone(),
+            project_root: tmp.path().to_path_buf(),
+            env_file: None,
+        };
+
+        let config = AgentConfig {
+            agent_name: "TestBot".to_string(),
+            ..AgentConfig::default()
+        };
+
+        let agent = StarpodAgent::with_paths(config, paths).await.unwrap();
+
+        // paths() returns the workspace paths
+        assert_eq!(agent.paths().agent_home, agent_home);
+        assert_eq!(agent.paths().skills_dir, skills_dir);
+        assert_eq!(agent.paths().project_root, tmp.path());
+
+        // Memory uses agent_home
+        let ctx = agent.memory().bootstrap_context().unwrap();
+        assert!(ctx.contains("TestBot") || ctx.contains("Aster"));
+
+        // Data dir should have session.db
+        assert!(data_dir.join("session.db").exists());
+        assert!(data_dir.join("vault.db").exists());
+        assert!(data_dir.join("cron.db").exists());
+    }
+
+    #[tokio::test]
+    async fn test_agent_with_paths_skill_filter() {
+        let tmp = TempDir::new().unwrap();
+        let agent_home = tmp.path().join("agent");
+        let skills_dir = tmp.path().join("skills");
+        std::fs::create_dir_all(&agent_home).unwrap();
+
+        // Create two skills in the shared skills dir
+        let skill_a = skills_dir.join("alpha");
+        let skill_b = skills_dir.join("beta");
+        std::fs::create_dir_all(&skill_a).unwrap();
+        std::fs::create_dir_all(&skill_b).unwrap();
+        std::fs::write(skill_a.join("SKILL.md"), "---\nname: alpha\ndescription: A\n---\nBody A").unwrap();
+        std::fs::write(skill_b.join("SKILL.md"), "---\nname: beta\ndescription: B\n---\nBody B").unwrap();
+
+        let paths = ResolvedPaths {
+            mode: starpod_core::Mode::SingleAgent {
+                starpod_dir: agent_home.clone(),
+            },
+            agent_toml: agent_home.join("agent.toml"),
+            agent_home: agent_home.clone(),
+            data_dir: agent_home.join("data"),
+            skills_dir: skills_dir.clone(),
+            project_root: tmp.path().to_path_buf(),
+            env_file: None,
+        };
+
+        // Filter to only "alpha"
+        let config = AgentConfig {
+            skills: vec!["alpha".to_string()],
+            ..AgentConfig::default()
+        };
+
+        let agent = StarpodAgent::with_paths(config, paths).await.unwrap();
+
+        let names = agent.skills().skill_names().unwrap();
+        assert_eq!(names, vec!["alpha"]);
+    }
+
+    #[tokio::test]
+    async fn test_reload_config() {
+        let tmp = TempDir::new().unwrap();
+        let agent = StarpodAgent::new(test_config(&tmp)).await.unwrap();
+
+        assert_eq!(agent.config().model, "claude-haiku-4-5");
+
+        // Reload with updated config
+        let mut new_config = test_config(&tmp);
+        new_config.model = "claude-sonnet-4-6".to_string();
+        new_config.agent_name = "Nova".to_string();
+        agent.reload_config(new_config);
+
+        let snapshot = agent.config();
+        assert_eq!(snapshot.model, "claude-sonnet-4-6");
+        assert_eq!(snapshot.agent_name, "Nova");
     }
 
     #[test]

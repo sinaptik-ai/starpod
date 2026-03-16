@@ -1,6 +1,7 @@
 mod routes;
 mod ws;
 
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -17,7 +18,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{info, warn, debug};
 
 use starpod_agent::StarpodAgent;
-use starpod_core::StarpodConfig;
+use starpod_core::{StarpodConfig, ResolvedPaths, reload_agent_config};
 
 /// Shared application state.
 ///
@@ -26,6 +27,7 @@ pub struct AppState {
     pub agent: Arc<StarpodAgent>,
     pub api_key: Option<String>,
     pub config: RwLock<StarpodConfig>,
+    pub paths: ResolvedPaths,
 }
 
 /// Embedded web UI assets (built by Vite into static/dist/).
@@ -121,17 +123,20 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
-/// Start the gateway server (creates its own agent).
-pub async fn serve(config: StarpodConfig) -> starpod_core::Result<()> {
-    let agent = Arc::new(StarpodAgent::new(config.clone()).await?);
-    serve_with_agent(agent, config, None).await
-}
-
-/// Start the gateway server with a pre-built agent (for sharing with Telegram bot).
+/// Start the gateway server with a pre-built agent.
+///
+/// Takes ownership of the agent, config, and resolved paths. Starts the cron
+/// scheduler, runs lifecycle prompts (BOOTSTRAP/BOOT), sets up the config file
+/// watcher for hot reload, and binds the Axum HTTP server.
+///
+/// The `paths` parameter determines which config files are watched for hot reload:
+/// - **Workspace**: watches both `starpod.toml` and `agents/<name>/agent.toml`
+/// - **SingleAgent**: watches `.starpod/agent.toml`
 pub async fn serve_with_agent(
     agent: Arc<StarpodAgent>,
     config: StarpodConfig,
     notifier: Option<starpod_cron::NotificationSender>,
+    paths: ResolvedPaths,
 ) -> starpod_core::Result<()> {
     // Start the cron scheduler in the background
     let _scheduler_handle = agent.start_scheduler(notifier);
@@ -147,10 +152,11 @@ pub async fn serve_with_agent(
         agent,
         api_key,
         config: RwLock::new(config.clone()),
+        paths: paths,
     });
 
     // Start config file watcher in background
-    let _watcher_handle = start_config_watcher(Arc::clone(&state), &config);
+    let _watcher_handle = start_config_watcher(Arc::clone(&state), &config, &state.paths);
 
     let app = build_router(state);
 
@@ -168,21 +174,46 @@ pub async fn serve_with_agent(
     Ok(())
 }
 
-/// Start a file watcher on config.toml and instance.toml that hot-reloads config on change.
+/// Start a file watcher that hot-reloads config on change.
+///
+/// When `paths` is provided (workspace-aware mode), watches the relevant
+/// config files. Otherwise falls back to legacy `.starpod/` watching.
 ///
 /// Returns a handle that keeps the watcher alive. The watcher is dropped
 /// (and stops) when the handle is dropped.
 fn start_config_watcher(
     state: Arc<AppState>,
-    config: &StarpodConfig,
+    _config: &StarpodConfig,
+    paths: &ResolvedPaths,
 ) -> Option<notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>> {
-    let project_root = config.project_root.clone();
-    let starpod_dir = project_root.join(".starpod");
-    let config_path = starpod_dir.join("config.toml");
-    let instance_path = starpod_dir.join("instance.toml");
+    let paths_clone = paths.clone();
+    let (watch_dir, watch_files, reload_fn): (PathBuf, Vec<PathBuf>, Box<dyn Fn() -> starpod_core::Result<StarpodConfig> + Send>) =
+        match &paths.mode {
+            starpod_core::Mode::Workspace { root, .. } => {
+                let watch_files = vec![
+                    root.join("starpod.toml"),
+                    paths.agent_toml.clone(),
+                ];
+                let watch = paths.agent_home.clone();
+                let p = paths_clone.clone();
+                (watch, watch_files, Box::new(move || {
+                    let agent_cfg = reload_agent_config(&p)?;
+                    Ok(agent_cfg.into_starpod_config(&p))
+                }))
+            }
+            starpod_core::Mode::SingleAgent { starpod_dir } => {
+                let watch = starpod_dir.clone();
+                let agent_toml = paths.agent_toml.clone();
+                let p = paths_clone.clone();
+                (watch, vec![agent_toml], Box::new(move || {
+                    let agent_cfg = reload_agent_config(&p)?;
+                    Ok(agent_cfg.into_starpod_config(&p))
+                }))
+            }
+        };
 
-    if !starpod_dir.exists() {
-        debug!("No .starpod/ directory found, skipping config watcher");
+    if !watch_dir.exists() {
+        debug!(dir = %watch_dir.display(), "Watch directory not found, skipping config watcher");
         return None;
     }
 
@@ -196,32 +227,38 @@ fn start_config_watcher(
         }
     };
 
-    // Watch the .starpod/ directory for changes
+    // Watch the directory for changes
     if let Err(e) = debouncer.watcher().watch(
-        &starpod_dir,
+        &watch_dir,
         notify::RecursiveMode::NonRecursive,
     ) {
-        warn!(error = %e, "Failed to watch .starpod/ directory");
+        warn!(error = %e, dir = %watch_dir.display(), "Failed to watch directory");
         return None;
     }
 
-    info!("Config hot reload enabled — watching .starpod/config.toml and instance.toml");
+    // If workspace mode, also watch the root for starpod.toml changes
+    if let starpod_core::Mode::Workspace { root, .. } = &paths.mode {
+        let _ = debouncer.watcher().watch(
+            root,
+            notify::RecursiveMode::NonRecursive,
+        );
+    }
+
+    info!(dir = %watch_dir.display(), "Config hot reload enabled");
 
     // Spawn a background thread (not async — notify uses std channels)
-    let config_path_clone = config_path.clone();
-    let instance_path_clone = instance_path.clone();
     std::thread::spawn(move || {
         for events in rx {
             match events {
                 Ok(events) => {
                     let config_changed = events.iter().any(|e| {
                         e.kind == DebouncedEventKind::Any
-                            && (e.path == config_path_clone || e.path == instance_path_clone)
+                            && watch_files.iter().any(|f| &e.path == f)
                     });
 
                     if config_changed {
                         info!("Config file changed, reloading...");
-                        match StarpodConfig::load_sync() {
+                        match reload_fn() {
                             Ok(new_config) => {
                                 let old_config = state.config.read().unwrap().clone();
 

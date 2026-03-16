@@ -1,16 +1,9 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::StarpodError;
-
-/// Project directory name (created by `starpod agent init`).
-const PROJECT_DIR: &str = ".starpod";
-const CONFIG_FILE: &str = "config.toml";
-const INSTANCE_CONFIG_FILE: &str = "instance.toml";
-
 /// Deep-merge `overlay` into `base`. Keys in `overlay` take precedence.
-fn deep_merge(base: &mut toml::Value, overlay: toml::Value) {
+pub fn deep_merge(base: &mut toml::Value, overlay: toml::Value) {
     match (base, overlay) {
         (toml::Value::Table(base_table), toml::Value::Table(overlay_table)) => {
             for (key, value) in overlay_table {
@@ -267,35 +260,6 @@ impl Default for CompactionConfig {
     }
 }
 
-/// Remote instance management configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct InstancesConfig {
-    /// Health check polling interval in seconds (default: 30).
-    #[serde(default = "default_health_check_interval")]
-    pub health_check_interval_secs: u64,
-    /// Heartbeat timeout in seconds — instance is unhealthy after this (default: 90).
-    #[serde(default = "default_heartbeat_timeout")]
-    pub heartbeat_timeout_secs: u64,
-    /// HTTP request timeout in seconds for instance API calls (default: 30).
-    #[serde(default = "default_http_timeout")]
-    pub http_timeout_secs: u64,
-}
-
-fn default_health_check_interval() -> u64 { 30 }
-fn default_heartbeat_timeout() -> u64 { 90 }
-fn default_http_timeout() -> u64 { 30 }
-
-impl Default for InstancesConfig {
-    fn default() -> Self {
-        Self {
-            health_check_interval_secs: default_health_check_interval(),
-            heartbeat_timeout_secs: default_heartbeat_timeout(),
-            http_timeout_secs: default_http_timeout(),
-        }
-    }
-}
-
 /// Attachment handling configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -447,15 +411,6 @@ pub struct StarpodConfig {
     #[serde(default)]
     pub attachments: AttachmentsConfig,
 
-    /// Remote instance settings.
-    #[serde(default)]
-    pub instances: InstancesConfig,
-
-    /// Remote instance backend URL (e.g. "https://api.starpod.example.com").
-    /// If set, `starpod instance` commands will connect to this backend.
-    #[serde(default)]
-    pub instance_backend_url: Option<String>,
-
     /// The project root directory (not serialized — set at load time).
     #[serde(skip)]
     pub project_root: PathBuf,
@@ -506,164 +461,12 @@ impl Default for StarpodConfig {
             providers: ProvidersConfig::default(),
             channels: ChannelsConfig::default(),
             attachments: AttachmentsConfig::default(),
-            instances: InstancesConfig::default(),
-            instance_backend_url: None,
             project_root: PathBuf::new(),
         }
     }
 }
 
 impl StarpodConfig {
-    /// Find the `.starpod/` directory by walking up from the current directory.
-    /// Returns the project root (parent of `.starpod/`).
-    pub fn find_project_root() -> Option<PathBuf> {
-        let mut dir = std::env::current_dir().ok()?;
-        loop {
-            if dir.join(PROJECT_DIR).is_dir() {
-                return Some(dir);
-            }
-            if !dir.pop() {
-                return None;
-            }
-        }
-    }
-
-    /// Load config from `.starpod/config.toml` + `.starpod/instance.toml`.
-    ///
-    /// `config.toml` is the shared base config. `instance.toml` is an optional
-    /// instance-specific overlay (superset — can override any shared setting and
-    /// is the **only** place where `[channels]` config is valid).
-    ///
-    /// If `config.toml` contains a `[channels]` section it is stripped with a warning.
-    pub async fn load() -> Result<Self, StarpodError> {
-        let project_root = Self::find_project_root().ok_or_else(|| {
-            StarpodError::Config(
-                "No .starpod/ directory found. Run `starpod agent init` to initialize a project."
-                    .to_string(),
-            )
-        })?;
-
-        let starpod_dir = project_root.join(PROJECT_DIR);
-
-        // 1. Load base config.toml as a TOML value tree
-        let config_path = starpod_dir.join(CONFIG_FILE);
-        let mut base_value = if config_path.exists() {
-            let content = tokio::fs::read_to_string(&config_path).await.map_err(|e| {
-                StarpodError::Config(format!("Failed to read config at {}: {}", config_path.display(), e))
-            })?;
-            toml::from_str::<toml::Value>(&content)
-                .map_err(|e| StarpodError::Config(format!("Invalid config TOML: {}", e)))?
-        } else {
-            toml::Value::Table(Default::default())
-        };
-
-        // 2. Warn and strip channels from config.toml (channels belong in instance.toml)
-        if let Some(table) = base_value.as_table_mut() {
-            if table.remove("channels").is_some() {
-                tracing::warn!(
-                    "Channels config found in config.toml — channels should only be in instance.toml. Ignoring."
-                );
-            }
-        }
-
-        // 3. Overlay instance.toml if it exists
-        let instance_path = starpod_dir.join(INSTANCE_CONFIG_FILE);
-        if instance_path.exists() {
-            let content = tokio::fs::read_to_string(&instance_path).await.map_err(|e| {
-                StarpodError::Config(format!("Failed to read instance config at {}: {}", instance_path.display(), e))
-            })?;
-            let instance_value: toml::Value = toml::from_str(&content)
-                .map_err(|e| StarpodError::Config(format!("Invalid instance TOML: {}", e)))?;
-            deep_merge(&mut base_value, instance_value);
-        }
-
-        // 4. Deserialize merged value into StarpodConfig
-        let mut config: StarpodConfig = base_value.try_into()
-            .map_err(|e| StarpodError::Config(format!("Invalid config: {}", e)))?;
-        config.project_root = project_root;
-
-        // Resolve data_dir relative to project root if not absolute
-        if config.data_dir.as_os_str().is_empty() {
-            config.data_dir = config.project_root.join(PROJECT_DIR).join("data");
-        } else if config.data_dir.is_relative() {
-            config.data_dir = config.project_root.join(&config.data_dir);
-        }
-
-        Ok(config)
-    }
-
-    /// Synchronous config reload (used by the config file watcher).
-    ///
-    /// Same logic as `load()` but uses blocking I/O so it can run from a
-    /// standard thread without a Tokio runtime.
-    pub fn load_sync() -> Result<Self, StarpodError> {
-        let project_root = Self::find_project_root().ok_or_else(|| {
-            StarpodError::Config(
-                "No .starpod/ directory found. Run `starpod agent init` to initialize a project."
-                    .to_string(),
-            )
-        })?;
-
-        let starpod_dir = project_root.join(PROJECT_DIR);
-
-        let config_path = starpod_dir.join(CONFIG_FILE);
-        let mut base_value = if config_path.exists() {
-            let content = std::fs::read_to_string(&config_path).map_err(|e| {
-                StarpodError::Config(format!("Failed to read config at {}: {}", config_path.display(), e))
-            })?;
-            toml::from_str::<toml::Value>(&content)
-                .map_err(|e| StarpodError::Config(format!("Invalid config TOML: {}", e)))?
-        } else {
-            toml::Value::Table(Default::default())
-        };
-
-        if let Some(table) = base_value.as_table_mut() {
-            if table.remove("channels").is_some() {
-                tracing::warn!(
-                    "Channels config found in config.toml — channels should only be in instance.toml. Ignoring."
-                );
-            }
-        }
-
-        let instance_path = starpod_dir.join(INSTANCE_CONFIG_FILE);
-        if instance_path.exists() {
-            let content = std::fs::read_to_string(&instance_path).map_err(|e| {
-                StarpodError::Config(format!("Failed to read instance config at {}: {}", instance_path.display(), e))
-            })?;
-            let instance_value: toml::Value = toml::from_str(&content)
-                .map_err(|e| StarpodError::Config(format!("Invalid instance TOML: {}", e)))?;
-            deep_merge(&mut base_value, instance_value);
-        }
-
-        let mut config: StarpodConfig = base_value.try_into()
-            .map_err(|e| StarpodError::Config(format!("Invalid config: {}", e)))?;
-        config.project_root = project_root;
-
-        if config.data_dir.as_os_str().is_empty() {
-            config.data_dir = config.project_root.join(PROJECT_DIR).join("data");
-        } else if config.data_dir.is_relative() {
-            config.data_dir = config.project_root.join(&config.data_dir);
-        }
-
-        Ok(config)
-    }
-
-    /// Load config from a specific path (no instance overlay — used for testing).
-    pub async fn load_from(path: &Path) -> Result<Self, StarpodError> {
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-
-        let content = tokio::fs::read_to_string(path).await.map_err(|e| {
-            StarpodError::Config(format!("Failed to read config at {}: {}", path.display(), e))
-        })?;
-
-        let config: StarpodConfig = toml::from_str(&content)
-            .map_err(|e| StarpodError::Config(format!("Invalid config TOML: {}", e)))?;
-
-        Ok(config)
-    }
-
     /// Resolved Anthropic API key: checks providers.anthropic.api_key,
     /// then ANTHROPIC_API_KEY env var.
     pub fn resolved_api_key(&self) -> Option<String> {
@@ -715,13 +518,6 @@ impl StarpodConfig {
         self.db_path
             .clone()
             .unwrap_or_else(|| self.data_dir.join("memory.db"))
-    }
-
-    /// Resolved instance backend URL: checks config, then env var.
-    pub fn resolved_instance_backend_url(&self) -> Option<String> {
-        self.instance_backend_url
-            .clone()
-            .or_else(|| std::env::var("STARPOD_INSTANCE_BACKEND_URL").ok())
     }
 
     /// Resolved API key for any provider.
@@ -786,189 +582,6 @@ impl StarpodConfig {
         })
     }
 
-    /// Path to the `.starpod/` directory for this project.
-    pub fn starpod_dir(&self) -> PathBuf {
-        self.project_root.join(PROJECT_DIR)
-    }
-
-    /// Initialize a new Starpod project in the given directory.
-    /// Creates `.starpod/config.toml`, `.starpod/instance.toml`, and `.starpod/data/`.
-    ///
-    /// If `config_content` is provided, it is written as the shared config file.
-    /// Otherwise a commented default template is used.
-    ///
-    /// If `instance_content` is provided, it is written as the instance config file.
-    /// Otherwise a commented default template is used.
-    pub async fn init(
-        dir: &Path,
-        config_content: Option<&str>,
-        instance_content: Option<&str>,
-    ) -> Result<(), StarpodError> {
-        let starpod_dir = dir.join(PROJECT_DIR);
-
-        if starpod_dir.exists() {
-            return Err(StarpodError::Config(format!(
-                "Already initialized: {} exists",
-                starpod_dir.display()
-            )));
-        }
-
-        // Create directory structure
-        let data_dir = starpod_dir.join("data");
-        tokio::fs::create_dir_all(&data_dir)
-            .await
-            .map_err(|e| StarpodError::Io(e))?;
-
-        // Write shared config
-        let content = config_content.unwrap_or(Self::DEFAULT_CONFIG);
-        tokio::fs::write(starpod_dir.join(CONFIG_FILE), content)
-            .await
-            .map_err(|e| StarpodError::Io(e))?;
-
-        // Write instance config
-        let instance = instance_content.unwrap_or(Self::DEFAULT_INSTANCE_CONFIG);
-        tokio::fs::write(starpod_dir.join(INSTANCE_CONFIG_FILE), instance)
-            .await
-            .map_err(|e| StarpodError::Io(e))?;
-
-        Ok(())
-    }
-
-    /// Default shared config template (no channels — those go in instance.toml).
-    pub const DEFAULT_CONFIG: &str = r#"# Starpod agent configuration (shared across instances)
-# See: https://github.com/gventuri/starpod-rs
-#
-# Instance-specific settings (channels, overrides) go in instance.toml.
-# Agent personality lives in .starpod/data/SOUL.md.
-# User profile lives in .starpod/data/USER.md.
-
-# ══════════════════════════════════════════════════════════════════════════════
-# GENERAL
-# ══════════════════════════════════════════════════════════════════════════════
-
-# Active LLM provider ("anthropic", "openai", etc.)
-provider = "anthropic"
-
-# Model to use
-model = "claude-haiku-4-5"
-
-# Maximum agentic turns per request
-max_turns = 30
-
-# Maximum tokens for LLM API responses
-# max_tokens = 16384
-
-# Server bind address
-server_addr = "127.0.0.1:3000"
-
-# Agent display name (personality and soul live in SOUL.md)
-agent_name = "Aster"
-
-# User timezone for cron scheduling (IANA format, e.g. "Europe/Rome")
-# User profile details live in USER.md
-# timezone = "America/New_York"
-
-# Reasoning effort for extended thinking: "low", "medium", "high"
-# reasoning_effort = "medium"
-
-# Model for conversation compaction summaries (defaults to primary model)
-# compaction_model = "claude-haiku-4-5"
-
-# How followup messages are handled during an active agent loop.
-# "inject" (default) integrates them into the next loop iteration;
-# "queue" buffers them and starts a new loop after the current one finishes.
-# followup_mode = "inject"
-
-# ══════════════════════════════════════════════════════════════════════════════
-# MEMORY
-# ══════════════════════════════════════════════════════════════════════════════
-# Tune memory search behavior.
-
-[memory]
-# half_life_days = 30.0            # Temporal decay half-life for daily logs
-# mmr_lambda = 0.7                 # 0.0 = max diversity, 1.0 = pure relevance
-# vector_search = true             # Enable vector (semantic) search
-# chunk_size = 1600                # Chunk size in characters for indexing (~400 tokens)
-# chunk_overlap = 320              # Overlap in characters between chunks (~80 tokens)
-# bootstrap_file_cap = 20000       # Max chars from a single file in bootstrap context
-
-# ══════════════════════════════════════════════════════════════════════════════
-# COMPACTION
-# ══════════════════════════════════════════════════════════════════════════════
-# Tune conversation compaction (context window management).
-
-[compaction]
-# context_budget = 160000          # Token budget triggering compaction (~80% of context window)
-# summary_max_tokens = 4096        # Max tokens for compaction summary
-# min_keep_messages = 4            # Minimum recent messages to preserve
-
-# ══════════════════════════════════════════════════════════════════════════════
-# CRON
-# ══════════════════════════════════════════════════════════════════════════════
-# Cron job scheduling defaults.
-
-[cron]
-# default_max_retries = 3          # Default max retries for failed jobs
-# default_timeout_secs = 7200      # Default job timeout (2h)
-# max_concurrent_runs = 1          # Maximum concurrent job executions
-
-# ══════════════════════════════════════════════════════════════════════════════
-# LLM PROVIDERS
-# ══════════════════════════════════════════════════════════════════════════════
-# Configure API keys and settings for each LLM provider.
-# Each provider supports: enabled, api_key, base_url, models
-
-# [providers.anthropic]
-# api_key = "sk-ant-..."                      # Or set ANTHROPIC_API_KEY env var
-# base_url = "https://api.anthropic.com"
-
-# [providers.openai]
-# api_key = "sk-..."                          # Or set OPENAI_API_KEY env var
-# models = ["gpt-4o", "gpt-4o-mini"]
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ATTACHMENTS
-# ══════════════════════════════════════════════════════════════════════════════
-# Control file attachment handling.
-
-[attachments]
-# enabled = true                   # Set to false to disable attachments entirely
-# allowed_extensions = []          # Allowed file extensions, e.g. ["jpg", "png", "pdf"]
-                                   # Empty list = all extensions allowed
-# max_file_size = 20971520         # Max file size in bytes (default: 20 MB)
-
-# ══════════════════════════════════════════════════════════════════════════════
-# INSTANCES
-# ══════════════════════════════════════════════════════════════════════════════
-# Remote instance backend for `starpod instance` commands.
-
-[instances]
-# health_check_interval_secs = 30  # Health check polling interval
-# heartbeat_timeout_secs = 90      # Instance considered unhealthy after this
-# http_timeout_secs = 30           # HTTP request timeout for instance API calls
-
-# instance_backend_url = "https://api.starpod.example.com"  # Or set STARPOD_INSTANCE_BACKEND_URL env var
-"#;
-
-    /// Default instance config template (instance-specific overrides + channels).
-    pub const DEFAULT_INSTANCE_CONFIG: &str = r#"# Instance-specific configuration (overrides config.toml)
-#
-# This file can contain any setting from config.toml as an override,
-# plus channel configurations which are ONLY valid here.
-
-# ══════════════════════════════════════════════════════════════════════════════
-# CHANNELS
-# ══════════════════════════════════════════════════════════════════════════════
-# Channel-specific settings. Channels are instance-specific and cannot be
-# set in config.toml.
-
-[channels.telegram]
-# enabled = true                   # Set to false to disable the Telegram channel
-# gap_minutes = 360                # Inactivity gap before new session (6h)
-# bot_token = "123456:ABC..."     # Or set TELEGRAM_BOT_TOKEN env var
-# allowed_users = [123456789, "alice"]  # User IDs or usernames (without @)
-# stream_mode = "final_only"      # "final_only" or "all_messages"
-"#;
 }
 
 #[cfg(test)]
@@ -1324,46 +937,6 @@ mod tests {
         assert!(config_true.memory.export_sessions);
     }
 
-    #[tokio::test]
-    async fn test_load_sync_matches_load() {
-        let dir = tempfile::tempdir().unwrap();
-        let starpod_dir = dir.path().join(".starpod");
-        std::fs::create_dir_all(&starpod_dir).unwrap();
-        std::fs::create_dir_all(starpod_dir.join("data")).unwrap();
-
-        let config_content = r#"
-            model = "claude-sonnet-4-6"
-            agent_name = "TestBot"
-            max_turns = 10
-        "#;
-        std::fs::write(starpod_dir.join("config.toml"), config_content).unwrap();
-
-        let instance_content = r#"
-            [memory]
-            half_life_days = 14.0
-        "#;
-        std::fs::write(starpod_dir.join("instance.toml"), instance_content).unwrap();
-
-        // Both load() and load_sync() require find_project_root() to work,
-        // which needs cwd to be inside the project. We can't easily change cwd
-        // in tests, so instead verify that load_sync's parsing logic matches
-        // by testing the underlying merge + deserialize directly.
-        let config_val: toml::Value = toml::from_str(config_content).unwrap();
-        let instance_val: toml::Value = toml::from_str(instance_content).unwrap();
-
-        let mut merged = config_val.clone();
-        deep_merge(&mut merged, instance_val);
-
-        let config: StarpodConfig = merged.try_into().unwrap();
-        assert_eq!(config.model, "claude-sonnet-4-6");
-        assert_eq!(config.agent_name, "TestBot");
-        assert_eq!(config.max_turns, 10);
-        assert_eq!(config.memory.half_life_days, 14.0);
-        // Defaults should still apply for unspecified fields
-        assert_eq!(config.memory.mmr_lambda, 0.7);
-        assert!(config.memory.export_sessions);
-    }
-
     // ── Channel gap_minutes tests ──────────────────────────────────────
 
     #[test]
@@ -1487,50 +1060,6 @@ mod tests {
 
     // ── Instances config tests ─────────────────────────────────────────
 
-    #[test]
-    fn instances_config_defaults() {
-        let cfg = InstancesConfig::default();
-        assert_eq!(cfg.health_check_interval_secs, 30);
-        assert_eq!(cfg.heartbeat_timeout_secs, 90);
-        assert_eq!(cfg.http_timeout_secs, 30);
-    }
-
-    #[test]
-    fn instances_config_default_when_missing_from_toml() {
-        let toml = "";
-        let config: StarpodConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.instances.health_check_interval_secs, 30);
-        assert_eq!(config.instances.heartbeat_timeout_secs, 90);
-        assert_eq!(config.instances.http_timeout_secs, 30);
-    }
-
-    #[test]
-    fn instances_config_from_toml() {
-        let toml = r#"
-            [instances]
-            health_check_interval_secs = 60
-            heartbeat_timeout_secs = 180
-            http_timeout_secs = 15
-        "#;
-        let config: StarpodConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.instances.health_check_interval_secs, 60);
-        assert_eq!(config.instances.heartbeat_timeout_secs, 180);
-        assert_eq!(config.instances.http_timeout_secs, 15);
-    }
-
-    #[test]
-    fn instances_config_partial_from_toml() {
-        // Only set health_check_interval_secs, rest should default
-        let toml = r#"
-            [instances]
-            health_check_interval_secs = 10
-        "#;
-        let config: StarpodConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.instances.health_check_interval_secs, 10);
-        assert_eq!(config.instances.heartbeat_timeout_secs, 90); // default
-        assert_eq!(config.instances.http_timeout_secs, 30); // default
-    }
-
     // ── max_tokens tests ───────────────────────────────────────────────
 
     #[test]
@@ -1639,61 +1168,6 @@ mod tests {
         "#;
         let config: StarpodConfig = toml::from_str(toml).unwrap();
         assert!(config.timezone.is_none()); // not read from [user]
-    }
-
-    // ── init creates both files ─────────────────────────────────────
-
-    #[tokio::test]
-    async fn init_creates_config_and_instance_files() {
-        let dir = tempfile::tempdir().unwrap();
-        StarpodConfig::init(dir.path(), None, None).await.unwrap();
-
-        assert!(dir.path().join(".starpod/config.toml").exists());
-        assert!(dir.path().join(".starpod/instance.toml").exists());
-        assert!(dir.path().join(".starpod/data").is_dir());
-    }
-
-    #[tokio::test]
-    async fn init_with_custom_content() {
-        let dir = tempfile::tempdir().unwrap();
-        let cfg = r#"model = "claude-sonnet-4-6""#;
-        let inst = r#"
-            [channels.telegram]
-            bot_token = "test:token"
-        "#;
-        StarpodConfig::init(dir.path(), Some(cfg), Some(inst)).await.unwrap();
-
-        let config_content = std::fs::read_to_string(dir.path().join(".starpod/config.toml")).unwrap();
-        assert!(config_content.contains("claude-sonnet-4-6"));
-
-        let instance_content = std::fs::read_to_string(dir.path().join(".starpod/instance.toml")).unwrap();
-        assert!(instance_content.contains("test:token"));
-    }
-
-    #[tokio::test]
-    async fn init_rejects_double_init() {
-        let dir = tempfile::tempdir().unwrap();
-        StarpodConfig::init(dir.path(), None, None).await.unwrap();
-        let err = StarpodConfig::init(dir.path(), None, None).await;
-        assert!(err.is_err());
-    }
-
-    // ── default templates parse cleanly ─────────────────────────────
-
-    #[test]
-    fn default_config_template_parses() {
-        let config: StarpodConfig = toml::from_str(StarpodConfig::DEFAULT_CONFIG).unwrap();
-        assert_eq!(config.model, "claude-haiku-4-5");
-        assert_eq!(config.agent_name, "Aster");
-        // Channels should NOT be in the shared config template
-        assert!(config.channels.telegram.is_none());
-    }
-
-    #[test]
-    fn default_instance_template_parses() {
-        let config: StarpodConfig = toml::from_str(StarpodConfig::DEFAULT_INSTANCE_CONFIG).unwrap();
-        // Instance template has commented-out telegram, so it parses as empty
-        assert!(config.channels.telegram.is_some()); // section exists but all values default
     }
 
     // ── deep_merge edge cases ───────────────────────────────────────
