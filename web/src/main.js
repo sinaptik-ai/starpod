@@ -122,7 +122,7 @@ function openPreview(url) {
   previewOgImg.src = ''
   previewOgTitle.textContent = 'Connection refused'
 
-  // Check if the URL can be framed before loading it
+  // Server-side pre-check: reliably detects X-Frame-Options / CSP blocking
   fetch('/api/frame-check?url=' + encodeURIComponent(url))
     .then(r => r.json())
     .then(data => {
@@ -133,18 +133,17 @@ function openPreview(url) {
           previewOgImg.src = data.ogImage
           previewOgImage.classList.remove('hidden')
         }
-        if (data.ogTitle) {
-          previewOgTitle.textContent = data.ogTitle
-        }
+        if (data.ogTitle) previewOgTitle.textContent = data.ogTitle
+        else try { previewOgTitle.textContent = new URL(url).hostname } catch {}
         showPreviewFallback()
       }
     })
     .catch(() => {
-      // If frame-check endpoint isn't available, load anyway with timeout fallback
+      // Endpoint unavailable — load iframe and hope for the best
       previewIframe.src = url
     })
 
-  // Safety timeout
+  // Safety timeout in case iframe hangs
   clearTimeout(previewLoadTimer)
   previewLoadTimer = setTimeout(() => {
     if (!previewIframe._loaded) showPreviewFallback()

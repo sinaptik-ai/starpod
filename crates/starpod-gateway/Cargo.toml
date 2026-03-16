@@ -21,3 +21,10 @@ futures = "0.3"
 rust-embed = { version = "8", features = ["interpolate-folder-path"] }
 mime_guess = "2"
 include_dir = "0.7"
+reqwest = { version = "0.12" }
+regex = "1"
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = "0.5"
+urlencoding = "2"
