@@ -1,9 +1,11 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use starpod_core::{ChatMessage, ChatResponse};
@@ -14,6 +16,7 @@ use crate::AppState;
 pub fn api_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/chat", post(chat_handler))
+        .route("/api/frame-check", get(frame_check_handler))
         .route("/api/sessions", get(list_sessions_handler))
         .route("/api/sessions/{id}", get(get_session_handler))
         .route("/api/sessions/{id}/messages", get(get_session_messages_handler))
@@ -28,6 +31,123 @@ pub fn api_routes() -> Router<Arc<AppState>> {
         .route("/api/instances/{id}/health", get(instance_health_handler))
         .route("/api/health", get(health_handler))
 }
+
+// ── Frame-check endpoint ─────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct FrameCheckQuery {
+    url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct FrameCheckResponse {
+    frameable: bool,
+    reason: String,
+    #[serde(rename = "ogImage")]
+    og_image: String,
+    #[serde(rename = "ogTitle")]
+    og_title: String,
+}
+
+async fn frame_check_handler(
+    Query(params): Query<FrameCheckQuery>,
+) -> Json<FrameCheckResponse> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .build()
+        .unwrap_or_default();
+
+    let resp = match client.get(&params.url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return Json(FrameCheckResponse {
+                frameable: false,
+                reason: e.to_string(),
+                og_image: String::new(),
+                og_title: String::new(),
+            });
+        }
+    };
+
+    let xfo = resp
+        .headers()
+        .get("x-frame-options")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let csp = resp
+        .headers()
+        .get("content-security-policy")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let mut frameable = true;
+    let mut reason = String::new();
+
+    if xfo == "deny" || xfo == "sameorigin" {
+        frameable = false;
+        reason = format!("X-Frame-Options: {}", xfo);
+    }
+
+    if csp.contains("frame-ancestors") {
+        if let Some(caps) = Regex::new(r"frame-ancestors\s+([^;]+)")
+            .unwrap()
+            .captures(&csp)
+        {
+            let val = caps[1].trim();
+            if !val.contains('*') {
+                frameable = false;
+                reason = format!("CSP frame-ancestors: {}", val);
+            }
+        }
+    }
+
+    let mut og_image = String::new();
+    let mut og_title = String::new();
+
+    if !frameable {
+        if let Ok(html) = resp.text().await {
+            let img_re = Regex::new(
+                r#"<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']"#,
+            )
+            .unwrap();
+            let img_re2 = Regex::new(
+                r#"<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["']"#,
+            )
+            .unwrap();
+            if let Some(caps) = img_re.captures(&html).or_else(|| img_re2.captures(&html)) {
+                og_image = caps[1].to_string();
+            }
+
+            let title_re = Regex::new(
+                r#"<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']"#,
+            )
+            .unwrap();
+            let title_re2 = Regex::new(
+                r#"<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:title["']"#,
+            )
+            .unwrap();
+            if let Some(caps) = title_re
+                .captures(&html)
+                .or_else(|| title_re2.captures(&html))
+            {
+                og_title = caps[1].to_string();
+            }
+        }
+    }
+
+    Json(FrameCheckResponse {
+        frameable,
+        reason,
+        og_image,
+        og_title,
+    })
+}
+
+// ── Chat endpoint ────────────────────────────────────────────────────────
 
 /// Request body for chat endpoint.
 #[derive(Debug, Deserialize)]
@@ -369,6 +489,79 @@ async fn instance_health_handler(
             }),
         )
     })
+}
+
+// ── Frame-check unit tests ───────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    fn frame_check_router() -> Router {
+        Router::new().route("/api/frame-check", get(frame_check_handler))
+    }
+
+    async fn get_frame_check(url: &str) -> FrameCheckResponse {
+        let app = frame_check_router();
+        let uri = format!("/api/frame-check?url={}", urlencoding::encode(url));
+        let req = Request::builder()
+            .uri(&uri)
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        serde_json::from_slice(&body).unwrap()
+    }
+
+    #[tokio::test]
+    async fn frameable_site() {
+        // httpbin allows framing (no X-Frame-Options)
+        let r = get_frame_check("https://httpbin.org/html").await;
+        assert!(r.frameable, "httpbin should be frameable");
+    }
+
+    #[tokio::test]
+    async fn non_frameable_site_with_xfo() {
+        // GitHub sets X-Frame-Options: deny
+        let r = get_frame_check("https://github.com").await;
+        assert!(!r.frameable, "github.com should not be frameable");
+        assert!(
+            r.reason.to_lowercase().contains("x-frame-options")
+                || r.reason.to_lowercase().contains("frame-ancestors"),
+            "reason should mention header: {}",
+            r.reason
+        );
+    }
+
+    #[tokio::test]
+    async fn non_frameable_extracts_og() {
+        // YouTube blocks framing and has og:image + og:title
+        let r = get_frame_check("https://www.youtube.com").await;
+        assert!(!r.frameable);
+        assert!(!r.og_title.is_empty(), "should extract og:title from YouTube");
+    }
+
+    #[tokio::test]
+    async fn unreachable_url_returns_not_frameable() {
+        let r = get_frame_check("http://localhost:1").await;
+        assert!(!r.frameable);
+        assert!(!r.reason.is_empty());
+    }
+
+    #[tokio::test]
+    async fn missing_url_param_returns_error() {
+        let app = frame_check_router();
+        let req = Request::builder()
+            .uri("/api/frame-check")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
 }
 
 /// Check X-API-Key header if an API key is configured.
