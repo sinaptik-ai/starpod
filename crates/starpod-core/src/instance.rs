@@ -17,6 +17,31 @@ use tracing::{debug, info};
 
 use crate::error::StarpodError;
 
+/// Default USER.md content seeded for new users.
+const DEFAULT_USER: &str = "\
+# User Profile
+
+<!-- The agent reads this file at the start of every conversation to personalize responses. -->
+<!-- Fill in what's relevant — leave sections blank or remove them if not needed. -->
+
+## Name
+<!-- Your name or how you'd like to be addressed. -->
+
+## Role
+<!-- e.g. software engineer, student, researcher, founder -->
+
+## Expertise
+<!-- What you're good at — helps the agent calibrate explanations. -->
+<!-- e.g. \"senior Rust developer\", \"new to programming\", \"data scientist\" -->
+
+## Preferences
+<!-- Communication style, formatting, language, or workflow preferences. -->
+<!-- e.g. \"be concise\", \"prefer code examples over explanations\", \"reply in Italian\" -->
+
+## Context
+<!-- Anything else the agent should know: current projects, goals, constraints. -->
+";
+
 /// Which `.env` file to copy from the workspace root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnvSource {
@@ -145,7 +170,7 @@ pub fn apply_blueprint(
         if !admin_dir.join("USER.md").exists() {
             std::fs::write(
                 admin_dir.join("USER.md"),
-                "# User Profile\n\nTell me about yourself and I'll remember.\n",
+                DEFAULT_USER,
             ).map_err(StarpodError::Io)?;
         }
         if !admin_dir.join("MEMORY.md").exists() {
