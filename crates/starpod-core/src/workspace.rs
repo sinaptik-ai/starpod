@@ -274,9 +274,10 @@ impl ResolvedPaths {
                 } else {
                     instance_skills
                 };
-                let project_root = workspace_root
-                    .map(|r| r.to_path_buf())
-                    .unwrap_or_else(|| instance_root.clone());
+                // The agent's sandbox is the instance directory, not the
+                // workspace root.  project_root controls cwd, system-prompt
+                // paths, and file-tool boundaries.
+                let project_root = instance_root.clone();
 
                 Ok(Self {
                     mode: mode.clone(),
@@ -878,7 +879,7 @@ mod tests {
         assert_eq!(paths.agent_home, starpod_dir);
         assert_eq!(paths.data_dir, instance_dir.join(".starpod/data"));
         assert_eq!(paths.skills_dir, root.join("skills"));
-        assert_eq!(paths.project_root, root.to_path_buf());
+        assert_eq!(paths.project_root, instance_dir);
         assert_eq!(paths.instance_root, instance_dir);
         assert_eq!(paths.users_dir, instance_dir.join(".starpod/users"));
     }
