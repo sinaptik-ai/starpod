@@ -176,6 +176,17 @@ pub fn generate_env_content(provider: &str, api_key: Option<&str>) -> String {
     }
 }
 
+/// Generate the `.env.dev` content for the selected provider.
+pub fn generate_env_dev_content(provider: &str, api_key: Option<&str>) -> String {
+    if let (Some(env_name), Some(key)) = (env_key_for_provider(provider), api_key) {
+        format!("# Development overrides\n{}={}\n", env_name, key)
+    } else if let Some(env_name) = env_key_for_provider(provider) {
+        format!("# Development overrides\n# {}=your-key-here\n", env_name)
+    } else {
+        "# Development overrides\n".to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,6 +239,25 @@ mod tests {
     }
 
     // ── .env generation ──────────────────────────────────────────────
+
+    #[test]
+    fn env_dev_content_with_key() {
+        let env = generate_env_dev_content("anthropic", Some("sk-ant-test123"));
+        assert_eq!(env, "# Development overrides\nANTHROPIC_API_KEY=sk-ant-test123\n");
+    }
+
+    #[test]
+    fn env_dev_content_without_key() {
+        let env = generate_env_dev_content("anthropic", None);
+        assert!(env.starts_with("# Development overrides"));
+        assert!(env.contains("# ANTHROPIC_API_KEY="));
+    }
+
+    #[test]
+    fn env_dev_content_ollama() {
+        let env = generate_env_dev_content("ollama", None);
+        assert_eq!(env, "# Development overrides\n");
+    }
 
     #[test]
     fn env_content_with_key() {

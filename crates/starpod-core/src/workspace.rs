@@ -14,12 +14,13 @@
 //! ```text
 //! workspace/
 //! +-- starpod.toml                    # workspace defaults (git-tracked)
+//! +-- .env                            # production secrets (gitignored)
+//! +-- .env.dev                        # development overrides (gitignored)
 //! +-- skills/                         # shared skills (git-tracked)
 //! +-- agents/                         # BLUEPRINTS (git-tracked)
 //! |   +-- aster/
 //! |       +-- agent.toml
 //! |       +-- SOUL.md
-//! |       +-- .env / .env.dev
 //! |       +-- users/{id}/user.toml
 //! |       +-- files/                  # template filesystem
 //! +-- .instances/                     # RUNTIME (gitignored)
@@ -27,7 +28,7 @@
 //!         +-- .starpod/
 //!         |   +-- agent.toml          # copied from blueprint
 //!         |   +-- SOUL.md
-//!         |   +-- .env                # single file (from .env.dev or .env)
+//!         |   +-- .env                # single file (from workspace .env.dev or .env)
 //!         |   +-- users/admin/
 //!         |   +-- data/
 //!         +-- reports/                # agent creates freely

@@ -128,13 +128,13 @@ SQLite connections use connection pools for safe concurrent access.
 ```
 workspace/
 ├── starpod.toml                    # workspace defaults (git-tracked)
+├── .env                            # production secrets (gitignored)
+├── .env.dev                        # development overrides (gitignored)
 ├── skills/                         # shared skills (git-tracked)
 ├── agents/                         # BLUEPRINTS (git-tracked)
 │   └── aster/
 │       ├── agent.toml              # config + default permissions
 │       ├── SOUL.md                 # personality
-│       ├── .env                    # prod secrets
-│       ├── .env.dev                # dev secrets override
 │       ├── users/                  # per-user permission templates
 │       └── files/                  # template filesystem
 └── .instances/                     # RUNTIME (gitignored)
@@ -142,7 +142,7 @@ workspace/
         ├── .starpod/               # internal (like .git/)
         │   ├── agent.toml          # copied from blueprint
         │   ├── SOUL.md             # copied from blueprint
-        │   ├── .env                # ONE file (from .env.dev or .env)
+        │   ├── .env                # ONE file (from workspace .env.dev or .env)
         │   ├── users/
         │   │   └── admin/          # auto-created
         │   │       ├── USER.md

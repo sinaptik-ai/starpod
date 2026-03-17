@@ -577,15 +577,6 @@ async fn scaffold_agent_blueprint(
     };
     tokio::fs::write(agent_dir.join("SOUL.md"), soul_content).await?;
 
-    tokio::fs::write(
-        agent_dir.join(".env"),
-        "# Production secrets\n# ANTHROPIC_API_KEY=sk-ant-...\n",
-    ).await?;
-    tokio::fs::write(
-        agent_dir.join(".env.dev"),
-        "# Development overrides\n# ANTHROPIC_API_KEY=sk-ant-...\n",
-    ).await?;
-
     Ok(())
 }
 
@@ -664,6 +655,10 @@ async fn main() -> anyhow::Result<()> {
             tokio::fs::write(
                 cwd.join(".env"),
                 onboarding::generate_env_content(&provider, api_key.as_deref()),
+            ).await?;
+            tokio::fs::write(
+                cwd.join(".env.dev"),
+                onboarding::generate_env_dev_content(&provider, api_key.as_deref()),
             ).await?;
 
             // Add .env and .instances/ to .gitignore if not already there
@@ -888,6 +883,7 @@ async fn main() -> anyhow::Result<()> {
             starpod_core::apply_blueprint(
                 &blueprint_dir,
                 &instance_dir,
+                &workspace_root,
                 starpod_core::EnvSource::Dev,
             )?;
 

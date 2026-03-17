@@ -17,7 +17,7 @@ use tracing::{debug, info};
 
 use crate::error::StarpodError;
 
-/// Which `.env` file to copy from the blueprint.
+/// Which `.env` file to copy from the workspace root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnvSource {
     /// Use `.env.dev` (development overrides).
@@ -35,7 +35,7 @@ pub enum EnvSource {
 /// ├── .starpod/                ← internal state
 /// │   ├── agent.toml           ← copied from blueprint
 /// │   ├── SOUL.md              ← copied from blueprint
-/// │   ├── .env                 ← from .env.dev (Dev) or .env (Prod)
+/// │   ├── .env                 ← from workspace .env.dev (Dev) or .env (Prod)
 /// │   ├── data/                ← SQLite databases
 /// │   └── users/
 /// │       └── admin/           ← auto-created default user
@@ -50,9 +50,11 @@ pub enum EnvSource {
 /// - Existing databases (data/*.db) are preserved.
 /// - Blueprint `files/*` are synced to instance root, but never overwrite `.starpod/`.
 /// - `agent.toml` and `SOUL.md` are always refreshed from the blueprint.
+/// - `.env` / `.env.dev` are read from `workspace_dir` (top level), not from the blueprint.
 pub fn apply_blueprint(
     blueprint_dir: &Path,
     instance_dir: &Path,
+    workspace_dir: &Path,
     env_source: EnvSource,
 ) -> crate::Result<()> {
     let starpod_dir = instance_dir.join(".starpod");
@@ -87,20 +89,20 @@ pub fn apply_blueprint(
         debug!("Copied SOUL.md from blueprint");
     }
 
-    // 4. Copy .env file based on env_source
+    // 4. Copy .env file from workspace root based on env_source
     let env_src = match env_source {
         EnvSource::Dev => {
-            let dev = blueprint_dir.join(".env.dev");
+            let dev = workspace_dir.join(".env.dev");
             if dev.is_file() {
                 Some(dev)
             } else {
                 // Fall back to .env if .env.dev doesn't exist
-                let prod = blueprint_dir.join(".env");
+                let prod = workspace_dir.join(".env");
                 if prod.is_file() { Some(prod) } else { None }
             }
         }
         EnvSource::Prod => {
-            let prod = blueprint_dir.join(".env");
+            let prod = workspace_dir.join(".env");
             if prod.is_file() { Some(prod) } else { None }
         }
     };
@@ -109,7 +111,7 @@ pub fn apply_blueprint(
             .map_err(|e| StarpodError::Config(format!(
                 "Failed to copy .env: {}", e
             )))?;
-        debug!(source = %src.display(), "Copied .env from blueprint");
+        debug!(source = %src.display(), "Copied .env from workspace");
     }
 
     // 5. Sync files/ → instance root (excluding .starpod/)
@@ -204,8 +206,10 @@ mod tests {
             blueprint.join("SOUL.md"),
             "# Soul\n\nYou are TestBot.\n",
         ).unwrap();
-        std::fs::write(blueprint.join(".env"), "PROD_KEY=secret\n").unwrap();
-        std::fs::write(blueprint.join(".env.dev"), "DEV_KEY=dev_secret\n").unwrap();
+
+        // .env files live at workspace root (tmp root), not in the blueprint
+        std::fs::write(tmp.path().join(".env"), "PROD_KEY=secret\n").unwrap();
+        std::fs::write(tmp.path().join(".env.dev"), "DEV_KEY=dev_secret\n").unwrap();
 
         // Template files
         let files = blueprint.join("files");
@@ -221,7 +225,7 @@ mod tests {
         let blueprint = setup_blueprint(&tmp);
         let instance = tmp.path().join(".instances").join("test-bot");
 
-        apply_blueprint(&blueprint, &instance, EnvSource::Dev).unwrap();
+        apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Dev).unwrap();
 
         let sp = instance.join(".starpod");
         assert!(sp.join("agent.toml").is_file());
@@ -241,7 +245,7 @@ mod tests {
         let blueprint = setup_blueprint(&tmp);
         let instance = tmp.path().join(".instances").join("test-bot");
 
-        apply_blueprint(&blueprint, &instance, EnvSource::Dev).unwrap();
+        apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Dev).unwrap();
 
         let env_content = std::fs::read_to_string(instance.join(".starpod").join(".env")).unwrap();
         assert!(env_content.contains("DEV_KEY=dev_secret"));
@@ -253,7 +257,7 @@ mod tests {
         let blueprint = setup_blueprint(&tmp);
         let instance = tmp.path().join(".instances").join("test-bot");
 
-        apply_blueprint(&blueprint, &instance, EnvSource::Prod).unwrap();
+        apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Prod).unwrap();
 
         let env_content = std::fs::read_to_string(instance.join(".starpod").join(".env")).unwrap();
         assert!(env_content.contains("PROD_KEY=secret"));
@@ -265,7 +269,7 @@ mod tests {
         let blueprint = setup_blueprint(&tmp);
         let instance = tmp.path().join(".instances").join("test-bot");
 
-        apply_blueprint(&blueprint, &instance, EnvSource::Dev).unwrap();
+        apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Dev).unwrap();
 
         assert!(instance.join("templates").join("report.md").is_file());
     }
@@ -277,14 +281,14 @@ mod tests {
         let instance = tmp.path().join(".instances").join("test-bot");
 
         // First apply
-        apply_blueprint(&blueprint, &instance, EnvSource::Dev).unwrap();
+        apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Dev).unwrap();
 
         // Modify admin USER.md
         let admin_user = instance.join(".starpod").join("users").join("admin").join("USER.md");
         std::fs::write(&admin_user, "# User\nCustom content\n").unwrap();
 
         // Second apply — should NOT overwrite
-        apply_blueprint(&blueprint, &instance, EnvSource::Dev).unwrap();
+        apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Dev).unwrap();
 
         let content = std::fs::read_to_string(&admin_user).unwrap();
         assert!(content.contains("Custom content"), "User data should be preserved");
@@ -297,7 +301,7 @@ mod tests {
         let instance = tmp.path().join(".instances").join("test-bot");
 
         // First apply
-        apply_blueprint(&blueprint, &instance, EnvSource::Dev).unwrap();
+        apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Dev).unwrap();
 
         // Update blueprint
         std::fs::write(
@@ -306,7 +310,7 @@ mod tests {
         ).unwrap();
 
         // Re-apply — agent.toml should be refreshed
-        apply_blueprint(&blueprint, &instance, EnvSource::Dev).unwrap();
+        apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Dev).unwrap();
 
         let content = std::fs::read_to_string(
             instance.join(".starpod").join("agent.toml")
@@ -320,14 +324,30 @@ mod tests {
         let blueprint = tmp.path().join("agents").join("no-dev-env");
         std::fs::create_dir_all(&blueprint).unwrap();
         std::fs::write(blueprint.join("agent.toml"), "").unwrap();
-        std::fs::write(blueprint.join(".env"), "ONLY_PROD=yes\n").unwrap();
-        // No .env.dev
+        // .env at workspace root, no .env.dev
+        std::fs::write(tmp.path().join(".env"), "ONLY_PROD=yes\n").unwrap();
 
         let instance = tmp.path().join(".instances").join("no-dev-env");
-        apply_blueprint(&blueprint, &instance, EnvSource::Dev).unwrap();
+        apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Dev).unwrap();
 
         let env = std::fs::read_to_string(instance.join(".starpod").join(".env")).unwrap();
         assert!(env.contains("ONLY_PROD=yes"), "Dev should fall back to prod .env");
+    }
+
+    #[test]
+    fn apply_blueprint_no_env_files() {
+        let tmp = TempDir::new().unwrap();
+        let blueprint = tmp.path().join("agents").join("bare");
+        std::fs::create_dir_all(&blueprint).unwrap();
+        std::fs::write(blueprint.join("agent.toml"), "").unwrap();
+        // No .env or .env.dev at workspace root
+
+        let instance = tmp.path().join(".instances").join("bare");
+        apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Dev).unwrap();
+
+        // Instance should be created but no .env file
+        assert!(instance.join(".starpod").join("agent.toml").is_file());
+        assert!(!instance.join(".starpod").join(".env").exists());
     }
 
     #[test]
