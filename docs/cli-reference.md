@@ -2,28 +2,52 @@
 
 The `starpod` binary provides commands for all major features.
 
-## Agent
+## Workspace
 
-### `starpod agent init`
+### `starpod init`
 
-Initialize a new `.starpod/` project directory.
+Initialize a new workspace in the current directory.
 
 ```bash
-starpod agent init                  # Interactive wizard
-starpod agent init --default        # Skip wizard, use defaults
-starpod agent init --name "Alice" --model "claude-opus-4-6"
+starpod init                        # Interactive wizard
+starpod init --default              # Skip wizard, use defaults
 ```
+
+The interactive wizard prompts for:
+- **Provider** — Anthropic, OpenAI, Gemini, Groq, DeepSeek, OpenRouter, or Ollama
+- **Model** — pre-filled with the provider's default
+- **API key** — saved to `.env` (skipped if already in environment or not needed)
+- **First agent** — optionally create an agent immediately
 
 | Flag | Description |
 |------|-------------|
-| `--name` | Your display name |
-| `--timezone` | IANA timezone |
-| `--agent-name` | Agent's display name |
-| `--soul` | Personality/instructions |
-| `--model` | Claude model |
-| `--default` | Skip the wizard |
+| `--default` | Skip the wizard, use Anthropic / `claude-sonnet-4-6` |
 
-### `starpod agent serve`
+Creates: `starpod.toml`, `agents/`, `skills/`, `.env`, `.gitignore`.
+
+## Agent
+
+### `starpod agent new <name>`
+
+Create a new agent in the workspace.
+
+```bash
+starpod agent new my-agent
+starpod agent new my-agent --agent-name "Jarvis" --model "claude-opus-4-6"
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--agent-name` | Agent's display name | `Aster` |
+| `--soul` | Personality/instructions | Generic helpful assistant |
+| `--model` | LLM model | `claude-sonnet-4-6` |
+| `--default` | Skip interactive prompts | — |
+
+### `starpod agent list`
+
+List all agents in the workspace.
+
+### `starpod serve`
 
 Start the HTTP/WS server with optional Telegram bot.
 
