@@ -53,12 +53,12 @@ When reviewing code, always check for:
 
 ```bash
 # With inline instructions
-starpod agent skills create "code-review" \
+starpod agent skills new "code-review" \
   --description "Review code for bugs and style issues." \
   --body "Check for error handling, edge cases, and security."
 
 # From a file
-starpod agent skills create "code-review" \
+starpod agent skills new "code-review" \
   --description "Review code for bugs and style issues." \
   --file code-review-instructions.md
 ```
