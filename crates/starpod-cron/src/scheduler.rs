@@ -179,6 +179,7 @@ impl CronScheduler {
                 session_mode: job.session_mode.clone(),
                 job_name: job.name.clone(),
                 job_id: job.id.clone(),
+                user_id: job.user_id.clone(),
             };
             let executor = Arc::clone(&self.executor);
             let result = (executor)(ctx).await;
@@ -270,6 +271,7 @@ impl CronScheduler {
                 session_mode: job.session_mode.clone(),
                 job_name: job.name.clone(),
                 job_id: job.id.clone(),
+                user_id: job.user_id.clone(),
             };
             let executor = Arc::clone(&self.executor);
             let result = (executor)(ctx).await;
@@ -521,7 +523,7 @@ mod tests {
         // Job with max_retries = 1
         let schedule = Schedule::Interval { every_ms: 60000 };
         let id = store
-            .add_job_full("exhaust-retry", "test", &schedule, false, None, 1, 7200, SessionMode::Isolated)
+            .add_job_full("exhaust-retry", "test", &schedule, false, None, 1, 7200, SessionMode::Isolated, None)
             .await
             .unwrap();
 
@@ -612,7 +614,7 @@ mod tests {
         // Add a delete-after-run job
         let schedule = Schedule::Interval { every_ms: 60000 };
         store
-            .add_job_full("one-shot", "test", &schedule, true, None, 3, 7200, SessionMode::Isolated)
+            .add_job_full("one-shot", "test", &schedule, true, None, 3, 7200, SessionMode::Isolated, None)
             .await
             .unwrap();
 
@@ -639,7 +641,7 @@ mod tests {
 
         let schedule = Schedule::Interval { every_ms: 60000 };
         store
-            .add_job_full("ctx-job", "hello world", &schedule, false, None, 3, 7200, SessionMode::Main)
+            .add_job_full("ctx-job", "hello world", &schedule, false, None, 3, 7200, SessionMode::Main, None)
             .await
             .unwrap();
 

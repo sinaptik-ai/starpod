@@ -28,8 +28,12 @@
 //!         |   +-- agent.toml          # copied from blueprint
 //!         |   +-- SOUL.md
 //!         |   +-- .env                # single file (from .env.dev or .env)
-//!         |   +-- users/admin/
-//!         |   +-- data/
+//!         |   +-- HEARTBEAT.md        # agent-level heartbeat (optional)
+//!         |   +-- BOOT.md             # startup instructions (optional)
+//!         |   +-- BOOTSTRAP.md        # one-time init (self-destructing)
+//!         |   +-- db/                 # SQLite databases
+//!         |   +-- users/admin/        # per-user data
+//!         |   +-- skills/
 //!         +-- reports/                # agent creates freely
 //! ```
 //!
@@ -40,8 +44,12 @@
 //! |   +-- agent.toml
 //! |   +-- SOUL.md
 //! |   +-- .env
+//! |   +-- HEARTBEAT.md
+//! |   +-- BOOT.md
+//! |   +-- BOOTSTRAP.md
+//! |   +-- db/                         # SQLite databases
 //! |   +-- users/admin/
-//! |   +-- data/
+//! |   +-- skills/
 //! +-- reports/                        # agent-produced files
 //! ```
 //!
@@ -206,8 +214,8 @@ pub struct ResolvedPaths {
     pub agent_toml: PathBuf,
     /// Agent home directory (.starpod/ dir — internal state).
     pub agent_home: PathBuf,
-    /// Data directory for SQLite DBs (agent_home/data/).
-    pub data_dir: PathBuf,
+    /// Database directory for SQLite DBs (agent_home/db/).
+    pub db_dir: PathBuf,
     /// Skills directory (workspace skills/ or .starpod/skills/).
     pub skills_dir: PathBuf,
     /// Project/workspace root.
@@ -222,12 +230,14 @@ pub struct ResolvedPaths {
 
 impl ResolvedPaths {
     /// Resolve all paths from a detected mode.
+    ///
+    /// Automatically migrates old `data/` layout to `db/` + root-level lifecycle files.
     pub fn resolve(mode: &Mode) -> crate::Result<Self> {
         match mode {
             Mode::SingleAgent { starpod_dir } => {
                 let agent_toml = starpod_dir.join("agent.toml");
                 let agent_home = starpod_dir.clone();
-                let data_dir = starpod_dir.join("data");
+                let db_dir = starpod_dir.join("db");
                 let skills_dir = starpod_dir.join("skills");
                 let users_dir = starpod_dir.join("users");
                 let instance_root = starpod_dir
@@ -243,7 +253,7 @@ impl ResolvedPaths {
                     mode: mode.clone(),
                     agent_toml,
                     agent_home,
-                    data_dir,
+                    db_dir,
                     skills_dir,
                     project_root,
                     instance_root,
@@ -258,7 +268,7 @@ impl ResolvedPaths {
             Mode::Instance { instance_root, agent_name: _ } => {
                 let agent_home = instance_root.join(".starpod");
                 let agent_toml = agent_home.join("agent.toml");
-                let data_dir = agent_home.join("data");
+                let db_dir = agent_home.join("db");
                 let users_dir = agent_home.join("users");
                 let env_path = agent_home.join(".env");
                 // Skills: check instance-level first, fall back to workspace
@@ -281,7 +291,7 @@ impl ResolvedPaths {
                     mode: mode.clone(),
                     agent_toml,
                     agent_home,
-                    data_dir,
+                    db_dir,
                     skills_dir,
                     project_root,
                     instance_root: instance_root.clone(),
@@ -308,7 +318,7 @@ impl ResolvedPaths {
                 // Fall back to old workspace layout (backward compat)
                 let agents_dir = root.join("agents").join(agent_name);
                 let agent_toml = agents_dir.join("agent.toml");
-                let data_dir = agents_dir.join("data");
+                let db_dir = agents_dir.join("db");
                 let skills_dir = root.join("skills");
                 let users_dir = agents_dir.join("users");
                 let env_path = root.join(".env");
@@ -317,7 +327,7 @@ impl ResolvedPaths {
                     mode: mode.clone(),
                     agent_toml,
                     agent_home: agents_dir.clone(),
-                    data_dir,
+                    db_dir,
                     skills_dir,
                     project_root: root.clone(),
                     instance_root: agents_dir,
@@ -330,6 +340,88 @@ impl ResolvedPaths {
                 })
             }
         }
+    }
+
+    /// Migrate old `data/` layout to `db/` + root-level lifecycle files.
+    ///
+    /// If `agent_home/data/` exists and `agent_home/db/` does not, performs:
+    /// 1. Move `data/*.db` → `db/`
+    /// 2. Move `data/HEARTBEAT.md`, `data/BOOT.md`, `data/BOOTSTRAP.md` → `agent_home/`
+    /// 3. Move `data/USER.md`, `data/MEMORY.md`, `data/memory/` → `users/admin/` (if not already there)
+    /// 4. Remove `data/SOUL.md` (duplicate of `agent_home/SOUL.md`)
+    /// 5. Remove `data/knowledge/` (no longer used)
+    /// 6. Clean up empty `data/`
+    pub fn migrate_if_needed(&self) {
+        let data_dir = self.agent_home.join("data");
+        if !data_dir.is_dir() || self.db_dir.is_dir() {
+            return; // Nothing to migrate
+        }
+
+        tracing::info!("Migrating old data/ layout to db/ + root-level files");
+
+        // 1. Create db/ and move databases
+        if let Err(e) = std::fs::create_dir_all(&self.db_dir) {
+            tracing::error!(error = %e, "Migration: failed to create db/");
+            return;
+        }
+        for db_name in &["memory.db", "session.db", "cron.db", "vault.db"] {
+            let src = data_dir.join(db_name);
+            let dst = self.db_dir.join(db_name);
+            if src.is_file() && !dst.exists() {
+                if let Err(e) = std::fs::rename(&src, &dst) {
+                    tracing::warn!(file = %db_name, error = %e, "Migration: failed to move DB file");
+                }
+            }
+        }
+        // Also move WAL/SHM files for SQLite
+        for suffix in &["-wal", "-shm"] {
+            for db_name in &["memory.db", "session.db", "cron.db", "vault.db"] {
+                let name = format!("{}{}", db_name, suffix);
+                let src = data_dir.join(&name);
+                let dst = self.db_dir.join(&name);
+                if src.is_file() && !dst.exists() {
+                    let _ = std::fs::rename(&src, &dst);
+                }
+            }
+        }
+
+        // 2. Move lifecycle files to agent_home root
+        for name in &["HEARTBEAT.md", "BOOT.md", "BOOTSTRAP.md"] {
+            let src = data_dir.join(name);
+            let dst = self.agent_home.join(name);
+            if src.is_file() && !dst.exists() {
+                if let Err(e) = std::fs::rename(&src, &dst) {
+                    tracing::warn!(file = %name, error = %e, "Migration: failed to move lifecycle file");
+                }
+            }
+        }
+
+        // 3. Move user files to users/admin/ (if not already there)
+        let admin_dir = self.users_dir.join("admin");
+        let _ = std::fs::create_dir_all(&admin_dir);
+        for name in &["USER.md", "MEMORY.md"] {
+            let src = data_dir.join(name);
+            let dst = admin_dir.join(name);
+            if src.is_file() && !dst.exists() {
+                let _ = std::fs::rename(&src, &dst);
+            }
+        }
+        let src_memory = data_dir.join("memory");
+        let dst_memory = admin_dir.join("memory");
+        if src_memory.is_dir() && !dst_memory.exists() {
+            let _ = std::fs::rename(&src_memory, &dst_memory);
+        }
+
+        // 4. Remove data/SOUL.md (duplicate)
+        let _ = std::fs::remove_file(data_dir.join("SOUL.md"));
+
+        // 5. Remove data/knowledge/ (no longer used)
+        let _ = std::fs::remove_dir_all(data_dir.join("knowledge"));
+
+        // 6. Try to remove empty data/
+        let _ = std::fs::remove_dir(&data_dir);
+
+        tracing::info!("Migration complete: data/ → db/ + root-level files");
     }
 
     /// Build a `UserContext` for a specific user ID.
@@ -519,7 +611,7 @@ impl AgentConfig {
     /// Convert to `StarpodConfig` for backward compatibility with existing code.
     pub fn into_starpod_config(self, paths: &ResolvedPaths) -> StarpodConfig {
         StarpodConfig {
-            data_dir: paths.data_dir.clone(),
+            db_dir: paths.db_dir.clone(),
             db_path: None,
             server_addr: self.server_addr,
             provider: self.provider,
@@ -811,7 +903,7 @@ mod tests {
 
         assert_eq!(paths.agent_toml, PathBuf::from("/app/.starpod/agent.toml"));
         assert_eq!(paths.agent_home, PathBuf::from("/app/.starpod"));
-        assert_eq!(paths.data_dir, PathBuf::from("/app/.starpod/data"));
+        assert_eq!(paths.db_dir, PathBuf::from("/app/.starpod/db"));
         assert_eq!(paths.skills_dir, PathBuf::from("/app/.starpod/skills"));
         assert_eq!(paths.project_root, PathBuf::from("/app"));
         assert_eq!(paths.instance_root, PathBuf::from("/app"));
@@ -836,7 +928,7 @@ mod tests {
             root.join("agents/sales-rep/agent.toml")
         );
         assert_eq!(paths.agent_home, root.join("agents/sales-rep"));
-        assert_eq!(paths.data_dir, root.join("agents/sales-rep/data"));
+        assert_eq!(paths.db_dir, root.join("agents/sales-rep/db"));
         assert_eq!(paths.skills_dir, root.join("skills"));
         assert_eq!(paths.project_root, root);
         assert_eq!(paths.instance_root, root.join("agents/sales-rep"));
@@ -862,7 +954,7 @@ mod tests {
 
         assert_eq!(paths.agent_toml, starpod_dir.join("agent.toml"));
         assert_eq!(paths.agent_home, starpod_dir);
-        assert_eq!(paths.data_dir, instance_dir.join(".starpod/data"));
+        assert_eq!(paths.db_dir, instance_dir.join(".starpod/db"));
         assert_eq!(paths.skills_dir, root.join("skills"));
         assert_eq!(paths.project_root, root.to_path_buf());
         assert_eq!(paths.instance_root, instance_dir);
@@ -1024,7 +1116,7 @@ model = "gpt-4o"
             },
             agent_toml: PathBuf::from("/app/.starpod/agent.toml"),
             agent_home: PathBuf::from("/app/.starpod"),
-            data_dir: PathBuf::from("/app/.starpod/data"),
+            db_dir: PathBuf::from("/app/.starpod/db"),
             skills_dir: PathBuf::from("/app/.starpod/skills"),
             project_root: PathBuf::from("/app"),
             instance_root: PathBuf::from("/app"),
@@ -1035,7 +1127,7 @@ model = "gpt-4o"
         let starpod_config = config.into_starpod_config(&paths);
         assert_eq!(starpod_config.agent_name, "TestBot");
         assert_eq!(starpod_config.model, "claude-sonnet-4-6");
-        assert_eq!(starpod_config.data_dir, PathBuf::from("/app/.starpod/data"));
+        assert_eq!(starpod_config.db_dir, PathBuf::from("/app/.starpod/db"));
         assert_eq!(starpod_config.project_root, PathBuf::from("/app"));
     }
 

@@ -74,7 +74,7 @@ impl CronStore {
         delete_after_run: bool,
         user_tz: Option<&str>,
     ) -> Result<String> {
-        self.add_job_full(name, prompt, schedule, delete_after_run, user_tz, self.default_max_retries, self.default_timeout_secs as u32, SessionMode::Isolated).await
+        self.add_job_full(name, prompt, schedule, delete_after_run, user_tz, self.default_max_retries, self.default_timeout_secs as u32, SessionMode::Isolated, None).await
     }
 
     /// Add a new cron job with full options. Returns the job ID.
@@ -88,6 +88,7 @@ impl CronStore {
         max_retries: u32,
         timeout_secs: u32,
         session_mode: SessionMode,
+        user_id: Option<&str>,
     ) -> Result<String> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().timestamp();
@@ -96,8 +97,8 @@ impl CronStore {
         let delete_flag = delete_after_run as i64;
 
         sqlx::query(
-            "INSERT INTO cron_jobs (id, name, prompt, schedule_type, schedule_value, enabled, delete_after_run, created_at, next_run_at, max_retries, timeout_secs, session_mode)
-             VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO cron_jobs (id, name, prompt, schedule_type, schedule_value, enabled, delete_after_run, created_at, next_run_at, max_retries, timeout_secs, session_mode, user_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         )
         .bind(&id)
         .bind(name)
@@ -110,6 +111,7 @@ impl CronStore {
         .bind(max_retries as i64)
         .bind(timeout_secs as i64)
         .bind(session_mode.as_str())
+        .bind(user_id)
         .execute(&self.pool)
         .await
         .map_err(|e| StarpodError::Cron(format!("Failed to add job: {}", e)))?;
@@ -148,7 +150,7 @@ impl CronStore {
     /// List all jobs.
     pub async fn list_jobs(&self) -> Result<Vec<CronJob>> {
         let rows = sqlx::query(
-            "SELECT id, name, prompt, schedule_type, schedule_value, enabled, delete_after_run, created_at, last_run_at, next_run_at, retry_count, max_retries, last_error, retry_at, timeout_secs, session_mode
+            "SELECT id, name, prompt, schedule_type, schedule_value, enabled, delete_after_run, created_at, last_run_at, next_run_at, retry_count, max_retries, last_error, retry_at, timeout_secs, session_mode, user_id
              FROM cron_jobs ORDER BY name",
         )
         .fetch_all(&self.pool)
@@ -161,7 +163,7 @@ impl CronStore {
     /// Get a job by name.
     pub async fn get_job_by_name(&self, name: &str) -> Result<Option<CronJob>> {
         let row = sqlx::query(
-            "SELECT id, name, prompt, schedule_type, schedule_value, enabled, delete_after_run, created_at, last_run_at, next_run_at, retry_count, max_retries, last_error, retry_at, timeout_secs, session_mode
+            "SELECT id, name, prompt, schedule_type, schedule_value, enabled, delete_after_run, created_at, last_run_at, next_run_at, retry_count, max_retries, last_error, retry_at, timeout_secs, session_mode, user_id
              FROM cron_jobs WHERE name = ?1",
         )
         .bind(name)
@@ -177,7 +179,7 @@ impl CronStore {
         let now = Utc::now().timestamp();
 
         let rows = sqlx::query(
-            "SELECT id, name, prompt, schedule_type, schedule_value, enabled, delete_after_run, created_at, last_run_at, next_run_at, retry_count, max_retries, last_error, retry_at, timeout_secs, session_mode
+            "SELECT id, name, prompt, schedule_type, schedule_value, enabled, delete_after_run, created_at, last_run_at, next_run_at, retry_count, max_retries, last_error, retry_at, timeout_secs, session_mode, user_id
              FROM cron_jobs
              WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?1",
         )
@@ -194,7 +196,7 @@ impl CronStore {
         let now = Utc::now().timestamp();
 
         let rows = sqlx::query(
-            "SELECT id, name, prompt, schedule_type, schedule_value, enabled, delete_after_run, created_at, last_run_at, next_run_at, retry_count, max_retries, last_error, retry_at, timeout_secs, session_mode
+            "SELECT id, name, prompt, schedule_type, schedule_value, enabled, delete_after_run, created_at, last_run_at, next_run_at, retry_count, max_retries, last_error, retry_at, timeout_secs, session_mode, user_id
              FROM cron_jobs
              WHERE retry_at IS NOT NULL AND retry_at <= ?1 AND enabled = 1",
         )
@@ -475,6 +477,7 @@ fn job_from_row(row: &SqliteRow) -> CronJob {
         retry_at: row.get("retry_at"),
         timeout_secs: row.get::<i64, _>("timeout_secs") as u32,
         session_mode: SessionMode::from_str(row.get::<&str, _>("session_mode")),
+        user_id: row.get("user_id"),
     }
 }
 
@@ -607,7 +610,7 @@ mod tests {
 
         let schedule = Schedule::Interval { every_ms: 60000 };
         let id = store
-            .add_job_full("my-job", "Do stuff", &schedule, false, None, 5, 3600, SessionMode::Main)
+            .add_job_full("my-job", "Do stuff", &schedule, false, None, 5, 3600, SessionMode::Main, None)
             .await
             .unwrap();
         assert!(!id.is_empty());
@@ -884,7 +887,7 @@ mod tests {
         // Create a job with a very short timeout
         let schedule = Schedule::Interval { every_ms: 60000 };
         let id = store
-            .add_job_full("timeout-job", "test", &schedule, false, None, 3, 1, SessionMode::Isolated)
+            .add_job_full("timeout-job", "test", &schedule, false, None, 3, 1, SessionMode::Isolated, None)
             .await
             .unwrap();
 
@@ -925,7 +928,7 @@ mod tests {
         // Job with a generous timeout
         let schedule = Schedule::Interval { every_ms: 60000 };
         let id = store
-            .add_job_full("safe-job", "test", &schedule, false, None, 3, 7200, SessionMode::Isolated)
+            .add_job_full("safe-job", "test", &schedule, false, None, 3, 7200, SessionMode::Isolated, None)
             .await
             .unwrap();
 

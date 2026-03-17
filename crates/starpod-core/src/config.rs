@@ -374,11 +374,11 @@ impl AttachmentsConfig {
 /// Main configuration for Starpod, loaded from `.starpod/config.toml` in the current directory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StarpodConfig {
-    /// Root data directory (default: `.starpod/data` relative to project root)
-    #[serde(default)]
-    pub data_dir: PathBuf,
+    /// Database directory for SQLite DBs (default: `.starpod/db`)
+    #[serde(default, alias = "data_dir")]
+    pub db_dir: PathBuf,
 
-    /// Path to the SQLite database (default: `<data_dir>/memory.db`)
+    /// Path to the SQLite database (default: `<db_dir>/memory.db`)
     #[serde(default)]
     pub db_path: Option<PathBuf>,
 
@@ -484,7 +484,7 @@ fn default_agent_name() -> String {
 impl Default for StarpodConfig {
     fn default() -> Self {
         Self {
-            data_dir: PathBuf::new(),
+            db_dir: PathBuf::new(),
             db_path: None,
             server_addr: default_server_addr(),
             provider: default_provider(),
@@ -545,11 +545,11 @@ impl StarpodConfig {
         }
     }
 
-    /// Resolved database path (uses `db_path` if set, otherwise `<data_dir>/memory.db`).
+    /// Resolved database path (uses `db_path` if set, otherwise `<db_dir>/memory.db`).
     pub fn resolved_db_path(&self) -> PathBuf {
         self.db_path
             .clone()
-            .unwrap_or_else(|| self.data_dir.join("memory.db"))
+            .unwrap_or_else(|| self.db_dir.join("memory.db"))
     }
 
     /// Resolved API key for any provider from the conventional env var.
