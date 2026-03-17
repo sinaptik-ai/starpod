@@ -201,6 +201,15 @@ fn start_config_watcher(
                     Ok(agent_cfg.into_starpod_config(&p))
                 }))
             }
+            starpod_core::Mode::Instance { .. } => {
+                let watch = paths.agent_home.clone();
+                let agent_toml = paths.agent_toml.clone();
+                let p = paths_clone.clone();
+                (watch, vec![agent_toml], Box::new(move || {
+                    let agent_cfg = reload_agent_config(&p)?;
+                    Ok(agent_cfg.into_starpod_config(&p))
+                }))
+            }
             starpod_core::Mode::SingleAgent { starpod_dir } => {
                 let watch = starpod_dir.clone();
                 let agent_toml = paths.agent_toml.clone();
@@ -236,12 +245,24 @@ fn start_config_watcher(
         return None;
     }
 
-    // If workspace mode, also watch the root for starpod.toml changes
-    if let starpod_core::Mode::Workspace { root, .. } = &paths.mode {
-        let _ = debouncer.watcher().watch(
-            root,
-            notify::RecursiveMode::NonRecursive,
-        );
+    // If workspace or instance mode, also watch the workspace root for starpod.toml changes
+    match &paths.mode {
+        starpod_core::Mode::Workspace { root, .. } => {
+            let _ = debouncer.watcher().watch(
+                root,
+                notify::RecursiveMode::NonRecursive,
+            );
+        }
+        starpod_core::Mode::Instance { instance_root, .. } => {
+            // Watch workspace root (grandparent of instance_root)
+            if let Some(workspace_root) = instance_root.parent().and_then(|p| p.parent()) {
+                let _ = debouncer.watcher().watch(
+                    workspace_root,
+                    notify::RecursiveMode::NonRecursive,
+                );
+            }
+        }
+        _ => {}
     }
 
     info!(dir = %watch_dir.display(), "Config hot reload enabled");

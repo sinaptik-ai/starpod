@@ -21,14 +21,14 @@ use starpod_cron::CronStore;
 use starpod_memory::MemoryStore;
 use starpod_session::{Channel, SessionDecision, SessionManager, UsageRecord};
 use starpod_skills::SkillStore;
-use starpod_vault::Vault;
 
 use crate::tools::{custom_tool_definitions, handle_custom_tool, ToolContext};
 
 /// All custom tool names.
 const CUSTOM_TOOLS: &[&str] = &[
     "MemorySearch", "MemoryWrite", "MemoryAppendDaily",
-    "VaultGet", "VaultSet",
+    "EnvGet",
+    "FileRead", "FileWrite", "FileList", "FileDelete",
     "SkillActivate", "SkillCreate", "SkillUpdate", "SkillDelete", "SkillList",
     "CronAdd", "CronList", "CronRemove", "CronRuns",
     "CronRun", "CronUpdate", "HeartbeatWake",
@@ -44,7 +44,6 @@ const CUSTOM_TOOLS: &[&str] = &[
 pub struct StarpodAgent {
     memory: Arc<MemoryStore>,
     session_mgr: Arc<SessionManager>,
-    vault: Arc<Vault>,
     skills: Arc<SkillStore>,
     cron: Arc<CronStore>,
     paths: ResolvedPaths,
@@ -78,15 +77,18 @@ impl StarpodAgent {
             attachments: config.attachments.clone(),
         };
 
+        let starpod_dir = config.data_dir.parent().unwrap_or(&config.data_dir).to_path_buf();
         let paths = ResolvedPaths {
             mode: starpod_core::Mode::SingleAgent {
-                starpod_dir: config.data_dir.parent().unwrap_or(&config.data_dir).to_path_buf(),
+                starpod_dir: starpod_dir.clone(),
             },
-            agent_toml: config.data_dir.parent().unwrap_or(&config.data_dir).join("agent.toml"),
+            agent_toml: starpod_dir.join("agent.toml"),
             agent_home: config.data_dir.clone(),
             data_dir: config.data_dir.clone(),
             skills_dir: config.data_dir.join("skills"),
             project_root: config.project_root.clone(),
+            instance_root: config.project_root.clone(),
+            users_dir: config.data_dir.join("users"),
             env_file: None,
         };
 
@@ -123,11 +125,6 @@ impl StarpodAgent {
         let sessions_dir = paths.agent_home.join("sessions");
         let session_mgr = SessionManager::new(&session_db, &sessions_dir).await?;
 
-        // Vault in data_dir
-        let vault_db = paths.data_dir.join("vault.db");
-        let master_key = derive_vault_key(&config);
-        let vault = Vault::new(&vault_db, &master_key).await?;
-
         // Skills from resolved skills_dir, with optional filter
         let skills = SkillStore::new(&paths.skills_dir)?
             .with_filter(agent_config.skills.clone());
@@ -141,7 +138,6 @@ impl StarpodAgent {
         Ok(Self {
             memory: Arc::new(memory),
             session_mgr: Arc::new(session_mgr),
-            vault: Arc::new(vault),
             skills: Arc::new(skills),
             cron: Arc::new(cron),
             paths,
@@ -319,7 +315,8 @@ impl StarpodAgent {
              Project root: {project_root}\n\
              Working directory: {project_root}\n\n\
              You have access to memory tools (MemorySearch, MemoryWrite, MemoryAppendDaily), \
-             vault tools (VaultGet, VaultSet), skill tools (SkillActivate, SkillCreate, SkillUpdate, SkillDelete, SkillList), \
+             environment tools (EnvGet), file tools (FileRead, FileWrite, FileList, FileDelete), \
+             skill tools (SkillActivate, SkillCreate, SkillUpdate, SkillDelete, SkillList), \
              and scheduling tools (CronAdd, CronList, CronRemove, CronRuns, CronRun, CronUpdate, HeartbeatWake).\n\
              You can read image files (png, jpg, gif, webp) with the Read tool — the image will be loaded \
              directly into the conversation so you can see and analyze it. For other file types like CSV or \
@@ -440,10 +437,10 @@ impl StarpodAgent {
     fn build_tool_handler(&self, config: &StarpodConfig) -> ExternalToolHandlerFn {
         let ctx = Arc::new(ToolContext {
             memory: Arc::clone(&self.memory),
-            vault: Arc::clone(&self.vault),
             skills: Arc::clone(&self.skills),
             cron: Arc::clone(&self.cron),
             user_tz: config.timezone.clone(),
+            instance_root: self.paths.instance_root.clone(),
         });
 
         Box::new(move |tool_name, input| {
@@ -837,11 +834,6 @@ impl StarpodAgent {
         &self.session_mgr
     }
 
-    /// Get a reference to the vault.
-    pub fn vault(&self) -> &Arc<Vault> {
-        &self.vault
-    }
-
     /// Get a reference to the skill store.
     pub fn skills(&self) -> &Arc<SkillStore> {
         &self.skills
@@ -1086,27 +1078,6 @@ fn resolve_channel(msg: &ChatMessage) -> (Channel, String) {
     }
 }
 
-/// Derive a 32-byte vault key.
-fn derive_vault_key(config: &StarpodConfig) -> [u8; 32] {
-    let resolved = config.resolved_api_key();
-    let seed = resolved
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .unwrap_or("starpod-default-vault-key-change-me!");
-
-    let mut key = [0u8; 32];
-    let bytes = seed.as_bytes();
-    for (i, byte) in bytes.iter().enumerate().take(32) {
-        key[i] = *byte;
-    }
-    if bytes.len() < 32 {
-        for i in bytes.len()..32 {
-            key[i] = key[i % bytes.len()].wrapping_add(i as u8);
-        }
-    }
-    key
-}
-
 /// Truncate a string to a maximum length, adding "..." if truncated.
 fn truncate(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
@@ -1146,9 +1117,6 @@ mod tests {
         assert!(ctx.contains("Aster"));
 
         // Vault should work
-        agent.vault().set("test", "value").await.unwrap();
-        assert_eq!(agent.vault().get("test").await.unwrap().as_deref(), Some("value"));
-
         // Skills dir should exist
         assert!(tmp.path().join("skills").exists());
 
@@ -1176,6 +1144,8 @@ mod tests {
             data_dir: data_dir.clone(),
             skills_dir: skills_dir.clone(),
             project_root: tmp.path().to_path_buf(),
+            instance_root: agent_home.clone(),
+            users_dir: agent_home.join("users"),
             env_file: None,
         };
 
@@ -1197,7 +1167,6 @@ mod tests {
 
         // Data dir should have session.db
         assert!(data_dir.join("session.db").exists());
-        assert!(data_dir.join("vault.db").exists());
         assert!(data_dir.join("cron.db").exists());
     }
 
@@ -1225,6 +1194,8 @@ mod tests {
             data_dir: agent_home.join("data"),
             skills_dir: skills_dir.clone(),
             project_root: tmp.path().to_path_buf(),
+            instance_root: tmp.path().to_path_buf(),
+            users_dir: agent_home.join("users"),
             env_file: None,
         };
 
@@ -1268,8 +1239,11 @@ mod tests {
         assert!(names.contains(&"MemoryWrite"));
         assert!(names.contains(&"MemoryAppendDaily"));
         // Vault tools
-        assert!(names.contains(&"VaultGet"));
-        assert!(names.contains(&"VaultSet"));
+        assert!(names.contains(&"EnvGet"));
+        assert!(names.contains(&"FileRead"));
+        assert!(names.contains(&"FileWrite"));
+        assert!(names.contains(&"FileList"));
+        assert!(names.contains(&"FileDelete"));
         // Skill tools
         assert!(names.contains(&"SkillActivate"));
         assert!(names.contains(&"SkillCreate"));
@@ -1285,7 +1259,7 @@ mod tests {
         assert!(names.contains(&"CronUpdate"));
         assert!(names.contains(&"HeartbeatWake"));
 
-        assert_eq!(defs.len(), 17);
+        assert_eq!(defs.len(), 20);
     }
 
     #[tokio::test]
@@ -1296,10 +1270,10 @@ mod tests {
 
         let ctx = ToolContext {
             memory: Arc::clone(agent.memory()),
-            vault: Arc::clone(agent.vault()),
             skills: Arc::clone(agent.skills()),
             cron: Arc::clone(agent.cron()),
             user_tz: None,
+            instance_root: tmp.path().to_path_buf(),
         };
 
         // Test MemorySearch

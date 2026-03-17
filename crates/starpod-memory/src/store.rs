@@ -157,6 +157,11 @@ impl MemoryStore {
         Ok(fresh)
     }
 
+    /// Get the data directory path.
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+
     /// Returns `true` if BOOTSTRAP.md exists and has non-empty content.
     pub fn has_bootstrap(&self) -> bool {
         self.read_file("BOOTSTRAP.md")

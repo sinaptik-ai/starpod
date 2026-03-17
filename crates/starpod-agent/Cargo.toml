@@ -9,7 +9,6 @@ agent-sdk = { path = "../agent-sdk" }
 starpod-core = { path = "../starpod-core" }
 starpod-memory = { path = "../starpod-memory", features = ["embeddings"] }
 starpod-session = { path = "../starpod-session" }
-starpod-vault = { path = "../starpod-vault" }
 starpod-skills = { path = "../starpod-skills" }
 starpod-cron = { path = "../starpod-cron" }
 chrono = { version = "0.4", features = ["serde"] }

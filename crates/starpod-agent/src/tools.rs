@@ -1,5 +1,6 @@
 //! Custom tool definitions and handler for Starpod-specific tools.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use agent_sdk::{CustomToolDefinition, ToolResult};
@@ -10,15 +11,14 @@ use starpod_cron::store::epoch_to_rfc3339;
 use starpod_cron::CronStore;
 use starpod_memory::MemoryStore;
 use starpod_skills::SkillStore;
-use starpod_vault::Vault;
 
 /// Shared context for custom tool handlers.
 pub struct ToolContext {
     pub memory: Arc<MemoryStore>,
-    pub vault: Arc<Vault>,
     pub skills: Arc<SkillStore>,
     pub cron: Arc<CronStore>,
     pub user_tz: Option<String>,
+    pub instance_root: PathBuf,
 }
 
 /// Build the JSON schema definitions for all Starpod custom tools.
@@ -75,37 +75,79 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
                 "required": ["text"]
             }),
         },
-        // --- Vault tools ---
+        // --- Env tool (replaces vault) ---
         CustomToolDefinition {
-            name: "VaultGet".into(),
-            description: "Retrieve an encrypted credential from the vault by key.".into(),
+            name: "EnvGet".into(),
+            description: "Look up an environment variable by key.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "key": {
                         "type": "string",
-                        "description": "The key to look up"
+                        "description": "The environment variable name to look up"
                     }
                 },
                 "required": ["key"]
             }),
         },
+        // --- File tools ---
         CustomToolDefinition {
-            name: "VaultSet".into(),
-            description: "Store an encrypted credential in the vault.".into(),
+            name: "FileRead".into(),
+            description: "Read a file from the agent's filesystem sandbox. Path is relative to the instance root.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "key": {
+                    "path": {
                         "type": "string",
-                        "description": "The key to store under"
-                    },
-                    "value": {
-                        "type": "string",
-                        "description": "The secret value to encrypt and store"
+                        "description": "Relative file path within the agent's filesystem"
                     }
                 },
-                "required": ["key", "value"]
+                "required": ["path"]
+            }),
+        },
+        CustomToolDefinition {
+            name: "FileWrite".into(),
+            description: "Write a file to the agent's filesystem sandbox. Path is relative to the instance root. Creates parent directories as needed.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative file path within the agent's filesystem"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The content to write"
+                    }
+                },
+                "required": ["path", "content"]
+            }),
+        },
+        CustomToolDefinition {
+            name: "FileList".into(),
+            description: "List files and directories in the agent's filesystem sandbox. Path is relative to the instance root.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative directory path (default: root of sandbox)"
+                    }
+                }
+            }),
+        },
+        CustomToolDefinition {
+            name: "FileDelete".into(),
+            description: "Delete a file from the agent's filesystem sandbox. Path is relative to the instance root.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative file path to delete"
+                    }
+                },
+                "required": ["path"]
             }),
         },
         // --- Skill tools ---
@@ -359,6 +401,47 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
     ]
 }
 
+// ── Sandbox path validation ──────────────────────────────────────────────────
+
+/// Validate and resolve a relative path within the instance sandbox.
+///
+/// Rejects paths that:
+/// - Start with `.starpod` (internal state)
+/// - Contain `..` traversal
+/// - Are absolute paths
+fn validate_sandbox_path(relative: &str, instance_root: &Path) -> std::result::Result<PathBuf, String> {
+    // Reject absolute paths
+    if relative.starts_with('/') || relative.starts_with('\\') {
+        return Err("Absolute paths are not allowed".into());
+    }
+
+    // Reject .. traversal
+    for component in std::path::Path::new(relative).components() {
+        if matches!(component, std::path::Component::ParentDir) {
+            return Err("Path traversal (..) is not allowed".into());
+        }
+    }
+
+    // Reject paths starting with .starpod
+    let normalized = relative.replace('\\', "/");
+    if normalized == ".starpod" || normalized.starts_with(".starpod/") {
+        return Err("Cannot access .starpod/ directory — it contains internal state".into());
+    }
+
+    let resolved = instance_root.join(relative);
+
+    // Double-check: canonicalize if the path exists
+    if resolved.exists() {
+        let canonical = resolved.canonicalize().map_err(|e| format!("Failed to resolve path: {}", e))?;
+        let root_canonical = instance_root.canonicalize().map_err(|e| format!("Failed to resolve root: {}", e))?;
+        if !canonical.starts_with(&root_canonical) {
+            return Err("Path resolves outside the sandbox".into());
+        }
+    }
+
+    Ok(resolved)
+}
+
 /// Handle a custom tool call. Returns `Some(ToolResult)` if handled, `None` if not a custom tool.
 pub async fn handle_custom_tool(
     ctx: &ToolContext,
@@ -442,45 +525,192 @@ pub async fn handle_custom_tool(
             }
         }
 
-        // --- Vault tools ---
-        "VaultGet" => {
+        // --- Env tool ---
+        "EnvGet" => {
             let key = input.get("key")?.as_str()?;
 
-            debug!(key = %key, "VaultGet");
+            debug!(key = %key, "EnvGet");
 
-            match ctx.vault.get(key).await {
-                Ok(Some(value)) => Some(ToolResult {
+            match std::env::var(key) {
+                Ok(value) => Some(ToolResult {
                     content: value,
                     is_error: false,
                     raw_content: None,
                 }),
-                Ok(None) => Some(ToolResult {
-                    content: format!("No vault entry found for key: {}", key),
+                Err(_) => Some(ToolResult {
+                    content: format!("Environment variable '{}' is not set.", key),
                     is_error: false,
                     raw_content: None,
                 }),
+            }
+        }
+
+        // --- File tools ---
+        "FileRead" => {
+            let path = input.get("path")?.as_str()?;
+
+            debug!(path = %path, "FileRead");
+
+            match validate_sandbox_path(path, &ctx.instance_root) {
+                Ok(resolved) => {
+                    if !resolved.is_file() {
+                        return Some(ToolResult {
+                            content: format!("File not found: {}", path),
+                            is_error: true,
+                            raw_content: None,
+                        });
+                    }
+                    match std::fs::read_to_string(&resolved) {
+                        Ok(content) => Some(ToolResult {
+                            content,
+                            is_error: false,
+                            raw_content: None,
+                        }),
+                        Err(e) => Some(ToolResult {
+                            content: format!("Failed to read file: {}", e),
+                            is_error: true,
+                            raw_content: None,
+                        }),
+                    }
+                }
                 Err(e) => Some(ToolResult {
-                    content: format!("Vault get error: {}", e),
+                    content: format!("Invalid path: {}", e),
                     is_error: true,
                     raw_content: None,
                 }),
             }
         }
 
-        "VaultSet" => {
-            let key = input.get("key")?.as_str()?;
-            let value = input.get("value")?.as_str()?;
+        "FileWrite" => {
+            let path = input.get("path")?.as_str()?;
+            let content = input.get("content")?.as_str()?;
 
-            debug!(key = %key, "VaultSet");
+            debug!(path = %path, "FileWrite");
 
-            match ctx.vault.set(key, value).await {
-                Ok(()) => Some(ToolResult {
-                    content: format!("Stored '{}' in vault.", key),
-                    is_error: false,
+            match validate_sandbox_path(path, &ctx.instance_root) {
+                Ok(resolved) => {
+                    // Create parent directories
+                    if let Some(parent) = resolved.parent() {
+                        if let Err(e) = std::fs::create_dir_all(parent) {
+                            return Some(ToolResult {
+                                content: format!("Failed to create directories: {}", e),
+                                is_error: true,
+                                raw_content: None,
+                            });
+                        }
+                    }
+                    match std::fs::write(&resolved, content) {
+                        Ok(()) => Some(ToolResult {
+                            content: format!("Successfully wrote {}", path),
+                            is_error: false,
+                            raw_content: None,
+                        }),
+                        Err(e) => Some(ToolResult {
+                            content: format!("Failed to write file: {}", e),
+                            is_error: true,
+                            raw_content: None,
+                        }),
+                    }
+                }
+                Err(e) => Some(ToolResult {
+                    content: format!("Invalid path: {}", e),
+                    is_error: true,
                     raw_content: None,
                 }),
+            }
+        }
+
+        "FileList" => {
+            let path = input.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+
+            debug!(path = %path, "FileList");
+
+            let resolved = if path == "." {
+                ctx.instance_root.clone()
+            } else {
+                match validate_sandbox_path(path, &ctx.instance_root) {
+                    Ok(p) => p,
+                    Err(e) => return Some(ToolResult {
+                        content: format!("Invalid path: {}", e),
+                        is_error: true,
+                        raw_content: None,
+                    }),
+                }
+            };
+
+            if !resolved.is_dir() {
+                return Some(ToolResult {
+                    content: format!("Not a directory: {}", path),
+                    is_error: true,
+                    raw_content: None,
+                });
+            }
+
+            match std::fs::read_dir(&resolved) {
+                Ok(entries) => {
+                    let mut items: Vec<serde_json::Value> = Vec::new();
+                    for entry in entries.flatten() {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        // Hide .starpod from listings
+                        if name == ".starpod" {
+                            continue;
+                        }
+                        let meta = entry.metadata().ok();
+                        let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+                        let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+                        items.push(json!({
+                            "name": if is_dir { format!("{}/", name) } else { name },
+                            "size": size,
+                            "type": if is_dir { "directory" } else { "file" },
+                        }));
+                    }
+                    items.sort_by(|a, b| {
+                        a.get("name").and_then(|v| v.as_str())
+                            .cmp(&b.get("name").and_then(|v| v.as_str()))
+                    });
+                    Some(ToolResult {
+                        content: serde_json::to_string_pretty(&items).unwrap_or_default(),
+                        is_error: false,
+                        raw_content: None,
+                    })
+                }
                 Err(e) => Some(ToolResult {
-                    content: format!("Vault set error: {}", e),
+                    content: format!("Failed to list directory: {}", e),
+                    is_error: true,
+                    raw_content: None,
+                }),
+            }
+        }
+
+        "FileDelete" => {
+            let path = input.get("path")?.as_str()?;
+
+            debug!(path = %path, "FileDelete");
+
+            match validate_sandbox_path(path, &ctx.instance_root) {
+                Ok(resolved) => {
+                    if !resolved.exists() {
+                        return Some(ToolResult {
+                            content: format!("File not found: {}", path),
+                            is_error: true,
+                            raw_content: None,
+                        });
+                    }
+                    match std::fs::remove_file(&resolved) {
+                        Ok(()) => Some(ToolResult {
+                            content: format!("Deleted {}", path),
+                            is_error: false,
+                            raw_content: None,
+                        }),
+                        Err(e) => Some(ToolResult {
+                            content: format!("Failed to delete file: {}", e),
+                            is_error: true,
+                            raw_content: None,
+                        }),
+                    }
+                }
+                Err(e) => Some(ToolResult {
+                    content: format!("Invalid path: {}", e),
                     is_error: true,
                     raw_content: None,
                 }),
@@ -671,7 +901,6 @@ pub async fn handle_custom_tool(
                                 "last_run_at": j.last_run_at.map(epoch_to_rfc3339),
                                 "next_run_at": j.next_run_at.map(epoch_to_rfc3339),
                             });
-                            // Show retry info only when relevant
                             if j.retry_count > 0 {
                                 obj["retry_count"] = json!(j.retry_count);
                             }
@@ -776,7 +1005,6 @@ pub async fn handle_custom_tool(
 
             debug!(job = %name, "CronRun");
 
-            // Look up job by name
             let job = match ctx.cron.get_job_by_name(name).await {
                 Ok(Some(j)) => j,
                 Ok(None) => {
@@ -795,7 +1023,6 @@ pub async fn handle_custom_tool(
                 }
             };
 
-            // Record run
             let run_id = match ctx.cron.record_run_start(&job.id).await {
                 Ok(id) => id,
                 Err(e) => {
@@ -842,7 +1069,7 @@ pub async fn handle_custom_tool(
 
             let update = starpod_cron::JobUpdate {
                 prompt: input.get("prompt").and_then(|v| v.as_str()).map(String::from),
-                schedule: None, // schedule updates not exposed via this tool
+                schedule: None,
                 enabled: input.get("enabled").and_then(|v| v.as_bool()),
                 max_retries: input.get("max_retries").and_then(|v| v.as_u64()).map(|v| v as u32),
                 timeout_secs: input.get("timeout_secs").and_then(|v| v.as_u64()).map(|v| v as u32),
@@ -871,7 +1098,6 @@ pub async fn handle_custom_tool(
             debug!(mode = %mode, "HeartbeatWake");
 
             if mode == "now" {
-                // Set heartbeat's next_run_at to now
                 let job = match ctx.cron.get_job_by_name("__heartbeat__").await {
                     Ok(Some(j)) => j,
                     Ok(None) => {
@@ -893,7 +1119,6 @@ pub async fn handle_custom_tool(
                 let now = chrono::Utc::now().timestamp();
                 match ctx.cron.update_next_run(&job.id, Some(now)).await {
                     Ok(()) => {
-                        // If a message was provided, update the heartbeat prompt
                         if let Some(message) = input.get("message").and_then(|v| v.as_str()) {
                             let update = starpod_cron::JobUpdate {
                                 prompt: Some(message.to_string()),
@@ -923,5 +1148,264 @@ pub async fn handle_custom_tool(
         }
 
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    // ── validate_sandbox_path ───────────────────────────────────────
+
+    #[test]
+    fn sandbox_rejects_absolute_path() {
+        let tmp = TempDir::new().unwrap();
+        let err = validate_sandbox_path("/etc/passwd", tmp.path());
+        assert!(err.is_err());
+        assert!(err.unwrap_err().contains("Absolute"));
+    }
+
+    #[test]
+    fn sandbox_rejects_dot_dot_traversal() {
+        let tmp = TempDir::new().unwrap();
+        let err = validate_sandbox_path("../escape.txt", tmp.path());
+        assert!(err.is_err());
+        assert!(err.unwrap_err().contains("traversal"));
+    }
+
+    #[test]
+    fn sandbox_rejects_starpod_dir() {
+        let tmp = TempDir::new().unwrap();
+        let err = validate_sandbox_path(".starpod/agent.toml", tmp.path());
+        assert!(err.is_err());
+        assert!(err.unwrap_err().contains(".starpod"));
+    }
+
+    #[test]
+    fn sandbox_rejects_starpod_dir_exact() {
+        let tmp = TempDir::new().unwrap();
+        let err = validate_sandbox_path(".starpod", tmp.path());
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn sandbox_allows_normal_path() {
+        let tmp = TempDir::new().unwrap();
+        let result = validate_sandbox_path("reports/weekly.md", tmp.path());
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), tmp.path().join("reports/weekly.md"));
+    }
+
+    #[test]
+    fn sandbox_allows_root_file() {
+        let tmp = TempDir::new().unwrap();
+        let result = validate_sandbox_path("notes.txt", tmp.path());
+        assert!(result.is_ok());
+    }
+
+    // ── EnvGet handler ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn env_get_returns_value() {
+        let tmp = TempDir::new().unwrap();
+        let memory = Arc::new(starpod_memory::MemoryStore::new(tmp.path()).await.unwrap());
+        let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
+
+        let ctx = ToolContext {
+            memory,
+            skills,
+            cron,
+            user_tz: None,
+            instance_root: tmp.path().to_path_buf(),
+        };
+
+        std::env::set_var("STARPOD_ENVGET_TEST_KEY", "test_value_42");
+        let result = handle_custom_tool(
+            &ctx,
+            "EnvGet",
+            &serde_json::json!({"key": "STARPOD_ENVGET_TEST_KEY"}),
+        ).await;
+        std::env::remove_var("STARPOD_ENVGET_TEST_KEY");
+
+        let result = result.unwrap();
+        assert!(!result.is_error);
+        assert_eq!(result.content, "test_value_42");
+    }
+
+    #[tokio::test]
+    async fn env_get_missing_key() {
+        let tmp = TempDir::new().unwrap();
+        let memory = Arc::new(starpod_memory::MemoryStore::new(tmp.path()).await.unwrap());
+        let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
+
+        let ctx = ToolContext {
+            memory,
+            skills,
+            cron,
+            user_tz: None,
+            instance_root: tmp.path().to_path_buf(),
+        };
+
+        let result = handle_custom_tool(
+            &ctx,
+            "EnvGet",
+            &serde_json::json!({"key": "STARPOD_DEFINITELY_NOT_SET_EVER"}),
+        ).await;
+
+        let result = result.unwrap();
+        assert!(!result.is_error); // not an error, just "not set"
+        assert!(result.content.contains("not set"));
+    }
+
+    // ── File tool handlers ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn file_write_and_read() {
+        let tmp = TempDir::new().unwrap();
+        let memory = Arc::new(starpod_memory::MemoryStore::new(tmp.path()).await.unwrap());
+        let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
+
+        let instance_root = tmp.path().join("instance");
+        std::fs::create_dir_all(&instance_root).unwrap();
+
+        let ctx = ToolContext {
+            memory,
+            skills,
+            cron,
+            user_tz: None,
+            instance_root: instance_root.clone(),
+        };
+
+        // Write a file
+        let result = handle_custom_tool(
+            &ctx,
+            "FileWrite",
+            &serde_json::json!({"path": "reports/test.txt", "content": "Hello world"}),
+        ).await.unwrap();
+        assert!(!result.is_error, "FileWrite failed: {}", result.content);
+
+        // Read it back
+        let result = handle_custom_tool(
+            &ctx,
+            "FileRead",
+            &serde_json::json!({"path": "reports/test.txt"}),
+        ).await.unwrap();
+        assert!(!result.is_error);
+        assert_eq!(result.content, "Hello world");
+    }
+
+    #[tokio::test]
+    async fn file_list_hides_starpod() {
+        let tmp = TempDir::new().unwrap();
+        let memory = Arc::new(starpod_memory::MemoryStore::new(tmp.path()).await.unwrap());
+        let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
+
+        let instance_root = tmp.path().join("instance");
+        std::fs::create_dir_all(instance_root.join(".starpod")).unwrap();
+        std::fs::write(instance_root.join("visible.txt"), "hi").unwrap();
+
+        let ctx = ToolContext {
+            memory,
+            skills,
+            cron,
+            user_tz: None,
+            instance_root: instance_root.clone(),
+        };
+
+        let result = handle_custom_tool(
+            &ctx,
+            "FileList",
+            &serde_json::json!({}),
+        ).await.unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains("visible.txt"));
+        assert!(!result.content.contains(".starpod"), "FileList should hide .starpod");
+    }
+
+    #[tokio::test]
+    async fn file_delete_works() {
+        let tmp = TempDir::new().unwrap();
+        let memory = Arc::new(starpod_memory::MemoryStore::new(tmp.path()).await.unwrap());
+        let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
+
+        let instance_root = tmp.path().join("instance");
+        std::fs::create_dir_all(&instance_root).unwrap();
+        std::fs::write(instance_root.join("deleteme.txt"), "bye").unwrap();
+
+        let ctx = ToolContext {
+            memory,
+            skills,
+            cron,
+            user_tz: None,
+            instance_root: instance_root.clone(),
+        };
+
+        let result = handle_custom_tool(
+            &ctx,
+            "FileDelete",
+            &serde_json::json!({"path": "deleteme.txt"}),
+        ).await.unwrap();
+        assert!(!result.is_error);
+        assert!(!instance_root.join("deleteme.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn file_read_rejects_starpod() {
+        let tmp = TempDir::new().unwrap();
+        let memory = Arc::new(starpod_memory::MemoryStore::new(tmp.path()).await.unwrap());
+        let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
+
+        let instance_root = tmp.path().join("instance");
+        let starpod = instance_root.join(".starpod");
+        std::fs::create_dir_all(&starpod).unwrap();
+        std::fs::write(starpod.join("agent.toml"), "secret").unwrap();
+
+        let ctx = ToolContext {
+            memory,
+            skills,
+            cron,
+            user_tz: None,
+            instance_root: instance_root.clone(),
+        };
+
+        let result = handle_custom_tool(
+            &ctx,
+            "FileRead",
+            &serde_json::json!({"path": ".starpod/agent.toml"}),
+        ).await.unwrap();
+        assert!(result.is_error, "FileRead should reject .starpod/ paths");
+    }
+
+    #[tokio::test]
+    async fn file_write_rejects_traversal() {
+        let tmp = TempDir::new().unwrap();
+        let memory = Arc::new(starpod_memory::MemoryStore::new(tmp.path()).await.unwrap());
+        let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
+
+        let instance_root = tmp.path().join("instance");
+        std::fs::create_dir_all(&instance_root).unwrap();
+
+        let ctx = ToolContext {
+            memory,
+            skills,
+            cron,
+            user_tz: None,
+            instance_root,
+        };
+
+        let result = handle_custom_tool(
+            &ctx,
+            "FileWrite",
+            &serde_json::json!({"path": "../escape.txt", "content": "evil"}),
+        ).await.unwrap();
+        assert!(result.is_error, "FileWrite should reject .. traversal");
     }
 }

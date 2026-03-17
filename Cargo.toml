@@ -5,7 +5,6 @@ members = [
     "crates/starpod-hooks",
     "crates/starpod-core",
     "crates/starpod-memory",
-    "crates/starpod-vault",
     "crates/starpod-session",
     "crates/starpod-skills",
     "crates/starpod-cron",

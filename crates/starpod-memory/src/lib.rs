@@ -48,6 +48,8 @@ pub mod indexer;
 pub mod schema;
 pub mod scoring;
 pub mod store;
+pub mod user_view;
 
 pub use embedder::Embedder;
 pub use store::{MemoryStore, SearchResult};
+pub use user_view::UserMemoryView;

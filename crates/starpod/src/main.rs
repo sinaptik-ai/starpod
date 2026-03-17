@@ -38,6 +38,15 @@ enum Commands {
         action: AgentCommand,
     },
 
+    /// Apply blueprint and start agent in dev mode (workspace only).
+    Dev {
+        /// Agent name from agents/ directory.
+        agent: String,
+        /// Port to serve on (overrides config).
+        #[arg(short, long)]
+        port: Option<u16>,
+    },
+
     /// Start the gateway HTTP/WS server (+ Telegram bot if configured).
     Serve {
         /// Agent name (required in workspace mode, optional in single-agent).
@@ -68,15 +77,6 @@ enum Commands {
         agent: Option<String>,
         #[command(subcommand)]
         action: MemoryAction,
-    },
-
-    /// Vault credential management.
-    Vault {
-        /// Agent name.
-        #[arg(short, long)]
-        agent: Option<String>,
-        #[command(subcommand)]
-        action: VaultAction,
     },
 
     /// Session management.
@@ -208,29 +208,6 @@ enum MemoryAction {
 }
 
 #[derive(Subcommand)]
-enum VaultAction {
-    /// Get a credential.
-    Get {
-        /// The key to retrieve.
-        key: String,
-    },
-    /// Set a credential.
-    Set {
-        /// The key to store.
-        key: String,
-        /// The value to encrypt and store.
-        value: String,
-    },
-    /// Delete a credential.
-    Delete {
-        /// The key to delete.
-        key: String,
-    },
-    /// List all keys.
-    List,
-}
-
-#[derive(Subcommand)]
 enum SessionAction {
     /// List recent sessions.
     List {
@@ -338,8 +315,11 @@ fn tool_icon(name: &str) -> &str {
         "MemorySearch" => "🧠",
         "MemoryWrite" => "📝",
         "MemoryAppendDaily" => "📅",
-        "VaultGet" => "🔐",
-        "VaultSet" => "🔑",
+        "EnvGet" => "🔑",
+        "FileRead" => "📖",
+        "FileWrite" => "📝",
+        "FileList" => "📂",
+        "FileDelete" => "🗑️",
         "SkillActivate" => "⚡",
         "SkillCreate" => "🛠️",
         "SkillUpdate" => "🛠️",
@@ -363,7 +343,7 @@ fn tool_input_preview(name: &str, input: &serde_json::Value) -> String {
     } else if let Some(q) = input.get("query").and_then(|v| v.as_str()) {
         truncate(q, 60)
     } else if let Some(key) = input.get("key").and_then(|v| v.as_str()) {
-        if name.starts_with("Vault") {
+        if name == "EnvGet" {
             key.to_string()
         } else {
             let s = serde_json::to_string(input).unwrap_or_default();
@@ -639,18 +619,30 @@ async fn main() -> anyhow::Result<()> {
                 onboarding::generate_env_content(&provider, api_key.as_deref()),
             ).await?;
 
-            // Add .env to .gitignore if not already there
+            // Add .env and .instances/ to .gitignore if not already there
             let gitignore_path = cwd.join(".gitignore");
-            let gitignore_content = if gitignore_path.exists() {
-                let existing = tokio::fs::read_to_string(&gitignore_path).await?;
-                if existing.contains(".env") {
-                    existing
-                } else {
-                    format!("{}\n.env\n*/data/\n", existing)
-                }
+            let mut gitignore_content = if gitignore_path.exists() {
+                tokio::fs::read_to_string(&gitignore_path).await?
             } else {
-                ".env\n*/data/\n".to_string()
+                String::new()
             };
+            let mut additions = Vec::new();
+            if !gitignore_content.contains(".env") {
+                additions.push(".env");
+            }
+            if !gitignore_content.contains(".instances/") {
+                additions.push(".instances/");
+            }
+            if !gitignore_content.contains("*/data/") {
+                additions.push("*/data/");
+            }
+            if !additions.is_empty() {
+                if !gitignore_content.is_empty() && !gitignore_content.ends_with('\n') {
+                    gitignore_content.push('\n');
+                }
+                gitignore_content.push_str(&additions.join("\n"));
+                gitignore_content.push('\n');
+            }
             tokio::fs::write(&gitignore_path, gitignore_content).await?;
 
             println!();
@@ -744,13 +736,11 @@ async fn main() -> anyhow::Result<()> {
                     std::process::exit(1);
                 }
 
-                // Create agent scaffold
-                let data_dir = agent_dir.join("data");
-                let memory_dir = agent_dir.join("memory");
-                let knowledge_dir = agent_dir.join("knowledge");
-                tokio::fs::create_dir_all(&data_dir).await?;
-                tokio::fs::create_dir_all(&memory_dir).await?;
-                tokio::fs::create_dir_all(&knowledge_dir).await?;
+                // Create blueprint scaffold (no runtime data — that goes in .instances/)
+                let users_dir = agent_dir.join("users");
+                let files_dir = agent_dir.join("files");
+                tokio::fs::create_dir_all(&users_dir).await?;
+                tokio::fs::create_dir_all(&files_dir).await?;
 
                 // Generate agent.toml
                 let display_name = agent_name.as_deref().unwrap_or(&name);
@@ -780,14 +770,14 @@ async fn main() -> anyhow::Result<()> {
                 };
                 tokio::fs::write(agent_dir.join("SOUL.md"), soul_content).await?;
 
-                // Generate USER.md and MEMORY.md
+                // Generate .env templates
                 tokio::fs::write(
-                    agent_dir.join("USER.md"),
-                    "# User Profile\n\n",
+                    agent_dir.join(".env"),
+                    "# Production secrets\n# ANTHROPIC_API_KEY=sk-ant-...\n",
                 ).await?;
                 tokio::fs::write(
-                    agent_dir.join("MEMORY.md"),
-                    "# Memory Index\n\n",
+                    agent_dir.join(".env.dev"),
+                    "# Development overrides\n# ANTHROPIC_API_KEY=sk-ant-...\n",
                 ).await?;
 
                 println!();
@@ -803,9 +793,9 @@ async fn main() -> anyhow::Result<()> {
                     agent_dir.join("agent.toml").display().to_string().bright_white()
                 );
                 println!(
-                    "  {} Run {} to start.",
+                    "  {} Run {} to start in dev mode.",
                     "→".dimmed(),
-                    format!("starpod serve -a {}", name).bright_white()
+                    format!("starpod dev {}", name).bright_white()
                 );
                 println!();
             }
@@ -854,6 +844,123 @@ async fn main() -> anyhow::Result<()> {
             }
 
         },
+
+        // ── Dev ──────────────────────────────────────────────────────
+        Commands::Dev { agent: agent_name, port } => {
+            // Require workspace mode
+            let cwd = std::env::current_dir()?;
+            let mode = starpod_core::detect_mode_from(Some(&agent_name), &cwd)?;
+            let workspace_root = match &mode {
+                starpod_core::Mode::Workspace { root, .. } => root.clone(),
+                _ => {
+                    eprintln!("Error: `starpod dev` requires workspace mode (starpod.toml must exist).");
+                    std::process::exit(1);
+                }
+            };
+
+            // Apply blueprint
+            let blueprint_dir = workspace_root.join("agents").join(&agent_name);
+            let instance_dir = workspace_root.join(".instances").join(&agent_name);
+
+            // Auto-migrate old layout: move data/, memory/, knowledge/, USER.md, MEMORY.md
+            let old_data = blueprint_dir.join("data");
+            let new_starpod = instance_dir.join(".starpod");
+            if old_data.exists() && !new_starpod.exists() {
+                println!("  {} Migrating old layout to new instance layout...", "↻".bright_yellow());
+                std::fs::create_dir_all(&new_starpod)?;
+                // Move data/
+                if old_data.is_dir() {
+                    let _ = std::fs::rename(&old_data, new_starpod.join("data"));
+                }
+                // Move memory/ and knowledge/ if at blueprint level
+                for dir_name in &["memory", "knowledge"] {
+                    let old = blueprint_dir.join(dir_name);
+                    if old.is_dir() {
+                        let _ = std::fs::rename(&old, new_starpod.join(dir_name));
+                    }
+                }
+                // Move USER.md, MEMORY.md to users/admin/
+                let admin_dir = new_starpod.join("users").join("admin");
+                std::fs::create_dir_all(&admin_dir)?;
+                std::fs::create_dir_all(admin_dir.join("memory"))?;
+                for file_name in &["USER.md", "MEMORY.md"] {
+                    let old = blueprint_dir.join(file_name);
+                    if old.is_file() {
+                        let _ = std::fs::rename(&old, admin_dir.join(file_name));
+                    }
+                }
+                println!("  {} Migration complete. Old data moved to {}", "✓".green().bold(), instance_dir.display());
+            }
+
+            starpod_core::apply_blueprint(
+                &blueprint_dir,
+                &instance_dir,
+                starpod_core::EnvSource::Dev,
+            )?;
+
+            // Resolve paths as Instance mode
+            let instance_mode = starpod_core::Mode::Instance {
+                instance_root: instance_dir.clone(),
+                agent_name: agent_name.clone(),
+            };
+            let paths = starpod_core::ResolvedPaths::resolve(&instance_mode)?;
+            let mut agent_config = starpod_core::load_agent_config(&paths)?;
+
+            // Override port if specified
+            if let Some(p) = port {
+                agent_config.server_addr = format!("127.0.0.1:{}", p);
+            }
+
+            let config = agent_config.clone().into_starpod_config(&paths);
+            let addr = config.server_addr.clone();
+            let display_name = config.agent_name.clone();
+
+            let agent = Arc::new(StarpodAgent::with_paths(agent_config, paths.clone()).await?);
+
+            // Telegram + notifier setup (same as Serve)
+            let telegram_token = config.resolved_telegram_token();
+            let telegram_allowed = config.resolved_telegram_allowed_user_ids();
+            let telegram_allowed_usernames = config.resolved_telegram_allowed_usernames();
+
+            let cron_notifier: Option<starpod_cron::NotificationSender> =
+                if let Some(ref token) = telegram_token {
+                    if !telegram_allowed.is_empty() {
+                        let token = token.clone();
+                        let users = telegram_allowed.clone();
+                        Some(Arc::new(move |_job_name, result_text, _success| {
+                            let token = token.clone();
+                            let users = users.clone();
+                            Box::pin(async move {
+                                starpod_telegram::send_notification(&token, &users, &result_text).await;
+                            })
+                        }))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+            if let Some(token) = telegram_token.clone() {
+                let tg_agent = Arc::clone(&agent);
+                let allowed = telegram_allowed.clone();
+                let allowed_names = telegram_allowed_usernames.clone();
+                tokio::spawn(async move {
+                    if let Err(e) =
+                        starpod_telegram::run_with_agent_filtered(tg_agent, token, allowed, allowed_names).await
+                    {
+                        tracing::error!(error = %e, "Telegram bot error");
+                    }
+                });
+            }
+
+            print_header_with_name(&display_name);
+            println!("  {} {} → {}", "DEV".bright_yellow().bold(), agent_name.bright_cyan(), instance_dir.display().to_string().dimmed());
+            println!("  {} {}", "Server".dimmed(), addr.bright_green());
+            print_separator();
+
+            starpod_gateway::serve_with_agent(agent, config, cron_notifier, paths).await?;
+        }
 
         // ── Serve ─────────────────────────────────────────────────────
         Commands::Serve { agent: agent_name } => {
@@ -1025,35 +1132,6 @@ async fn main() -> anyhow::Result<()> {
                 MemoryAction::Reindex => {
                     agent.memory().reindex().await?;
                     println!("Memory index rebuilt.");
-                }
-            }
-        }
-
-        // ── Vault ─────────────────────────────────────────────────────
-        Commands::Vault { agent: agent_name, action } => {
-            let (agent, _config, _paths) = resolve_agent(agent_name).await?;
-            match action {
-                VaultAction::Get { key } => match agent.vault().get(&key).await? {
-                    Some(value) => println!("{}", value),
-                    None => println!("No value found for key: {}", key),
-                },
-                VaultAction::Set { key, value } => {
-                    agent.vault().set(&key, &value).await?;
-                    println!("Stored '{}'.", key);
-                }
-                VaultAction::Delete { key } => {
-                    agent.vault().delete(&key).await?;
-                    println!("Deleted '{}'.", key);
-                }
-                VaultAction::List => {
-                    let keys = agent.vault().list_keys().await?;
-                    if keys.is_empty() {
-                        println!("Vault is empty.");
-                    } else {
-                        for key in &keys {
-                            println!("  {}", key);
-                        }
-                    }
                 }
             }
         }

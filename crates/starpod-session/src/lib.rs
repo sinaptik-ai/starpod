@@ -60,6 +60,7 @@ pub struct SessionMeta {
     pub message_count: i64,
     pub channel: String,
     pub channel_session_key: Option<String>,
+    pub user_id: String,
 }
 
 /// A stored message in a session.
@@ -142,15 +143,27 @@ impl SessionManager {
         key: &str,
         gap_minutes: Option<i64>,
     ) -> Result<SessionDecision> {
+        self.resolve_session_for_user(channel, key, gap_minutes, "admin").await
+    }
+
+    /// Resolve session for a given channel, key, and user.
+    pub async fn resolve_session_for_user(
+        &self,
+        channel: &Channel,
+        key: &str,
+        gap_minutes: Option<i64>,
+        user_id: &str,
+    ) -> Result<SessionDecision> {
         let row = sqlx::query(
             "SELECT id, last_message_at
              FROM session_metadata
-             WHERE channel = ?1 AND channel_session_key = ?2 AND is_closed = 0
+             WHERE channel = ?1 AND channel_session_key = ?2 AND is_closed = 0 AND user_id = ?3
              ORDER BY last_message_at DESC
              LIMIT 1",
         )
         .bind(channel.as_str())
         .bind(key)
+        .bind(user_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| StarpodError::Database(format!("Resolve session query failed: {}", e)))?;
@@ -195,17 +208,28 @@ impl SessionManager {
         channel: &Channel,
         key: &str,
     ) -> Result<String> {
+        self.create_session_for_user(channel, key, "admin").await
+    }
+
+    /// Create a new session for a channel, key, and user, returning its ID.
+    pub async fn create_session_for_user(
+        &self,
+        channel: &Channel,
+        key: &str,
+        user_id: &str,
+    ) -> Result<String> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
 
         sqlx::query(
-            "INSERT INTO session_metadata (id, created_at, last_message_at, is_closed, message_count, channel, channel_session_key)
-             VALUES (?1, ?2, ?2, 0, 0, ?3, ?4)",
+            "INSERT INTO session_metadata (id, created_at, last_message_at, is_closed, message_count, channel, channel_session_key, user_id)
+             VALUES (?1, ?2, ?2, 0, 0, ?3, ?4, ?5)",
         )
         .bind(&id)
         .bind(&now)
         .bind(channel.as_str())
         .bind(key)
+        .bind(user_id)
         .execute(&self.pool)
         .await
         .map_err(|e| StarpodError::Database(format!("Create session failed: {}", e)))?;
@@ -289,7 +313,7 @@ impl SessionManager {
     /// List sessions, most recent first.
     pub async fn list_sessions(&self, limit: usize) -> Result<Vec<SessionMeta>> {
         let rows = sqlx::query(
-            "SELECT id, created_at, last_message_at, is_closed, summary, title, message_count, channel, channel_session_key
+            "SELECT id, created_at, last_message_at, is_closed, summary, title, message_count, channel, channel_session_key, user_id
              FROM session_metadata
              ORDER BY last_message_at DESC
              LIMIT ?1",
@@ -310,7 +334,7 @@ impl SessionManager {
     /// Get a specific session by ID.
     pub async fn get_session(&self, id: &str) -> Result<Option<SessionMeta>> {
         let row = sqlx::query(
-            "SELECT id, created_at, last_message_at, is_closed, summary, title, message_count, channel, channel_session_key
+            "SELECT id, created_at, last_message_at, is_closed, summary, title, message_count, channel, channel_session_key, user_id
              FROM session_metadata WHERE id = ?1",
         )
         .bind(id)
@@ -453,6 +477,7 @@ fn session_meta_from_row(row: &sqlx::sqlite::SqliteRow) -> SessionMeta {
         message_count: row.get("message_count"),
         channel: row.get("channel"),
         channel_session_key: row.get("channel_session_key"),
+        user_id: row.try_get("user_id").unwrap_or_else(|_| "admin".to_string()),
     }
 }
 
