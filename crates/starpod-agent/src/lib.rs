@@ -53,7 +53,7 @@ pub struct StarpodAgent {
 impl StarpodAgent {
     /// Create a new StarpodAgent from a `StarpodConfig`.
     ///
-    /// Constructs synthetic `ResolvedPaths` from the config's `data_dir` and `project_root`.
+    /// Constructs synthetic `ResolvedPaths` from the config's `db_dir` and `project_root`.
     /// Prefer `with_paths()` for workspace-aware construction.
     pub async fn new(config: StarpodConfig) -> Result<Self> {
         let agent_config = AgentConfig {
@@ -77,18 +77,18 @@ impl StarpodAgent {
             attachments: config.attachments.clone(),
         };
 
-        let starpod_dir = config.data_dir.parent().unwrap_or(&config.data_dir).to_path_buf();
+        let starpod_dir = config.db_dir.parent().unwrap_or(&config.db_dir).to_path_buf();
         let paths = ResolvedPaths {
             mode: starpod_core::Mode::SingleAgent {
                 starpod_dir: starpod_dir.clone(),
             },
             agent_toml: starpod_dir.join("agent.toml"),
-            agent_home: config.data_dir.clone(),
-            data_dir: config.data_dir.clone(),
-            skills_dir: config.data_dir.join("skills"),
+            agent_home: starpod_dir.clone(),
+            db_dir: config.db_dir.clone(),
+            skills_dir: starpod_dir.join("skills"),
             project_root: config.project_root.clone(),
             instance_root: config.project_root.clone(),
-            users_dir: config.data_dir.join("users"),
+            users_dir: starpod_dir.join("users"),
             env_file: None,
         };
 
@@ -98,13 +98,16 @@ impl StarpodAgent {
     /// Create a new StarpodAgent from an `AgentConfig` and `ResolvedPaths`.
     ///
     /// This is the workspace-aware constructor that uses resolved paths for
-    /// all file locations instead of deriving them from `data_dir`.
+    /// all file locations instead of deriving them from `db_dir`.
     pub async fn with_paths(agent_config: AgentConfig, paths: ResolvedPaths) -> Result<Self> {
+        // Migrate old data/ layout if needed
+        paths.migrate_if_needed();
+
         // Convert AgentConfig → StarpodConfig for the config RwLock
         let config = agent_config.clone().into_starpod_config(&paths);
 
-        // Memory: agent_home contains SOUL.md, USER.md, MEMORY.md, memory/, knowledge/
-        let mut memory = MemoryStore::new(&paths.agent_home).await?;
+        // Memory: agent_home contains SOUL.md, lifecycle files; db_dir has memory.db
+        let mut memory = MemoryStore::new(&paths.agent_home, &paths.db_dir).await?;
         memory.set_half_life_days(config.memory.half_life_days);
         memory.set_mmr_lambda(config.memory.mmr_lambda);
         memory.set_chunk_size(config.memory.chunk_size);
@@ -117,11 +120,11 @@ impl StarpodAgent {
             debug!("Vector search enabled with local embedder");
         }
 
-        // Session DB in data_dir
-        std::fs::create_dir_all(&paths.data_dir).map_err(|e| {
-            StarpodError::Config(format!("Failed to create data dir {}: {}", paths.data_dir.display(), e))
+        // Session DB in db_dir
+        std::fs::create_dir_all(&paths.db_dir).map_err(|e| {
+            StarpodError::Config(format!("Failed to create db dir {}: {}", paths.db_dir.display(), e))
         })?;
-        let session_db = paths.data_dir.join("session.db");
+        let session_db = paths.db_dir.join("session.db");
         let sessions_dir = paths.agent_home.join("sessions");
         let session_mgr = SessionManager::new(&session_db, &sessions_dir).await?;
 
@@ -129,8 +132,8 @@ impl StarpodAgent {
         let skills = SkillStore::new(&paths.skills_dir)?
             .with_filter(agent_config.skills.clone());
 
-        // Cron in data_dir
-        let cron_db = paths.data_dir.join("cron.db");
+        // Cron in db_dir
+        let cron_db = paths.db_dir.join("cron.db");
         let mut cron = CronStore::new(&cron_db).await?;
         cron.set_default_max_retries(config.cron.default_max_retries);
         cron.set_default_timeout_secs(config.cron.default_timeout_secs);
@@ -434,13 +437,14 @@ impl StarpodAgent {
     }
 
     /// Build the external tool handler closure.
-    fn build_tool_handler(&self, config: &StarpodConfig) -> ExternalToolHandlerFn {
+    fn build_tool_handler(&self, config: &StarpodConfig, user_id: Option<&str>) -> ExternalToolHandlerFn {
         let ctx = Arc::new(ToolContext {
             memory: Arc::clone(&self.memory),
             skills: Arc::clone(&self.skills),
             cron: Arc::clone(&self.cron),
             user_tz: config.timezone.clone(),
             instance_root: self.paths.instance_root.clone(),
+            user_id: user_id.map(|s| s.to_string()),
         });
 
         Box::new(move |tool_name, input| {
@@ -510,16 +514,16 @@ impl StarpodAgent {
             .context_budget(config.compaction.context_budget)
             .summary_max_tokens(config.compaction.summary_max_tokens)
             .min_keep_messages(config.compaction.min_keep_messages)
-            .external_tool_handler(self.build_tool_handler(&config))
+            .external_tool_handler(self.build_tool_handler(&config, message.user_id.as_deref()))
             .pre_compact_handler(self.build_pre_compact_handler())
             .custom_tools(custom_tool_definitions())
             .attachments(query_atts)
             .provider(provider)
             .cwd(config.project_root.to_string_lossy().to_string())
             .additional_directories(vec![
-                config.data_dir.to_string_lossy().to_string(),
+                config.db_dir.to_string_lossy().to_string(),
             ])
-            .hook_dirs(vec![config.data_dir.join("hooks")]);
+            .hook_dirs(vec![config.db_dir.join("hooks")]);
 
         // Resume existing session to load conversation history, or set ID for new ones
         if is_resuming {
@@ -687,7 +691,7 @@ impl StarpodAgent {
             .context_budget(config.compaction.context_budget)
             .summary_max_tokens(config.compaction.summary_max_tokens)
             .min_keep_messages(config.compaction.min_keep_messages)
-            .external_tool_handler(self.build_tool_handler(&config))
+            .external_tool_handler(self.build_tool_handler(&config, message.user_id.as_deref()))
             .pre_compact_handler(self.build_pre_compact_handler())
             .custom_tools(custom_tool_definitions())
             .followup_rx(followup_rx)
@@ -695,9 +699,9 @@ impl StarpodAgent {
             .provider(provider)
             .cwd(config.project_root.to_string_lossy().to_string())
             .additional_directories(vec![
-                config.data_dir.to_string_lossy().to_string(),
+                config.db_dir.to_string_lossy().to_string(),
             ])
-            .hook_dirs(vec![config.data_dir.join("hooks")]);
+            .hook_dirs(vec![config.db_dir.join("hooks")]);
 
         // Resume existing session to load conversation history, or set ID for new ones
         if is_resuming {
@@ -1025,6 +1029,7 @@ async fn ensure_heartbeat(
             3,
             7200,
             starpod_cron::SessionMode::Main,
+            None, // agent-level heartbeat
         )
         .await?;
 
@@ -1100,8 +1105,8 @@ mod tests {
 
     fn test_config(tmp: &TempDir) -> StarpodConfig {
         StarpodConfig {
-            data_dir: tmp.path().to_path_buf(),
-            db_path: Some(tmp.path().join("memory.db")),
+            db_dir: tmp.path().join("db"),
+            db_path: Some(tmp.path().join("db").join("memory.db")),
             project_root: tmp.path().to_path_buf(),
             ..StarpodConfig::default()
         }
@@ -1120,18 +1125,18 @@ mod tests {
         // Skills dir should exist
         assert!(tmp.path().join("skills").exists());
 
-        // Cron db should exist
-        assert!(tmp.path().join("cron.db").exists());
+        // Cron db should exist in db/
+        assert!(tmp.path().join("db").join("cron.db").exists());
     }
 
     #[tokio::test]
     async fn test_agent_with_paths() {
         let tmp = TempDir::new().unwrap();
         let agent_home = tmp.path().join("agents").join("test-bot");
-        let data_dir = agent_home.join("data");
+        let db_dir = agent_home.join("db");
         let skills_dir = tmp.path().join("skills");
         std::fs::create_dir_all(&agent_home).unwrap();
-        std::fs::create_dir_all(&data_dir).unwrap();
+        std::fs::create_dir_all(&db_dir).unwrap();
         std::fs::create_dir_all(&skills_dir).unwrap();
 
         let paths = ResolvedPaths {
@@ -1141,7 +1146,7 @@ mod tests {
             },
             agent_toml: agent_home.join("agent.toml"),
             agent_home: agent_home.clone(),
-            data_dir: data_dir.clone(),
+            db_dir: db_dir.clone(),
             skills_dir: skills_dir.clone(),
             project_root: tmp.path().to_path_buf(),
             instance_root: agent_home.clone(),
@@ -1165,9 +1170,9 @@ mod tests {
         let ctx = agent.memory().bootstrap_context().unwrap();
         assert!(ctx.contains("TestBot") || ctx.contains("Aster"));
 
-        // Data dir should have session.db
-        assert!(data_dir.join("session.db").exists());
-        assert!(data_dir.join("cron.db").exists());
+        // DB dir should have session.db
+        assert!(db_dir.join("session.db").exists());
+        assert!(db_dir.join("cron.db").exists());
     }
 
     #[tokio::test]
@@ -1191,7 +1196,7 @@ mod tests {
             },
             agent_toml: agent_home.join("agent.toml"),
             agent_home: agent_home.clone(),
-            data_dir: agent_home.join("data"),
+            db_dir: agent_home.join("db"),
             skills_dir: skills_dir.clone(),
             project_root: tmp.path().to_path_buf(),
             instance_root: tmp.path().to_path_buf(),
@@ -1274,6 +1279,7 @@ mod tests {
             cron: Arc::clone(agent.cron()),
             user_tz: None,
             instance_root: tmp.path().to_path_buf(),
+            user_id: Some("admin".into()),
         };
 
         // Test MemorySearch
@@ -1459,7 +1465,7 @@ mod tests {
         ctx.cron.add_job_full(
             "__heartbeat__", "heartbeat prompt",
             &starpod_cron::Schedule::Cron { expr: "0 */30 * * * *".into() },
-            false, None, 3, 7200, starpod_cron::SessionMode::Main,
+            false, None, 3, 7200, starpod_cron::SessionMode::Main, None,
         ).await.unwrap();
 
         let result = handle_custom_tool(

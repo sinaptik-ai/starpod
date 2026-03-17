@@ -1,7 +1,7 @@
 //! Per-user memory view — overlays user-specific files on top of shared agent memory.
 //!
 //! In multi-user mode, each user has their own `USER.md`, `MEMORY.md`, `memory/` daily logs,
-//! while sharing the agent's `SOUL.md`, `knowledge/`, and search index.
+//! while sharing the agent's `SOUL.md` and search index.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -16,12 +16,12 @@ use crate::store::{MemoryStore, SearchResult};
 
 /// A per-user view over the shared agent memory store.
 ///
-/// - `SOUL.md`, `knowledge/*`, `HEARTBEAT.md`, `BOOT.md`, `BOOTSTRAP.md` come from the shared agent store.
+/// - `SOUL.md`, `HEARTBEAT.md`, `BOOT.md`, `BOOTSTRAP.md` come from the shared agent store.
 /// - `USER.md`, `MEMORY.md`, `memory/*` (daily logs) come from the user's directory.
 /// - Search queries both the agent-level index and user-level files.
 /// - Writes route to the appropriate location based on the file path.
 pub struct UserMemoryView {
-    /// Shared agent-level memory store (SOUL.md, knowledge/, search index).
+    /// Shared agent-level memory store (SOUL.md, search index).
     agent_store: Arc<MemoryStore>,
     /// Per-user directory (.starpod/users/<id>/).
     user_dir: PathBuf,
@@ -122,8 +122,7 @@ impl UserMemoryView {
     /// Write a file, routing to the appropriate location.
     ///
     /// - `USER.md`, `MEMORY.md`, `memory/*` → user directory
-    /// - `knowledge/*` → agent store (shared)
-    /// - `SOUL.md` → agent store (shared)
+    /// - Everything else → agent store (shared)
     pub async fn write_file(&self, name: &str, content: &str) -> Result<()> {
         if is_user_file(name) {
             scoring::validate_path(name, &self.user_dir)?;
@@ -215,8 +214,9 @@ mod tests {
 
     async fn setup() -> (TempDir, Arc<MemoryStore>, PathBuf) {
         let tmp = TempDir::new().unwrap();
-        let agent_data = tmp.path().join("agent_data");
-        let store = Arc::new(MemoryStore::new(&agent_data).await.unwrap());
+        let agent_home = tmp.path().join("agent_home");
+        let db_dir = tmp.path().join("db");
+        let store = Arc::new(MemoryStore::new(&agent_home, &db_dir).await.unwrap());
         let user_dir = tmp.path().join("users").join("alice");
         (tmp, store, user_dir)
     }
@@ -259,10 +259,10 @@ mod tests {
         let content = std::fs::read_to_string(user_dir.join("USER.md")).unwrap();
         assert!(content.contains("Bob"));
 
-        // knowledge/* goes to agent store
-        view.write_file("knowledge/test.md", "# Test\nShared knowledge\n").await.unwrap();
-        let content = store.read_file("knowledge/test.md").unwrap();
-        assert!(content.contains("Shared knowledge"));
+        // Non-user files go to agent store
+        view.write_file("test-shared.md", "# Test\nShared content\n").await.unwrap();
+        let content = store.read_file("test-shared.md").unwrap();
+        assert!(content.contains("Shared content"));
     }
 
     #[tokio::test]
@@ -302,7 +302,7 @@ mod tests {
         assert!(is_user_file("MEMORY.md"));
         assert!(is_user_file("memory/2026-03-17.md"));
         assert!(!is_user_file("SOUL.md"));
-        assert!(!is_user_file("knowledge/test.md"));
+        assert!(!is_user_file("test.md"));
         assert!(!is_user_file("HEARTBEAT.md"));
     }
 }
