@@ -542,6 +542,53 @@ fn print_result(result_text: &str, result_msg: &agent_sdk::ResultMessage, start:
     print_separator();
 }
 
+// ── Blueprint scaffold helper ────────────────────────────────────────────
+
+/// Create agent blueprint directory structure (used by both `init` and `agent new`).
+async fn scaffold_agent_blueprint(
+    agent_dir: &std::path::Path,
+    name: &str,
+    display_name: &str,
+    model: &str,
+    soul: Option<&str>,
+) -> anyhow::Result<()> {
+    tokio::fs::create_dir_all(agent_dir.join("users")).await?;
+    tokio::fs::create_dir_all(agent_dir.join("files")).await?;
+
+    let agent_toml = format!(
+        "# Agent configuration for {}\n\
+         agent_name = \"{}\"\n\
+         model = \"{}\"\n\
+         # skills = []  # Empty = all workspace skills\n",
+        name, display_name, model,
+    );
+    tokio::fs::write(agent_dir.join("agent.toml"), agent_toml).await?;
+
+    let soul_content = match soul {
+        Some(text) => format!(
+            "# Soul\n\nYou are {}, a personal AI assistant. {}\n",
+            display_name, text
+        ),
+        None => format!(
+            "# Soul\n\nYou are {}, a personal AI assistant. \
+             You are helpful, direct, and thoughtful.\n",
+            display_name
+        ),
+    };
+    tokio::fs::write(agent_dir.join("SOUL.md"), soul_content).await?;
+
+    tokio::fs::write(
+        agent_dir.join(".env"),
+        "# Production secrets\n# ANTHROPIC_API_KEY=sk-ant-...\n",
+    ).await?;
+    tokio::fs::write(
+        agent_dir.join(".env.dev"),
+        "# Development overrides\n# ANTHROPIC_API_KEY=sk-ant-...\n",
+    ).await?;
+
+    Ok(())
+}
+
 // ── Agent resolution helper ─────────────────────────────────────────────
 
 /// Resolve mode, paths, config, and build agent from an optional agent name flag.
@@ -652,31 +699,11 @@ async fn main() -> anyhow::Result<()> {
                 cwd.display()
             );
 
-            // Create first agent if requested during wizard
+            // Create first agent if requested during wizard (blueprint layout)
             if let Some(agent_name) = first_agent {
                 let display_name = agent_display.as_deref().unwrap_or("Aster");
                 let agent_dir = cwd.join("agents").join(&agent_name);
-                tokio::fs::create_dir_all(agent_dir.join("data")).await?;
-                tokio::fs::create_dir_all(agent_dir.join("memory")).await?;
-                tokio::fs::create_dir_all(agent_dir.join("knowledge")).await?;
-
-                let agent_toml = format!(
-                    "# Agent configuration for {}\n\
-                     agent_name = \"{}\"\n\
-                     model = \"{}\"\n",
-                    agent_name, display_name, model,
-                );
-                tokio::fs::write(agent_dir.join("agent.toml"), agent_toml).await?;
-                tokio::fs::write(
-                    agent_dir.join("SOUL.md"),
-                    format!(
-                        "# Soul\n\nYou are {}, a personal AI assistant. \
-                         You are helpful, direct, and thoughtful.\n",
-                        display_name
-                    ),
-                ).await?;
-                tokio::fs::write(agent_dir.join("USER.md"), "# User Profile\n\n").await?;
-                tokio::fs::write(agent_dir.join("MEMORY.md"), "# Memory Index\n\n").await?;
+                scaffold_agent_blueprint(&agent_dir, &agent_name, display_name, &model, None).await?;
 
                 println!(
                     "  {} Created agent '{}'",
@@ -686,7 +713,7 @@ async fn main() -> anyhow::Result<()> {
                 println!(
                     "  {} Run {} to start.",
                     "→".dimmed(),
-                    format!("starpod serve -a {}", agent_name).bright_white()
+                    format!("starpod dev {}", agent_name).bright_white()
                 );
             } else {
                 println!(
@@ -737,47 +764,13 @@ async fn main() -> anyhow::Result<()> {
                 }
 
                 // Create blueprint scaffold (no runtime data — that goes in .instances/)
-                let users_dir = agent_dir.join("users");
-                let files_dir = agent_dir.join("files");
-                tokio::fs::create_dir_all(&users_dir).await?;
-                tokio::fs::create_dir_all(&files_dir).await?;
-
-                // Generate agent.toml
                 let display_name = agent_name.as_deref().unwrap_or(&name);
-                let agent_toml = format!(
-                    "# Agent configuration for {}\n\
-                     agent_name = \"{}\"\n\
-                     model = \"{}\"\n\
-                     # skills = []  # Empty = all workspace skills\n",
-                    name,
+                scaffold_agent_blueprint(
+                    &agent_dir,
+                    &name,
                     display_name,
-                    model,
-                );
-                tokio::fs::write(agent_dir.join("agent.toml"), agent_toml).await?;
-
-                // Generate SOUL.md
-                let soul_content = if let Some(ref soul_text) = soul {
-                    format!(
-                        "# Soul\n\nYou are {}, a personal AI assistant. {}\n",
-                        display_name, soul_text
-                    )
-                } else {
-                    format!(
-                        "# Soul\n\nYou are {}, a personal AI assistant. \
-                         You are helpful, direct, and thoughtful.\n",
-                        display_name
-                    )
-                };
-                tokio::fs::write(agent_dir.join("SOUL.md"), soul_content).await?;
-
-                // Generate .env templates
-                tokio::fs::write(
-                    agent_dir.join(".env"),
-                    "# Production secrets\n# ANTHROPIC_API_KEY=sk-ant-...\n",
-                ).await?;
-                tokio::fs::write(
-                    agent_dir.join(".env.dev"),
-                    "# Development overrides\n# ANTHROPIC_API_KEY=sk-ant-...\n",
+                    &model,
+                    soul.as_deref(),
                 ).await?;
 
                 println!();
