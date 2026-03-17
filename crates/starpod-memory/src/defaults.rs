@@ -19,7 +19,25 @@ You are Aster, a personal AI assistant. You are helpful, direct, and thoughtful.
 /// Default USER.md content.
 pub const DEFAULT_USER: &str = r#"# User Profile
 
-No information learned about the user yet. This file will be updated as conversations happen.
+<!-- The agent reads this file at the start of every conversation to personalize responses. -->
+<!-- Fill in what's relevant — leave sections blank or remove them if not needed. -->
+
+## Name
+<!-- Your name or how you'd like to be addressed. -->
+
+## Role
+<!-- e.g. software engineer, student, researcher, founder -->
+
+## Expertise
+<!-- What you're good at — helps the agent calibrate explanations. -->
+<!-- e.g. "senior Rust developer", "new to programming", "data scientist" -->
+
+## Preferences
+<!-- Communication style, formatting, language, or workflow preferences. -->
+<!-- e.g. "be concise", "prefer code examples over explanations", "reply in Italian" -->
+
+## Context
+<!-- Anything else the agent should know: current projects, goals, constraints. -->
 "#;
 
 /// Default MEMORY.md content.
