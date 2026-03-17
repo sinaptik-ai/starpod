@@ -1,4 +1,35 @@
 import './style.css'
+import { marked } from 'marked'
+
+// Configure marked for GFM (tables, strikethrough, etc.)
+marked.setOptions({
+  gfm: true,
+  breaks: false,
+})
+
+// Custom renderer to add copy buttons to code blocks and preview links
+const renderer = new marked.Renderer()
+renderer.code = function({ text, lang }) {
+  const langLabel = lang || 'code'
+  const codeId = 'code-' + Math.random().toString(36).slice(2, 8)
+  return '<pre class="bg-bg border border-border-main rounded-lg my-3 overflow-x-auto font-mono text-[13px] leading-relaxed text-secondary">' +
+    '<div class="flex items-center justify-between px-3 py-1.5 border-b border-border-subtle text-[11px] text-dim font-mono tracking-wide select-none">' +
+      '<span>' + escapeHtmlForRenderer(langLabel) + '</span>' +
+      '<button class="copy-btn bg-transparent border border-border-main text-dim font-mono text-[11px] px-2 py-0.5 rounded transition-all" onclick="copyCode(this, \'' + codeId + '\')">copy</button>' +
+    '</div>' +
+    '<div class="px-4 py-3" id="' + codeId + '">' + escapeHtmlForRenderer(text) + '</div></pre>'
+}
+renderer.link = function({ href, text }) {
+  const safeUrl = href.replace(/'/g, "\\'")
+  return '<a onclick="event.preventDefault();window._openPreview(\'' + safeUrl + '\')" href="#" class="text-accent-soft underline decoration-accent/30 hover:decoration-accent transition-colors cursor-pointer link-preview">' + text + '</a>'
+}
+marked.use({ renderer })
+
+function escapeHtmlForRenderer(text) {
+  const div = document.createElement('div')
+  div.textContent = text
+  return div.innerHTML
+}
 
 // ── DOM refs ──
 const messages = document.getElementById('messages')
@@ -64,27 +95,7 @@ function escapeHtml(text) {
 }
 
 function formatText(text) {
-  let html = escapeHtml(text)
-
-  // Code blocks with language labels and copy buttons
-  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
-    const langLabel = lang || 'code'
-    const codeId = 'code-' + Math.random().toString(36).slice(2, 8)
-    return '<pre class="bg-bg border border-border-main rounded-lg my-3 overflow-x-auto font-mono text-[13px] leading-relaxed text-secondary">' +
-      '<div class="flex items-center justify-between px-3 py-1.5 border-b border-border-subtle text-[11px] text-dim font-mono tracking-wide select-none">' +
-        '<span>' + escapeHtml(langLabel) + '</span>' +
-        '<button class="copy-btn bg-transparent border border-border-main text-dim font-mono text-[11px] px-2 py-0.5 rounded transition-all" onclick="copyCode(this, \'' + codeId + '\')">copy</button>' +
-      '</div>' +
-      '<div class="px-4 py-3" id="' + codeId + '">' + code + '</div></pre>'
-  })
-  html = html.replace(/`([^`]+)`/g, '<code class="bg-elevated border border-border-subtle px-1.5 py-0.5 rounded font-mono text-[12.5px] text-accent-soft">$1</code>')
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong class="text-primary font-semibold">$1</strong>')
-  html = html.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
-  html = html.replace(/(?<![="'])(https?:\/\/[^\s<>"')\]]+)/g, (_, url) => {
-    const safeUrl = url.replace(/'/g, "\\'")
-    return '<a onclick="event.preventDefault();window._openPreview(\'' + safeUrl + '\')" href="#" class="text-accent-soft underline decoration-accent/30 hover:decoration-accent transition-colors cursor-pointer link-preview">' + url + '</a>'
-  })
-  return html
+  return marked.parse(text)
 }
 
 function formatUserText(text) {
@@ -300,7 +311,7 @@ function ensureBubble() {
   if (!currentMsg) return null
   removeThinking()
   const bubble = document.createElement('div')
-  bubble.className = 'py-1 leading-[1.75] text-sm whitespace-pre-wrap break-words text-secondary streaming-cursor'
+  bubble.className = 'py-1 leading-[1.75] text-sm break-words text-secondary streaming-cursor markdown-body'
   currentMsg.appendChild(bubble)
   currentBubble = bubble
   return bubble
@@ -397,7 +408,7 @@ function endStream(data) {
     })
 
     if (data.is_error && data.errors && data.errors.length > 0) {
-      const hasText = Array.from(currentMsg.querySelectorAll('[class*="whitespace-pre-wrap"]')).some(b => b._rawText)
+      const hasText = Array.from(currentMsg.querySelectorAll('.markdown-body')).some(b => b._rawText)
       if (!hasText) {
         const bubble = ensureBubble()
         if (bubble) {
@@ -731,7 +742,7 @@ function selectSession(session) {
         } else if (m.role === 'assistant') {
           const el = document.createElement('div')
           el.className = 'max-w-full mt-2'
-          el.innerHTML = '<div class="py-1 leading-[1.75] text-sm whitespace-pre-wrap break-words text-secondary">' + formatText(m.content) + '</div>'
+          el.innerHTML = '<div class="py-1 leading-[1.75] text-sm break-words text-secondary markdown-body">' + formatText(m.content) + '</div>'
           messages.appendChild(el)
           currentAssistantMsg = el
         } else if (m.role === 'tool_use') {
