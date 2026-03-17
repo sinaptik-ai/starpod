@@ -14,8 +14,9 @@ model = "claude-sonnet-4-6"
 max_turns = 30
 server_addr = "127.0.0.1:3000"
 
+# Provider API keys must be set in .env (e.g. ANTHROPIC_API_KEY=sk-ant-...)
 # [providers.anthropic]
-# api_key = "sk-ant-..."   # Or set ANTHROPIC_API_KEY in .env
+# base_url = "https://api.anthropic.com/v1/messages"
 
 # [memory]
 # half_life_days = 30.0

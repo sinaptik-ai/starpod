@@ -1,6 +1,45 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use tracing::warn;
+
+/// Warn (and ignore) any `api_key` or `bot_token` found in a raw TOML value tree.
+///
+/// Credentials must live in `.env`, not in config files. This function inspects
+/// the parsed TOML before it is deserialized so that unknown/ignored keys still
+/// trigger a user-visible warning.
+pub fn warn_credentials_in_toml(value: &toml::Value, file_label: &str) {
+    if let Some(table) = value.as_table() {
+        // Check providers.*.api_key
+        if let Some(providers) = table.get("providers").and_then(|v| v.as_table()) {
+            for (name, provider) in providers {
+                if let Some(ptable) = provider.as_table() {
+                    if ptable.contains_key("api_key") {
+                        warn!(
+                            file = file_label,
+                            provider = name,
+                            "api_key in [providers.{name}] is ignored — \
+                             move it to .env as {}_API_KEY",
+                            name.to_uppercase()
+                        );
+                    }
+                }
+            }
+        }
+        // Check channels.telegram.bot_token
+        if let Some(channels) = table.get("channels").and_then(|v| v.as_table()) {
+            if let Some(telegram) = channels.get("telegram").and_then(|v| v.as_table()) {
+                if telegram.contains_key("bot_token") {
+                    warn!(
+                        file = file_label,
+                        "bot_token in [channels.telegram] is ignored — \
+                         move it to .env as TELEGRAM_BOT_TOKEN"
+                    );
+                }
+            }
+        }
+    }
+}
 
 /// Deep-merge `overlay` into `base`. Keys in `overlay` take precedence.
 pub fn deep_merge(base: &mut toml::Value, overlay: toml::Value) {
@@ -44,14 +83,16 @@ pub enum FollowupMode {
 }
 
 /// Configuration for a single LLM provider.
+///
+/// **Credentials belong in `.env`, not here.** Use the conventional env var
+/// for each provider (e.g. `ANTHROPIC_API_KEY`). Any `api_key` found in a
+/// config file is ignored and triggers a warning at load time.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProviderConfig {
     /// Whether this provider is enabled.
     #[serde(default = "default_true")]
     pub enabled: bool,
-    /// API key (or use the corresponding env var).
-    pub api_key: Option<String>,
     /// Override API endpoint.
     pub base_url: Option<String>,
     /// Preferred models shown first.
@@ -85,6 +126,9 @@ pub enum AllowedUser {
 }
 
 /// Telegram channel configuration (lives under `[channels.telegram]`).
+///
+/// **The bot token belongs in `.env` as `TELEGRAM_BOT_TOKEN`, not here.**
+/// Any `bot_token` found in a config file is ignored and triggers a warning.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TelegramChannelConfig {
@@ -94,8 +138,6 @@ pub struct TelegramChannelConfig {
     /// Inactivity gap (in minutes) before auto-closing a Telegram session (default: 360 = 6h).
     #[serde(default = "default_gap_minutes")]
     pub gap_minutes: Option<i64>,
-    /// Bot token from @BotFather.
-    pub bot_token: Option<String>,
     /// Users allowed to interact with the bot — can be numeric IDs or
     /// usernames (without @). Example: `[123456789, "alice"]`.
     /// If empty, no one can chat (only /start works to show user ID/username).
@@ -115,7 +157,6 @@ impl Default for TelegramChannelConfig {
         Self {
             enabled: true,
             gap_minutes: default_gap_minutes(),
-            bot_token: None,
             allowed_users: Vec::new(),
             stream_mode: default_stream_mode(),
         }
@@ -467,23 +508,14 @@ impl Default for StarpodConfig {
 }
 
 impl StarpodConfig {
-    /// Resolved Anthropic API key: checks providers.anthropic.api_key,
-    /// then ANTHROPIC_API_KEY env var.
+    /// Resolved Anthropic API key from the `ANTHROPIC_API_KEY` env var.
     pub fn resolved_api_key(&self) -> Option<String> {
-        self.providers
-            .anthropic
-            .as_ref()
-            .and_then(|p| p.api_key.clone())
-            .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
+        std::env::var("ANTHROPIC_API_KEY").ok()
     }
 
-    /// Resolved Telegram bot token: checks [channels.telegram] section, then env var.
+    /// Resolved Telegram bot token from the `TELEGRAM_BOT_TOKEN` env var.
     pub fn resolved_telegram_token(&self) -> Option<String> {
-        self.channels
-            .telegram
-            .as_ref()
-            .and_then(|t| t.bot_token.clone())
-            .or_else(|| std::env::var("TELEGRAM_BOT_TOKEN").ok())
+        std::env::var("TELEGRAM_BOT_TOKEN").ok()
     }
 
     /// Resolved Telegram allowed user IDs from [channels.telegram] section.
@@ -520,35 +552,22 @@ impl StarpodConfig {
             .unwrap_or_else(|| self.data_dir.join("memory.db"))
     }
 
-    /// Resolved API key for any provider.
+    /// Resolved API key for any provider from the conventional env var.
     ///
-    /// Checks `providers.<name>.api_key` in config, then falls back to the
-    /// conventional environment variable for that provider.
+    /// Credentials must be set via environment variables (or `.env` file),
+    /// never in config files.
     pub fn resolved_provider_api_key(&self, provider: &str) -> Option<String> {
-        let cfg = match provider {
-            "anthropic" => self.providers.anthropic.as_ref(),
-            "openai" => self.providers.openai.as_ref(),
-            "gemini" => self.providers.gemini.as_ref(),
-            "groq" => self.providers.groq.as_ref(),
-            "deepseek" => self.providers.deepseek.as_ref(),
-            "openrouter" => self.providers.openrouter.as_ref(),
-            "ollama" => self.providers.ollama.as_ref(),
-            _ => None,
+        let env_var = match provider {
+            "anthropic" => "ANTHROPIC_API_KEY",
+            "openai" => "OPENAI_API_KEY",
+            "gemini" => "GEMINI_API_KEY",
+            "groq" => "GROQ_API_KEY",
+            "deepseek" => "DEEPSEEK_API_KEY",
+            "openrouter" => "OPENROUTER_API_KEY",
+            "ollama" => return Some(String::new()), // Ollama doesn't require a key
+            _ => return None,
         };
-
-        cfg.and_then(|c| c.api_key.clone()).or_else(|| {
-            let env_var = match provider {
-                "anthropic" => "ANTHROPIC_API_KEY",
-                "openai" => "OPENAI_API_KEY",
-                "gemini" => "GEMINI_API_KEY",
-                "groq" => "GROQ_API_KEY",
-                "deepseek" => "DEEPSEEK_API_KEY",
-                "openrouter" => "OPENROUTER_API_KEY",
-                "ollama" => return Some(String::new()), // Ollama doesn't require a key
-                _ => return None,
-            };
-            std::env::var(env_var).ok()
-        })
+        std::env::var(env_var).ok()
     }
 
     /// Resolved base URL for any provider.
@@ -647,7 +666,7 @@ mod tests {
     fn test_channels_telegram_enabled_and_gap_defaults() {
         let toml = r#"
             [channels.telegram]
-            bot_token = "test"
+            enabled = true
         "#;
         let config: StarpodConfig = toml::from_str(toml).unwrap();
         let tg = config.channels.telegram.as_ref().unwrap();
@@ -666,55 +685,28 @@ mod tests {
         assert_eq!(config.channel_gap_minutes("main"), None);
     }
 
-    #[test]
-    fn test_resolved_api_key_from_config() {
-        let toml = r#"
-            [providers.anthropic]
-            api_key = "sk-ant-from-config"
-        "#;
-        let config: StarpodConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.resolved_api_key().unwrap(), "sk-ant-from-config");
-    }
-
     // All env-var API key tests are combined into a single test to avoid
     // parallel test races — std::env::set_var/remove_var are process-global.
     #[test]
-    fn test_resolved_api_key_env_var_scenarios() {
-        // Scenario 1: config takes priority over env var
-        let config_with_key: StarpodConfig = toml::from_str(r#"
-            [providers.anthropic]
-            api_key = "sk-ant-from-config"
-        "#).unwrap();
+    fn test_resolved_api_key_env_only() {
+        // Credentials only come from env vars, never from config files.
         std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-from-env");
-        assert_eq!(config_with_key.resolved_api_key().unwrap(), "sk-ant-from-config");
+        let config: StarpodConfig = toml::from_str("").unwrap();
+        assert_eq!(config.resolved_api_key().unwrap(), "sk-ant-from-env");
 
-        // Scenario 2: env var fallback when no config key
-        let config_no_key: StarpodConfig = toml::from_str("").unwrap();
-        assert_eq!(config_no_key.resolved_api_key().unwrap(), "sk-ant-from-env");
-
-        // Scenario 3: none when neither set
         std::env::remove_var("ANTHROPIC_API_KEY");
-        assert!(config_no_key.resolved_api_key().is_none());
-
-        // Scenario 4: empty provider section, no env var → none
-        let config_empty_provider: StarpodConfig = toml::from_str(r#"
-            [providers.anthropic]
-            base_url = "https://api.anthropic.com"
-        "#).unwrap();
-        assert!(config_empty_provider.resolved_api_key().is_none());
+        assert!(config.resolved_api_key().is_none());
     }
 
     #[test]
-    fn resolved_provider_api_key_from_config() {
-        let toml = r#"
-            [providers.openai]
-            api_key = "sk-test-openai-key"
-        "#;
-        let config: StarpodConfig = toml::from_str(toml).unwrap();
+    fn resolved_provider_api_key_from_env() {
+        std::env::set_var("OPENAI_API_KEY", "sk-test-openai-key");
+        let config = StarpodConfig::default();
         assert_eq!(
             config.resolved_provider_api_key("openai"),
             Some("sk-test-openai-key".to_string())
         );
+        std::env::remove_var("OPENAI_API_KEY");
     }
 
     #[test]
@@ -773,6 +765,97 @@ mod tests {
         let config = StarpodConfig::default();
         // Ollama doesn't require an API key, returns empty string
         assert_eq!(config.resolved_provider_api_key("ollama"), Some(String::new()));
+    }
+
+    // ── Credential-in-config rejection tests ─────────────────────────────
+
+    #[test]
+    fn api_key_in_provider_config_is_silently_ignored() {
+        // Old configs that still have api_key in [providers.*] must parse
+        // without error — the field is simply dropped by serde.
+        let toml = r#"
+            [providers.anthropic]
+            api_key = "sk-ant-should-be-ignored"
+            base_url = "https://custom.example.com"
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        let p = config.providers.anthropic.as_ref().unwrap();
+        assert_eq!(p.base_url.as_deref(), Some("https://custom.example.com"));
+        // No api_key field on ProviderConfig — credential is dropped.
+    }
+
+    #[test]
+    fn bot_token_in_telegram_config_is_silently_ignored() {
+        // Old configs with bot_token in [channels.telegram] must still parse.
+        let toml = r#"
+            [channels.telegram]
+            bot_token = "123:ABC"
+            gap_minutes = 60
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        let tg = config.channels.telegram.as_ref().unwrap();
+        assert_eq!(tg.gap_minutes, Some(60));
+        // No bot_token field on TelegramChannelConfig — credential is dropped.
+    }
+
+    #[test]
+    fn warn_credentials_in_toml_detects_api_key() {
+        let value: toml::Value = toml::from_str(r#"
+            [providers.anthropic]
+            api_key = "sk-ant-bad"
+            [providers.openai]
+            base_url = "https://example.com"
+        "#).unwrap();
+        // Should not panic — warning goes to tracing. We just verify the
+        // function runs without error on input containing credentials.
+        warn_credentials_in_toml(&value, "test.toml");
+    }
+
+    #[test]
+    fn warn_credentials_in_toml_detects_bot_token() {
+        let value: toml::Value = toml::from_str(r#"
+            [channels.telegram]
+            bot_token = "123:ABC"
+        "#).unwrap();
+        warn_credentials_in_toml(&value, "test.toml");
+    }
+
+    #[test]
+    fn warn_credentials_in_toml_clean_config_no_panic() {
+        // A config with no credentials should pass through silently.
+        let value: toml::Value = toml::from_str(r#"
+            [providers.anthropic]
+            base_url = "https://api.anthropic.com"
+            [channels.telegram]
+            gap_minutes = 360
+        "#).unwrap();
+        warn_credentials_in_toml(&value, "clean.toml");
+    }
+
+    #[test]
+    fn resolved_api_key_ignores_config_reads_env_only() {
+        // Even if a provider section exists, the resolved key comes from env.
+        let config: StarpodConfig = toml::from_str(r#"
+            [providers.anthropic]
+            base_url = "https://custom.example.com"
+        "#).unwrap();
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        assert!(config.resolved_api_key().is_none());
+
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-from-env-only");
+        assert_eq!(config.resolved_api_key().unwrap(), "sk-from-env-only");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+
+    #[test]
+    fn resolved_telegram_token_reads_env_only() {
+        let config = StarpodConfig::default();
+        std::env::remove_var("TELEGRAM_BOT_TOKEN");
+        assert!(config.resolved_telegram_token().is_none());
+
+        std::env::set_var("TELEGRAM_BOT_TOKEN", "123:from-env");
+        assert_eq!(config.resolved_telegram_token().unwrap(), "123:from-env");
+        std::env::remove_var("TELEGRAM_BOT_TOKEN");
     }
 
     // ── Attachments config tests ─────────────────────────────────────────
@@ -1209,7 +1292,7 @@ mod tests {
         let overlay: toml::Value = toml::from_str(r#"
             model = "sonnet"
             [channels.telegram]
-            bot_token = "123:ABC"
+            gap_minutes = 120
         "#).unwrap();
         deep_merge(&mut base, overlay);
         let config: StarpodConfig = base.try_into().unwrap();
@@ -1217,6 +1300,6 @@ mod tests {
         assert_eq!(config.max_turns, 30); // preserved
         assert_eq!(config.agent_name, "Aster"); // preserved
         let tg = config.channels.telegram.unwrap();
-        assert_eq!(tg.bot_token.as_deref(), Some("123:ABC")); // added
+        assert_eq!(tg.gap_minutes, Some(120)); // added
     }
 }
