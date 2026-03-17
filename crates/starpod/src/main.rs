@@ -556,23 +556,87 @@ async fn scaffold_agent_blueprint(
     tokio::fs::create_dir_all(agent_dir.join("files")).await?;
 
     let agent_toml = format!(
-        "# Agent configuration for {}\n\
-         agent_name = \"{}\"\n\
-         model = \"{}\"\n\
-         # skills = []  # Empty = all workspace skills\n",
-        name, display_name, model,
+        r#"# Agent configuration for {name}
+# Overrides workspace starpod.toml defaults for this agent.
+
+agent_name = "{display_name}"
+model = "{model}"
+# skills = []  # empty = all workspace skills
+
+# provider = "anthropic"
+# max_turns = 30
+# max_tokens = 16384
+# server_addr = "127.0.0.1:3000"
+# reasoning_effort = "low"  # low, medium, high
+# compaction_model = "{model}"
+# timezone = "Europe/Rome"  # IANA format, used for cron scheduling
+# followup_mode = "inject"  # inject or queue
+
+# [memory]
+# half_life_days = 30.0
+# mmr_lambda = 0.7
+# vector_search = true
+# chunk_size = 1600
+# chunk_overlap = 320
+# bootstrap_file_cap = 20000
+# export_sessions = true
+
+# [compaction]
+# context_budget = 160000
+# summary_max_tokens = 4096
+# min_keep_messages = 4
+
+# [cron]
+# default_max_retries = 3
+# default_timeout_secs = 7200
+# max_concurrent_runs = 1
+
+# [attachments]
+# enabled = true
+# allowed_extensions = []
+# max_file_size = 20971520
+
+# Channel config is only valid in agent.toml (not in starpod.toml).
+# [channels.telegram]
+# enabled = true
+# gap_minutes = 360  # inactivity gap before auto-closing session (6h)
+# allowed_users = []  # numeric IDs or usernames, e.g. [123456789, "alice"]
+# stream_mode = "final_only"  # final_only or all_messages
+"#,
+        name = name,
+        display_name = display_name,
+        model = model,
     );
     tokio::fs::write(agent_dir.join("agent.toml"), agent_toml).await?;
 
     let soul_content = match soul {
         Some(text) => format!(
-            "# Soul\n\nYou are {}, a personal AI assistant. {}\n",
-            display_name, text
+            "# Soul\n\n\
+             You are {display_name}, a personal AI assistant. {text}\n\n\
+             ## Core Traits\n\
+             - You remember past conversations and learn from them\n\
+             - You adapt your communication style to the user's preferences\n\
+             - You are proactive about offering relevant information from memory\n\
+             - You are honest about what you know and don't know\n\n\
+             ## Communication Style\n\
+             - Be concise but thorough when needed\n\
+             - Use a friendly, professional tone\n\
+             - Ask clarifying questions when the request is ambiguous\n\
+             - Offer context from past conversations when relevant\n",
         ),
         None => format!(
-            "# Soul\n\nYou are {}, a personal AI assistant. \
-             You are helpful, direct, and thoughtful.\n",
-            display_name
+            "# Soul\n\n\
+             You are {display_name}, a personal AI assistant. You are helpful, direct, and thoughtful.\n\n\
+             ## Core Traits\n\
+             - You remember past conversations and learn from them\n\
+             - You adapt your communication style to the user's preferences\n\
+             - You are proactive about offering relevant information from memory\n\
+             - You are honest about what you know and don't know\n\n\
+             ## Communication Style\n\
+             - Be concise but thorough when needed\n\
+             - Use a friendly, professional tone\n\
+             - Ask clarifying questions when the request is ambiguous\n\
+             - Offer context from past conversations when relevant\n",
         ),
     };
     tokio::fs::write(agent_dir.join("SOUL.md"), soul_content).await?;

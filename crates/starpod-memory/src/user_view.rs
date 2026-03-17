@@ -41,7 +41,7 @@ impl UserMemoryView {
         if !user_md.exists() {
             std::fs::write(
                 &user_md,
-                "# User Profile\n\nTell me about yourself and I'll remember.\n",
+                crate::defaults::DEFAULT_USER,
             ).map_err(StarpodError::Io)?;
         }
         let memory_md = user_dir.join("MEMORY.md");
