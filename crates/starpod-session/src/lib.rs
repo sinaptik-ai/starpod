@@ -244,7 +244,11 @@ impl SessionManager {
     /// Set the session title if it hasn't been set yet.
     pub async fn set_title_if_empty(&self, id: &str, title: &str) -> Result<()> {
         let truncated = if title.len() > 100 {
-            format!("{}...", &title[..100])
+            let mut end = 100;
+            while end > 0 && !title.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}...", &title[..end])
         } else {
             title.to_string()
         };
@@ -389,7 +393,11 @@ impl SessionManager {
         // Auto-set title from first user message
         if role == "user" {
             let title = if content.len() > 100 {
-                format!("{}...", &content[..100])
+                let mut end = 100;
+                while end > 0 && !content.is_char_boundary(end) {
+                    end -= 1;
+                }
+                format!("{}...", &content[..end])
             } else {
                 content.to_string()
             };
