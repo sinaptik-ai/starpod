@@ -38,7 +38,7 @@ starpod agent init \
 |------|-------------|---------|
 | `--name` | Your display name | System username |
 | `--timezone` | IANA timezone | Auto-detected |
-| `--agent-name` | Agent's display name | `Aster` |
+| `--agent-name` | Agent's display name | Agent name |
 | `--soul` | Personality/instructions | Empty |
 | `--model` | Claude model to use | `claude-haiku-4-5` |
 | `--default` | Skip the wizard | — |
