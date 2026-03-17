@@ -85,6 +85,8 @@ pub struct CronJob {
     pub timeout_secs: u32,
     /// Controls whether the job runs in an isolated or shared main session.
     pub session_mode: SessionMode,
+    /// User ID for user-scoped jobs. `None` = agent-level job.
+    pub user_id: Option<String>,
 }
 
 /// Context passed to the [`JobExecutor`](crate::scheduler::JobExecutor) callback.
@@ -100,6 +102,8 @@ pub struct JobContext {
     pub job_name: String,
     /// Unique job ID (for correlating runs).
     pub job_id: String,
+    /// User ID for user-scoped jobs. `None` = agent-level job.
+    pub user_id: Option<String>,
 }
 
 /// Partial update for a cron job — only non-`None` fields are applied.
@@ -199,6 +203,7 @@ mod tests {
             session_mode: SessionMode::Main,
             job_name: "my-job".into(),
             job_id: "abc-123".into(),
+            user_id: Some("alice".into()),
         };
         assert_eq!(ctx.prompt, "Do something");
         assert_eq!(ctx.session_mode, SessionMode::Main);

@@ -6,7 +6,7 @@
 //!   checks preventing directory traversal, non-`.md` writes, and oversized content.
 //! - **Temporal decay** ([`decay_factor`], [`apply_decay`]) — penalizes older daily
 //!   logs in search results using exponential half-life decay while leaving evergreen
-//!   files (SOUL.md, knowledge/*) unaffected.
+//!   files (SOUL.md, HEARTBEAT.md, etc.) unaffected.
 //! - **MMR re-ranking** ([`mmr_rerank`]) — Maximal Marginal Relevance diversifies
 //!   search results by balancing query relevance against redundancy with
 //!   already-selected results.
@@ -111,11 +111,11 @@ pub fn validate_content_size(content: &str) -> Result<()> {
 /// Daily log files (`memory/YYYY-MM-DD.md`) decay with a half-life:
 ///   `decay = 0.5^(age_days / half_life_days)`
 ///
-/// Evergreen files (SOUL.md, USER.md, MEMORY.md, knowledge/*) return 1.0.
+/// Evergreen files (SOUL.md, USER.md, MEMORY.md, HEARTBEAT.md, etc.) return 1.0.
 pub fn decay_factor(source: &str, half_life_days: f64) -> f64 {
     // Evergreen files don't decay
     let evergreen_prefixes = ["SOUL.md", "USER.md", "MEMORY.md", "HEARTBEAT.md"];
-    if evergreen_prefixes.contains(&source) || source.starts_with("knowledge/") {
+    if evergreen_prefixes.contains(&source) {
         return 1.0;
     }
 
@@ -239,15 +239,15 @@ mod tests {
     #[test]
     fn validate_path_accepts_subdirectory() {
         let tmp = TempDir::new().unwrap();
-        std::fs::create_dir_all(tmp.path().join("knowledge")).unwrap();
-        assert!(validate_path("knowledge/rust.md", tmp.path()).is_ok());
+        std::fs::create_dir_all(tmp.path().join("subdir")).unwrap();
+        assert!(validate_path("subdir/notes.md", tmp.path()).is_ok());
     }
 
     #[test]
     fn validate_path_rejects_traversal() {
         let tmp = TempDir::new().unwrap();
         assert!(validate_path("../etc/passwd.md", tmp.path()).is_err());
-        assert!(validate_path("knowledge/../../secret.md", tmp.path()).is_err());
+        assert!(validate_path("subdir/../../secret.md", tmp.path()).is_err());
     }
 
     #[test]
@@ -303,7 +303,8 @@ mod tests {
         assert_eq!(decay_factor("USER.md", 30.0), 1.0);
         assert_eq!(decay_factor("MEMORY.md", 30.0), 1.0);
         assert_eq!(decay_factor("HEARTBEAT.md", 30.0), 1.0);
-        assert_eq!(decay_factor("knowledge/rust.md", 30.0), 1.0);
+        // Non-evergreen, non-daily files get a slight decay
+        assert_eq!(decay_factor("notes.md", 30.0), 0.8);
     }
 
     #[test]
@@ -497,6 +498,6 @@ mod tests {
     fn apply_decay_with_factor_one_is_identity() {
         // Evergreen files have factor 1.0 — rank should be unchanged
         let rank = -7.5;
-        assert_eq!(apply_decay(rank, "knowledge/rust.md", 30.0), rank);
+        assert_eq!(apply_decay(rank, "HEARTBEAT.md", 30.0), rank);
     }
 }

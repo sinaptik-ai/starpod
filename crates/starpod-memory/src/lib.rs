@@ -6,16 +6,18 @@
 //! ## Architecture
 //!
 //! ```text
-//! .starpod/data/
-//! ├── memory.db          # SQLite: FTS5 index + vector embeddings
+//! .starpod/
 //! ├── SOUL.md            # Agent personality (evergreen)
-//! ├── USER.md            # User profile (evergreen)
-//! ├── MEMORY.md          # Long-term memory (evergreen)
 //! ├── HEARTBEAT.md       # Periodic task instructions (evergreen)
-//! ├── memory/
-//! │   └── YYYY-MM-DD.md  # Daily logs (subject to temporal decay)
-//! └── knowledge/
-//!     └── *.md           # Persistent knowledge (evergreen)
+//! ├── BOOT.md            # Startup instructions (evergreen)
+//! ├── BOOTSTRAP.md       # One-time init (self-destructing)
+//! ├── db/
+//! │   └── memory.db      # SQLite: FTS5 index + vector embeddings
+//! └── users/<id>/
+//!     ├── USER.md        # User profile (per-user)
+//!     ├── MEMORY.md      # Long-term memory (per-user)
+//!     └── memory/
+//!         └── YYYY-MM-DD.md  # Daily logs (per-user, temporal decay)
 //! ```
 //!
 //! ## Search Pipeline

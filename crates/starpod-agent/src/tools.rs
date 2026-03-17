@@ -19,6 +19,7 @@ pub struct ToolContext {
     pub cron: Arc<CronStore>,
     pub user_tz: Option<String>,
     pub instance_root: PathBuf,
+    pub user_id: Option<String>,
 }
 
 /// Build the JSON schema definitions for all Starpod custom tools.
@@ -868,7 +869,7 @@ pub async fn handle_custom_tool(
 
             debug!(job = %name, "CronAdd");
 
-            match ctx.cron.add_job_full(name, prompt, &schedule, delete_after_run, ctx.user_tz.as_deref(), max_retries, timeout_secs, session_mode).await {
+            match ctx.cron.add_job_full(name, prompt, &schedule, delete_after_run, ctx.user_tz.as_deref(), max_retries, timeout_secs, session_mode, ctx.user_id.as_deref()).await {
                 Ok(id) => Some(ToolResult {
                     content: format!("Scheduled job '{}' (id: {})", name, &id[..8]),
                     is_error: false,
@@ -1209,7 +1210,7 @@ mod tests {
     #[tokio::test]
     async fn env_get_returns_value() {
         let tmp = TempDir::new().unwrap();
-        let memory = Arc::new(starpod_memory::MemoryStore::new(tmp.path()).await.unwrap());
+        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("db")).await.unwrap());
         let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
         let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
 
@@ -1219,6 +1220,7 @@ mod tests {
             cron,
             user_tz: None,
             instance_root: tmp.path().to_path_buf(),
+            user_id: Some("admin".into()),
         };
 
         std::env::set_var("STARPOD_ENVGET_TEST_KEY", "test_value_42");
@@ -1237,7 +1239,7 @@ mod tests {
     #[tokio::test]
     async fn env_get_missing_key() {
         let tmp = TempDir::new().unwrap();
-        let memory = Arc::new(starpod_memory::MemoryStore::new(tmp.path()).await.unwrap());
+        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("db")).await.unwrap());
         let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
         let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
 
@@ -1247,6 +1249,7 @@ mod tests {
             cron,
             user_tz: None,
             instance_root: tmp.path().to_path_buf(),
+            user_id: Some("admin".into()),
         };
 
         let result = handle_custom_tool(
@@ -1265,7 +1268,7 @@ mod tests {
     #[tokio::test]
     async fn file_write_and_read() {
         let tmp = TempDir::new().unwrap();
-        let memory = Arc::new(starpod_memory::MemoryStore::new(tmp.path()).await.unwrap());
+        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("db")).await.unwrap());
         let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
         let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
 
@@ -1278,6 +1281,7 @@ mod tests {
             cron,
             user_tz: None,
             instance_root: instance_root.clone(),
+            user_id: Some("admin".into()),
         };
 
         // Write a file
@@ -1301,7 +1305,7 @@ mod tests {
     #[tokio::test]
     async fn file_list_hides_starpod() {
         let tmp = TempDir::new().unwrap();
-        let memory = Arc::new(starpod_memory::MemoryStore::new(tmp.path()).await.unwrap());
+        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("db")).await.unwrap());
         let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
         let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
 
@@ -1315,6 +1319,7 @@ mod tests {
             cron,
             user_tz: None,
             instance_root: instance_root.clone(),
+            user_id: Some("admin".into()),
         };
 
         let result = handle_custom_tool(
@@ -1330,7 +1335,7 @@ mod tests {
     #[tokio::test]
     async fn file_delete_works() {
         let tmp = TempDir::new().unwrap();
-        let memory = Arc::new(starpod_memory::MemoryStore::new(tmp.path()).await.unwrap());
+        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("db")).await.unwrap());
         let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
         let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
 
@@ -1344,6 +1349,7 @@ mod tests {
             cron,
             user_tz: None,
             instance_root: instance_root.clone(),
+            user_id: Some("admin".into()),
         };
 
         let result = handle_custom_tool(
@@ -1358,7 +1364,7 @@ mod tests {
     #[tokio::test]
     async fn file_read_rejects_starpod() {
         let tmp = TempDir::new().unwrap();
-        let memory = Arc::new(starpod_memory::MemoryStore::new(tmp.path()).await.unwrap());
+        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("db")).await.unwrap());
         let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
         let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
 
@@ -1373,6 +1379,7 @@ mod tests {
             cron,
             user_tz: None,
             instance_root: instance_root.clone(),
+            user_id: Some("admin".into()),
         };
 
         let result = handle_custom_tool(
@@ -1386,7 +1393,7 @@ mod tests {
     #[tokio::test]
     async fn file_write_rejects_traversal() {
         let tmp = TempDir::new().unwrap();
-        let memory = Arc::new(starpod_memory::MemoryStore::new(tmp.path()).await.unwrap());
+        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("db")).await.unwrap());
         let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
         let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
 
@@ -1399,6 +1406,7 @@ mod tests {
             cron,
             user_tz: None,
             instance_root,
+            user_id: Some("admin".into()),
         };
 
         let result = handle_custom_tool(
