@@ -585,11 +585,24 @@ pub struct WorkspaceConfig {
 pub fn load_agent_config(paths: &ResolvedPaths) -> crate::Result<AgentConfig> {
     // Load .env hierarchy
     match &paths.mode {
-        Mode::SingleAgent { .. } | Mode::Instance { .. } => {
+        Mode::Instance { instance_root, .. } => {
+            // For instances: load workspace .env first (base), then instance .env (override)
+            if let Some(workspace_root) = instance_root.parent().and_then(|p| p.parent()) {
+                let workspace_env = workspace_root.join(".env");
+                if workspace_env.is_file() {
+                    if let Err(e) = dotenvy::from_path_override(&workspace_env) {
+                        warn!(path = %workspace_env.display(), error = %e, "Failed to load workspace .env");
+                    }
+                }
+            }
+            // Instance .env overrides workspace .env
+            load_env(&paths.agent_home, None);
+        }
+        Mode::SingleAgent { .. } => {
             load_env(&paths.agent_home, None);
         }
         Mode::Workspace { .. } => {
-            // Legacy: load workspace .env
+            // Load workspace .env
             if let Some(ref env_file) = paths.env_file {
                 if let Err(e) = dotenvy::from_path_override(env_file) {
                     warn!(path = %env_file.display(), error = %e, "Failed to load .env file");
@@ -1352,5 +1365,70 @@ model = "claude-sonnet-4-6"
             Some("alice_val".to_string())
         );
         std::env::remove_var("STARPOD_OVERRIDE_TEST");
+    }
+
+    // ── Instance .env loads workspace .env as base ──────────────────
+
+    #[test]
+    fn instance_config_loads_workspace_env() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Workspace .env with API key
+        std::fs::write(root.join("starpod.toml"), "").unwrap();
+        std::fs::write(root.join(".env"), "STARPOD_INST_ENV_TEST=from_workspace\n").unwrap();
+
+        // Instance with agent.toml but NO .env
+        let instance_dir = root.join(".instances").join("bot");
+        let starpod_dir = instance_dir.join(".starpod");
+        std::fs::create_dir_all(&starpod_dir).unwrap();
+        std::fs::write(starpod_dir.join("agent.toml"), "").unwrap();
+
+        let mode = Mode::Instance {
+            instance_root: instance_dir,
+            agent_name: "bot".to_string(),
+        };
+        let paths = ResolvedPaths::resolve(&mode).unwrap();
+        let _config = load_agent_config(&paths).unwrap();
+
+        // Workspace .env should have been loaded
+        assert_eq!(
+            std::env::var("STARPOD_INST_ENV_TEST").ok(),
+            Some("from_workspace".to_string()),
+            "Instance mode should load workspace .env as base"
+        );
+        std::env::remove_var("STARPOD_INST_ENV_TEST");
+    }
+
+    #[test]
+    fn instance_env_overrides_workspace_env() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Workspace .env
+        std::fs::write(root.join("starpod.toml"), "").unwrap();
+        std::fs::write(root.join(".env"), "STARPOD_INST_OVERRIDE_TEST=workspace_val\n").unwrap();
+
+        // Instance .env overrides
+        let instance_dir = root.join(".instances").join("bot");
+        let starpod_dir = instance_dir.join(".starpod");
+        std::fs::create_dir_all(&starpod_dir).unwrap();
+        std::fs::write(starpod_dir.join("agent.toml"), "").unwrap();
+        std::fs::write(starpod_dir.join(".env"), "STARPOD_INST_OVERRIDE_TEST=instance_val\n").unwrap();
+
+        let mode = Mode::Instance {
+            instance_root: instance_dir,
+            agent_name: "bot".to_string(),
+        };
+        let paths = ResolvedPaths::resolve(&mode).unwrap();
+        let _config = load_agent_config(&paths).unwrap();
+
+        // Instance .env should override workspace .env
+        assert_eq!(
+            std::env::var("STARPOD_INST_OVERRIDE_TEST").ok(),
+            Some("instance_val".to_string()),
+            "Instance .env should override workspace .env"
+        );
+        std::env::remove_var("STARPOD_INST_OVERRIDE_TEST");
     }
 }
