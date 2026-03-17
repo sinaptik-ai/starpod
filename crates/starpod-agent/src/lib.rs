@@ -162,7 +162,7 @@ impl StarpodAgent {
     /// Hot-reload the agent config. Updates per-request settings (model, provider,
     /// agent_name, etc.) and applies memory tuning parameters immediately.
     ///
-    /// Settings that require restart: `server_addr`, `channels.telegram.bot_token`.
+    /// Settings that require restart: `server_addr`, `TELEGRAM_BOT_TOKEN` env var.
     pub fn reload_config(&self, new_config: StarpodConfig) {
         // Apply memory tuning parameters to the live MemoryStore.
         // MemoryStore is behind Arc but set_* methods need &mut, so we

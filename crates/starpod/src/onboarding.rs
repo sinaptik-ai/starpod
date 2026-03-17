@@ -148,6 +148,10 @@ model = "{model}"
 max_turns = 30
 server_addr = "127.0.0.1:3000"
 
+# Provider API keys must be set in .env (e.g. ANTHROPIC_API_KEY=sk-ant-...)
+# [providers.{provider}]
+# base_url = "https://..."
+
 # [memory]
 # half_life_days = 30.0
 # vector_search = true
