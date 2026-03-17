@@ -146,15 +146,41 @@ pub fn generate_workspace_config_with(provider: &str, model: &str) -> String {
 provider = "{provider}"
 model = "{model}"
 max_turns = 30
+# max_tokens = 16384
 server_addr = "127.0.0.1:3000"
+# reasoning_effort = "low"  # low, medium, high (for models with extended thinking)
+# compaction_model = "{model}"  # model used for conversation compaction summaries
+# followup_mode = "inject"  # inject = merge into running loop, queue = run after current loop
 
 # Provider API keys must be set in .env (e.g. ANTHROPIC_API_KEY=sk-ant-...)
 # [providers.{provider}]
+# enabled = true
 # base_url = "https://..."
+# models = []  # preferred models shown first
 
 # [memory]
 # half_life_days = 30.0
+# mmr_lambda = 0.7  # 0.0 = max diversity, 1.0 = pure relevance
 # vector_search = true
+# chunk_size = 1600  # ~400 tokens
+# chunk_overlap = 320  # ~80 tokens
+# bootstrap_file_cap = 20000  # max chars from a single file in bootstrap context
+# export_sessions = true  # export closed sessions for long-term recall
+
+# [compaction]
+# context_budget = 160000  # token budget triggering compaction
+# summary_max_tokens = 4096
+# min_keep_messages = 4
+
+# [cron]
+# default_max_retries = 3
+# default_timeout_secs = 7200  # 2 hours
+# max_concurrent_runs = 1
+
+# [attachments]
+# enabled = true
+# allowed_extensions = []  # empty = all allowed, e.g. ["jpg", "png", "pdf"]
+# max_file_size = 20971520  # 20 MB
 "#
     )
 }
