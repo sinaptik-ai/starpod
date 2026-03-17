@@ -593,6 +593,12 @@ function sendMessage() {
   if ((!text && pendingAttachments.length === 0) || !ws || ws.readyState !== WebSocket.OPEN) return
 
   addUserMessage(text, pendingAttachments)
+
+  // If there's an active assistant message (streaming), move it after the new user message
+  if (currentMsg && currentMsg.parentNode === messages) {
+    messages.appendChild(currentMsg)
+  }
+
   isStreaming = true
 
   const payload = { type: 'message', text, channel_id: 'web', channel_session_key: currentSessionKey }
