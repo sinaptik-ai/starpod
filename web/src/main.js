@@ -295,6 +295,21 @@ function removeThinking() {
   }
 }
 
+function showThinking() {
+  if (!currentMsg) return
+  removeThinking()
+  if (currentBubble) {
+    currentBubble.classList.remove('streaming-cursor')
+    currentBubble = null
+  }
+  const thinking = document.createElement('div')
+  thinking.className = 'flex items-center gap-1.5 py-2 text-dim text-xs'
+  thinking.innerHTML = '<div class="flex gap-1"><span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span></div>'
+  currentMsg._thinkingEl = thinking
+  currentMsg.appendChild(thinking)
+  scrollToBottom()
+}
+
 function ensureBubble() {
   if (currentBubble) return currentBubble
   if (!currentMsg) return null
@@ -423,7 +438,6 @@ function endStream(data) {
   isStreaming = false
   currentMsg = null
   currentBubble = null
-  sendBtn.disabled = false
   inputText.focus()
   scrollToBottom()
 }
@@ -469,6 +483,7 @@ function connect() {
         break
       case 'tool_result':
         addToolResult(data.content, data.is_error, data.tool_use_id)
+        showThinking()
         break
       case 'stream_end':
         endStream(data)
@@ -564,11 +579,10 @@ app.addEventListener('drop', (e) => { e.preventDefault(); dragCounter = 0; app.c
 // ── Send ──
 function sendMessage() {
   const text = inputText.value.trim()
-  if ((!text && pendingAttachments.length === 0) || isStreaming || !ws || ws.readyState !== WebSocket.OPEN) return
+  if ((!text && pendingAttachments.length === 0) || !ws || ws.readyState !== WebSocket.OPEN) return
 
   addUserMessage(text, pendingAttachments)
   isStreaming = true
-  sendBtn.disabled = true
 
   const payload = { type: 'message', text, channel_id: 'web', channel_session_key: currentSessionKey }
   if (pendingAttachments.length > 0) payload.attachments = pendingAttachments
