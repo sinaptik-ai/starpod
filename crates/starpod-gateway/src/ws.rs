@@ -348,13 +348,41 @@ async fn process_stream_with_followups(
                     }
                     Some(Err(e)) => {
                         error!(error = %e, "Stream error");
-                        let _ = send_msg(sender, &ServerMessage::Error {
-                            message: format!("Stream error: {}", e),
+                        // Save any accumulated assistant text before reporting the error
+                        if !result_text.is_empty() {
+                            let _ = state.agent.session_mgr().save_message(
+                                session_id, "assistant", &result_text,
+                            ).await;
+                        }
+                        let _ = send_msg(sender, &ServerMessage::StreamEnd {
+                            session_id: session_id.to_string(),
+                            num_turns: 0,
+                            cost_usd: 0.0,
+                            input_tokens: 0,
+                            output_tokens: 0,
+                            is_error: true,
+                            errors: vec![format!("Stream error: {}", e)],
                         }).await;
                         return true;
                     }
                     None => {
-                        // Stream ended without a Result message
+                        // Stream ended without a Result message — save any
+                        // accumulated text and notify the client so the UI
+                        // cursor stops blinking.
+                        if !result_text.is_empty() {
+                            let _ = state.agent.session_mgr().save_message(
+                                session_id, "assistant", &result_text,
+                            ).await;
+                        }
+                        let _ = send_msg(sender, &ServerMessage::StreamEnd {
+                            session_id: session_id.to_string(),
+                            num_turns: 0,
+                            cost_usd: 0.0,
+                            input_tokens: 0,
+                            output_tokens: 0,
+                            is_error: false,
+                            errors: Vec::new(),
+                        }).await;
                         return true;
                     }
                 }
@@ -544,13 +572,40 @@ async fn process_stream(
             }
             Err(e) => {
                 error!(error = %e, "Stream error");
-                let _ = send_msg(sender, &ServerMessage::Error {
-                    message: format!("Stream error: {}", e),
+                if !result_text.is_empty() {
+                    let _ = state.agent.session_mgr().save_message(
+                        session_id, "assistant", &result_text,
+                    ).await;
+                }
+                let _ = send_msg(sender, &ServerMessage::StreamEnd {
+                    session_id: session_id.to_string(),
+                    num_turns: 0,
+                    cost_usd: 0.0,
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    is_error: true,
+                    errors: vec![format!("Stream error: {}", e)],
                 }).await;
                 return;
             }
         }
     }
+    // Stream ended without a Result message — send stream_end so the UI
+    // cursor stops and any accumulated text is persisted.
+    if !result_text.is_empty() {
+        let _ = state.agent.session_mgr().save_message(
+            session_id, "assistant", &result_text,
+        ).await;
+    }
+    let _ = send_msg(sender, &ServerMessage::StreamEnd {
+        session_id: session_id.to_string(),
+        num_turns: 0,
+        cost_usd: 0.0,
+        input_tokens: 0,
+        output_tokens: 0,
+        is_error: false,
+        errors: Vec::new(),
+    }).await;
 }
 
 #[cfg(test)]

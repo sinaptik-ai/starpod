@@ -607,11 +607,7 @@ impl StarpodAgent {
         }
 
         // Step 5: Append summary to daily log
-        let summary = if result_text.len() > 200 {
-            format!("{}...", &result_text[..200])
-        } else {
-            result_text.clone()
-        };
+        let summary = truncate(&result_text, 200);
         let agent_name = &config.agent_name;
         let _ = self.memory.append_daily(&format!(
             "**User**: {}\n**{agent_name}**: {}",
@@ -760,11 +756,7 @@ impl StarpodAgent {
             ).await;
         }
 
-        let summary = if result_text.len() > 200 {
-            format!("{}...", &result_text[..200])
-        } else {
-            result_text.to_string()
-        };
+        let summary = truncate(result_text, 200);
         let agent_name = &config.agent_name;
         let _ = self.memory.append_daily(&format!(
             "**User**: {}\n**{agent_name}**: {}",
@@ -1120,7 +1112,13 @@ fn truncate(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_len])
+        // Find the nearest char boundary at or before max_len to avoid
+        // panicking on multi-byte UTF-8 sequences.
+        let mut end = max_len;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}...", &s[..end])
     }
 }
 
