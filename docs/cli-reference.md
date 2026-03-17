@@ -165,18 +165,18 @@ Show a skill's metadata and full instructions.
 starpod agent skills show code-review
 ```
 
-### `starpod agent skills create`
+### `starpod agent skills new`
 
 Create a new AgentSkills-compatible skill with YAML frontmatter.
 
 ```bash
 # With inline instructions
-starpod agent skills create "code-review" \
+starpod agent skills new "code-review" \
   --description "Review code for bugs and style issues." \
   --body "Check for error handling, edge cases, and security."
 
 # Instructions from a file
-starpod agent skills create "code-review" \
+starpod agent skills new "code-review" \
   --description "Review code for bugs and style issues." \
   --file code-review-instructions.md
 ```

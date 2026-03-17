@@ -250,7 +250,7 @@ enum SkillAction {
         name: String,
     },
     /// Create a new AgentSkills-compatible skill.
-    Create {
+    New {
         /// Skill name (lowercase, hyphens, e.g. 'code-review').
         name: String,
         /// Description of what the skill does and when to use it.
@@ -753,7 +753,7 @@ async fn main() -> anyhow::Result<()> {
                 tokio::fs::create_dir_all(&knowledge_dir).await?;
 
                 // Generate agent.toml
-                let display_name = agent_name.as_deref().unwrap_or("Aster");
+                let display_name = agent_name.as_deref().unwrap_or(&name);
                 let agent_toml = format!(
                     "# Agent configuration for {}\n\
                      agent_name = \"{}\"\n\
@@ -1140,7 +1140,7 @@ async fn main() -> anyhow::Result<()> {
                         None => println!("Skill '{}' not found.", name),
                     }
                 }
-                SkillAction::Create { name, description, body, file } => {
+                SkillAction::New { name, description, body, file } => {
                     let body = if let Some(path) = file {
                         std::fs::read_to_string(&path)?
                     } else if let Some(b) = body {

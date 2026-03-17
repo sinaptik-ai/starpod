@@ -149,8 +149,8 @@ starpod agent sessions list [-l 10]             List recent sessions
 
 starpod agent skills list                       List all skills
 starpod agent skills show <name>                Show a skill's content
-starpod agent skills create <name> -c "..."     Create a skill from inline content
-starpod agent skills create <name> -f file.md   Create a skill from a file
+starpod agent skills new <name> -c "..."        Create a skill from inline content
+starpod agent skills new <name> -f file.md      Create a skill from a file
 starpod agent skills delete <name>              Delete a skill
 
 starpod agent cron list                         List all cron jobs

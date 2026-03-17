@@ -32,6 +32,15 @@ starpod agent new my-agent
 starpod agent new my-agent --agent-name "Jarvis" --soul "You are a coding assistant" --model "claude-opus-4-6"
 ```
 
+### Available Flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--agent-name` | Agent's display name | Agent name |
+| `--soul` | Personality/instructions | Empty |
+| `--model` | Claude model to use | `claude-sonnet-4-6` |
+| `--default` | Skip the wizard | — |
+
 ## What Gets Created
 
 ```
