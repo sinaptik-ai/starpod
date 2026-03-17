@@ -1,6 +1,6 @@
 # Project Setup
 
-Starpod uses a workspace model — each directory where you run `starpod init` gets a `starpod.toml`, `agents/`, and `skills/` directory.
+Starpod uses a workspace model — each directory where you run `starpod init` gets a `starpod.toml`, `agents/`, and `skills/` directory. Agents are **blueprints** (git-tracked config + personality); runtime state lives in `.instances/` (gitignored).
 
 ## Interactive Wizard
 
@@ -43,26 +43,48 @@ starpod agent new my-agent --agent-name "Jarvis" --soul "You are a coding assist
 
 ## What Gets Created
 
+### Workspace (git-tracked)
+
 ```
 your-project/
-├── starpod.toml        Workspace config (provider, model, defaults)
-├── .env                API key (gitignored)
-├── .gitignore          Includes .env and */data/
+├── starpod.toml          Workspace config (provider, model, defaults)
+├── .env                  API key (gitignored)
+├── .gitignore            Includes .env, .instances/, */data/
 ├── agents/
-│   └── my-agent/       (if created during init)
-│       ├── agent.toml  Agent-specific overrides
-│       ├── SOUL.md     Agent personality
-│       ├── USER.md     User profile (starts empty)
-│       ├── MEMORY.md   Memory index (starts empty)
-│       ├── data/       SQLite databases
-│       ├── memory/     Daily logs
-│       └── knowledge/  Knowledge base
-└── skills/             Shared skills
+│   └── my-agent/         BLUEPRINT (git-tracked)
+│       ├── agent.toml    Agent-specific overrides
+│       ├── SOUL.md       Agent personality
+│       ├── .env          Production secrets template
+│       ├── .env.dev      Dev secrets template
+│       ├── users/        Per-user permission templates
+│       └── files/        Template files synced to instance
+└── skills/               Shared skills
+```
+
+### Runtime (gitignored, created by `starpod dev`)
+
+```
+your-project/
+└── .instances/
+    └── my-agent/           Agent's filesystem sandbox
+        ├── .starpod/       Internal state (like .git/)
+        │   ├── agent.toml  Copied from blueprint
+        │   ├── SOUL.md     Copied from blueprint
+        │   ├── .env        From .env.dev (dev) or .env (prod)
+        │   ├── data/       SQLite databases
+        │   └── users/
+        │       └── admin/  Auto-created default user
+        │           ├── USER.md
+        │           ├── MEMORY.md
+        │           └── memory/
+        ├── reports/        Agent-created files
+        └── ...             Full filesystem sandbox
 ```
 
 - **`starpod.toml`** — workspace-level defaults shared across all agents.
 - **`agents/<name>/agent.toml`** — per-agent overrides (deep-merged on top of workspace config).
 - **`.env`** — API key for your chosen provider (e.g. `ANTHROPIC_API_KEY=sk-ant-...`).
+- **`.instances/`** — runtime state, never committed. Created automatically by `starpod dev`.
 
 ## Multiple Agents
 
@@ -76,6 +98,12 @@ starpod agent new journal --agent-name "Journal" --soul "You help me reflect on 
 Run a specific agent with:
 
 ```bash
-starpod serve -a backend-bot
-starpod repl -a journal
+starpod dev backend-bot
+starpod dev journal --port 3001
+```
+
+For production (single-agent mode without workspace):
+
+```bash
+starpod serve
 ```
