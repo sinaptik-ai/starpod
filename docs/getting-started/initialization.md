@@ -1,78 +1,72 @@
 # Project Setup
 
-Starpod is project-scoped — each directory where you run `starpod agent init` gets its own `.starpod/` folder with config, memory, credentials, and skills.
+Starpod uses a workspace model — each directory where you run `starpod init` gets a `starpod.toml`, `agents/`, and `skills/` directory.
 
 ## Interactive Wizard
 
 ```bash
 cd your-project
-starpod agent init
+starpod init
 ```
 
 The wizard walks you through:
-- Your name and timezone
-- Agent name and personality
-- Model selection
-- Optional Telegram bot setup
+1. **Provider selection** — pick from Anthropic, OpenAI, Gemini, Groq, DeepSeek, OpenRouter, or Ollama
+2. **Model** — pre-filled with the default for your chosen provider (e.g. `claude-sonnet-4-6` for Anthropic)
+3. **API key** — masked input, saved to `.env`. Skipped if already set in your environment or if the provider doesn't need one (Ollama)
+4. **First agent** — optionally create your first agent right away with a slug and display name
 
 ## Skip the Wizard
 
 ```bash
-starpod agent init --default
+starpod init --default
 ```
 
-## Custom Flags
+Uses Anthropic / `claude-sonnet-4-6` with no API key and no agent.
+
+## Create Agents
+
+After initializing, create agents with:
 
 ```bash
-starpod agent init \
-  --name "Alice" \
-  --timezone "Europe/Rome" \
-  --agent-name "Jarvis" \
-  --soul "You are a helpful coding assistant" \
-  --model "claude-opus-4-6"
+starpod agent new my-agent
+starpod agent new my-agent --agent-name "Jarvis" --soul "You are a coding assistant" --model "claude-opus-4-6"
 ```
-
-### Available Flags
-
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--name` | Your display name | System username |
-| `--timezone` | IANA timezone | Auto-detected |
-| `--agent-name` | Agent's display name | `Aster` |
-| `--soul` | Personality/instructions | Empty |
-| `--model` | Claude model to use | `claude-haiku-4-5` |
-| `--default` | Skip the wizard | — |
 
 ## What Gets Created
 
 ```
-.starpod/
-├── config.toml      Shared configuration (model, provider, memory, etc.)
-├── instance.toml    Instance-specific config (channels, overrides)
-└── data/
-    ├── SOUL.md      Agent personality (from --soul or wizard)
-    ├── USER.md      Your name and info
-    ├── MEMORY.md    General knowledge (starts empty)
-    ├── memory/      Daily conversation logs
-    ├── knowledge/   Knowledge base documents
-    └── skills/      Skill definitions
+your-project/
+├── starpod.toml        Workspace config (provider, model, defaults)
+├── .env                API key (gitignored)
+├── .gitignore          Includes .env and */data/
+├── agents/
+│   └── my-agent/       (if created during init)
+│       ├── agent.toml  Agent-specific overrides
+│       ├── SOUL.md     Agent personality
+│       ├── USER.md     User profile (starts empty)
+│       ├── MEMORY.md   Memory index (starts empty)
+│       ├── data/       SQLite databases
+│       ├── memory/     Daily logs
+│       └── knowledge/  Knowledge base
+└── skills/             Shared skills
 ```
 
-- **`config.toml`** contains shared settings — deploy the same file to every instance.
-- **`instance.toml`** contains instance-specific settings (channels, overrides) — varies per machine.
-- **`SOUL.md`** defines the agent personality and instructions.
-- **`USER.md`** stores user profile info (name, timezone, preferences).
+- **`starpod.toml`** — workspace-level defaults shared across all agents.
+- **`agents/<name>/agent.toml`** — per-agent overrides (deep-merged on top of workspace config).
+- **`.env`** — API key for your chosen provider (e.g. `ANTHROPIC_API_KEY=sk-ant-...`).
 
-## Multiple Projects
+## Multiple Agents
 
-Each project is fully independent. Different agents, different personalities, different memory:
+Each agent in the workspace can have its own model, personality, and memory:
 
 ```bash
-cd ~/work/backend
-starpod agent init --agent-name "Backend Bot" --model "claude-sonnet-4-6"
-
-cd ~/personal/notes
-starpod agent init --agent-name "Journal" --soul "You help me reflect on my day"
+starpod agent new backend-bot --agent-name "Backend Bot" --model "claude-sonnet-4-6"
+starpod agent new journal --agent-name "Journal" --soul "You help me reflect on my day"
 ```
 
-Starpod walks up from the current directory to find the nearest `.starpod/` folder, just like Git finds `.git/`.
+Run a specific agent with:
+
+```bash
+starpod serve -a backend-bot
+starpod repl -a journal
+```

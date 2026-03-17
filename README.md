@@ -32,46 +32,40 @@ crates/
 cargo install --path crates/starpod --locked
 ```
 
-### Initialize a Project
+### Initialize a Workspace
 
 ```bash
 cd your-project
-starpod agent init
+starpod init
 ```
 
-This launches an interactive wizard that sets up your name, timezone, agent personality, model, and optional Telegram bot. It creates `.starpod/config.toml` and `.starpod/data/` in the current directory.
+The interactive wizard walks you through provider selection (Anthropic, OpenAI, Gemini, Groq, DeepSeek, OpenRouter, Ollama), model, API key (saved to `.env`), and optionally creating your first agent.
 
-To skip the wizard and use defaults:
+To skip the wizard and use defaults (Anthropic / `claude-sonnet-4-6`):
 
 ```bash
-starpod agent init --default
+starpod init --default
 ```
 
-You can also pass individual settings as flags:
+### Create an Agent
+
+If you didn't create one during init:
 
 ```bash
-starpod agent init --name "Alice" --timezone "Europe/Rome" --agent-name "Jarvis" --model "claude-opus-4-6"
-```
-
-Available flags: `--name`, `--timezone`, `--agent-name`, `--soul`, `--model`, `--default` (alias `--skip-onboarding`).
-
-### Set Your API Key
-
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
+starpod agent new my-agent
 ```
 
 ### Run
 
 ```bash
 # Start the server (web UI + API + WebSocket + optional Telegram bot)
-starpod agent serve
+starpod serve -a my-agent
 
 # One-shot chat
-starpod agent chat "What files are in this directory?"
+starpod chat -a my-agent "What files are in this directory?"
 
 # Interactive REPL
-starpod agent repl
+starpod repl -a my-agent
 ```
 
 When you run `starpod agent serve`, you'll see:
@@ -129,12 +123,13 @@ Config is per-project. Starpod walks up from the current directory to find the n
 ## CLI Reference
 
 ```
-starpod agent init                        Initialize .starpod/ (interactive wizard)
-starpod agent init --default              Initialize with defaults (no wizard)
-starpod agent init --name "..." ...       Initialize with specific settings
-starpod agent serve                       Start server (web UI + API + WS + Telegram)
-starpod agent chat "<message>"            Send a one-shot message
-starpod agent repl                        Interactive REPL session
+starpod init                              Initialize workspace (interactive wizard)
+starpod init --default                    Initialize with defaults (no wizard)
+starpod agent new <name>                  Create a new agent
+starpod agent list                        List agents in workspace
+starpod serve -a <agent>                  Start server (web UI + API + WS + Telegram)
+starpod chat -a <agent> "<message>"       Send a one-shot message
+starpod repl -a <agent>                   Interactive REPL session
 
 starpod instance create                   Create a remote instance (coming soon)
 starpod instance list                     List running instances

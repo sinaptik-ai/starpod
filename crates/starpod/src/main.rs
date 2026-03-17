@@ -591,7 +591,7 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         // ── Init: scaffold a new workspace ────────────────────────────
-        Commands::Init { default: _ } => {
+        Commands::Init { default: use_defaults } => {
             let cwd = std::env::current_dir()?;
 
             if cwd.join("starpod.toml").exists() {
@@ -603,14 +603,41 @@ async fn main() -> anyhow::Result<()> {
                 std::process::exit(1);
             }
 
+            // Collect answers: interactive wizard or defaults
+            let answers = if use_defaults {
+                None
+            } else {
+                onboarding::run_wizard()
+            };
+
+            let (provider, model, api_key, first_agent, agent_display) = match answers {
+                Some(a) => (
+                    a.provider,
+                    a.model,
+                    a.api_key,
+                    a.first_agent_name,
+                    a.agent_display_name,
+                ),
+                None => (
+                    "anthropic".to_string(),
+                    "claude-sonnet-4-6".to_string(),
+                    None,
+                    None,
+                    None,
+                ),
+            };
+
             // Create workspace scaffold
             tokio::fs::write(
                 cwd.join("starpod.toml"),
-                onboarding::generate_workspace_config(),
+                onboarding::generate_workspace_config_with(&provider, &model),
             ).await?;
             tokio::fs::create_dir_all(cwd.join("agents")).await?;
             tokio::fs::create_dir_all(cwd.join("skills")).await?;
-            tokio::fs::write(cwd.join(".env"), "# ANTHROPIC_API_KEY=sk-ant-...\n").await?;
+            tokio::fs::write(
+                cwd.join(".env"),
+                onboarding::generate_env_content(&provider, api_key.as_deref()),
+            ).await?;
 
             // Add .env to .gitignore if not already there
             let gitignore_path = cwd.join(".gitignore");
@@ -632,21 +659,51 @@ async fn main() -> anyhow::Result<()> {
                 "✓".green().bold(),
                 cwd.display()
             );
-            println!(
-                "  {} Edit {} for workspace defaults.",
-                "→".dimmed(),
-                "starpod.toml".bright_white()
-            );
-            println!(
-                "  {} Put secrets in {}.",
-                "→".dimmed(),
-                ".env".bright_white()
-            );
-            println!(
-                "  {} Run {} to create your first agent.",
-                "→".dimmed(),
-                "starpod agent new <name>".bright_white()
-            );
+
+            // Create first agent if requested during wizard
+            if let Some(agent_name) = first_agent {
+                let display_name = agent_display.as_deref().unwrap_or("Aster");
+                let agent_dir = cwd.join("agents").join(&agent_name);
+                tokio::fs::create_dir_all(agent_dir.join("data")).await?;
+                tokio::fs::create_dir_all(agent_dir.join("memory")).await?;
+                tokio::fs::create_dir_all(agent_dir.join("knowledge")).await?;
+
+                let agent_toml = format!(
+                    "# Agent configuration for {}\n\
+                     agent_name = \"{}\"\n\
+                     model = \"{}\"\n",
+                    agent_name, display_name, model,
+                );
+                tokio::fs::write(agent_dir.join("agent.toml"), agent_toml).await?;
+                tokio::fs::write(
+                    agent_dir.join("SOUL.md"),
+                    format!(
+                        "# Soul\n\nYou are {}, a personal AI assistant. \
+                         You are helpful, direct, and thoughtful.\n",
+                        display_name
+                    ),
+                ).await?;
+                tokio::fs::write(agent_dir.join("USER.md"), "# User Profile\n\n").await?;
+                tokio::fs::write(agent_dir.join("MEMORY.md"), "# Memory Index\n\n").await?;
+
+                println!(
+                    "  {} Created agent '{}'",
+                    "✓".green().bold(),
+                    agent_name.bright_white()
+                );
+                println!(
+                    "  {} Run {} to start.",
+                    "→".dimmed(),
+                    format!("starpod serve -a {}", agent_name).bright_white()
+                );
+            } else {
+                println!(
+                    "  {} Run {} to create your first agent.",
+                    "→".dimmed(),
+                    "starpod agent new <name>".bright_white()
+                );
+            }
+
             println!();
         }
 

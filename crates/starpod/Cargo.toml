@@ -30,3 +30,4 @@ colored = "3"
 anyhow = "1"
 uuid = { version = "1", features = ["v4"] }
 toml = "0.8"
+dialoguer = "0.12.0"
