@@ -36,18 +36,22 @@ pub enum EnvSource {
 /// │   ├── agent.toml           ← copied from blueprint
 /// │   ├── SOUL.md              ← copied from blueprint
 /// │   ├── .env                 ← from workspace .env.dev (Dev) or .env (Prod)
-/// │   ├── data/                ← SQLite databases
+/// │   ├── HEARTBEAT.md         ← agent-level heartbeat (empty default)
+/// │   ├── BOOT.md              ← startup instructions (empty default)
+/// │   ├── BOOTSTRAP.md         ← one-time init (empty default)
+/// │   ├── db/                  ← SQLite databases
 /// │   └── users/
 /// │       └── admin/           ← auto-created default user
 /// │           ├── USER.md
-/// │           └── MEMORY.md
+/// │           ├── MEMORY.md
+/// │           └── memory/      ← daily logs
 /// └── ...                      ← agent-created files
 /// ```
 ///
 /// # Preservation rules
 ///
 /// - Existing user directories are never overwritten.
-/// - Existing databases (data/*.db) are preserved.
+/// - Existing databases (db/*.db) are preserved.
 /// - Blueprint `files/*` are synced to instance root, but never overwrite `.starpod/`.
 /// - `agent.toml` and `SOUL.md` are always refreshed from the blueprint.
 /// - `.env` / `.env.dev` are read from `workspace_dir` (top level), not from the blueprint.
@@ -64,10 +68,18 @@ pub fn apply_blueprint(
         .map_err(|e| StarpodError::Config(format!(
             "Failed to create .starpod/ in {}: {}", instance_dir.display(), e
         )))?;
-    std::fs::create_dir_all(starpod_dir.join("data"))
+    std::fs::create_dir_all(starpod_dir.join("db"))
         .map_err(StarpodError::Io)?;
     std::fs::create_dir_all(starpod_dir.join("users"))
         .map_err(StarpodError::Io)?;
+
+    // Seed lifecycle files at .starpod/ root (empty defaults, only if not present)
+    for name in &["HEARTBEAT.md", "BOOT.md", "BOOTSTRAP.md"] {
+        let path = starpod_dir.join(name);
+        if !path.exists() {
+            std::fs::write(&path, "").map_err(StarpodError::Io)?;
+        }
+    }
 
     // 2. Copy agent.toml (always refresh)
     let src_toml = blueprint_dir.join("agent.toml");
@@ -231,7 +243,10 @@ mod tests {
         assert!(sp.join("agent.toml").is_file());
         assert!(sp.join("SOUL.md").is_file());
         assert!(sp.join(".env").is_file());
-        assert!(sp.join("data").is_dir());
+        assert!(sp.join("db").is_dir());
+        assert!(sp.join("HEARTBEAT.md").exists());
+        assert!(sp.join("BOOT.md").exists());
+        assert!(sp.join("BOOTSTRAP.md").exists());
         assert!(sp.join("users").is_dir());
         assert!(sp.join("users").join("admin").is_dir());
         assert!(sp.join("users").join("admin").join("USER.md").is_file());

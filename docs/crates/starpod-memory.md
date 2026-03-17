@@ -2,23 +2,41 @@
 
 Persistent memory system: markdown files on disk + SQLite FTS5 full-text search index.
 
+## Architecture
+
+```
+.starpod/
+├── SOUL.md            # Agent personality (agent-level)
+├── HEARTBEAT.md       # Periodic tasks (agent-level)
+├── db/
+│   └── memory.db      # FTS5 index + vector embeddings
+└── users/<id>/
+    ├── USER.md        # User profile (per-user)
+    ├── MEMORY.md      # Long-term memory (per-user)
+    └── memory/
+        └── YYYY-MM-DD.md  # Daily logs (per-user, temporal decay)
+```
+
+- **MemoryStore** manages agent-level files (SOUL.md, lifecycle files) and the FTS5 index.
+- **UserMemoryView** overlays per-user files on top of the shared agent store.
+
 ## API
 
 ```rust
-let store = MemoryStore::new(&data_dir).await?;
+// Agent-level store
+let store = MemoryStore::new(&agent_home, &db_dir).await?;
 
-// Bootstrap context for system prompt
+// Agent-level bootstrap context (SOUL.md only)
 let context = store.bootstrap_context()?;
+
+// Per-user view
+let view = UserMemoryView::new(Arc::new(store), user_dir)?;
+
+// User-level bootstrap (SOUL.md + USER.md + MEMORY.md + daily logs)
+let context = view.bootstrap_context(20_000)?;
 
 // Full-text search
 let results = store.search("database migrations", 5).await?;
-
-// File operations
-let content = store.read_file("knowledge/rust.md").await?;
-store.write_file("knowledge/rust.md", "# Rust\n...").await?;
-
-// Append to today's daily log
-store.append_daily("Discussed migration strategy").await?;
 
 // Rebuild FTS5 index
 store.reindex().await?;
@@ -50,21 +68,12 @@ All chunking parameters are configurable in `.starpod/config.toml` under the `[m
 
 ## Bootstrap Context
 
-`bootstrap_context()` assembles:
+**Agent-level** (`MemoryStore::bootstrap_context()`): SOUL.md only.
 
-1. `SOUL.md` (capped at 20K chars by default)
-2. `USER.md` (capped at 20K chars by default)
-3. `MEMORY.md` (capped at 20K chars by default)
-4. Last 3 daily logs (most recent first)
+**User-level** (`UserMemoryView::bootstrap_context()`): SOUL.md + USER.md + MEMORY.md + last 3 daily logs.
 
 The per-file character cap is configurable via `[memory] bootstrap_file_cap` in `config.toml` (default: 20000).
 
-Returns a single string for injection into the system prompt.
-
-## Session Transcript Export
-
-The memory store indexes `knowledge/sessions/` — a subdirectory where session transcripts are written when sessions close. These transcripts are searchable via `MemorySearch` like any other knowledge file, but are not included in the bootstrap context (they're retrieved on demand).
-
 ## Tests
 
-25+ unit tests covering seeding, search, chunking, temporal decay, vector search, hybrid search, path validation, content size limits, and session transcript indexing.
+30+ unit tests covering seeding, search, chunking, temporal decay, vector search, hybrid search, path validation, content size limits, and user view routing.
