@@ -426,6 +426,12 @@ pub fn load_agent_config(paths: &ResolvedPaths) -> crate::Result<AgentConfig> {
                     e
                 ))
             })?;
+
+            // Warn about any credentials left in the config file
+            if let Ok(raw) = toml::from_str::<toml::Value>(&content) {
+                crate::config::warn_credentials_in_toml(&raw, &paths.agent_toml.display().to_string());
+            }
+
             let mut config: AgentConfig = toml::from_str(&content)
                 .map_err(|e| StarpodError::Config(format!("Invalid agent.toml: {}", e)))?;
 
@@ -447,8 +453,10 @@ pub fn load_agent_config(paths: &ResolvedPaths) -> crate::Result<AgentConfig> {
                         e
                     ))
                 })?;
-                toml::from_str::<toml::Value>(&content)
-                    .map_err(|e| StarpodError::Config(format!("Invalid starpod.toml: {}", e)))?
+                let val = toml::from_str::<toml::Value>(&content)
+                    .map_err(|e| StarpodError::Config(format!("Invalid starpod.toml: {}", e)))?;
+                crate::config::warn_credentials_in_toml(&val, &workspace_toml.display().to_string());
+                val
             } else {
                 toml::Value::Table(Default::default())
             };
@@ -464,6 +472,7 @@ pub fn load_agent_config(paths: &ResolvedPaths) -> crate::Result<AgentConfig> {
                 })?;
                 let agent_value: toml::Value = toml::from_str(&content)
                     .map_err(|e| StarpodError::Config(format!("Invalid agent.toml: {}", e)))?;
+                crate::config::warn_credentials_in_toml(&agent_value, &paths.agent_toml.display().to_string());
                 deep_merge(&mut base_value, agent_value);
             }
 
@@ -907,5 +916,71 @@ model = "claude-sonnet-4-6"
         // name should be derived from agent_name when default
         assert_eq!(config.name, "CustomBot");
         assert_eq!(config.agent_name, "CustomBot");
+    }
+
+    // ── Credential-in-config backward compat ────────────────────────
+
+    #[test]
+    fn load_config_with_legacy_api_key_still_parses() {
+        // Old configs that still contain api_key / bot_token must load
+        // without error — the keys are silently dropped and a warning
+        // is emitted via tracing.
+        let tmp = TempDir::new().unwrap();
+        let starpod_dir = tmp.path().join(".starpod");
+        std::fs::create_dir_all(&starpod_dir).unwrap();
+        std::fs::write(
+            starpod_dir.join("agent.toml"),
+            r#"
+            [providers.anthropic]
+            api_key = "sk-ant-should-be-ignored"
+            base_url = "https://custom.example.com"
+
+            [channels.telegram]
+            bot_token = "123:ABC"
+            gap_minutes = 120
+            "#,
+        ).unwrap();
+
+        let mode = Mode::SingleAgent { starpod_dir };
+        let paths = ResolvedPaths::resolve(&mode).unwrap();
+        let config = load_agent_config(&paths).unwrap();
+
+        // Credential fields no longer exist on the structs, but the
+        // config loaded without error (backward compat).
+        let p = config.providers.anthropic.as_ref().unwrap();
+        assert_eq!(p.base_url.as_deref(), Some("https://custom.example.com"));
+        let tg = config.channels.telegram.as_ref().unwrap();
+        assert_eq!(tg.gap_minutes, Some(120));
+    }
+
+    #[test]
+    fn load_workspace_config_with_legacy_credentials_still_parses() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_path_buf();
+        std::fs::write(
+            root.join("starpod.toml"),
+            r#"
+            provider = "anthropic"
+            [providers.anthropic]
+            api_key = "sk-ant-legacy"
+            "#,
+        ).unwrap();
+        let agent_dir = root.join("agents").join("test-bot");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        std::fs::write(
+            agent_dir.join("agent.toml"),
+            r#"
+            [channels.telegram]
+            bot_token = "123:legacy"
+            "#,
+        ).unwrap();
+
+        let mode = Mode::Workspace { root, agent_name: "test-bot".to_string() };
+        let paths = ResolvedPaths::resolve(&mode).unwrap();
+        let config = load_agent_config(&paths).unwrap();
+
+        // Both files had legacy credential keys — config still loads fine.
+        assert_eq!(config.provider, "anthropic");
+        assert!(config.channels.telegram.is_some());
     }
 }
