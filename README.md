@@ -7,10 +7,9 @@ A local-first personal AI assistant platform built in Rust, powered by Claude. E
 ```
 crates/
 ├── agent-sdk/          Claude API client + agent loop
-├── starpod-core/         Shared types, config, error handling
-├── starpod-memory/       SQLite FTS5 full-text search + markdown files
-├── starpod-vault/        AES-256-GCM encrypted credential storage
-├── starpod-session/      Channel-aware session lifecycle
+├── starpod-core/         Shared types, config, error handling, instance management
+├── starpod-memory/       SQLite FTS5 full-text search + per-user memory
+├── starpod-session/      Channel-aware session lifecycle (per-user)
 ├── starpod-skills/       Self-extension skill system (markdown-based)
 ├── starpod-cron/         Cron scheduling (interval, cron expr, one-shot)
 ├── starpod-agent/        Orchestrator wiring everything together
@@ -58,8 +57,8 @@ starpod agent new my-agent
 ### Run
 
 ```bash
-# Start the server (web UI + API + WebSocket + optional Telegram bot)
-starpod serve -a my-agent
+# Start in dev mode (applies blueprint, creates .instances/, serves)
+starpod dev my-agent
 
 # One-shot chat
 starpod chat -a my-agent "What files are in this directory?"
@@ -68,7 +67,7 @@ starpod chat -a my-agent "What files are in this directory?"
 starpod repl -a my-agent
 ```
 
-When you run `starpod agent serve`, you'll see:
+When you run `starpod dev`, you'll see:
 
 ```
   Starpod is running
@@ -83,84 +82,68 @@ When you run `starpod agent serve`, you'll see:
 
 ### Configure
 
-Edit `.starpod/config.toml`:
+**Workspace config** (`starpod.toml`) — shared defaults for all agents:
 
 ```toml
-# Active LLM provider
 provider = "anthropic"
-model = "claude-haiku-4-5"
+model = "claude-sonnet-4-6"
 max_turns = 30
-server_addr = "127.0.0.1:3000"
+```
 
-# Reasoning effort for extended thinking: "low", "medium", "high"
+**Agent config** (`agents/<name>/agent.toml`) — per-agent overrides:
+
+```toml
+agent_name = "Aster"
+model = "claude-opus-4-6"
 # reasoning_effort = "medium"
-
-[identity]
-# name = "Aster"                  # Agent's display name
-# emoji = "🤖"                    # Agent's emoji/avatar
-# soul = ""                       # Freeform personality injected into system prompt
-
-[user]
-# name = "Your Name"
 # timezone = "America/New_York"
 
 [providers.anthropic]
-# api_key = "sk-ant-..."          # Or set ANTHROPIC_API_KEY env var
+# base_url = "https://custom.example.com"  # Optional override
 
-[providers.openai]
-# api_key = "sk-..."              # Not yet implemented
-# models = ["gpt-5-4"]
-
-[telegram]
-# bot_token = "123456:ABC..."     # Or set TELEGRAM_BOT_TOKEN env var
-# allowed_users = [123456789, "alice"]  # User IDs or usernames (without @)
-# stream_mode = "off"             # "edit_in_place" or "off"
-# edit_throttle_ms = 300
+[channels.telegram]
+# gap_minutes = 360
+# allowed_users = [123456789, "alice"]
 ```
 
-Config is per-project. Starpod walks up from the current directory to find the nearest `.starpod/` folder (like git finds `.git/`).
+**Secrets** go in `.env` files (never in config):
+- `agents/<name>/.env` — production secrets
+- `agents/<name>/.env.dev` — dev overrides (used by `starpod dev`)
+- `ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN`, etc.
+
+**Personality** is defined in `agents/<name>/SOUL.md`, not in config.
 
 ## CLI Reference
 
 ```
 starpod init                              Initialize workspace (interactive wizard)
 starpod init --default                    Initialize with defaults (no wizard)
-starpod agent new <name>                  Create a new agent
+starpod agent new <name>                  Create a new agent blueprint
 starpod agent list                        List agents in workspace
-starpod serve -a <agent>                  Start server (web UI + API + WS + Telegram)
+starpod dev <agent> [--port N]            Apply blueprint + start dev server
+starpod serve                             Start production server (single-agent mode)
 starpod chat -a <agent> "<message>"       Send a one-shot message
 starpod repl -a <agent>                   Interactive REPL session
 
-starpod instance create                   Create a remote instance (coming soon)
-starpod instance list                     List running instances
-starpod instance kill <id>                Kill an instance
-starpod instance pause <id>               Pause an instance
-starpod instance restart <id>             Restart an instance
+starpod memory search "<query>" [-l 5]    Full-text search over memory
+starpod memory reindex                    Rebuild the FTS5 index
+starpod sessions list [-l 10]             List recent sessions
 
-starpod agent memory search "<query>" [-l 5]    Full-text search over memory
-starpod agent memory reindex                    Rebuild the FTS5 index
+starpod skill list                        List all skills
+starpod skill show <name>                 Show a skill's content
+starpod skill new <name> -d "..." -b "..."  Create a skill
+starpod skill delete <name>               Delete a skill
 
-starpod agent vault get <key>                   Retrieve a stored credential
-starpod agent vault set <key> <value>           Encrypt and store a credential
-starpod agent vault delete <key>                Delete a credential
-starpod agent vault list                        List all stored keys
-
-starpod agent sessions list [-l 10]             List recent sessions
-
-starpod agent skills list                       List all skills
-starpod agent skills show <name>                Show a skill's content
-starpod agent skills new <name> -c "..."        Create a skill from inline content
-starpod agent skills new <name> -f file.md      Create a skill from a file
-starpod agent skills delete <name>              Delete a skill
-
-starpod agent cron list                         List all cron jobs
-starpod agent cron remove <name>                Remove a cron job
-starpod agent cron runs <name> [-l 10]          Show recent runs for a job
+starpod cron list                         List all cron jobs
+starpod cron remove <name>                Remove a cron job
+starpod cron runs <name> [-l 10]          Show recent runs for a job
+starpod cron run <name>                   Trigger a job immediately
+starpod cron edit <name> [--prompt ...] [--enabled true/false]
 ```
 
 ## Web UI
 
-The embedded web UI is served at `http://localhost:3000/` when running `starpod agent serve`.
+The embedded web UI is served at `http://localhost:3000/` when running `starpod dev`.
 
 - Minimal dark theme
 - Streaming responses via WebSocket with live text deltas
@@ -182,26 +165,18 @@ API key authentication: set `STARPOD_API_KEY` env var on the server, then `local
    - Choose a username (must end in `bot`, e.g. `my_starpod_bot`)
    - BotFather will reply with a token like `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`
 
-2. **Add the token to your project**
+2. **Add the token to your `.env`**
 
-   Either add it to `.starpod/config.toml`:
-   ```toml
-   [telegram]
-   bot_token = "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+   Add to `agents/<name>/.env.dev` (for dev) or `agents/<name>/.env` (for prod):
    ```
-
-   Or set it as an environment variable:
-   ```bash
-   export TELEGRAM_BOT_TOKEN="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+   TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
    ```
-
-   **Tip:** `starpod agent init` can set this up for you during the interactive wizard.
 
 3. **Restrict access (recommended)**
 
-   Send `/start` to your bot — it will reply with your user ID and username. Add either to `.starpod/config.toml`:
+   Send `/start` to your bot — it will reply with your user ID and username. Add to `agents/<name>/agent.toml`:
    ```toml
-   [telegram]
+   [channels.telegram]
    allowed_users = [123456789]
    ```
    You can mix user IDs and usernames (without `@`): `allowed_users = [123456789, "alice", 987654321]`
@@ -210,7 +185,7 @@ API key authentication: set `STARPOD_API_KEY` env var on the server, then `local
 
 4. **Start the server**
    ```bash
-   starpod agent serve
+   starpod dev <agent-name>
    ```
    You should see `Telegram  connected` in the startup banner. The bot is now running.
 
@@ -271,16 +246,16 @@ Connect to `ws://localhost:3000/ws` (or `ws://localhost:3000/ws?token=KEY`).
 
 ## Agent Tools
 
-The agent has access to built-in tools from the SDK plus 13 custom tools:
+The agent has access to built-in tools from the SDK plus 20 custom tools:
 
 | Category | Tools |
 |----------|-------|
-| Files | `Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep` |
-| Web | `WebSearch`, `WebFetch` |
+| Built-in | `Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep` |
 | Memory | `MemorySearch`, `MemoryWrite`, `MemoryAppendDaily` |
-| Vault | `VaultGet`, `VaultSet` |
-| Skills | `SkillCreate`, `SkillUpdate`, `SkillDelete`, `SkillList` |
-| Cron | `CronAdd`, `CronList`, `CronRemove`, `CronRuns` |
+| Environment | `EnvGet` |
+| File Sandbox | `FileRead`, `FileWrite`, `FileList`, `FileDelete` |
+| Skills | `SkillActivate`, `SkillCreate`, `SkillUpdate`, `SkillDelete`, `SkillList` |
+| Cron | `CronAdd`, `CronList`, `CronRemove`, `CronRuns`, `CronRun`, `CronUpdate`, `HeartbeatWake` |
 
 The Bash tool supports `run_in_background: true` for long-running processes (servers, etc.) that should not block the agent.
 
@@ -311,15 +286,11 @@ while let Some(msg) = stream.next().await {
 
 ### starpod-memory
 
-Persistent memory: markdown files on disk + SQLite FTS5 index. Text is chunked into ~400-token segments with 80-token overlap at line boundaries. `bootstrap_context()` assembles personality + user facts + knowledge + recent daily logs into the system prompt.
-
-### starpod-vault
-
-AES-256-GCM encrypted credential storage in SQLite with audit logging.
+Persistent memory: markdown files on disk + SQLite FTS5 index. Text is chunked into ~400-token segments with 80-token overlap at line boundaries. `bootstrap_context()` assembles personality + user facts + knowledge + recent daily logs into the system prompt. Per-user memory is supported via `UserMemoryView` — each user gets their own USER.md, MEMORY.md, and daily logs while sharing SOUL.md and knowledge/.
 
 ### starpod-session
 
-Channel-aware session management with per-channel strategies:
+Channel-aware session management with per-channel strategies and per-user scoping:
 
 - **`main`** (web, REPL, CLI): Explicit sessions — the client provides a `channel_session_key` (e.g. a conversation UUID) and the session continues until closed. Multiple concurrent sessions are supported.
 - **`telegram`**: Time-gap sessions — messages within 6 hours continue the same session (keyed by chat ID), otherwise a new session starts and the old one is auto-closed.
@@ -332,7 +303,7 @@ Markdown-based skill files at `<data_dir>/skills/<name>/SKILL.md`. Skills are in
 
 ### starpod-cron
 
-Scheduling system supporting interval (`every_ms`), cron expressions, and one-shot (`at`) schedules. Cron expressions are evaluated in the user's local timezone when `[user] timezone` is configured (auto-detected during `starpod agent init`). A background scheduler (30s tick) runs jobs through `StarpodAgent::chat()` and records run history.
+Scheduling system supporting interval (`every_ms`), cron expressions, and one-shot (`at`) schedules. Cron expressions are evaluated in the user's local timezone when `timezone` is configured in agent.toml. A background scheduler (30s tick) runs jobs through `StarpodAgent::chat()` and records run history.
 
 ## Development
 
@@ -342,18 +313,11 @@ Scheduling system supporting interval (`every_ms`), cron expressions, and one-sh
 cargo test
 ```
 
-70 unit tests + 2 doc-tests across all crates, zero warnings.
+609 tests across all crates, zero warnings.
 
-| Crate | Tests |
-|-------|-------|
-| agent-sdk | 17 + 2 doc |
-| starpod-memory | 8 |
-| starpod-vault | 7 |
-| starpod-session | 11 |
-| starpod-skills | 9 |
-| starpod-cron | 11 |
-| starpod-agent | 3 |
-| starpod-telegram | 4 |
+```bash
+cargo test --workspace
+```
 
 ## License
 

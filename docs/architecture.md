@@ -5,10 +5,9 @@ Starpod is a Rust workspace with 11 crates, each responsible for a single concer
 ```
 crates/
 ├── agent-sdk/          Claude API client + agent loop
-├── starpod-core/         Shared types, config, error handling
+├── starpod-core/         Shared types, config, error handling, instance management
 ├── starpod-memory/       SQLite FTS5 full-text search + markdown files
-├── starpod-vault/        AES-256-GCM encrypted credential storage
-├── starpod-session/      Channel-aware session lifecycle
+├── starpod-session/      Channel-aware session lifecycle (per-user)
 ├── starpod-skills/       Self-extension skill system (markdown-based)
 ├── starpod-cron/         Cron scheduling (interval, cron expr, one-shot)
 ├── starpod-agent/        Orchestrator wiring everything together
@@ -16,6 +15,15 @@ crates/
 ├── starpod-telegram/     Telegram bot interface (teloxide)
 └── starpod/              CLI binary
 ```
+
+## Blueprint / Instance Separation
+
+Starpod separates **blueprints** (git-tracked agent definitions) from **instances** (runtime state):
+
+- **Blueprint** (`agents/<name>/`) — config, personality, secrets templates. Committed to git.
+- **Instance** (`.instances/<name>/`) — databases, memory, user data, agent-created files. Gitignored.
+
+`starpod dev <agent>` copies the blueprint into an instance via `apply_blueprint()`, then serves it.
 
 ## Dependency Graph
 
@@ -34,7 +42,7 @@ crates/
                              │
             ┌────────┬───────┼───────┬────────┐
             ▼        ▼       ▼       ▼        ▼
-        memory    vault   session  skills    cron
+        memory    env     session  skills    cron
             │        │       │       │        │
             └────────┴───────┼───────┴────────┘
                              ▼
@@ -47,7 +55,7 @@ crates/
 
 ### 1. User Sends a Message
 
-Via the web UI (WebSocket), Telegram bot, CLI (`starpod agent chat`), or HTTP API (`POST /api/chat`).
+Via the web UI (WebSocket), Telegram bot, CLI (`starpod chat`), or HTTP API (`POST /api/chat`).
 
 ### 2. Channel Routing
 
@@ -55,13 +63,15 @@ The `starpod-agent` maps the incoming message to a **Channel** (`Main` or `Teleg
 - **Main** — explicit sessions, client provides a UUID
 - **Telegram** — time-gap sessions, 6-hour inactivity timeout
 
+Sessions are scoped per-user — each user_id gets isolated session history.
+
 ### 3. Context Assembly
 
 The memory system bootstraps context:
-- `SOUL.md` — agent personality
-- `USER.md` — user info
-- `MEMORY.md` — long-term knowledge
-- Last 3 daily logs
+- `SOUL.md` — agent personality (shared)
+- `USER.md` — user info (per-user)
+- `MEMORY.md` — long-term knowledge (per-user)
+- Last 3 daily logs (per-user)
 - All active skills
 
 ### 4. Agent Loop
@@ -88,7 +98,7 @@ The provider is selected at runtime from `config.provider`:
 
 Each provider translates between the canonical Anthropic types (`CreateMessageRequest`, `MessageResponse`, `StreamEvent`) and its own wire format internally.
 
-The agent has access to file I/O, web search, memory, vault, skills, and cron tools.
+The agent has access to file I/O, web search, memory, environment, file sandbox, skills, and cron tools.
 
 **Conversation compaction**: when `input_tokens` exceeds the context budget (160k tokens), older messages are automatically summarized via a separate API call and replaced with a compact summary. The full transcript is preserved on disk. Tool-use cycles are never split.
 
@@ -105,31 +115,59 @@ All subsystems are wrapped in `Arc` for thread-safe sharing across async tasks:
 | Component | Type | Shared By |
 |-----------|------|-----------|
 | Memory | `Arc<MemoryStore>` | Agent, Gateway |
-| Vault | `Arc<Vault>` | Agent |
 | Sessions | `Arc<SessionManager>` | Agent, Gateway |
 | Skills | `Arc<SkillStore>` | Agent |
 | Cron | `Arc<CronStore>` | Agent, Scheduler |
 
-SQLite connections use `Mutex<Connection>` for safe concurrent access.
+SQLite connections use connection pools for safe concurrent access.
 
-## Project Directory
+## Directory Layouts
+
+### Workspace (development)
 
 ```
-.starpod/
-├── config.toml          Shared configuration (model, provider, etc.)
-├── instance.toml        Instance-specific config (channels, overrides)
-└── data/
-    ├── SOUL.md          Agent personality
-    ├── USER.md          User information
-    ├── MEMORY.md        General knowledge
-    ├── memory/          Daily logs (YYYY-MM-DD.md)
-    ├── knowledge/       Knowledge base documents
-    ├── skills/          Skill definitions
-    │   └── <name>/
-    │       └── SKILL.md
-    ├── downloads/       Uploaded file attachments
-    │   └── <session_id>/
-    └── memory.db        SQLite (FTS5 + sessions + vault + cron)
+workspace/
+├── starpod.toml                    # workspace defaults (git-tracked)
+├── skills/                         # shared skills (git-tracked)
+├── agents/                         # BLUEPRINTS (git-tracked)
+│   └── aster/
+│       ├── agent.toml              # config + default permissions
+│       ├── SOUL.md                 # personality
+│       ├── .env                    # prod secrets
+│       ├── .env.dev                # dev secrets override
+│       ├── users/                  # per-user permission templates
+│       └── files/                  # template filesystem
+└── .instances/                     # RUNTIME (gitignored)
+    └── aster/                      # agent's filesystem root
+        ├── .starpod/               # internal (like .git/)
+        │   ├── agent.toml          # copied from blueprint
+        │   ├── SOUL.md             # copied from blueprint
+        │   ├── .env                # ONE file (from .env.dev or .env)
+        │   ├── users/
+        │   │   └── admin/          # auto-created
+        │   │       ├── USER.md
+        │   │       ├── MEMORY.md
+        │   │       └── memory/
+        │   └── data/               # SQLite DBs
+        ├── reports/                # agent creates freely
+        └── ...                     # full filesystem sandbox
 ```
 
-Starpod walks up from the current directory to find the nearest `.starpod/` folder — just like Git finds `.git/`.
+### Single-agent (production)
+
+```
+/srv/aster/                         # agent's filesystem root
+├── .starpod/
+│   ├── agent.toml
+│   ├── SOUL.md
+│   ├── .env
+│   ├── users/admin/
+│   └── data/
+├── reports/                        # agent-produced files
+└── ...
+```
+
+Starpod auto-detects the mode by walking up from the current directory:
+- `.starpod/agent.toml` found → **SingleAgent** mode
+- Inside `.instances/<name>/` with `starpod.toml` sibling → **Instance** mode
+- `starpod.toml` found → **Workspace** mode
