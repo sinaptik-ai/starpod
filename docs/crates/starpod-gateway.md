@@ -50,10 +50,32 @@ pub struct AppState {
     pub api_key: Option<String>,
     pub config: RwLock<StarpodConfig>,
     pub paths: ResolvedPaths,
+    pub events_tx: tokio::sync::broadcast::Sender<GatewayEvent>,
 }
 ```
 
-Shared across all routes via Axum's state extraction. Config is wrapped in `RwLock` for hot reload support.
+Shared across all routes via Axum's state extraction. Config is wrapped in `RwLock` for hot reload support. The `events_tx` broadcast channel pushes cron/heartbeat notifications to all connected WebSocket clients.
+
+## Event Broadcasting
+
+When a cron job or heartbeat completes, the gateway broadcasts a `GatewayEvent` to all connected WebSocket clients:
+
+```rust
+pub enum GatewayEvent {
+    CronComplete {
+        job_name: String,      // Job that completed
+        session_id: String,    // Session created (empty on failure)
+        result_preview: String, // Truncated result (500 chars)
+        success: bool,         // Success or failure
+    },
+}
+```
+
+The gateway composes the cron `NotificationSender` to both:
+1. Broadcast to the WS event channel (for web UI toasts + session list updates)
+2. Forward to the original Telegram notifier (if configured)
+
+This composition happens transparently in `serve_with_agent` — callers pass their Telegram notifier and the gateway wraps it.
 
 ## Config Hot Reload
 

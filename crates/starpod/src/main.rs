@@ -817,7 +817,7 @@ fn setup_telegram_and_notifier(
             if !telegram_allowed.is_empty() {
                 let token = token.clone();
                 let users = telegram_allowed.clone();
-                Some(Arc::new(move |_job_name, result_text, _success| {
+                Some(Arc::new(move |_job_name, _session_id, result_text, _success| {
                     let token = token.clone();
                     let users = users.clone();
                     Box::pin(async move {

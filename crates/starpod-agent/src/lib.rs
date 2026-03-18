@@ -918,7 +918,10 @@ impl StarpodAgent {
                     attachments: Vec::new(),
                 };
                 match agent.chat(msg).await {
-                    Ok(resp) => Ok(truncate(&resp.text, 500)),
+                    Ok(resp) => Ok(starpod_cron::JobResult {
+                        session_id: resp.session_id,
+                        summary: truncate(&resp.text, 500),
+                    }),
                     Err(e) => Err(e.to_string()),
                 }
             })
@@ -1045,12 +1048,15 @@ async fn ensure_heartbeat(
 async fn execute_heartbeat(
     agent: &StarpodAgent,
     fallback_prompt: &str,
-) -> std::result::Result<String, String> {
+) -> std::result::Result<starpod_cron::JobResult, String> {
     let prompt = match agent.memory().read_file("HEARTBEAT.md") {
         Ok(content) if !content.trim().is_empty() => content,
         _ => {
             // Nothing to do — skip silently
-            return Ok("skipped".to_string());
+            return Ok(starpod_cron::JobResult {
+                session_id: String::new(),
+                summary: "skipped".to_string(),
+            });
         }
     };
 
@@ -1064,7 +1070,10 @@ async fn execute_heartbeat(
         attachments: Vec::new(),
     };
     match agent.chat(msg).await {
-        Ok(resp) => Ok(truncate(&resp.text, 500)),
+        Ok(resp) => Ok(starpod_cron::JobResult {
+            session_id: resp.session_id,
+            summary: truncate(&resp.text, 500),
+        }),
         Err(e) => Err(e.to_string()),
     }
 }

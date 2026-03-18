@@ -11,6 +11,8 @@ Starpod ships with an embedded web UI served at `http://localhost:3000/` when ru
 - **Clickable URLs** — links in responses are clickable
 - **Usage stats** — turns, cost, and token counts after each response
 - **Session history** — sidebar with previous conversations, full message persistence
+- **Cron notifications** — toast alerts when cron jobs or heartbeats complete, with click-to-navigate
+- **Unread indicators** — blue dot on sessions with new activity, sorted to the top of the sidebar
 - **Auto-reconnect** — exponential backoff on WebSocket disconnection
 
 ## Authentication
@@ -60,3 +62,26 @@ See [Configuration > Frontend](/getting-started/configuration#frontend-web-ui) f
 ## Session Management
 
 Each conversation tab in the web UI uses a unique `channel_session_key` (UUID). The sidebar lists previous sessions with their auto-generated titles.
+
+### Unread Sessions
+
+Sessions are marked as **unread** (shown with a blue dot) when they receive new activity that the user hasn't viewed. This includes:
+
+- Sessions created by cron jobs or heartbeats
+- Sessions updated while the user is viewing a different conversation
+
+Unread sessions are sorted to the top of the sidebar. Clicking a session marks it as read and removes the indicator.
+
+Unread state is tracked client-side in `localStorage` (`starpod_read_sessions`). Stale entries are automatically pruned when the session list is refreshed.
+
+## Cron & Heartbeat Notifications
+
+When a cron job or heartbeat completes, a **toast notification** slides in from the top-right corner showing:
+
+- The job name
+- A preview of the result (success or failure)
+- A success/error indicator
+
+Clicking the toast navigates to the cron job's session, where you can see the full execution transcript (tool calls, results, and agent response). Toasts auto-dismiss after 6 seconds.
+
+The session sidebar also refreshes automatically, so the new cron session appears at the top with an unread indicator.

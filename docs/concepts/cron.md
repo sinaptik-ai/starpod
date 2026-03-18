@@ -58,12 +58,22 @@ The scheduler runs in the background with a **30-second tick**:
 1. Check for due jobs (`next_run_at <= now`)
 2. Execute each job's prompt through `StarpodAgent::chat()`
 3. Record the run (status, duration, result summary)
-4. Send notification via Telegram (if configured)
+4. Send notifications (web UI toast + Telegram if configured)
 5. Compute next run time (or delete if one-shot)
 
 ## Notifications
 
-Completed cron jobs can send results to Telegram. The notification includes the job name, result summary, and success/failure status.
+When a cron job completes (success or failure), notifications are sent through two channels:
+
+### Web UI (real-time)
+
+All connected WebSocket clients receive a `notification` event. The web UI shows a **toast notification** (auto-dismisses after 6 seconds) and refreshes the session sidebar. Clicking the toast navigates to the cron job's session transcript. New cron sessions appear with an **unread indicator** (blue dot) and are sorted to the top of the sidebar.
+
+### Telegram
+
+If Telegram is configured, the result is sent to all users in `STARPOD_TELEGRAM_ALLOWED_USER_IDS`.
+
+Both channels fire for every job — web push is always active when clients are connected, Telegram is opt-in via configuration.
 
 ## Agent Tools
 

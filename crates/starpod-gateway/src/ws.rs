@@ -125,6 +125,19 @@ enum ServerMessage {
     /// Error message.
     #[serde(rename = "error")]
     Error { message: String },
+
+    /// Cron job or heartbeat completed — pushed to all connected clients.
+    ///
+    /// The frontend uses this to show a toast notification and refresh the
+    /// session sidebar. If `session_id` is non-empty, clicking the toast
+    /// navigates to the cron job's session transcript.
+    #[serde(rename = "notification")]
+    Notification {
+        job_name: String,
+        session_id: String,
+        result_preview: String,
+        success: bool,
+    },
 }
 
 /// Send a ServerMessage over the WebSocket. Returns false if the send failed.
@@ -146,6 +159,7 @@ async fn send_msg(
 async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     let (mut sender, mut receiver) = socket.split();
     let followup_mode = state.config.read().unwrap().followup_mode;
+    let mut events_rx = state.events_tx.subscribe();
 
     debug!("WebSocket client connected");
 
@@ -194,19 +208,39 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
             continue;
         }
 
-        // Wait for the next WS message from the client.
-        let msg = match receiver.next().await {
-            Some(Ok(WsMessage::Text(text))) => text,
-            Some(Ok(WsMessage::Close(_))) => {
-                debug!("WebSocket client disconnected");
-                break;
+        // Wait for the next WS message from the client OR a broadcast event.
+        let msg = tokio::select! {
+            ws_msg = receiver.next() => {
+                match ws_msg {
+                    Some(Ok(WsMessage::Text(text))) => text,
+                    Some(Ok(WsMessage::Close(_))) => {
+                        debug!("WebSocket client disconnected");
+                        break;
+                    }
+                    Some(Ok(_)) => continue,
+                    Some(Err(e)) => {
+                        error!(error = %e, "WebSocket receive error");
+                        break;
+                    }
+                    None => break,
+                }
             }
-            Some(Ok(_)) => continue,
-            Some(Err(e)) => {
-                error!(error = %e, "WebSocket receive error");
-                break;
+            event = events_rx.recv() => {
+                match event {
+                    Ok(crate::GatewayEvent::CronComplete { job_name, session_id, result_preview, success }) => {
+                        if !send_msg(&mut sender, &ServerMessage::Notification {
+                            job_name, session_id, result_preview, success,
+                        }).await {
+                            break;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        debug!(skipped = n, "WS client lagged behind broadcast events");
+                    }
+                    Err(_) => break, // channel closed
+                }
+                continue;
             }
-            None => break,
         };
 
         let client_msg: ClientMessage = match serde_json::from_str(&msg) {
@@ -299,6 +333,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     &mut stream,
                     &mut sender,
                     &mut receiver,
+                    &mut events_rx,
                     &state,
                     &session_id,
                     &text,
@@ -324,6 +359,7 @@ async fn process_stream_with_followups(
     stream: &mut agent_sdk::Query,
     sender: &mut futures::stream::SplitSink<WebSocket, WsMessage>,
     receiver: &mut futures::stream::SplitStream<WebSocket>,
+    events_rx: &mut tokio::sync::broadcast::Receiver<crate::GatewayEvent>,
     state: &Arc<AppState>,
     session_id: &str,
     user_text: &str,
@@ -423,6 +459,23 @@ async fn process_stream_with_followups(
                     }
                     Some(Ok(_)) => {}
                     None => return false,
+                }
+            }
+
+            // Branch 3: Broadcast event (cron notification)
+            event = events_rx.recv() => {
+                match event {
+                    Ok(crate::GatewayEvent::CronComplete { job_name, session_id: sid, result_preview, success }) => {
+                        if !send_msg(sender, &ServerMessage::Notification {
+                            job_name, session_id: sid, result_preview, success,
+                        }).await {
+                            return false;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        debug!(skipped = n, "WS client lagged behind broadcast events during stream");
+                    }
+                    Err(_) => {} // channel closed, ignore during stream
                 }
             }
         }
@@ -716,5 +769,44 @@ mod tests {
         // Results reference the correct tool
         assert_eq!(ra["tool_use_id"], "toolu_aaa");
         assert_eq!(rb["tool_use_id"], "toolu_bbb");
+    }
+
+    #[test]
+    fn notification_serializes_correctly() {
+        let msg = ServerMessage::Notification {
+            job_name: "daily-summary".into(),
+            session_id: "sess-abc-123".into(),
+            result_preview: "No critical errors found today.".into(),
+            success: true,
+        };
+        let json: serde_json::Value = serde_json::from_str(
+            &serde_json::to_string(&msg).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(json["type"], "notification");
+        assert_eq!(json["job_name"], "daily-summary");
+        assert_eq!(json["session_id"], "sess-abc-123");
+        assert_eq!(json["result_preview"], "No critical errors found today.");
+        assert_eq!(json["success"], true);
+    }
+
+    #[test]
+    fn notification_failure_serializes_correctly() {
+        let msg = ServerMessage::Notification {
+            job_name: "broken-job".into(),
+            session_id: "".into(),
+            result_preview: "connection refused".into(),
+            success: false,
+        };
+        let json: serde_json::Value = serde_json::from_str(
+            &serde_json::to_string(&msg).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(json["type"], "notification");
+        assert_eq!(json["job_name"], "broken-job");
+        assert_eq!(json["session_id"], "");
+        assert_eq!(json["success"], false);
     }
 }
