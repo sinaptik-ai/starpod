@@ -84,6 +84,7 @@ export default defineConfig({
           collapsed: true,
           items: [
             { text: 'agent-sdk', link: '/crates/agent-sdk' },
+            { text: 'starpod-hooks', link: '/crates/starpod-hooks' },
             { text: 'starpod-core', link: '/crates/starpod-core' },
             { text: 'starpod-memory', link: '/crates/starpod-memory' },
             { text: 'starpod-vault', link: '/crates/starpod-vault' },

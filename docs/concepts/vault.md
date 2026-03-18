@@ -10,39 +10,13 @@ The vault provides **AES-256-GCM encrypted credential storage** with audit loggi
 
 ## Agent Tools
 
-The agent can read and write credentials during conversations:
+The `VaultGet` and `VaultSet` tools have been removed from the agent's tool set. Environment variables are now accessed via the `EnvGet` tool instead (see [Tools](/concepts/tools)).
 
-### VaultGet
+The Vault crate still exists for **programmatic use** from Rust code (e.g., storing credentials during onboarding or via the CLI), but the agent no longer has direct tool access to the vault during conversations.
 
-```json
-{ "key": "github_token" }
-```
+## Programmatic Use
 
-Returns the decrypted value, or null if the key doesn't exist.
-
-### VaultSet
-
-```json
-{ "key": "github_token", "value": "ghp_xxxxxxxxxxxx" }
-```
-
-Encrypts and stores the value. Overwrites if the key already exists.
-
-## CLI
-
-```bash
-# Store a credential
-starpod agent vault set github_token "ghp_xxxxxxxxxxxx"
-
-# Retrieve it
-starpod agent vault get github_token
-
-# List all stored keys (values are not shown)
-starpod agent vault list
-
-# Delete a credential
-starpod agent vault delete github_token
-```
+The vault is available as a Rust library (`starpod_vault::Vault`) but does not have CLI commands. Secrets should be stored in `.env` files and accessed by the agent via the `EnvGet` tool.
 
 ## Use Cases
 
@@ -52,5 +26,5 @@ starpod agent vault delete github_token
 - Any secret the agent needs across conversations
 
 ::: warning
-The vault encrypts values at rest, but they are decrypted in memory when accessed. Treat the `.starpod/data/memory.db` file as sensitive.
+The vault encrypts values at rest, but they are decrypted in memory when accessed. Treat the `.starpod/db/vault.db` file as sensitive.
 :::

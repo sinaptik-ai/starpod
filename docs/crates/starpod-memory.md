@@ -50,7 +50,7 @@ pub struct SearchResult {
     pub text: String,        // Matching chunk
     pub line_start: usize,
     pub line_end: usize,
-    pub rank: f64,           // FTS5 rank (lower = more relevant)
+    pub rank: f64,           // Rank score (more negative = more relevant)
 }
 ```
 
@@ -64,7 +64,7 @@ Text is split into chunks for the FTS5 index:
 | Overlap | 320 chars (~80 tokens) | Configurable via `[memory] chunk_overlap` |
 | Splitting | Line-aware | Splits on line boundaries |
 
-All chunking parameters are configurable in `.starpod/config.toml` under the `[memory]` section.
+All chunking parameters are configurable in `agent.toml` under the `[memory]` section.
 
 ## Bootstrap Context
 
@@ -72,7 +72,7 @@ All chunking parameters are configurable in `.starpod/config.toml` under the `[m
 
 **User-level** (`UserMemoryView::bootstrap_context()`): SOUL.md + USER.md + MEMORY.md + last 3 daily logs.
 
-The per-file character cap is configurable via `[memory] bootstrap_file_cap` in `config.toml` (default: 20000).
+The per-file character cap is configurable via `[memory] bootstrap_file_cap` in `agent.toml` (default: 20000).
 
 ## Tests
 

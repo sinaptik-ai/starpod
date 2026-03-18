@@ -1,11 +1,12 @@
 # Architecture
 
-Starpod is a Rust workspace with 11 crates, each responsible for a single concern.
+Starpod is a Rust workspace with 12 crates, each responsible for a single concern.
 
 ```
 crates/
-├── agent-sdk/          Claude API client + agent loop
-├── starpod-core/         Shared types, config, error handling, instance management
+├── agent-sdk/            Claude API client + agent loop
+├── starpod-hooks/        Lifecycle hook system (events, callbacks, permissions)
+├── starpod-core/         Shared types, config, error handling
 ├── starpod-memory/       SQLite FTS5 full-text search + markdown files
 ├── starpod-session/      Channel-aware session lifecycle (per-user)
 ├── starpod-skills/       Self-extension skill system (markdown-based)
@@ -13,6 +14,7 @@ crates/
 ├── starpod-agent/        Orchestrator wiring everything together
 ├── starpod-gateway/      Axum HTTP/WS server + embedded web UI
 ├── starpod-telegram/     Telegram bot interface (teloxide)
+├── starpod-instances/    Remote instance management client
 └── starpod/              CLI binary
 ```
 
@@ -40,15 +42,16 @@ Starpod separates **blueprints** (git-tracked agent definitions) from **instance
        └─────┬──────┘ └─────┬──────┘ └──────┬───────┘
              └───────────────┼───────────────┘
                              │
-            ┌────────┬───────┼───────┬────────┐
-            ▼        ▼       ▼       ▼        ▼
-        memory    env     session  skills    cron
-            │        │       │       │        │
-            └────────┴───────┼───────┴────────┘
+            ┌────────┬───────┼───────┬────────┬──────────┐
+            ▼        ▼       ▼       ▼        ▼          ▼
+        memory    vault  session  skills    cron     instances
+            │        │       │       │        │          │
+            └────────┴───────┼───────┴────────┴──────────┘
                              ▼
                          starpod-core
                              │
-                         agent-sdk
+                      ┌──────┴──────┐
+                  agent-sdk    starpod-hooks
 ```
 
 ## Data Flow
@@ -119,7 +122,7 @@ All subsystems are wrapped in `Arc` for thread-safe sharing across async tasks:
 | Skills | `Arc<SkillStore>` | Agent |
 | Cron | `Arc<CronStore>` | Agent, Scheduler |
 
-SQLite connections use connection pools for safe concurrent access.
+SQLite connections are wrapped in `Mutex<Connection>` for safe concurrent access.
 
 ## Directory Layouts
 
@@ -148,7 +151,7 @@ workspace/
         │   │       ├── USER.md
         │   │       ├── MEMORY.md
         │   │       └── memory/
-        │   └── data/               # SQLite DBs
+        │   └── db/                 # SQLite DBs
         ├── reports/                # agent creates freely
         └── ...                     # full filesystem sandbox
 ```
@@ -162,7 +165,7 @@ workspace/
 │   ├── SOUL.md
 │   ├── .env
 │   ├── users/admin/
-│   └── data/
+│   └── db/
 ├── reports/                        # agent-produced files
 └── ...
 ```

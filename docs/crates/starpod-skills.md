@@ -88,7 +88,7 @@ Step-by-step instructions for the agent...
 ## Storage
 
 ```
-.starpod/data/skills/
+.starpod/skills/
 └── <name>/
     ├── SKILL.md        # Required
     ├── scripts/        # Optional: executable code

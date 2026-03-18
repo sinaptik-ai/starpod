@@ -24,7 +24,7 @@ The client provides a `channel_session_key` (typically a UUID). The same key alw
 
 ### Telegram Channel
 
-Messages from the same chat ID within **6 hours** continue the same session. After a 6-hour gap, the old session is auto-closed and a new one begins.
+Messages from the same chat ID within the configured inactivity threshold continue the same session. After the threshold is exceeded (default: **360 minutes / 6 hours**, configurable via `gap_minutes` in `[channels.telegram]`), the old session is auto-closed and a new one begins.
 
 No explicit session management needed — just send messages.
 
@@ -43,12 +43,7 @@ Look up session by (channel, key)
     │
     └── Not found or gap exceeded → Create new session
                                      (auto-close old if Telegram)
-                                     (export transcript to memory)
 ```
-
-### Transcript Export on Close
-
-When a session is auto-closed, its full transcript is exported to `knowledge/sessions/` in the memory store. This allows the agent to recall past conversations via `MemorySearch`. See [Memory — Session Transcript Export](/concepts/memory#session-transcript-export) for details.
 
 ## Session Data
 
@@ -57,7 +52,9 @@ When a session is auto-closed, its full transcript is exported to `knowledge/ses
 | `id` | Unique session identifier |
 | `channel` | `main` or `telegram` |
 | `channel_session_key` | Client key or chat ID |
-| `title` | Auto-generated after first turn |
+| `user_id` | User who owns the session |
+| `title` | Auto-generated from first user message |
+| `summary` | Summary text (set on close) |
 | `message_count` | Number of messages |
 | `created_at` | Session start time |
 | `last_message_at` | Last activity |
@@ -85,10 +82,11 @@ When a conversation approaches the model's context window limit (~160k tokens), 
 
 Tool-use cycles are never split — if a compaction boundary would fall between a tool call and its result, it moves to keep them together.
 
-Configure the summarization model in `.starpod/config.toml`:
+Configure the summarization model in `agent.toml` under the `[compaction]` section:
 
 ```toml
-compaction_model = "claude-haiku-4-5"
+[compaction]
+model = "claude-haiku-4-5"
 ```
 
 If the compaction model fails, it falls back to the primary model.
@@ -100,5 +98,5 @@ All messages (user, assistant, tool use/results) are saved to the session databa
 ## CLI
 
 ```bash
-starpod agent sessions list --limit 10
+starpod sessions list --limit 10
 ```

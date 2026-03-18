@@ -1,11 +1,11 @@
 # Lifecycle Prompts
 
-Starpod has three **lifecycle prompt files** that let the agent act autonomously at key moments — without being prompted by a user. All three live in `.starpod/data/` and are **disabled by default** (empty on init). Add instructions to activate them.
+Starpod has three **lifecycle prompt files** that let the agent act autonomously at key moments — without being prompted by a user. All three live in `.starpod/` and are **disabled by default** (empty on init). Add instructions to activate them.
 
 | File | When it runs | How often | Session |
 |------|-------------|-----------|---------|
 | `BOOTSTRAP.md` | First init only | Once, then cleared | Main |
-| `BOOT.md` | Every server start | Once per `starpod agent serve` | Main |
+| `BOOT.md` | Every server start | Once per `starpod serve` | Main |
 | `HEARTBEAT.md` | Periodically while running | Every 30 minutes | Main |
 
 All three run through the full `chat()` pipeline — the agent has access to memory, tools, vault, and conversation context.
@@ -37,7 +37,7 @@ Update USER.md with what you learn. Be conversational, not robotic.
 
 ## BOOT.md — Server Start
 
-Boot runs **every time** `starpod agent serve` starts. Use it for startup checks, daily briefings, or any "wake up" routine.
+Boot runs **every time** `starpod serve` starts. Use it for startup checks, daily briefings, or any "wake up" routine.
 
 ### Example
 
@@ -111,7 +111,7 @@ This is useful when the agent detects something that warrants an earlier check-i
 ## How It Works
 
 ```
-starpod agent serve
+starpod serve
     │
     ├─ Scheduler starts (heartbeat + cron jobs)
     │
@@ -152,23 +152,23 @@ Bootstrap runs first, then boot, then the heartbeat loop begins. All are indepen
 ### 1. Initialize your project
 
 ```bash
-starpod agent init
+starpod init
 ```
 
-This creates empty `BOOTSTRAP.md`, `BOOT.md`, and `HEARTBEAT.md` files in `.starpod/data/`.
+This creates empty `BOOTSTRAP.md`, `BOOT.md`, and `HEARTBEAT.md` files in `.starpod/`.
 
 ### 2. Edit the files you want to activate
 
 ```bash
 # Edit with your preferred editor
-$EDITOR .starpod/data/BOOT.md
-$EDITOR .starpod/data/HEARTBEAT.md
+$EDITOR .starpod/BOOT.md
+$EDITOR .starpod/HEARTBEAT.md
 ```
 
 ### 3. Start the server
 
 ```bash
-starpod agent serve
+starpod serve
 ```
 
 You'll see lifecycle activity in the logs:
@@ -188,7 +188,7 @@ Clear the file's content. The file stays on disk but execution is skipped when e
 
 - **Re-reads from disk**: `HEARTBEAT.md` and `BOOT.md` are read fresh on every execution. You can update them while the server is running — no restart needed (though `BOOT.md` won't re-run until the next restart).
 - **Main session**: All lifecycle prompts run in the main session, sharing context with ongoing conversations.
-- **Disabled by default**: All three files are empty on `starpod agent init`. Add content to activate.
+- **Disabled by default**: All three files are empty on `starpod init`. Add content to activate.
 - **`BOOTSTRAP.md` is one-shot**: The file is cleared after successful execution. To re-run it, add new content manually.
 - **Reserved name**: The `__heartbeat__` cron job name is reserved — you cannot create a regular cron job with this name.
 - **Heartbeat retries**: 3 attempts before marking the run as failed, with a 2-hour timeout per execution.

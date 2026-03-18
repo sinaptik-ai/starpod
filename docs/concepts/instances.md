@@ -4,13 +4,7 @@ Starpod can manage **remote cloud instances** through a backend API. You can cre
 
 ## Configuration
 
-Add the backend URL to your `.starpod/config.toml`:
-
-```toml
-instance_backend_url = "https://api.starpod.example.com"
-```
-
-Or set the environment variable:
+Set the backend URL as an environment variable:
 
 ```bash
 export STARPOD_INSTANCE_BACKEND_URL="https://api.starpod.example.com"
@@ -78,16 +72,17 @@ You can register callbacks that fire when an instance's status changes — usefu
 
 ```rust
 use starpod_instances::{InstanceClient, HealthMonitor};
+use std::sync::Arc;
 
-let client = InstanceClient::new("https://api.example.com", Some("api-key"));
-let monitor = HealthMonitor::new(client, "instance-id")
+let client = InstanceClient::new("https://api.example.com", Some("api-key")).unwrap();
+let monitor = HealthMonitor::new(client)
     .with_interval(Duration::from_secs(30))
     .with_heartbeat_timeout(Duration::from_secs(90))
-    .on_status_change(|id, old, new| {
-        println!("Instance {id} changed from {old:?} to {new:?}");
-    });
+    .on_status_change(Arc::new(|id, status, health| {
+        println!("Instance {id} changed to {status:?}");
+    }));
 
-let shutdown = monitor.start().await;
+let shutdown = monitor.start();  // Not async — returns watch::Sender<()> directly
 // ... later ...
 let _ = shutdown.send(());  // Stop monitoring
 ```

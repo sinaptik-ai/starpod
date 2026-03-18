@@ -6,7 +6,7 @@ Get Starpod running in under 2 minutes.
 
 ```bash
 cd your-project
-starpod agent init --default
+starpod init --default
 ```
 
 ## 2. Set your API key
@@ -18,7 +18,7 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 ## 3. Start the server
 
 ```bash
-starpod agent serve
+starpod serve
 ```
 
 ```
@@ -39,13 +39,13 @@ Open [http://localhost:3000](http://localhost:3000) for the web UI.
 One-shot message:
 
 ```bash
-starpod agent chat "What files are in this directory?"
+starpod chat "What files are in this directory?"
 ```
 
 Interactive REPL:
 
 ```bash
-starpod agent repl
+starpod repl
 ```
 
 ## What's Next?

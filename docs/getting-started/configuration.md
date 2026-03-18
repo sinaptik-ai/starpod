@@ -2,14 +2,14 @@
 
 Starpod uses a two-file configuration model:
 
-- **`config.toml`** — shared settings (model, provider, memory, compaction, cron, etc.). Deploy the same file across all instances.
-- **`instance.toml`** — instance-specific overrides. Can contain any setting from `config.toml` as an override, plus **channels** (which can _only_ be configured here).
+- **`starpod.toml`** — workspace-level defaults shared across all agents (git-tracked).
+- **`agent.toml`** — per-agent overrides (lives in `agents/<name>/agent.toml` in workspace mode, or `.starpod/agent.toml` in single-agent mode). Can contain any setting from `starpod.toml` as an override, plus **channels** (which can _only_ be configured here).
 
-Agent personality lives in `.starpod/data/SOUL.md`. User profile lives in `.starpod/data/USER.md`. These are not part of the config files.
+Agent personality lives in `.starpod/SOUL.md`. User profile lives in `.starpod/users/<id>/USER.md`. These are not part of the config files.
 
 ## Full Reference
 
-### config.toml (shared)
+### starpod.toml (workspace defaults)
 
 ```toml
 # ─── General ────────────────────────────────────────────
@@ -31,26 +31,27 @@ agent_name = "Aster"              # Agent display name (personality in SOUL.md)
 # followup_mode = "inject"        # "inject" or "queue"
 
 # ─── Providers ─────────────────────────────────────────
+# API keys must be set via environment variables or .env files, not here.
+# e.g. ANTHROPIC_API_KEY=sk-ant-... in .env
+
 [providers.anthropic]
-# api_key = "sk-ant-..."          # Or set ANTHROPIC_API_KEY env var
+# enabled = true
 # base_url = "https://api.anthropic.com/v1/messages"
 
 [providers.openai]
-# api_key = "sk-..."              # Or set OPENAI_API_KEY env var
 # base_url = "https://api.openai.com/v1/chat/completions"
 
 [providers.gemini]
-# api_key = "..."                 # Or set GEMINI_API_KEY env var
 # base_url = "https://generativelanguage.googleapis.com/v1beta"
 
 [providers.groq]
-# api_key = "gsk_..."             # Or set GROQ_API_KEY env var
+# base_url = "https://api.groq.com/openai/v1/chat/completions"
 
 [providers.deepseek]
-# api_key = "..."                 # Or set DEEPSEEK_API_KEY env var
+# base_url = "https://api.deepseek.com/v1/chat/completions"
 
 [providers.openrouter]
-# api_key = "..."                 # Or set OPENROUTER_API_KEY env var
+# base_url = "https://openrouter.ai/api/v1/chat/completions"
 
 [providers.ollama]
 # base_url = "http://localhost:11434/v1/chat/completions"  # No API key needed
@@ -63,7 +64,7 @@ agent_name = "Aster"              # Agent display name (personality in SOUL.md)
 # chunk_size = 1600               # Chunk size in chars for indexing (~400 tokens)
 # chunk_overlap = 320             # Overlap in chars between chunks (~80 tokens)
 # bootstrap_file_cap = 20000      # Max chars per file in bootstrap context
-# export_sessions = true          # Export closed session transcripts to knowledge/sessions/
+# export_sessions = true          # Export closed session transcripts to memory for long-term recall
 
 # ─── Compaction ───────────────────────────────────────
 [compaction]
@@ -83,30 +84,22 @@ agent_name = "Aster"              # Agent display name (personality in SOUL.md)
 # allowed_extensions = []          # e.g. ["jpg", "png", "pdf"]; empty = all
 # max_file_size = 20971520         # Max file size in bytes (default: 20 MB)
 
-# ─── Instances ─────────────────────────────────────────
-# instance_backend_url = "https://api.starpod.example.com"  # Or set STARPOD_INSTANCE_BACKEND_URL env var
-
-[instances]
-# health_check_interval_secs = 30  # Health check polling interval
-# heartbeat_timeout_secs = 90      # Instance unhealthy after this
-# http_timeout_secs = 30           # HTTP request timeout for instance API calls
 ```
 
-### instance.toml (per-instance)
+### agent.toml (per-agent)
 
 ```toml
-# Instance-specific overrides — can contain any config.toml key,
+# Per-agent overrides — can contain any starpod.toml key,
 # plus channels which are ONLY valid here.
 
-# Override model for this instance:
+# Override model for this agent:
 # model = "claude-sonnet-4-6"
 
 # ─── Channels ─────────────────────────────────────────
 [channels.telegram]
 # enabled = true                  # Enable/disable the Telegram channel
 # gap_minutes = 360               # Inactivity gap (minutes) before new session (6h)
-# bot_token = "123456:ABC..."     # Or set TELEGRAM_BOT_TOKEN env var
-# allowed_users = [123456789]     # Empty = no one can chat
+# allowed_users = [123456789]     # Empty = no one can chat; set TELEGRAM_BOT_TOKEN in .env
 # stream_mode = "final_only"      # "final_only" or "all_messages"
 ```
 
@@ -131,35 +124,33 @@ Personality and user profile are **not** config settings — they live in markdo
 
 | File | Purpose |
 |------|---------|
-| `.starpod/data/SOUL.md` | Agent personality, tone, and instructions. Loaded into every system prompt via bootstrap context. |
-| `.starpod/data/USER.md` | User name, timezone, preferences. Loaded into every system prompt via bootstrap context. |
+| `.starpod/SOUL.md` | Agent personality, tone, and instructions. Loaded into every system prompt via bootstrap context. |
+| `.starpod/users/<id>/USER.md` | User name, timezone, preferences. Loaded into every system prompt via bootstrap context. |
 
 Edit these files directly to customize agent behavior or update user info. The agent can also update them itself through memory tools.
 
 ## API Key Resolution
 
-For each provider, keys are resolved in priority order (first match wins):
+API keys are resolved exclusively from environment variables (or `.env` files). There is no `api_key` field in config files — any `api_key` found in a config file is ignored and triggers a warning.
 
-1. `providers.<name>.api_key` in `config.toml`
-2. Provider-specific environment variable (see table below)
-
-Ollama requires no API key by default.
+Each provider uses its conventional env var (e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`). Ollama requires no API key by default.
 
 ::: warning
-Never commit API keys to version control. Use environment variables or add `.starpod/config.toml` to `.gitignore`.
+Never commit API keys to version control. Store them in `.env` files (which are gitignored) or set them as environment variables.
 :::
 
 ## Telegram Settings
 
-Telegram settings live in `instance.toml` under `[channels.telegram]`:
+Telegram settings live in `agent.toml` under `[channels.telegram]`:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | bool | `true` | Enable/disable the Telegram channel |
 | `gap_minutes` | integer | `360` | Inactivity gap (minutes) before new session |
-| `bot_token` | string | — | From BotFather (or `TELEGRAM_BOT_TOKEN` env) |
-| `allowed_users` | array | `[]` | User ID allowlist |
+| `allowed_users` | array | `[]` | User IDs and/or usernames allowed to chat |
 | `stream_mode` | string | `"final_only"` | `"final_only"` or `"all_messages"` |
+
+The bot token must be set via the `TELEGRAM_BOT_TOKEN` environment variable (or `.env` file), not in config.
 
 ## Attachments
 
@@ -185,7 +176,7 @@ The `[memory]` section tunes search and indexing behavior.
 | `chunk_size` | integer | `1600` | Chunk size in characters for indexing (~400 tokens) |
 | `chunk_overlap` | integer | `320` | Overlap in characters between chunks (~80 tokens) |
 | `bootstrap_file_cap` | integer | `20000` | Max characters per file included in bootstrap context |
-| `export_sessions` | bool | `true` | Export closed session transcripts to `knowledge/sessions/` for long-term recall |
+| `export_sessions` | bool | `true` | Export closed session transcripts to memory for long-term recall |
 
 ## Compaction
 
@@ -207,19 +198,9 @@ The `[cron]` section sets defaults for the job scheduling system.
 | `default_timeout_secs` | integer | `7200` | Default job timeout in seconds (2h) |
 | `max_concurrent_runs` | integer | `1` | Maximum concurrent job runs |
 
-## Instances
-
-The `[instances]` section configures remote instance management.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `health_check_interval_secs` | integer | `30` | Health check polling interval in seconds |
-| `heartbeat_timeout_secs` | integer | `90` | Seconds before an instance is considered unhealthy |
-| `http_timeout_secs` | integer | `30` | HTTP request timeout for instance API calls |
-
 ## Hot Reload
 
-Starpod watches `config.toml` and `instance.toml` for changes while the server is running. When a file is modified, the new config is loaded and applied automatically — no restart needed.
+Starpod watches `starpod.toml` and `agent.toml` for changes while the server is running. When a file is modified, the new config is loaded and applied automatically — no restart needed.
 
 ### What reloads instantly
 
@@ -234,7 +215,7 @@ Starpod watches `config.toml` and `instance.toml` for changes while the server i
 ### What requires a restart
 
 - `server_addr` — the TCP listener is already bound
-- `channels.telegram.bot_token` — the Telegram bot is already running
+- `TELEGRAM_BOT_TOKEN` — the Telegram bot is already running
 
 When a restart-required setting changes, Starpod logs a warning but continues running with the new values for everything else.
 
@@ -246,11 +227,11 @@ A file watcher (debounced at 2 seconds) monitors the `.starpod/` directory. On c
 
 When Starpod loads config, it:
 
-1. Reads `.starpod/config.toml` as the base
-2. Strips any `[channels]` section from `config.toml` (with a warning — channels belong in `instance.toml`)
-3. If `.starpod/instance.toml` exists, deep-merges it on top (instance values win on conflicts)
+1. Reads `starpod.toml` as the workspace-level base (in workspace mode)
+2. Strips any `[channels]` section from `starpod.toml` (with a warning — channels belong in `agent.toml`)
+3. Deep-merges the agent's `agent.toml` on top (agent values win on conflicts)
 
-This means you can deploy the same `config.toml` to every VM and only vary `instance.toml` per machine.
+This means you can share the same `starpod.toml` across all agents and only vary `agent.toml` per agent.
 
 **Examples:**
 
@@ -271,14 +252,14 @@ max_file_size = 5242880
 
 ## Environment Variables
 
-| Variable | Maps To |
+| Variable | Purpose |
 |----------|---------|
-| `ANTHROPIC_API_KEY` | `providers.anthropic.api_key` |
-| `OPENAI_API_KEY` | `providers.openai.api_key` |
-| `GEMINI_API_KEY` | `providers.gemini.api_key` |
-| `GROQ_API_KEY` | `providers.groq.api_key` |
-| `DEEPSEEK_API_KEY` | `providers.deepseek.api_key` |
-| `OPENROUTER_API_KEY` | `providers.openrouter.api_key` |
-| `TELEGRAM_BOT_TOKEN` | `channels.telegram.bot_token` |
+| `ANTHROPIC_API_KEY` | Anthropic API key |
+| `OPENAI_API_KEY` | OpenAI API key |
+| `GEMINI_API_KEY` | Gemini API key |
+| `GROQ_API_KEY` | Groq API key |
+| `DEEPSEEK_API_KEY` | DeepSeek API key |
+| `OPENROUTER_API_KEY` | OpenRouter API key |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token |
 | `STARPOD_API_KEY` | API key auth for the HTTP/WS gateway |
-| `STARPOD_INSTANCE_BACKEND_URL` | `instance_backend_url` |
+| `STARPOD_INSTANCE_BACKEND_URL` | Remote instance backend URL |

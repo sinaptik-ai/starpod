@@ -27,15 +27,15 @@ starpod --help
 export ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
-Or add it to your project config after [initialization](/getting-started/initialization):
+Or add it to your project `.env` file after [initialization](/getting-started/initialization):
 
-```toml
-[providers.anthropic]
-api_key = "sk-ant-..."
+```bash
+# .env
+ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 ::: tip
-The environment variable is checked as a fallback. If both are set, the config file value takes priority.
+API keys must be set via environment variables or `.env` files — they cannot be placed in config files. Any `api_key` found in a config file is ignored and triggers a warning.
 :::
 
 ## Next Steps

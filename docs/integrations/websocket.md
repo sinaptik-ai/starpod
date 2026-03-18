@@ -56,7 +56,7 @@ Each attachment object has:
 
 Images (`image/png`, `image/jpeg`, `image/gif`, `image/webp`) are sent to Claude for vision analysis. All files are saved to `{project_root}/downloads/`.
 
-Attachments are validated against the `[attachments]` settings in `config.toml` — you can disable uploads, restrict file extensions, and set a max file size. See [Attachment Settings](/getting-started/configuration#attachments).
+Attachments are validated against the `[attachments]` settings in `agent.toml` — you can disable uploads, restrict file extensions, and set a max file size. See [Attachment Settings](/getting-started/configuration#attachments).
 
 ### Server → Client
 
@@ -91,6 +91,7 @@ Emitted when the agent calls a tool:
 ```json
 {
   "type": "tool_use",
+  "id": "toolu_abc123",
   "name": "Glob",
   "input": { "pattern": "*" }
 }
@@ -103,6 +104,7 @@ Emitted when a tool returns a result:
 ```json
 {
   "type": "tool_result",
+  "tool_use_id": "toolu_abc123",
   "content": "Cargo.toml\nREADME.md\nsrc/",
   "is_error": false
 }
@@ -143,8 +145,8 @@ A typical exchange looks like:
 ```
 Client:  {"type": "message", "text": "List files"}
 Server:  {"type": "stream_start", "session_id": "..."}
-Server:  {"type": "tool_use", "name": "Glob", "input": {"pattern": "*"}}
-Server:  {"type": "tool_result", "content": "...", "is_error": false}
+Server:  {"type": "tool_use", "id": "...", "name": "Glob", "input": {"pattern": "*"}}
+Server:  {"type": "tool_result", "tool_use_id": "...", "content": "...", "is_error": false}
 Server:  {"type": "text_delta", "text": "Here are the files:\n\n"}
 Server:  {"type": "text_delta", "text": "- Cargo.toml\n"}
 Server:  {"type": "text_delta", "text": "- README.md\n"}
@@ -153,7 +155,7 @@ Server:  {"type": "stream_end", ...}
 
 ## Followup Messages
 
-You can send additional messages while a stream is active. The behavior depends on the `followup_mode` setting in `config.toml`:
+You can send additional messages while a stream is active. The behavior depends on the `followup_mode` setting in `agent.toml`:
 
 ### Inject Mode (default)
 

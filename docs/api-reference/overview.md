@@ -36,6 +36,13 @@ If `STARPOD_API_KEY` is not set, the API is open (no auth required).
 | `GET` | [`/api/sessions/:id/messages`](/api-reference/sessions#get-messages) | Get session messages |
 | `GET` | [`/api/memory/search`](/api-reference/memory#search) | Full-text memory search |
 | `POST` | [`/api/memory/reindex`](/api-reference/memory#reindex) | Rebuild FTS5 index |
+| `GET` | [`/api/instances`](/api-reference/instances#list-instances) | List remote instances |
+| `POST` | [`/api/instances`](/api-reference/instances#create-instance) | Create a new instance |
+| `GET` | [`/api/instances/:id`](/api-reference/instances#get-instance) | Get instance details |
+| `DELETE` | [`/api/instances/:id`](/api-reference/instances#delete-instance) | Delete (kill) an instance |
+| `POST` | [`/api/instances/:id/pause`](/api-reference/instances#pause-instance) | Pause an instance |
+| `POST` | [`/api/instances/:id/restart`](/api-reference/instances#restart-instance) | Restart an instance |
+| `GET` | [`/api/instances/:id/health`](/api-reference/instances#instance-health) | Instance health info |
 | `GET` | [`/api/health`](/api-reference/health) | Health check |
 
 ## WebSocket

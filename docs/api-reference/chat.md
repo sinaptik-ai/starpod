@@ -26,7 +26,6 @@ curl -X POST http://localhost:3000/api/chat \
 | `user_id` | string | No | User identifier |
 | `channel_id` | string | No | Channel name (default: `"main"`) |
 | `channel_session_key` | string | No | Session identifier |
-| `attachments` | string[] | No | File paths to attach |
 
 ### Response
 

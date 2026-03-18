@@ -7,7 +7,7 @@ HTTP client for remote instance management, log streaming, SSH access, and healt
 ```rust
 use starpod_instances::InstanceClient;
 
-let client = InstanceClient::new("https://api.example.com", Some("api-key"));
+let client = InstanceClient::new("https://api.example.com", Some("api-key".into()))?;
 
 // CRUD
 let instance = client.create_instance(CreateInstanceRequest {
@@ -45,20 +45,22 @@ Background health polling with auto-restart on stale heartbeats.
 use starpod_instances::HealthMonitor;
 use std::time::Duration;
 
-let monitor = HealthMonitor::new(client, "inst_abc123")
+let monitor = HealthMonitor::new(client)
     .with_interval(Duration::from_secs(30))       // Poll every 30s (default)
     .with_heartbeat_timeout(Duration::from_secs(90)) // Stale after 90s (default)
-    .on_status_change(|id, old, new| {
-        println!("{id}: {old:?} → {new:?}");
-    });
+    .on_status_change(Arc::new(|id, status, health| {
+        println!("{id}: {status:?}");
+    }));
 
-let shutdown = monitor.start().await;
+let shutdown = monitor.start(); // Returns watch::Sender — drop to stop
 // Send to stop: shutdown.send(()).ok();
 ```
 
 ## Types
 
 ```rust
+// Serialized as lowercase: "creating", "running", "paused", "stopped", "error"
+#[serde(rename_all = "lowercase")]
 pub enum InstanceStatus {
     Creating,
     Running,
@@ -72,8 +74,8 @@ pub struct Instance {
     pub name: Option<String>,
     pub status: InstanceStatus,
     pub region: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: i64,          // Unix epoch timestamp
+    pub updated_at: i64,          // Unix epoch timestamp
     pub health: Option<HealthInfo>,
 }
 
@@ -81,12 +83,12 @@ pub struct HealthInfo {
     pub cpu_percent: f64,
     pub memory_mb: u64,
     pub disk_mb: u64,
-    pub last_heartbeat: String,
+    pub last_heartbeat: i64,      // Unix epoch timestamp
     pub uptime_secs: u64,
 }
 
 pub struct LogEntry {
-    pub timestamp: String,
+    pub timestamp: i64,           // Unix epoch timestamp
     pub level: String,
     pub message: String,
 }

@@ -16,15 +16,15 @@ curl http://localhost:3000/api/instances \
   {
     "id": "inst_abc123",
     "name": "my-bot",
-    "status": "Running",
+    "status": "running",
     "region": "us-east-1",
-    "created_at": "2026-03-14T10:00:00Z",
-    "updated_at": "2026-03-14T10:05:00Z",
+    "created_at": 1710410400,
+    "updated_at": 1710410700,
     "health": {
       "cpu_percent": 12.5,
       "memory_mb": 256,
       "disk_mb": 1024,
-      "last_heartbeat": "2026-03-14T10:05:00Z",
+      "last_heartbeat": 1710410700,
       "uptime_secs": 3600
     }
   }
@@ -90,7 +90,13 @@ curl -X POST http://localhost:3000/api/instances/inst_abc123/pause \
 
 #### Response
 
-Returns the updated instance object with `status: "Paused"`.
+Returns a simple status object:
+
+```json
+{
+  "status": "paused"
+}
+```
 
 ## Restart Instance {#restart-instance}
 
@@ -103,7 +109,13 @@ curl -X POST http://localhost:3000/api/instances/inst_abc123/restart \
 
 #### Response
 
-Returns the updated instance object with `status: "Running"`.
+Returns a simple status object:
+
+```json
+{
+  "status": "restarted"
+}
+```
 
 ## Instance Health {#instance-health}
 
@@ -121,7 +133,7 @@ curl http://localhost:3000/api/instances/inst_abc123/health \
   "cpu_percent": 12.5,
   "memory_mb": 256,
   "disk_mb": 1024,
-  "last_heartbeat": "2026-03-14T10:05:00Z",
+  "last_heartbeat": 1710410700,
   "uptime_secs": 3600
 }
 ```
@@ -130,11 +142,11 @@ curl http://localhost:3000/api/instances/inst_abc123/health \
 
 | Status | Description |
 |--------|-------------|
-| `Creating` | Provisioning in progress |
-| `Running` | Active and healthy |
-| `Paused` | Suspended, can be restarted |
-| `Stopped` | Terminated |
-| `Error` | Encountered a failure |
+| `creating` | Provisioning in progress |
+| `running` | Active and healthy |
+| `paused` | Suspended, can be restarted |
+| `stopped` | Terminated |
+| `error` | Encountered a failure |
 
 ::: info
 Log streaming (`GET /instances/:id/logs`) and SSH info (`GET /instances/:id/ssh`) are available via the CLI only. See the [CLI Reference](/cli-reference#instances).

@@ -28,7 +28,8 @@ curl http://localhost:3000/api/sessions?limit=20 \
     "created_at": "2026-03-14T10:00:00Z",
     "last_message_at": "2026-03-14T10:05:00Z",
     "is_closed": false,
-    "summary": null
+    "summary": null,
+    "user_id": "user123"
   }
 ]
 ```
@@ -83,3 +84,4 @@ curl http://localhost:3000/api/sessions/abc123/messages \
 | `user` | User message |
 | `assistant` | Agent response |
 | `tool_use` | Tool call (JSON-encoded name + input) |
+| `tool_result` | Tool result (JSON-encoded output) |

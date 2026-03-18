@@ -14,7 +14,7 @@ Run every N milliseconds:
 
 ### Cron Expression
 
-6-field cron expressions (with seconds), evaluated in the user's timezone:
+Both 5-field standard and 6-field (with seconds) cron expressions are accepted. 5-field expressions are auto-expanded to 6-field. Evaluated in the user's timezone:
 
 ```json
 { "kind": "cron", "expr": "0 0 9 * * MON-FRI" }
@@ -69,17 +69,20 @@ Completed cron jobs can send results to Telegram. The notification includes the 
 
 | Tool | Description |
 |------|-------------|
-| `CronAdd` | Create a job (`name`, `prompt`, `schedule`, `delete_after_run`) |
+| `CronAdd` | Create a job (`name`, `prompt`, `schedule`, `delete_after_run`, `max_retries`, `timeout_secs`, `session_mode`) |
 | `CronList` | List all jobs with next run times |
 | `CronRemove` | Remove a job by name |
 | `CronRuns` | View execution history (`name`, `limit`) |
+| `CronRun` | Immediately execute a job by name (manual trigger) |
+| `CronUpdate` | Update properties of an existing job (`name`, `prompt`, `enabled`, `max_retries`, `timeout_secs`, `session_mode`) |
 
 ## CLI
 
 ```bash
-starpod agent cron list                         # List all jobs
-starpod agent cron remove "morning-reminder"    # Remove a job
-starpod agent cron runs "morning-reminder" -l 10 # View run history
+starpod cron list                         # List all jobs
+starpod cron remove "morning-reminder"    # Remove a job
+starpod cron runs "morning-reminder" -l 10 # View run history
+starpod cron run "morning-reminder"        # Trigger immediately
 ```
 
 ## Lifecycle Prompts
@@ -90,10 +93,9 @@ See [Lifecycle Prompts](/concepts/heartbeat) for full details.
 
 ## Timezone
 
-Cron expressions use the user's timezone from `config.toml`:
+Cron expressions use the timezone from the top-level `timezone` field in `agent.toml`:
 
 ```toml
-[user]
 timezone = "America/New_York"
 ```
 
