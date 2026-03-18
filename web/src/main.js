@@ -291,40 +291,26 @@ function startAssistantMessage() {
   currentBubble = null
   messages.appendChild(msg)
 
-  const thinking = document.createElement('div')
-  thinking.className = 'flex items-center gap-1.5 py-2 text-dim text-xs'
-  thinking.innerHTML = '<div class="flex gap-1"><span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span></div>'
-  msg._thinkingEl = thinking
-  msg.appendChild(thinking)
+  // Show an empty bubble with the streaming cursor immediately
+  ensureBubble()
   scrollToBottom()
-}
-
-function removeThinking() {
-  if (currentMsg && currentMsg._thinkingEl) {
-    currentMsg._thinkingEl.remove()
-    currentMsg._thinkingEl = null
-  }
 }
 
 function showThinking() {
   if (!currentMsg) return
-  removeThinking()
+  // End current bubble and start a fresh one with the streaming cursor
   if (currentBubble) {
     currentBubble.classList.remove('streaming-cursor')
     currentBubble = null
   }
-  const thinking = document.createElement('div')
-  thinking.className = 'flex items-center gap-1.5 py-2 text-dim text-xs'
-  thinking.innerHTML = '<div class="flex gap-1"><span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span></div>'
-  currentMsg._thinkingEl = thinking
-  currentMsg.appendChild(thinking)
+  ensureBubble()
   scrollToBottom()
 }
 
 function ensureBubble() {
   if (currentBubble) return currentBubble
   if (!currentMsg) return null
-  removeThinking()
+
   const bubble = document.createElement('div')
   bubble.className = 'py-1 leading-[1.75] text-sm break-words text-secondary streaming-cursor markdown-body'
   currentMsg.appendChild(bubble)
@@ -344,7 +330,7 @@ function appendText(text) {
 
 function addToolUse(name, input, toolUseId) {
   if (!currentMsg) return
-  removeThinking()
+
   if (currentBubble) {
     currentBubble.classList.remove('streaming-cursor')
     currentBubble = null
@@ -416,10 +402,14 @@ function addToolResult(content, isError, toolUseId) {
 
 function endStream(data) {
   if (currentMsg) {
-    removeThinking()
+  
     currentMsg.querySelectorAll('.streaming-cursor').forEach(b => {
       b.classList.remove('streaming-cursor')
-      if (b._rawText) b.innerHTML = formatText(b._rawText)
+      if (b._rawText) {
+        b.innerHTML = formatText(b._rawText)
+      } else if (!b.textContent.trim()) {
+        b.remove()
+      }
     })
 
     if (data.is_error && data.errors && data.errors.length > 0) {
