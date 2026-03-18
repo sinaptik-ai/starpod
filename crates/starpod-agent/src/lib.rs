@@ -423,7 +423,9 @@ impl StarpodAgent {
                 // Truncate to a reasonable size
                 let combined = text_parts.join("\n");
                 let truncated = if combined.len() > 2000 {
-                    format!("{}...", &combined[..2000])
+                    let mut end = 2000;
+                    while end > 0 && !combined.is_char_boundary(end) { end -= 1; }
+                    format!("{}...", &combined[..end])
                 } else {
                     combined
                 };
@@ -1397,7 +1399,7 @@ mod tests {
         assert!(result.is_some());
         let r = result.unwrap();
         assert!(!r.is_error);
-        assert!(r.content.contains("Manual run started"));
+        assert!(r.content.contains("Manual run recorded"));
 
         // Test CronRun on nonexistent job
         let result = handle_custom_tool(
@@ -1419,7 +1421,7 @@ mod tests {
         assert!(result.is_some());
         let r = result.unwrap();
         assert!(!r.is_error);
-        assert!(r.content.contains("running")); // the run we started
+        assert!(r.content.contains("success") || r.content.contains("Success")); // the run we completed
 
         // Test CronRuns on nonexistent job
         let result = handle_custom_tool(

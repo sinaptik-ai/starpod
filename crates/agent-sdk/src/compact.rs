@@ -86,7 +86,9 @@ pub fn build_summary_prompt(old_messages: &[ApiMessage]) -> String {
                     // Truncate long tool results
                     let content_str = content.to_string();
                     if content_str.len() > 500 {
-                        rendered.push_str(&format!("Tool {}: {}...\n", label, &content_str[..500]));
+                        let mut end = 500;
+                        while end > 0 && !content_str.is_char_boundary(end) { end -= 1; }
+                        rendered.push_str(&format!("Tool {}: {}...\n", label, &content_str[..end]));
                     } else {
                         rendered.push_str(&format!("Tool {}: {}\n", label, content_str));
                     }
@@ -260,6 +262,7 @@ mod tests {
                 content: serde_json::json!("file1.rs\nfile2.rs"),
                 is_error: None,
                 cache_control: None,
+                name: None,
             }],
         }
     }

@@ -134,6 +134,9 @@ pub enum ApiContentBlock {
         is_error: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
+        /// The tool/function name (used by Gemini's functionResponse).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
     },
 
     #[serde(rename = "thinking")]
@@ -428,6 +431,7 @@ mod tests {
             content: serde_json::json!("output text"),
             is_error: Some(false),
             cache_control: None,
+            name: None,
         };
         let json = serde_json::to_string(&block).unwrap();
         let back: ApiContentBlock = serde_json::from_str(&json).unwrap();
