@@ -531,12 +531,7 @@ async fn handle_stream_message(
                 }
             }
 
-            state.agent.finalize_chat(session_id, user_text, result_text, &result).await;
-
-            if !result_text.is_empty() {
-                let _ = state.agent.session_mgr().save_message(session_id, "assistant", result_text).await;
-            }
-
+            // Send StreamEnd immediately so the client stops showing the loading state.
             let _ = send_msg(sender, &ServerMessage::StreamEnd {
                 session_id: session_id.to_string(),
                 num_turns: result.num_turns,
@@ -546,6 +541,18 @@ async fn handle_stream_message(
                 is_error: result.is_error,
                 errors: result.errors.clone(),
             }).await;
+
+            // Finalize in background so we don't block the client.
+            let agent = Arc::clone(&state.agent);
+            let sid = session_id.to_string();
+            let ut = user_text.to_string();
+            let rt = result_text.clone();
+            tokio::spawn(async move {
+                agent.finalize_chat(&sid, &ut, &rt, &result).await;
+                if !rt.is_empty() {
+                    let _ = agent.session_mgr().save_message(&sid, "assistant", &rt).await;
+                }
+            });
 
             return StreamAction::Done;
         }
