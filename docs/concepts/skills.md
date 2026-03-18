@@ -51,17 +51,22 @@ When reviewing code, always check for:
 
 ### Via CLI
 
-```bash
-# With inline instructions
-starpod skill new "code-review" \
-  --description "Review code for bugs and style issues." \
-  --body "Check for error handling, edge cases, and security."
+`starpod skill new` generates a complete skill using AI — you provide the name, and optionally a description or extra context:
 
-# From a file
-starpod skill new "code-review" \
-  --description "Review code for bugs and style issues." \
-  --file code-review-instructions.md
+```bash
+# Name only — AI generates everything
+starpod skill new code-review
+
+# With explicit description (overrides AI)
+starpod skill new code-review \
+  --description "Review code for bugs, security issues, and style."
+
+# With extra context for the AI
+starpod skill new code-review \
+  --prompt "Focus on OWASP top 10 and always check error handling"
 ```
+
+The generated skill follows [AgentSkills best practices](https://agentskills.io/skill-creation/best-practices): clear trigger conditions, step-by-step procedures, gotchas sections, and validation loops.
 
 ### Via the Agent
 

@@ -4029,6 +4029,7 @@ dependencies = [
  "dialoguer",
  "futures",
  "rustyline",
+ "serde",
  "serde_json",
  "starpod-agent",
  "starpod-core",

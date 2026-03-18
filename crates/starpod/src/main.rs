@@ -260,19 +260,16 @@ enum SkillAction {
         /// Skill name.
         name: String,
     },
-    /// Create a new AgentSkills-compatible skill.
+    /// Create a new skill (AI-generated from name + optional prompt).
     New {
         /// Skill name (lowercase, hyphens, e.g. 'code-review').
         name: String,
         /// Description of what the skill does and when to use it.
         #[arg(short, long)]
-        description: String,
-        /// Markdown instructions (or use --file for the body).
+        description: Option<String>,
+        /// Extra instructions or context for the AI generator.
         #[arg(short, long)]
-        body: Option<String>,
-        /// Read instructions from a file.
-        #[arg(short, long)]
-        file: Option<String>,
+        prompt: Option<String>,
     },
     /// Delete a skill.
     Delete {
@@ -327,6 +324,35 @@ enum CronAction {
         session_mode: Option<String>,
     },
 }
+
+// ── Skill generation prompt ───────────────────────────────────────────────
+
+const SKILL_GEN_SYSTEM_PROMPT: &str = r#"You are a skill author for the AgentSkills open format (agentskills.io).
+
+Given a natural language request, generate a skill definition with three fields:
+- **name**: A concise, lowercase identifier using only letters, digits, and hyphens (max 64 chars). Must not start/end with a hyphen or contain consecutive hyphens.
+- **description**: 1-2 sentences explaining what the skill does AND when to use it. Use imperative phrasing ("Use this skill when..."). Be "pushy" — explicitly list contexts where the skill applies, including indirect mentions. Max 1024 chars.
+- **body**: Markdown instructions the agent follows when the skill is activated. Under 500 lines.
+
+## Best practices for the body
+
+- **Add what the agent lacks, omit what it knows.** Focus on project-specific conventions, domain procedures, non-obvious edge cases. Don't explain general knowledge.
+- **Favor procedures over declarations.** Teach how to approach a class of problems, not what to produce for a specific instance.
+- **Provide defaults, not menus.** Pick one recommended approach; mention alternatives briefly.
+- **Match specificity to fragility.** Be prescriptive when operations are fragile or sequence matters; give freedom when multiple approaches are valid.
+- **Use effective patterns:**
+  - Gotchas sections for environment-specific facts that defy assumptions
+  - Templates for output format (concrete structure, not prose)
+  - Checklists for multi-step workflows with explicit step tracking
+  - Validation loops: do work → run validator → fix issues → repeat
+  - Plan-validate-execute: create plan → validate → execute
+- **Design coherent units.** Not too narrow (needing multiple skills for one task), not too broad (hard to activate precisely).
+- **Keep it actionable.** Concise stepwise guidance with working examples outperforms exhaustive documentation.
+
+## Output
+
+Return a JSON object with exactly: `name`, `description`, `body`.
+"#;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1321,16 +1347,96 @@ async fn main() -> anyhow::Result<()> {
                         None => println!("Skill '{}' not found.", name),
                     }
                 }
-                SkillAction::New { name, description, body, file } => {
-                    let body = if let Some(path) = file {
-                        std::fs::read_to_string(&path)?
-                    } else if let Some(b) = body {
-                        b
-                    } else {
-                        anyhow::bail!("Provide --body or --file");
-                    };
-                    store.create(&name, &description, &body)?;
-                    println!("Created skill '{}'.", name);
+                SkillAction::New { name, description, prompt } => {
+                    println!(
+                        "  {} Generating skill '{}'...\n",
+                        "⚡".bright_yellow(),
+                        name.bright_white()
+                    );
+
+                    // Build the user prompt for the AI.
+                    let mut user_prompt = format!("Create a skill named \"{}\".", name);
+                    if let Some(ref d) = description {
+                        user_prompt.push_str(&format!("\n\nThe skill description MUST be: {}", d));
+                    }
+                    if let Some(ref p) = prompt {
+                        user_prompt.push_str(&format!("\n\nAdditional context:\n{}", p));
+                    }
+
+                    let output_schema = serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "description": {
+                                "type": "string",
+                                "description": "1-2 sentence description of what the skill does and when to use it. Max 1024 chars. Use imperative phrasing: 'Use this skill when...'"
+                            },
+                            "body": {
+                                "type": "string",
+                                "description": "Markdown instructions for the agent to follow when the skill is activated. Should be under 500 lines / ~5000 tokens."
+                            }
+                        },
+                        "required": ["description", "body"],
+                        "additionalProperties": false
+                    });
+
+                    let options = agent_sdk::Options::builder()
+                        .system_prompt(agent_sdk::options::SystemPrompt::Custom(
+                            SKILL_GEN_SYSTEM_PROMPT.to_string(),
+                        ))
+                        .output_format(output_schema)
+                        .max_turns(1)
+                        .persist_session(false)
+                        .permission_mode(agent_sdk::PermissionMode::Plan)
+                        .build();
+
+                    let mut stream = agent_sdk::query(&user_prompt, options);
+
+                    let mut result_msg = None;
+                    while let Some(msg_result) = stream.next().await {
+                        let msg = msg_result?;
+                        if let Message::Result(result) = msg {
+                            result_msg = Some(result);
+                        }
+                    }
+
+                    let result = result_msg
+                        .ok_or_else(|| anyhow::anyhow!("No result from AI"))?;
+
+                    if result.is_error {
+                        anyhow::bail!(
+                            "Skill generation failed: {}",
+                            result.errors.join("; ")
+                        );
+                    }
+
+                    let structured = result.structured_output.ok_or_else(|| {
+                        anyhow::anyhow!("No structured output returned from AI")
+                    })?;
+
+                    #[derive(serde::Deserialize)]
+                    struct SkillGen {
+                        description: String,
+                        body: String,
+                    }
+
+                    let gen: SkillGen = serde_json::from_value(structured)?;
+
+                    let skill_desc = description.unwrap_or(gen.description);
+
+                    store.create(&name, &skill_desc, &gen.body)?;
+
+                    println!(
+                        "  {} Created skill '{}'",
+                        "✓".green().bold(),
+                        name.bright_white()
+                    );
+                    println!(
+                        "  {} {}",
+                        "Description:".dimmed(),
+                        skill_desc
+                    );
+                    println!();
+                    println!("{}", gen.body);
                 }
                 SkillAction::Delete { name } => {
                     store.delete(&name)?;
