@@ -57,6 +57,14 @@ fn agent_new_uses_name_as_display_name() {
         soul.contains("You are mybot"),
         "SOUL.md should use the name as the agent identity, got:\n{soul}"
     );
+
+    // Lifecycle files should be scaffolded
+    for name in &["HEARTBEAT.md", "BOOT.md", "BOOTSTRAP.md"] {
+        assert!(
+            ws.path().join("agents/mybot").join(name).exists(),
+            "{name} should be created by agent new"
+        );
+    }
 }
 
 #[test]

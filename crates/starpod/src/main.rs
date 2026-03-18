@@ -641,6 +641,14 @@ model = "{model}"
     };
     tokio::fs::write(agent_dir.join("SOUL.md"), soul_content).await?;
 
+    // Seed lifecycle files (empty defaults)
+    for name in &["HEARTBEAT.md", "BOOT.md", "BOOTSTRAP.md"] {
+        let path = agent_dir.join(name);
+        if !path.exists() {
+            tokio::fs::write(&path, "").await?;
+        }
+    }
+
     Ok(())
 }
 
