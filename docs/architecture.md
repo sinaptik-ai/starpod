@@ -89,7 +89,7 @@ An instance is the runtime environment created from a blueprint. It lives in `.i
 
 `starpod dev <agent>` copies the blueprint into an instance via `apply_blueprint()`, then serves it. Re-running `starpod dev` refreshes the config but preserves runtime data — so you can iterate on the agent's personality without losing its memory.
 
-For standalone deployments without a workspace, `starpod build --agent <path>` creates a self-contained `.starpod/` via `build_standalone()`, ready for `starpod serve`.
+For standalone deployments without a workspace, `starpod build --agent <path>` creates a self-contained `.starpod/` via `build_standalone()`, ready for `starpod serve`. If a `.starpod/` already exists, the command will error — use `--force` to overwrite the blueprint files while preserving runtime data.
 
 ## Dependency Graph
 

@@ -73,6 +73,7 @@ build_standalone(
     &output_dir,              // .starpod/ created here
     Some(&skills_dir),        // optional skills to include
     Some(&env_file),          // optional .env to include
+    false,                    // force: overwrite existing .starpod/
 )?;
 ```
 

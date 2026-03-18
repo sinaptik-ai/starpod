@@ -126,6 +126,9 @@ enum Commands {
         /// Path to .env file to include.
         #[arg(long = "env")]
         env_file: Option<String>,
+        /// Overwrite existing .starpod/ blueprint files.
+        #[arg(long)]
+        force: bool,
     },
 
     /// Deploy stub (future).
@@ -1670,7 +1673,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ── Build ─────────────────────────────────────────────────────
-        Commands::Build { agent, skills, output, env_file } => {
+        Commands::Build { agent, skills, output, env_file, force } => {
             let agent_path = std::path::PathBuf::from(&agent);
             if !agent_path.join("agent.toml").is_file() {
                 eprintln!(
@@ -1693,6 +1696,7 @@ async fn main() -> anyhow::Result<()> {
                 &output_dir,
                 skills_path.as_deref(),
                 env_path.as_deref(),
+                force,
             )?;
 
             let starpod_dir = output_dir.join(".starpod");
