@@ -11,8 +11,8 @@ starpod_telegram::run(config, token).await?;
 // Shared agent (co-hosted with gateway)
 starpod_telegram::run_with_agent(agent, token).await?;
 
-// With user allowlist
-starpod_telegram::run_with_agent_filtered(agent, token, allowed_users).await?;
+// With user allowlist (IDs and usernames)
+starpod_telegram::run_with_agent_filtered(agent, token, allowed_users, allowed_usernames).await?;
 
 // Send a notification (for cron job results)
 starpod_telegram::send_notification(&token, &user_ids, "Job completed").await;
@@ -48,4 +48,4 @@ starpod_telegram::send_notification(&token, &user_ids, "Job completed").await;
 
 ## Tests
 
-4 unit tests.
+16 unit tests covering message splitting, markdown-to-HTML conversion, escaping, and edge cases.

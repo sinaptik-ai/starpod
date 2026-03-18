@@ -6,8 +6,9 @@ A local-first personal AI assistant platform built in Rust, powered by Claude. E
 
 ```
 crates/
-├── agent-sdk/          Claude API client + agent loop
-├── starpod-core/         Shared types, config, error handling, instance management
+├── agent-sdk/            Claude API client + agent loop
+├── starpod-hooks/        Lifecycle hook system (events, callbacks, permissions)
+├── starpod-core/         Shared types, config, error handling
 ├── starpod-memory/       SQLite FTS5 full-text search + per-user memory
 ├── starpod-session/      Channel-aware session lifecycle (per-user)
 ├── starpod-skills/       Self-extension skill system (markdown-based)
@@ -15,6 +16,7 @@ crates/
 ├── starpod-agent/        Orchestrator wiring everything together
 ├── starpod-gateway/      Axum HTTP/WS server + embedded web UI
 ├── starpod-telegram/     Telegram bot interface (teloxide)
+├── starpod-instances/    Remote instance management client
 └── starpod/              CLI binary
 ```
 
@@ -138,7 +140,7 @@ starpod cron list                         List all cron jobs
 starpod cron remove <name>                Remove a cron job
 starpod cron runs <name> [-l 10]          Show recent runs for a job
 starpod cron run <name>                   Trigger a job immediately
-starpod cron edit <name> [--prompt ...] [--enabled true/false]
+starpod cron edit <name> [--prompt ...] [--schedule ...] [--enabled true/false] [--max-retries N] [--timeout-secs N] [--session-mode ...]
 ```
 
 ## Web UI
@@ -206,7 +208,7 @@ API key authentication: set `STARPOD_API_KEY` env var on the server, then `local
 - Shares the same `StarpodAgent` instance with the web UI and API
 - Shows typing indicator while the agent is thinking
 - Splits long responses at line boundaries (Telegram's 4096-char limit)
-- Sends as MarkdownV2, falls back to plain text on parse failure
+- Sends as HTML (`ParseMode::Html`), falls back to plain text on parse failure
 
 ## Gateway API
 
@@ -219,10 +221,19 @@ Set the `STARPOD_API_KEY` environment variable to require API key auth. Clients 
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/chat` | Send a chat message |
+| `GET` | `/api/frame-check?url=...` | Check if a URL allows framing |
 | `GET` | `/api/sessions?limit=20` | List recent sessions |
 | `GET` | `/api/sessions/:id` | Get a specific session |
+| `GET` | `/api/sessions/:id/messages` | Get session messages |
 | `GET` | `/api/memory/search?q=...&limit=10` | Full-text search |
 | `POST` | `/api/memory/reindex` | Rebuild FTS index |
+| `GET` | `/api/instances` | List remote instances |
+| `POST` | `/api/instances` | Create a remote instance |
+| `GET` | `/api/instances/:id` | Get instance details |
+| `DELETE` | `/api/instances/:id` | Delete an instance |
+| `POST` | `/api/instances/:id/pause` | Pause an instance |
+| `POST` | `/api/instances/:id/restart` | Restart an instance |
+| `GET` | `/api/instances/:id/health` | Instance health check |
 | `GET` | `/api/health` | Health check |
 
 ### WebSocket Streaming
@@ -239,8 +250,8 @@ Connect to `ws://localhost:3000/ws` (or `ws://localhost:3000/ws?token=KEY`).
 {"type": "stream_start", "session_id": "..."}
 {"type": "text_delta", "text": "Hi "}
 {"type": "text_delta", "text": "there!"}
-{"type": "tool_use", "name": "Read", "input": {"file_path": "/tmp/foo.txt"}}
-{"type": "tool_result", "content": "file contents...", "is_error": false}
+{"type": "tool_use", "id": "toolu_abc123", "name": "Read", "input": {"file_path": "/tmp/foo.txt"}}
+{"type": "tool_result", "tool_use_id": "toolu_abc123", "content": "file contents...", "is_error": false}
 {"type": "stream_end", "session_id": "...", "num_turns": 1, "cost_usd": 0.004, "input_tokens": 1200, "output_tokens": 45, "is_error": false, "errors": []}
 ```
 
@@ -286,7 +297,7 @@ while let Some(msg) = stream.next().await {
 
 ### starpod-memory
 
-Persistent memory: markdown files on disk + SQLite FTS5 index. Text is chunked into ~400-token segments with 80-token overlap at line boundaries. `bootstrap_context()` assembles personality + user facts + knowledge + recent daily logs into the system prompt. Per-user memory is supported via `UserMemoryView` — each user gets their own USER.md, MEMORY.md, and daily logs while sharing SOUL.md and knowledge/.
+Persistent memory: markdown files on disk + SQLite FTS5 index. Text is chunked into ~400-token segments with 80-token overlap at line boundaries. `bootstrap_context()` returns SOUL.md (agent-level), while `UserMemoryView` assembles per-user context: USER.md, MEMORY.md, and recent daily logs. Each user gets their own memory space under `.starpod/users/<id>/`.
 
 ### starpod-session
 
@@ -299,7 +310,7 @@ Tracks token usage and cost per turn. The scheduler creates standalone `main` se
 
 ### starpod-skills
 
-Markdown-based skill files at `<data_dir>/skills/<name>/SKILL.md`. Skills are injected into the system prompt on every turn. The agent can create, update, and delete skills at runtime.
+Markdown-based skill files at `.starpod/skills/<name>/SKILL.md`. Skills are injected into the system prompt on every turn. The agent can create, update, and delete skills at runtime.
 
 ### starpod-cron
 
@@ -313,7 +324,7 @@ Scheduling system supporting interval (`every_ms`), cron expressions, and one-sh
 cargo test
 ```
 
-609 tests across all crates, zero warnings.
+407 tests across all crates, zero warnings.
 
 ```bash
 cargo test --workspace

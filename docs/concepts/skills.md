@@ -53,12 +53,12 @@ When reviewing code, always check for:
 
 ```bash
 # With inline instructions
-starpod agent skills new "code-review" \
+starpod skill new "code-review" \
   --description "Review code for bugs and style issues." \
   --body "Check for error handling, edge cases, and security."
 
 # From a file
-starpod agent skills new "code-review" \
+starpod skill new "code-review" \
   --description "Review code for bugs and style issues." \
   --file code-review-instructions.md
 ```
@@ -76,8 +76,8 @@ The agent uses `SkillCreate` to save it. The skill appears in the catalog immedi
 Create the directory and file directly:
 
 ```bash
-mkdir -p .starpod/data/skills/code-review
-cat > .starpod/data/skills/code-review/SKILL.md << 'EOF'
+mkdir -p .starpod/skills/code-review
+cat > .starpod/skills/code-review/SKILL.md << 'EOF'
 ---
 name: code-review
 description: Review code for bugs and style issues.
@@ -90,9 +90,9 @@ EOF
 ## Managing Skills
 
 ```bash
-starpod agent skills list              # List all skills with descriptions
-starpod agent skills show code-review  # View a skill's full content
-starpod agent skills delete code-review # Delete a skill
+starpod skill list              # List all skills with descriptions
+starpod skill show code-review  # View a skill's full content
+starpod skill delete code-review # Delete a skill
 ```
 
 ## Agent Tools
@@ -172,7 +172,7 @@ Skills without YAML frontmatter (plain markdown) continue to work. The directory
 ## Storage
 
 ```
-.starpod/data/skills/
+.starpod/skills/
 ├── code-review/
 │   └── SKILL.md
 ├── daily-standup/
@@ -183,4 +183,4 @@ Skills without YAML frontmatter (plain markdown) continue to work. The directory
 
 ## AgentSkills Compatibility
 
-Starpod's skill format is compatible with the [AgentSkills](https://agentskills.io) open standard, used by Claude Code, Cursor, VS Code Copilot, Gemini CLI, and many other tools. Skills created for those tools can be dropped into `.starpod/data/skills/` and will work automatically.
+Starpod's skill format is compatible with the [AgentSkills](https://agentskills.io) open standard, used by Claude Code, Cursor, VS Code Copilot, Gemini CLI, and many other tools. Skills created for those tools can be dropped into `.starpod/skills/` and will work automatically.

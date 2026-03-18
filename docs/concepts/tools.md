@@ -1,6 +1,6 @@
 # Agent Tools
 
-The agent has access to **built-in tools** from the Claude Agent SDK plus **13 custom tools** provided by Starpod.
+The agent has access to **built-in tools** from the Claude Agent SDK plus **20 custom tools** provided by Starpod.
 
 ## Built-in Tools
 
@@ -29,19 +29,28 @@ The `Bash` tool supports `run_in_background: true` for long-running processes (s
 | `MemoryWrite` | `file`, `content` | Write or update a memory/knowledge file |
 | `MemoryAppendDaily` | `text` | Append to today's daily log |
 
-### Vault
+### Environment
 
 | Tool | Input | Description |
 |------|-------|-------------|
-| `VaultGet` | `key` | Decrypt and retrieve a stored credential |
-| `VaultSet` | `key`, `value` | Encrypt and store a credential |
+| `EnvGet` | `key` | Look up an environment variable by key |
+
+### Files
+
+| Tool | Input | Description |
+|------|-------|-------------|
+| `FileRead` | `path` | Read a file from the agent's filesystem sandbox |
+| `FileWrite` | `path`, `content` | Write a file to the agent's filesystem sandbox |
+| `FileList` | `path` (optional) | List files and directories in the sandbox |
+| `FileDelete` | `path` | Delete a file from the sandbox |
 
 ### Skills
 
 | Tool | Input | Description |
 |------|-------|-------------|
-| `SkillCreate` | `name`, `content` | Create a new skill |
-| `SkillUpdate` | `name`, `content` | Update an existing skill |
+| `SkillActivate` | `name` | Load a skill's full instructions into context |
+| `SkillCreate` | `name`, `description`, `body` | Create a new AgentSkills-compatible skill |
+| `SkillUpdate` | `name`, `description`, `body` | Update an existing skill's description and instructions |
 | `SkillDelete` | `name` | Delete a skill |
 | `SkillList` | — | List all active skills |
 
@@ -49,10 +58,18 @@ The `Bash` tool supports `run_in_background: true` for long-running processes (s
 
 | Tool | Input | Description |
 |------|-------|-------------|
-| `CronAdd` | `name`, `prompt`, `schedule`, `delete_after_run` | Create a scheduled job |
+| `CronAdd` | `name`, `prompt`, `schedule`, `delete_after_run`, `max_retries`, `timeout_secs`, `session_mode` | Create a scheduled job |
 | `CronList` | — | List all jobs with next run times |
 | `CronRemove` | `name` | Remove a job |
 | `CronRuns` | `name`, `limit` | View execution history |
+| `CronRun` | `name` | Immediately execute a cron job (manual trigger) |
+| `CronUpdate` | `name`, `prompt`, `enabled`, `max_retries`, `timeout_secs`, `session_mode` | Update properties of an existing job |
+
+### Heartbeat
+
+| Tool | Input | Description |
+|------|-------|-------------|
+| `HeartbeatWake` | `mode` (`"now"` or `"next"`), `message` | Wake the heartbeat system outside its normal cycle |
 
 ## CronAdd Schedule Format
 

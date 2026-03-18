@@ -12,7 +12,8 @@ curl http://localhost:3000/api/health
 
 ```json
 {
-  "status": "ok"
+  "status": "ok",
+  "version": "0.1.0"
 }
 ```
 

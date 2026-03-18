@@ -47,136 +47,140 @@ starpod agent new my-agent --agent-name "Jarvis" --model "claude-opus-4-6"
 
 List all agents in the workspace.
 
+### `starpod dev`
+
+Apply blueprint and start agent in dev mode (workspace only).
+
+```bash
+starpod dev my-agent
+starpod dev my-agent --port 8080
+```
+
+| Flag | Description |
+|------|-------------|
+| `--port`, `-p` | Port to serve on (overrides config) |
+
 ### `starpod serve`
 
 Start the HTTP/WS server with optional Telegram bot.
 
 ```bash
-starpod agent serve
+starpod serve
+starpod serve -a my-agent
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--agent`, `-a` | Agent name (required in workspace mode, optional in single-agent) |
 
 Serves the web UI, REST API, WebSocket endpoint, and (if configured) Telegram bot. All share the same agent instance.
 
-### `starpod agent chat`
+### `starpod chat`
 
 Send a one-shot message.
 
 ```bash
-starpod agent chat "What files are in this directory?"
+starpod chat "What files are in this directory?"
+starpod chat -a my-agent "What files are in this directory?"
 ```
 
-### `starpod agent repl`
+| Flag | Description |
+|------|-------------|
+| `--agent`, `-a` | Agent name |
+
+### `starpod repl`
 
 Start an interactive REPL with readline support and history.
 
 ```bash
-starpod agent repl
+starpod repl
+starpod repl -a my-agent
+```
+
+| Flag | Description |
+|------|-------------|
+| `--agent`, `-a` | Agent name |
+
+### `starpod deploy`
+
+Deploy stub (future).
+
+```bash
+starpod deploy <agent_name>
 ```
 
 ## Memory
 
-### `starpod agent memory search`
+### `starpod memory search`
 
-Full-text search across memory and knowledge files.
+Full-text search across memory files.
 
 ```bash
-starpod agent memory search "database migrations"
-starpod agent memory search "rust patterns" --limit 10
+starpod memory search "database migrations"
+starpod memory search "rust patterns" --limit 10
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--agent`, `-a` | — | Agent name |
 | `--limit`, `-l` | `5` | Maximum results |
 
-### `starpod agent memory reindex`
+### `starpod memory reindex`
 
 Rebuild the FTS5 search index.
 
 ```bash
-starpod agent memory reindex
-```
-
-## Vault
-
-### `starpod agent vault set`
-
-Encrypt and store a credential.
-
-```bash
-starpod agent vault set github_token "ghp_xxxxxxxxxxxx"
-```
-
-### `starpod agent vault get`
-
-Retrieve a decrypted credential.
-
-```bash
-starpod agent vault get github_token
-```
-
-### `starpod agent vault delete`
-
-Delete a stored credential.
-
-```bash
-starpod agent vault delete github_token
-```
-
-### `starpod agent vault list`
-
-List all stored keys (values are not shown).
-
-```bash
-starpod agent vault list
+starpod memory reindex
 ```
 
 ## Sessions
 
-### `starpod agent sessions list`
+### `starpod sessions list`
 
 List recent sessions.
 
 ```bash
-starpod agent sessions list
-starpod agent sessions list --limit 20
+starpod sessions list
+starpod sessions list --limit 20
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--agent`, `-a` | — | Agent name |
 | `--limit`, `-l` | `10` | Maximum sessions |
 
 ## Skills
 
 Skills follow the [AgentSkills](https://agentskills.io) open format.
 
-### `starpod agent skills list`
+### `starpod skill list`
 
 List all skills with their descriptions.
 
 ```bash
-starpod agent skills list
+starpod skill list
 ```
 
-### `starpod agent skills show`
+### `starpod skill show`
 
 Show a skill's metadata and full instructions.
 
 ```bash
-starpod agent skills show code-review
+starpod skill show code-review
 ```
 
-### `starpod agent skills new`
+### `starpod skill new`
 
 Create a new AgentSkills-compatible skill with YAML frontmatter.
 
 ```bash
 # With inline instructions
-starpod agent skills new "code-review" \
+starpod skill new "code-review" \
   --description "Review code for bugs and style issues." \
   --body "Check for error handling, edge cases, and security."
 
 # Instructions from a file
-starpod agent skills new "code-review" \
+starpod skill new "code-review" \
   --description "Review code for bugs and style issues." \
   --file code-review-instructions.md
 ```
@@ -187,48 +191,74 @@ starpod agent skills new "code-review" \
 | `--body`, `-b` | Inline markdown instructions |
 | `--file`, `-f` | Read instructions from a file |
 
-### `starpod agent skills delete`
+### `starpod skill delete`
 
 Delete a skill and its directory.
 
 ```bash
-starpod agent skills delete code-review
+starpod skill delete code-review
 ```
 
 ## Cron
 
-### `starpod agent cron list`
+### `starpod cron list`
 
 List all scheduled jobs.
 
 ```bash
-starpod agent cron list
+starpod cron list
 ```
 
-### `starpod agent cron remove`
+### `starpod cron remove`
 
 Remove a job by name.
 
 ```bash
-starpod agent cron remove "morning-reminder"
+starpod cron remove "morning-reminder"
 ```
 
-### `starpod agent cron runs`
+### `starpod cron runs`
 
 Show recent executions for a job.
 
 ```bash
-starpod agent cron runs "morning-reminder"
-starpod agent cron runs "morning-reminder" --limit 20
+starpod cron runs "morning-reminder"
+starpod cron runs "morning-reminder" --limit 20
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--limit`, `-l` | `10` | Maximum runs |
 
+### `starpod cron run`
+
+Trigger a cron job immediately.
+
+```bash
+starpod cron run "morning-reminder"
+```
+
+### `starpod cron edit`
+
+Edit a cron job's properties.
+
+```bash
+starpod cron edit "morning-reminder" --prompt "New prompt text"
+starpod cron edit "morning-reminder" --schedule "0 9 * * *" --enabled false
+```
+
+| Flag | Description |
+|------|-------------|
+| `--prompt` | New prompt text |
+| `--schedule` | New cron schedule expression |
+| `--enabled` | Enable or disable the job (`true`/`false`) |
+| `--max-retries` | Max retries on failure |
+| `--timeout-secs` | Timeout in seconds |
+| `--session-mode` | Session mode: `isolated` or `main` |
+
 ## Instances
 
-Manage remote cloud instances. Requires `instance_backend_url` in config or `STARPOD_INSTANCE_BACKEND_URL` env var.
+Manage remote cloud instances. Requires `STARPOD_INSTANCE_BACKEND_URL` env var.
 
 ### `starpod instance create`
 

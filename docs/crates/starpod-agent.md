@@ -5,7 +5,7 @@ The orchestrator crate that wires all subsystems together. Provides `StarpodAgen
 ## API
 
 ```rust
-let config = StarpodConfig::load()?;
+let config = load_agent_config(&paths)?;
 let agent = StarpodAgent::new(config).await?;
 
 // Non-streaming chat
@@ -46,15 +46,16 @@ When a user sends a message while a stream is active, behavior depends on `follo
 - **`inject`** (default) — Messages are sent through a channel and drained at the next agent loop iteration boundary (before the next API call). Multiple rapid messages are batched into a single user message.
 - **`queue`** — Messages are buffered. After the current stream finishes, all queued messages are combined and dispatched as a new agent loop.
 
-Conversation compaction is enabled by default with a 160k token context budget. The compaction model is configurable via `compaction_model` in `.starpod/config.toml` (defaults to the primary model).
+Conversation compaction is enabled by default with a 160k token context budget. The compaction model is configurable via `compaction_model` in `agent.toml` (defaults to the primary model).
 
-## Custom Tools (13)
+## Custom Tools (20)
 
 | Category | Tools |
 |----------|-------|
 | Memory | `MemorySearch`, `MemoryWrite`, `MemoryAppendDaily` |
-| Vault | `VaultGet`, `VaultSet` |
-| Skills | `SkillCreate`, `SkillUpdate`, `SkillDelete`, `SkillList` |
+| Environment | `EnvGet` |
+| Files | `FileRead`, `FileWrite`, `FileList`, `FileDelete` |
+| Skills | `SkillActivate`, `SkillCreate`, `SkillUpdate`, `SkillDelete`, `SkillList` |
 | Cron | `CronAdd`, `CronList`, `CronRemove`, `CronRuns`, `CronRun`, `CronUpdate` |
 | Heartbeat | `HeartbeatWake` |
 
@@ -78,16 +79,11 @@ agent.reload_config(new_config);
 let config = agent.config(); // returns owned StarpodConfig
 ```
 
-## Session Transcript Export
-
-When a session is auto-closed (e.g. Telegram time-gap), the agent exports the full transcript to `knowledge/sessions/` in the memory store. This is controlled by `[memory] export_sessions` in config (default: `true`).
-
 ## Component Accessors
 
 ```rust
 agent.memory()      // &Arc<MemoryStore>
 agent.session_mgr() // &Arc<SessionManager>
-agent.vault()       // &Arc<Vault>
 agent.skills()      // &Arc<SkillStore>
 agent.cron()        // &Arc<CronStore>
 agent.config()      // StarpodConfig (owned snapshot)

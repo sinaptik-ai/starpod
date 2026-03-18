@@ -16,6 +16,17 @@ let id = store.add_job(
     Some("America/New_York"), // user timezone
 ).await?;
 
+// Create with full options (retry, timeout, session mode, user)
+let id = store.add_job_full(
+    "morning-check", "Summarize overnight alerts",
+    &Schedule::Cron { expr: "0 0 9 * * *".into() },
+    false, Some("America/New_York"),
+    3,                               // max_retries
+    7200,                            // timeout_secs
+    SessionMode::Isolated,
+    None,                            // user_id
+).await?;
+
 // List and manage
 let jobs = store.list_jobs().await?;
 store.remove_job(&id).await?;
@@ -33,7 +44,7 @@ let runs = store.list_runs(&id, 10).await?;
 pub enum Schedule {
     OneShot { at: String },        // ISO 8601 timestamp
     Interval { every_ms: u64 },    // Fixed interval
-    Cron { expr: String },         // 6-field with seconds
+    Cron { expr: String },         // 5-field standard or 6-field with seconds
 }
 ```
 
@@ -41,8 +52,8 @@ pub enum Schedule {
 
 ```rust
 let scheduler = CronScheduler::new(
-    store,
-    executor,           // Fn(prompt) -> Future<Result<String, String>>
+    store,              // Arc<CronStore>
+    executor,           // Fn(JobContext) -> Future<Result<String, String>>
     30,                 // tick interval (seconds)
     Some("America/New_York".into()),
 )
@@ -54,10 +65,10 @@ scheduler.start();  // Returns JoinHandle
 ## Callback Types
 
 ```rust
-// Executes a job prompt, returns result text
-type JobExecutor = Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> + Send + Sync>;
+// Executes a job — receives a JobContext with prompt, session mode, job name, job ID, user ID
+type JobExecutor = Arc<dyn Fn(JobContext) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> + Send + Sync>;
 
-// Sends notification after job completion
+// Sends notification after job completion (job_name, result_text, success)
 type NotificationSender = Arc<dyn Fn(String, String, bool) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 ```
 
@@ -74,6 +85,21 @@ pub struct CronJob {
     pub created_at: i64,
     pub last_run_at: Option<i64>,
     pub next_run_at: Option<i64>,
+    pub retry_count: u32,
+    pub max_retries: u32,
+    pub last_error: Option<String>,
+    pub retry_at: Option<i64>,
+    pub timeout_secs: u32,
+    pub session_mode: SessionMode,      // Isolated or Main
+    pub user_id: Option<String>,        // None = agent-level job
+}
+
+pub struct JobContext {
+    pub prompt: String,
+    pub session_mode: SessionMode,
+    pub job_name: String,
+    pub job_id: String,
+    pub user_id: Option<String>,
 }
 
 pub struct CronRun {
@@ -92,7 +118,7 @@ pub enum RunStatus {
 
 ## Configuration
 
-Default retry, timeout, and concurrency settings are configurable via `[cron]` in `.starpod/config.toml`:
+Default retry, timeout, and concurrency settings are configurable via `[cron]` in `agent.toml`:
 
 | Key | Default | Description |
 |-----|---------|-------------|

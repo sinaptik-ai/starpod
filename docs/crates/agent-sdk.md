@@ -81,7 +81,7 @@ Options::builder()
     .system_prompt("You are a helpful assistant")
     .allowed_tools(vec!["Bash".into(), "Read".into()])
     .session_id("my-session")
-    .thinking(ThinkingConfig { effort: "medium" })
+    .thinking(ThinkingConfig::Enabled { budget_tokens: 10_000 })
     .permission_mode(PermissionMode::BypassPermissions)
     .external_tool_handler(handler_fn)
     .custom_tools(vec![tool_def])
@@ -112,7 +112,7 @@ enum Message {
     Assistant(AssistantMessage),
     User(UserMessage),
     Result(ResultMessage),
-    ToolUse(ToolUseMessage),
+    StreamEvent(StreamEventMessage),
 }
 ```
 
@@ -151,4 +151,4 @@ The handler returns `Some(ToolResult)` to handle a tool, or `None` to let the SD
 
 ## Tests
 
-31 unit tests + 2 doc-tests.
+97 tests (including doc-tests).

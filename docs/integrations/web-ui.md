@@ -1,6 +1,6 @@
 # Web UI
 
-Starpod ships with an embedded web UI served at `http://localhost:3000/` when running `starpod agent serve`.
+Starpod ships with an embedded web UI served at `http://localhost:3000/` when running `starpod dev <agent>`.
 
 ## Features
 
@@ -18,7 +18,7 @@ Starpod ships with an embedded web UI served at `http://localhost:3000/` when ru
 To protect the web UI, set the `STARPOD_API_KEY` environment variable on the server:
 
 ```bash
-STARPOD_API_KEY="your-secret-key" starpod agent serve
+STARPOD_API_KEY="your-secret-key" starpod dev <agent>
 ```
 
 Then set the key in your browser's console:

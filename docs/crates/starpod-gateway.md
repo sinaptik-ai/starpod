@@ -5,11 +5,8 @@ Axum HTTP/WebSocket server with an embedded web UI.
 ## API
 
 ```rust
-// Start with config (creates agent internally)
-starpod_gateway::serve(config).await?;
-
-// Start with a shared agent (for Telegram co-hosting)
-starpod_gateway::serve_with_agent(agent, config, notifier).await?;
+// Start with a shared agent, config, optional notifier, and resolved paths
+starpod_gateway::serve_with_agent(agent, config, notifier, paths).await?;
 
 // Build just the router (for testing or embedding)
 let router = starpod_gateway::build_router(state);
@@ -20,14 +17,23 @@ let router = starpod_gateway::build_router(state);
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/chat` | Chat (non-streaming) |
+| `GET` | `/api/frame-check` | Check if a URL is frameable (X-Frame-Options / CSP) |
 | `GET` | `/api/sessions` | List sessions |
 | `GET` | `/api/sessions/:id` | Get session metadata |
 | `GET` | `/api/sessions/:id/messages` | Get session messages |
 | `GET` | `/api/memory/search` | Full-text search |
 | `POST` | `/api/memory/reindex` | Rebuild FTS index |
+| `GET` | `/api/instances` | List remote instances |
+| `POST` | `/api/instances` | Create a remote instance |
+| `GET` | `/api/instances/:id` | Get instance details |
+| `DELETE` | `/api/instances/:id` | Kill (terminate) an instance |
+| `POST` | `/api/instances/:id/pause` | Pause an instance |
+| `POST` | `/api/instances/:id/restart` | Restart an instance |
+| `GET` | `/api/instances/:id/health` | Instance health info |
 | `GET` | `/api/health` | Health check |
 | `GET` | `/ws` | WebSocket streaming |
-| `GET` | `/` | Embedded web UI |
+| `GET` | `/docs`, `/docs/*` | Embedded documentation site |
+| `GET` | `/` | Embedded web UI (SPA fallback) |
 
 ## Authentication
 
@@ -43,6 +49,7 @@ pub struct AppState {
     pub agent: Arc<StarpodAgent>,
     pub api_key: Option<String>,
     pub config: RwLock<StarpodConfig>,
+    pub paths: ResolvedPaths,
 }
 ```
 
@@ -50,7 +57,7 @@ Shared across all routes via Axum's state extraction. Config is wrapped in `RwLo
 
 ## Config Hot Reload
 
-The gateway watches `.starpod/config.toml` and `instance.toml` for changes. When either file is modified, the config is reloaded and applied to both the agent and gateway state. See [Configuration — Hot Reload](/getting-started/configuration#hot-reload) for details.
+The gateway watches `agent.toml` for changes. When the file is modified, the config is reloaded and applied to both the agent and gateway state. See [Configuration — Hot Reload](/getting-started/configuration#hot-reload) for details.
 
 ## WebSocket Protocol
 

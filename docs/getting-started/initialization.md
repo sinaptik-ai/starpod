@@ -49,13 +49,11 @@ starpod agent new my-agent --agent-name "Jarvis" --soul "You are a coding assist
 your-project/
 ├── starpod.toml          Workspace config (provider, model, defaults)
 ├── .env                  API key (gitignored)
-├── .gitignore            Includes .env, .instances/, */data/
+├── .gitignore            Includes .env, .instances/, */db/
 ├── agents/
 │   └── my-agent/         BLUEPRINT (git-tracked)
 │       ├── agent.toml    Agent-specific overrides
 │       ├── SOUL.md       Agent personality
-│       ├── .env          Production secrets template
-│       ├── .env.dev      Dev secrets template
 │       ├── users/        Per-user permission templates
 │       └── files/        Template files synced to instance
 └── skills/               Shared skills
@@ -71,7 +69,7 @@ your-project/
         │   ├── agent.toml  Copied from blueprint
         │   ├── SOUL.md     Copied from blueprint
         │   ├── .env        From .env.dev (dev) or .env (prod)
-        │   ├── data/       SQLite databases
+        │   ├── db/         SQLite databases
         │   └── users/
         │       └── admin/  Auto-created default user
         │           ├── USER.md
