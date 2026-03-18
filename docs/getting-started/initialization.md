@@ -54,7 +54,6 @@ your-project/
 │   └── my-agent/         BLUEPRINT (git-tracked)
 │       ├── agent.toml    Agent-specific overrides
 │       ├── SOUL.md       Agent personality
-│       ├── users/        Per-user permission templates
 │       └── files/        Template files synced to instance
 └── skills/               Shared skills
 ```

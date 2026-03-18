@@ -560,7 +560,6 @@ async fn scaffold_agent_blueprint(
     soul: Option<&str>,
     workspace_root: Option<&std::path::Path>,
 ) -> anyhow::Result<()> {
-    tokio::fs::create_dir_all(agent_dir.join("users")).await?;
     tokio::fs::create_dir_all(agent_dir.join("files")).await?;
 
     // Read workspace starpod.toml to inherit defaults (scaffolding)

@@ -65,6 +65,12 @@ fn agent_new_uses_name_as_display_name() {
             "{name} should be created by agent new"
         );
     }
+
+    // Blueprint should NOT contain a users/ directory (users live in the instance, not the template)
+    assert!(
+        !ws.path().join("agents/mybot/users").exists(),
+        "Blueprint should not scaffold a users/ directory"
+    );
 }
 
 #[test]

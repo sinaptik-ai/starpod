@@ -138,7 +138,6 @@ workspace/
 │   └── aster/
 │       ├── agent.toml              # config + default permissions
 │       ├── SOUL.md                 # personality
-│       ├── users/                  # per-user permission templates
 │       └── files/                  # template filesystem
 └── .instances/                     # RUNTIME (gitignored)
     └── aster/                      # agent's filesystem root
