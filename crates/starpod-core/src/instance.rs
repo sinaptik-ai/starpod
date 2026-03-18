@@ -98,11 +98,15 @@ pub fn apply_blueprint(
     std::fs::create_dir_all(starpod_dir.join("users"))
         .map_err(StarpodError::Io)?;
 
-    // Seed lifecycle files at .starpod/ root (empty defaults, only if not present)
+    // Seed lifecycle files from blueprint (always refresh if blueprint has them,
+    // otherwise create empty defaults if not present)
     for name in &["HEARTBEAT.md", "BOOT.md", "BOOTSTRAP.md"] {
-        let path = starpod_dir.join(name);
-        if !path.exists() {
-            std::fs::write(&path, "").map_err(StarpodError::Io)?;
+        let src = blueprint_dir.join(name);
+        let dst = starpod_dir.join(name);
+        if src.is_file() {
+            std::fs::copy(&src, &dst).map_err(StarpodError::Io)?;
+        } else if !dst.exists() {
+            std::fs::write(&dst, "").map_err(StarpodError::Io)?;
         }
     }
 
