@@ -24,7 +24,6 @@
 //! |   +-- aster/
 //! |       +-- agent.toml
 //! |       +-- SOUL.md
-//! |       +-- users/{id}/user.toml
 //! |       +-- files/                  # template filesystem
 //! +-- .instances/                     # RUNTIME (gitignored)
 //!     +-- aster/                      # agent's filesystem root
