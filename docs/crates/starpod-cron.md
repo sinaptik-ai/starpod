@@ -53,11 +53,11 @@ pub enum Schedule {
 ```rust
 let scheduler = CronScheduler::new(
     store,              // Arc<CronStore>
-    executor,           // Fn(JobContext) -> Future<Result<String, String>>
+    executor,           // Fn(JobContext) -> Future<Result<JobResult, String>>
     30,                 // tick interval (seconds)
     Some("America/New_York".into()),
 )
-.with_notifier(notifier);  // Optional Fn(job_name, result, success) -> Future
+.with_notifier(notifier);  // Optional Fn(job_name, session_id, result, success) -> Future
 
 scheduler.start();  // Returns JoinHandle
 ```
@@ -65,11 +65,18 @@ scheduler.start();  // Returns JoinHandle
 ## Callback Types
 
 ```rust
-// Executes a job — receives a JobContext with prompt, session mode, job name, job ID, user ID
-type JobExecutor = Arc<dyn Fn(JobContext) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> + Send + Sync>;
+/// Returned by the executor on success — carries the session ID for notification routing.
+pub struct JobResult {
+    pub session_id: String,  // Session created by this job (empty on failure)
+    pub summary: String,     // Result summary (typically truncated to 500 chars)
+}
 
-// Sends notification after job completion (job_name, result_text, success)
-type NotificationSender = Arc<dyn Fn(String, String, bool) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+// Executes a job — receives a JobContext with prompt, session mode, job name, job ID, user ID
+type JobExecutor = Arc<dyn Fn(JobContext) -> Pin<Box<dyn Future<Output = Result<JobResult, String>> + Send>> + Send + Sync>;
+
+// Sends notification after job completion (job_name, session_id, result_text, success)
+// The gateway composes this to broadcast to WS clients + forward to Telegram.
+type NotificationSender = Arc<dyn Fn(String, String, String, bool) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 ```
 
 ## Types
@@ -128,4 +135,4 @@ Default retry, timeout, and concurrency settings are configurable via `[cron]` i
 
 ## Tests
 
-11 unit tests.
+14 unit tests (including notification routing with session IDs, failure cases, and retry paths).

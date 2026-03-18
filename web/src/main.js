@@ -79,8 +79,83 @@ let toolCounter = 0
 let currentSessionId = null
 let currentSessionKey = generateUUID()
 let pendingAttachments = []
+let cachedSessions = []
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024
+
+// ── Unread tracking (localStorage) ──
+// Sessions are "unread" until the user clicks on them or sends a message.
+// Stored client-side as a Set of session IDs that have been seen.
+// Stale entries are pruned when the session list is refreshed from the server.
+const UNREAD_KEY = 'starpod_read_sessions'
+let readSessions = new Set(JSON.parse(localStorage.getItem(UNREAD_KEY) || '[]'))
+
+function saveReadSessions() {
+  localStorage.setItem(UNREAD_KEY, JSON.stringify([...readSessions]))
+}
+
+function markRead(sessionId) {
+  if (!readSessions.has(sessionId)) {
+    readSessions.add(sessionId)
+    saveReadSessions()
+  }
+  // Update DOM — remove blue dot
+  const el = sessionList.querySelector(`.session-item[data-sid="${sessionId}"]`)
+  if (el) {
+    const dot = el.querySelector('.unread-dot')
+    if (dot) dot.remove()
+  }
+}
+
+function isUnread(sessionId) {
+  return !readSessions.has(sessionId)
+}
+
+// ── Toast notifications ──
+// Shown when a cron/heartbeat job completes while the web UI is open.
+// Clicking a toast navigates to the cron job's session transcript.
+// Toasts auto-dismiss after 6 seconds with a slide-out animation.
+function showToast(jobName, preview, success, sessionId) {
+  const container = document.getElementById('toast-container') || createToastContainer()
+  const toast = document.createElement('div')
+  toast.className = 'toast ' + (success ? 'toast-success' : 'toast-error')
+  toast.innerHTML =
+    '<div class="toast-icon">' + (success ? '\u2713' : '\u2717') + '</div>' +
+    '<div class="toast-content">' +
+      '<div class="toast-title">' + escapeHtml(jobName) + '</div>' +
+      '<div class="toast-body">' + escapeHtml(preview.length > 120 ? preview.slice(0, 120) + '\u2026' : preview) + '</div>' +
+    '</div>'
+  if (sessionId) {
+    toast.style.cursor = 'pointer'
+    toast.addEventListener('click', () => {
+      toast.remove()
+      // Find the session in cached list and navigate to it
+      const session = cachedSessions.find(s => s.id === sessionId)
+      if (session) {
+        selectSession(session)
+      } else {
+        // Fetch fresh sessions and navigate
+        fetchSessions(() => {
+          const s = cachedSessions.find(s => s.id === sessionId)
+          if (s) selectSession(s)
+        })
+      }
+    })
+  }
+  container.appendChild(toast)
+  // Auto-dismiss after 6s
+  setTimeout(() => {
+    toast.style.animation = 'toast-out 0.3s ease forwards'
+    setTimeout(() => toast.remove(), 300)
+  }, 6000)
+}
+
+function createToastContainer() {
+  const c = document.createElement('div')
+  c.id = 'toast-container'
+  document.body.appendChild(c)
+  return c
+}
 
 // ── Helpers ──
 function setStatus(state) {
@@ -484,7 +559,10 @@ function connect() {
 
     switch (data.type) {
       case 'stream_start':
-        if (data.session_id) currentSessionId = data.session_id
+        if (data.session_id) {
+          currentSessionId = data.session_id
+          markRead(data.session_id)
+        }
         startAssistantMessage()
         break
       case 'text_delta':
@@ -499,6 +577,9 @@ function connect() {
         break
       case 'stream_end':
         endStream(data)
+        // Mark current session as read + refresh sidebar
+        if (currentSessionId) markRead(currentSessionId)
+        fetchSessions()
         break
       case 'error':
         if (isStreaming) {
@@ -514,6 +595,17 @@ function connect() {
           currentMsg = null
           currentBubble = null
         }
+        break
+      case 'notification':
+        // Cron/heartbeat job completed — show toast + refresh session list
+        showToast(data.job_name, data.result_preview, data.success, data.session_id)
+        // Mark the new session as unread (unless it's the active one)
+        if (data.session_id && data.session_id !== currentSessionId) {
+          readSessions.delete(data.session_id)
+          saveReadSessions()
+        }
+        // Refresh session list to show the new cron session
+        fetchSessions()
         break
     }
   }
@@ -714,14 +806,24 @@ function formatSessionDate(isoStr) {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
-function fetchSessions() {
+function fetchSessions(callback) {
   const token = localStorage.getItem('starpod_api_key')
   const headers = {}
   if (token) headers['X-API-Key'] = token
 
   fetch('/api/sessions?limit=50', { headers })
     .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
-    .then(sessions => renderSessions(sessions))
+    .then(sessions => {
+      cachedSessions = sessions || []
+      // Prune stale read markers
+      const ids = new Set(cachedSessions.map(s => s.id))
+      for (const id of readSessions) {
+        if (!ids.has(id)) readSessions.delete(id)
+      }
+      saveReadSessions()
+      renderSessions(cachedSessions)
+      if (callback) callback()
+    })
     .catch(() => { sessionList.innerHTML = '<div class="text-center text-dim text-xs py-8">Failed to load sessions</div>' })
 }
 
@@ -731,23 +833,39 @@ function renderSessions(sessions) {
     return
   }
 
+  // Sort: unread first (by recency), then read (by recency)
+  const sorted = [...sessions].sort((a, b) => {
+    const aUnread = isUnread(a.id) ? 1 : 0
+    const bUnread = isUnread(b.id) ? 1 : 0
+    if (aUnread !== bUnread) return bUnread - aUnread
+    return new Date(b.last_message_at || b.created_at) - new Date(a.last_message_at || a.created_at)
+  })
+
   sessionList.innerHTML = ''
-  sessions.forEach(s => {
+  sorted.forEach(s => {
     const el = document.createElement('div')
     const active = s.id === currentSessionId
+    const unread = isUnread(s.id) && !active
     el.className = 'session-item px-3.5 py-3 rounded-lg cursor-pointer mb-1' +
       (active ? ' active' : '')
+    el.setAttribute('data-sid', s.id)
 
     const summary = s.title || s.summary || 'Untitled conversation'
     const date = formatSessionDate(s.last_message_at || s.created_at)
     const msgs = s.message_count || 0
     const closed = s.is_closed ? ' \u00b7 ended' : ''
+    const dot = unread ? '<span class="unread-dot"></span>' : ''
 
     el.innerHTML =
-      '<div class="text-[13px] leading-snug line-clamp-2 break-words' + (active ? ' text-primary font-medium' : ' text-secondary') + '">' + escapeHtml(summary) + '</div>' +
-      '<div class="font-mono text-[11px] text-dim mt-1 flex gap-2">' +
-        '<span>' + date + '</span>' +
-        '<span>' + msgs + ' msg' + (msgs !== 1 ? 's' : '') + closed + '</span>' +
+      '<div class="flex items-start gap-2">' +
+        dot +
+        '<div class="flex-1 min-w-0">' +
+          '<div class="text-[13px] leading-snug line-clamp-2 break-words' + (active ? ' text-primary font-medium' : ' text-secondary') + '">' + escapeHtml(summary) + '</div>' +
+          '<div class="font-mono text-[11px] text-dim mt-1 flex gap-2">' +
+            '<span>' + date + '</span>' +
+            '<span>' + msgs + ' msg' + (msgs !== 1 ? 's' : '') + closed + '</span>' +
+          '</div>' +
+        '</div>' +
       '</div>'
 
     el._sessionId = s.id
@@ -760,7 +878,8 @@ function selectSession(session) {
   if (isMobile() || sidebar.classList.contains('transient')) closeSidebar()
   currentSessionId = session.id
   currentSessionKey = session.channel_session_key || generateUUID()
-  // Update active state in sidebar
+  // Mark as read and update sidebar
+  markRead(session.id)
   sessionList.querySelectorAll('.session-item').forEach(el => {
     el.classList.toggle('active', el._sessionId === session.id)
   })

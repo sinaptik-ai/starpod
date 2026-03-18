@@ -9,14 +9,50 @@ use tracing::{error, info, warn};
 use crate::store::{backoff_delay, compute_next_run, CronStore};
 use crate::types::{JobContext, RunStatus};
 
-/// Callback type for executing a job. Receives a `JobContext` with prompt, session mode, etc.
+/// Result returned by a [`JobExecutor`] on success.
+///
+/// Contains both the session ID (for notification routing to the web UI)
+/// and a short result summary (forwarded to Telegram and shown in toasts).
+///
+/// ```
+/// use starpod_cron::JobResult;
+///
+/// let result = JobResult {
+///     session_id: "sess-abc-123".into(),
+///     summary: "Digest sent successfully".into(),
+/// };
+/// assert_eq!(result.session_id, "sess-abc-123");
+/// ```
+#[derive(Debug, Clone)]
+pub struct JobResult {
+    /// The session ID created/used by this job execution.
+    ///
+    /// Empty string when the job failed before a session was created.
+    pub session_id: String,
+    /// A short summary of the execution result (typically truncated to 500 chars).
+    pub summary: String,
+}
+
+/// Callback type for executing a job.
+///
+/// Receives a [`JobContext`] with the prompt, session mode, and job metadata.
+/// Returns [`JobResult`] on success (with session ID for notification routing)
+/// or an error string on failure.
 pub type JobExecutor =
-    Arc<dyn Fn(JobContext) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> + Send + Sync>;
+    Arc<dyn Fn(JobContext) -> Pin<Box<dyn Future<Output = Result<JobResult, String>> + Send>> + Send + Sync>;
 
 /// Callback type for sending notifications after a cron job completes.
-/// Receives (job_name, result_text, success).
+///
+/// Called with four arguments:
+/// - `job_name`: the human-readable name of the job that ran
+/// - `session_id`: the session created by the job (empty string on failure)
+/// - `result_text`: a summary of the result (truncated output or error message)
+/// - `success`: `true` if the job succeeded, `false` if it failed
+///
+/// The gateway composes this to broadcast to WebSocket clients and optionally
+/// forward to Telegram.
 pub type NotificationSender =
-    Arc<dyn Fn(String, String, bool) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+    Arc<dyn Fn(String, String, String, bool) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 /// Background scheduler that polls for due jobs and executes them.
 ///
@@ -185,12 +221,12 @@ impl CronScheduler {
             let result = (executor)(ctx).await;
 
             // Record completion and handle retry logic
-            let (status, summary) = match result {
-                Ok(s) => {
+            let (status, session_id, summary) = match result {
+                Ok(jr) => {
                     info!(job = %job.name, "Cron job completed successfully");
                     // Phase 1: Reset retry state on success
                     let _ = self.store.reset_retry(&job.id).await;
-                    (RunStatus::Success, s)
+                    (RunStatus::Success, jr.session_id, jr.summary)
                 }
                 Err(e) => {
                     warn!(job = %job.name, error = %e, "Cron job failed");
@@ -210,7 +246,7 @@ impl CronScheduler {
                         let _ = self.store.mark_permanently_failed(&job.id, &e).await;
                         warn!(job = %job.name, "Max retries exceeded, permanently failed");
                     }
-                    (RunStatus::Failed, e)
+                    (RunStatus::Failed, String::new(), e)
                 }
             };
 
@@ -222,7 +258,7 @@ impl CronScheduler {
             // Send notification if configured
             if let Some(ref notifier) = self.notifier {
                 let success = status == RunStatus::Success;
-                (notifier)(job.name.clone(), summary.clone(), success).await;
+                (notifier)(job.name.clone(), session_id.clone(), summary.clone(), success).await;
             }
 
             // Handle one-shot / delete-after-run
@@ -276,11 +312,11 @@ impl CronScheduler {
             let executor = Arc::clone(&self.executor);
             let result = (executor)(ctx).await;
 
-            let (status, summary) = match result {
-                Ok(s) => {
+            let (status, session_id, summary) = match result {
+                Ok(jr) => {
                     info!(job = %job.name, "Retry succeeded");
                     let _ = self.store.reset_retry(&job.id).await;
-                    (RunStatus::Success, s)
+                    (RunStatus::Success, jr.session_id, jr.summary)
                 }
                 Err(e) => {
                     warn!(job = %job.name, error = %e, "Retry failed");
@@ -299,7 +335,7 @@ impl CronScheduler {
                         let _ = self.store.mark_permanently_failed(&job.id, &e).await;
                         warn!(job = %job.name, "Max retries exceeded, permanently failed");
                     }
-                    (RunStatus::Failed, e)
+                    (RunStatus::Failed, String::new(), e)
                 }
             };
 
@@ -310,7 +346,7 @@ impl CronScheduler {
 
             if let Some(ref notifier) = self.notifier {
                 let success = status == RunStatus::Success;
-                (notifier)(job.name.clone(), summary.clone(), success).await;
+                (notifier)(job.name.clone(), session_id.clone(), summary.clone(), success).await;
             }
         }
     }
@@ -331,7 +367,7 @@ mod tests {
     }
 
     fn success_executor() -> JobExecutor {
-        Arc::new(|_ctx| Box::pin(async { Ok("done".to_string()) }))
+        Arc::new(|_ctx| Box::pin(async { Ok(JobResult { session_id: "test-session".into(), summary: "done".into() }) }))
     }
 
     fn failing_executor() -> JobExecutor {
@@ -343,7 +379,7 @@ mod tests {
             let counter = Arc::clone(&counter);
             Box::pin(async move {
                 counter.fetch_add(1, Ordering::SeqCst);
-                Ok("done".to_string())
+                Ok(JobResult { session_id: "test-session".into(), summary: "done".into() })
             })
         })
     }
@@ -587,7 +623,7 @@ mod tests {
         store.update_next_run(&jobs[0].id, Some(past)).await.unwrap();
 
         let notified_clone = Arc::clone(&notified);
-        let notifier: crate::NotificationSender = Arc::new(move |_name, _result, _success| {
+        let notifier: crate::NotificationSender = Arc::new(move |_name, _session_id, _result, _success| {
             let n = Arc::clone(&notified_clone);
             Box::pin(async move {
                 n.fetch_add(1, Ordering::SeqCst);
@@ -656,7 +692,7 @@ mod tests {
             let ctx_clone = Arc::clone(&ctx_clone);
             Box::pin(async move {
                 *ctx_clone.lock().await = Some(ctx);
-                Ok("done".to_string())
+                Ok(JobResult { session_id: "test-session".into(), summary: "done".into() })
             })
         });
 
@@ -674,5 +710,111 @@ mod tests {
         assert_eq!(ctx.prompt, "hello world");
         assert_eq!(ctx.session_mode, SessionMode::Main);
         assert_eq!(ctx.job_name, "ctx-job");
+    }
+
+    #[tokio::test]
+    async fn test_notification_receives_session_id() {
+        let store = setup().await;
+
+        let schedule = Schedule::Interval { every_ms: 60000 };
+        store.add_job("session-notify", "test", &schedule, false, None).await.unwrap();
+
+        let past = Utc::now().timestamp() - 10;
+        let jobs = store.list_jobs().await.unwrap();
+        store.update_next_run(&jobs[0].id, Some(past)).await.unwrap();
+
+        let received = Arc::new(tokio::sync::Mutex::new(None::<(String, String, String, bool)>));
+        let received_clone = Arc::clone(&received);
+        let notifier: crate::NotificationSender = Arc::new(move |name, session_id, result, success| {
+            let r = Arc::clone(&received_clone);
+            Box::pin(async move {
+                *r.lock().await = Some((name, session_id, result, success));
+            })
+        });
+
+        // Executor returns a specific session_id
+        let executor: JobExecutor = Arc::new(|_ctx| {
+            Box::pin(async {
+                Ok(JobResult {
+                    session_id: "cron-session-42".into(),
+                    summary: "all good".into(),
+                })
+            })
+        });
+
+        let scheduler = CronScheduler::new(Arc::clone(&store), executor, 60, None)
+            .with_notifier(notifier);
+
+        scheduler.tick().await;
+
+        let r = received.lock().await;
+        let (name, session_id, result, success) = r.as_ref().expect("Notifier should have been called");
+        assert_eq!(name, "session-notify");
+        assert_eq!(session_id, "cron-session-42");
+        assert_eq!(result, "all good");
+        assert!(*success);
+    }
+
+    #[tokio::test]
+    async fn test_notification_failure_has_empty_session_id() {
+        let store = setup().await;
+
+        let schedule = Schedule::Interval { every_ms: 60000 };
+        store.add_job("fail-notify", "test", &schedule, false, None).await.unwrap();
+
+        let past = Utc::now().timestamp() - 10;
+        let jobs = store.list_jobs().await.unwrap();
+        store.update_next_run(&jobs[0].id, Some(past)).await.unwrap();
+
+        let received = Arc::new(tokio::sync::Mutex::new(None::<(String, String, bool)>));
+        let received_clone = Arc::clone(&received);
+        let notifier: crate::NotificationSender = Arc::new(move |_name, session_id, _result, success| {
+            let r = Arc::clone(&received_clone);
+            Box::pin(async move {
+                *r.lock().await = Some((session_id, _result, success));
+            })
+        });
+
+        let scheduler = CronScheduler::new(Arc::clone(&store), failing_executor(), 60, None)
+            .with_notifier(notifier);
+
+        scheduler.tick().await;
+
+        let r = received.lock().await;
+        let (session_id, result, success) = r.as_ref().expect("Notifier should have been called on failure");
+        assert!(session_id.is_empty(), "Failed jobs should have empty session_id");
+        assert_eq!(result, "connection refused");
+        assert!(!success);
+    }
+
+    #[tokio::test]
+    async fn test_notification_on_retry_success() {
+        let store = setup().await;
+
+        let schedule = Schedule::Interval { every_ms: 60000 };
+        let id = store.add_job("retry-notify", "test", &schedule, false, None).await.unwrap();
+
+        // Schedule a retry in the past
+        let past = Utc::now().timestamp() - 10;
+        store.schedule_retry(&id, past, "old error").await.unwrap();
+
+        let received = Arc::new(tokio::sync::Mutex::new(None::<(String, String, bool)>));
+        let received_clone = Arc::clone(&received);
+        let notifier: crate::NotificationSender = Arc::new(move |_name, session_id, _result, success| {
+            let r = Arc::clone(&received_clone);
+            Box::pin(async move {
+                *r.lock().await = Some((session_id, _result, success));
+            })
+        });
+
+        let scheduler = CronScheduler::new(Arc::clone(&store), success_executor(), 60, None)
+            .with_notifier(notifier);
+
+        scheduler.tick().await;
+
+        let r = received.lock().await;
+        let (session_id, _, success) = r.as_ref().expect("Notifier should fire on retry success");
+        assert_eq!(session_id, "test-session");
+        assert!(*success);
     }
 }

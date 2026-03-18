@@ -20,6 +20,30 @@ use tracing::{info, warn, debug};
 use starpod_agent::StarpodAgent;
 use starpod_core::{StarpodConfig, ResolvedPaths, reload_agent_config};
 
+/// Event broadcast to connected WebSocket clients via a `tokio::sync::broadcast` channel.
+///
+/// When a cron job or heartbeat completes, the gateway pushes a `CronComplete` event
+/// to all connected WS clients. Each client forwards it as a `ServerMessage::Notification`
+/// so the web UI can show a toast and update the session list in real time.
+///
+/// The broadcast channel is created in [`serve_with_agent`] and stored in [`AppState`].
+/// The composed notifier writes to the channel before forwarding to the Telegram notifier.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "type")]
+pub enum GatewayEvent {
+    /// A cron job or heartbeat completed (success or failure).
+    ///
+    /// - `session_id` is empty when the job failed before creating a session.
+    /// - `result_preview` is truncated to 500 characters by the executor.
+    #[serde(rename = "cron_complete")]
+    CronComplete {
+        job_name: String,
+        session_id: String,
+        result_preview: String,
+        success: bool,
+    },
+}
+
 /// Shared application state.
 ///
 /// Config is wrapped in `RwLock` for hot reload support.
@@ -28,6 +52,8 @@ pub struct AppState {
     pub api_key: Option<String>,
     pub config: RwLock<StarpodConfig>,
     pub paths: ResolvedPaths,
+    /// Broadcast channel for pushing events to connected WebSocket clients.
+    pub events_tx: tokio::sync::broadcast::Sender<GatewayEvent>,
 }
 
 /// Embedded web UI assets (built by Vite into static/dist/).
@@ -155,8 +181,33 @@ pub async fn serve_with_agent(
     notifier: Option<starpod_cron::NotificationSender>,
     paths: ResolvedPaths,
 ) -> starpod_core::Result<()> {
+    // Create broadcast channel for WS event push
+    let (events_tx, _) = tokio::sync::broadcast::channel::<GatewayEvent>(64);
+
+    // Compose notifier: broadcast to WS clients + forward to original (Telegram) notifier
+    let ws_tx = events_tx.clone();
+    let composed_notifier: Option<starpod_cron::NotificationSender> = {
+        Some(Arc::new(move |job_name: String, session_id: String, result_text: String, success: bool| {
+            let notifier = notifier.clone();
+            let ws_tx = ws_tx.clone();
+            Box::pin(async move {
+                // Broadcast to connected WS clients
+                let _ = ws_tx.send(GatewayEvent::CronComplete {
+                    job_name: job_name.clone(),
+                    session_id: session_id.clone(),
+                    result_preview: result_text.clone(),
+                    success,
+                });
+                // Forward to original notifier (Telegram) if present
+                if let Some(ref n) = notifier {
+                    (n)(job_name, session_id, result_text, success).await;
+                }
+            })
+        }))
+    };
+
     // Start the cron scheduler in the background
-    let _scheduler_handle = agent.start_scheduler(notifier);
+    let _scheduler_handle = agent.start_scheduler(composed_notifier);
     info!("Cron scheduler started");
 
     // Run lifecycle prompts (BOOTSTRAP.md on first init, BOOT.md on every start)
@@ -169,7 +220,8 @@ pub async fn serve_with_agent(
         agent,
         api_key,
         config: RwLock::new(config.clone()),
-        paths: paths,
+        paths,
+        events_tx,
     });
 
     // Start config file watcher in background
@@ -384,5 +436,54 @@ mod tests {
         let head_pos = result.find("</head>").unwrap();
         let script_pos = result.find("<script>window.__STARPOD__=").unwrap();
         assert!(script_pos < head_pos);
+    }
+
+    #[test]
+    fn gateway_event_cron_complete_serializes_correctly() {
+        let event = GatewayEvent::CronComplete {
+            job_name: "daily-digest".into(),
+            session_id: "sess-xyz".into(),
+            result_preview: "Digest sent".into(),
+            success: true,
+        };
+        let json: serde_json::Value = serde_json::from_str(
+            &serde_json::to_string(&event).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(json["type"], "cron_complete");
+        assert_eq!(json["job_name"], "daily-digest");
+        assert_eq!(json["session_id"], "sess-xyz");
+        assert_eq!(json["result_preview"], "Digest sent");
+        assert_eq!(json["success"], true);
+    }
+
+    #[test]
+    fn gateway_event_is_clone_and_send() {
+        let event = GatewayEvent::CronComplete {
+            job_name: "test".into(),
+            session_id: "s".into(),
+            result_preview: "ok".into(),
+            success: true,
+        };
+        // Clone works (required by broadcast channel)
+        let _cloned = event.clone();
+        // Send is required for broadcast — this compiles = it's Send
+        fn assert_send<T: Send>(_t: &T) {}
+        assert_send(&event);
+    }
+
+    #[test]
+    fn broadcast_channel_creation() {
+        // Verify broadcast channel can be created with GatewayEvent
+        let (tx, _rx) = tokio::sync::broadcast::channel::<GatewayEvent>(64);
+        let event = GatewayEvent::CronComplete {
+            job_name: "test".into(),
+            session_id: "s1".into(),
+            result_preview: "result".into(),
+            success: true,
+        };
+        // Should not panic — no subscribers is fine
+        let _ = tx.send(event);
     }
 }

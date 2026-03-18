@@ -138,6 +138,33 @@ Emitted on errors:
 }
 ```
 
+#### `notification`
+
+Pushed to **all connected clients** when a cron job or heartbeat completes. This is not part of a chat stream — it arrives independently at any time.
+
+```json
+{
+  "type": "notification",
+  "job_name": "daily-summary",
+  "session_id": "550e8400-e29b-41d4-a716-446655440000",
+  "result_preview": "No critical errors found today.",
+  "success": true
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `job_name` | string | Name of the cron job that completed |
+| `session_id` | string | Session created by the job (empty on failure) |
+| `result_preview` | string | Result summary (truncated to 500 chars) |
+| `success` | boolean | Whether the job succeeded |
+
+The web UI uses this to show a toast notification and refresh the session sidebar. If you're building a custom client, you can use this to trigger alerts or update a dashboard.
+
+::: tip
+Notifications can arrive during an active chat stream. Handle them independently of the `stream_start` → `stream_end` flow.
+:::
+
 ## Event Sequence
 
 A typical exchange looks like:
