@@ -105,10 +105,21 @@ pub fn detect_mode(agent_name: Option<&str>) -> crate::Result<Mode> {
 
 /// Like `detect_mode` but starting from a given directory instead of CWD.
 pub fn detect_mode_from(agent_name: Option<&str>, start_dir: &Path) -> crate::Result<Mode> {
-    // Check single-agent mode first: .starpod/agent.toml in start_dir
-    let starpod_dir = start_dir.join(".starpod");
-    if starpod_dir.join("agent.toml").is_file() {
-        return Ok(Mode::SingleAgent { starpod_dir });
+    // Check single-agent mode: walk up looking for .starpod/agent.toml
+    {
+        let mut dir = start_dir.to_path_buf();
+        loop {
+            let starpod_dir = dir.join(".starpod");
+            if starpod_dir.join("agent.toml").is_file() {
+                return Ok(Mode::SingleAgent { starpod_dir });
+            }
+            if !dir.pop() {
+                break;
+            }
+            if dir == Path::new("/") || dir == Path::new("") {
+                break;
+            }
+        }
     }
 
     // Check instance mode: walk up looking for `.instances/` parent with `starpod.toml` sibling
@@ -141,6 +152,7 @@ pub fn detect_mode_from(agent_name: Option<&str>, start_dir: &Path) -> crate::Re
     }
 
     // Also check old-style .starpod/ for helpful error message
+    let starpod_dir = start_dir.join(".starpod");
     if starpod_dir.is_dir() {
         return Err(StarpodError::Config(
             "Found .starpod/ but no agent.toml inside. \
@@ -1147,6 +1159,60 @@ max_turns = 30
 
         let err = detect_mode_from(None, tmp.path()).unwrap_err();
         assert!(err.to_string().contains("no agent.toml"));
+    }
+
+    #[test]
+    fn detect_single_agent_walks_up_directories() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // .starpod/agent.toml at root
+        let starpod_dir = root.join(".starpod");
+        std::fs::create_dir_all(&starpod_dir).unwrap();
+        std::fs::write(starpod_dir.join("agent.toml"), "").unwrap();
+
+        // CWD is a subdirectory
+        let subdir = root.join("some").join("deep").join("subdir");
+        std::fs::create_dir_all(&subdir).unwrap();
+
+        let mode = detect_mode_from(None, &subdir).unwrap();
+        match mode {
+            Mode::SingleAgent { starpod_dir: dir } => {
+                assert_eq!(dir, starpod_dir);
+            }
+            _ => panic!("Expected SingleAgent mode from subdirectory, got {:?}", mode),
+        }
+    }
+
+    #[test]
+    fn detect_single_agent_walk_up_finds_nearest() {
+        // If there are nested .starpod/ dirs (unusual but possible),
+        // walk-up finds the nearest ancestor with .starpod/agent.toml
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Outer .starpod/
+        let outer = root.join(".starpod");
+        std::fs::create_dir_all(&outer).unwrap();
+        std::fs::write(outer.join("agent.toml"), "").unwrap();
+
+        // Inner dir with its own .starpod/
+        let inner_root = root.join("inner");
+        let inner_starpod = inner_root.join(".starpod");
+        std::fs::create_dir_all(&inner_starpod).unwrap();
+        std::fs::write(inner_starpod.join("agent.toml"), "").unwrap();
+
+        // CWD inside inner — should find inner, not outer
+        let subdir = inner_root.join("data");
+        std::fs::create_dir_all(&subdir).unwrap();
+
+        let mode = detect_mode_from(None, &subdir).unwrap();
+        match mode {
+            Mode::SingleAgent { starpod_dir: dir } => {
+                assert_eq!(dir, inner_starpod);
+            }
+            _ => panic!("Expected SingleAgent for nearest .starpod/"),
+        }
     }
 
     #[test]

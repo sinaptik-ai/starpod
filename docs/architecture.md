@@ -25,7 +25,7 @@ Starpod separates **blueprints** (git-tracked agent definitions) from **instance
 - **Blueprint** (`agents/<name>/`) — config, personality, secrets templates. Committed to git.
 - **Instance** (`.instances/<name>/`) — databases, memory, user data, agent-created files. Gitignored.
 
-`starpod dev <agent>` copies the blueprint into an instance via `apply_blueprint()`, then serves it.
+`starpod dev <agent>` copies the blueprint into an instance via `apply_blueprint()`, then serves it. For standalone deployments, `starpod build --agent <path>` creates a self-contained `.starpod/` via `build_standalone()` without requiring a workspace.
 
 ## Dependency Graph
 
@@ -170,6 +170,8 @@ workspace/
 ```
 
 Starpod auto-detects the mode by walking up from the current directory:
-- `.starpod/agent.toml` found → **SingleAgent** mode
+- `.starpod/agent.toml` found (in CWD or any parent) → **SingleAgent** mode
 - Inside `.instances/<name>/` with `starpod.toml` sibling → **Instance** mode
 - `starpod.toml` found → **Workspace** mode
+
+This means `starpod serve`, `starpod chat`, etc. work from any subdirectory — they walk up to find the nearest `.starpod/`.

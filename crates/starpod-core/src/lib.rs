@@ -10,7 +10,7 @@ pub use config::{
     ProviderConfig, ProvidersConfig, ReasoningEffort, TelegramChannelConfig,
 };
 pub use error::{StarpodError, Result};
-pub use instance::{EnvSource, apply_blueprint};
+pub use instance::{EnvSource, apply_blueprint, build_standalone};
 pub use types::{Attachment, ChatMessage, ChatResponse, ChatUsage, MAX_ATTACHMENT_SIZE};
 pub use workspace::{
     AgentConfig, Mode, ResolvedPaths, UserContext, WorkspaceConfig,

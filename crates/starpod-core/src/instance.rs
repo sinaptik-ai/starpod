@@ -205,6 +205,137 @@ pub fn apply_blueprint(
     Ok(())
 }
 
+/// Build a standalone `.starpod/` from an agent blueprint directory.
+///
+/// Unlike [`apply_blueprint`] which operates within a workspace,
+/// this function takes explicit paths to all inputs and creates a
+/// self-contained `.starpod/` at `output_dir/.starpod/`.
+///
+/// # Arguments
+///
+/// - `blueprint_dir`: path to agent blueprint folder (must contain `agent.toml`)
+/// - `output_dir`: where to create the `.starpod/` directory
+/// - `skills_dir`: optional path to skills folder to include
+/// - `env_file`: optional path to `.env` file to include
+pub fn build_standalone(
+    blueprint_dir: &Path,
+    output_dir: &Path,
+    skills_dir: Option<&Path>,
+    env_file: Option<&Path>,
+) -> crate::Result<()> {
+    let starpod_dir = output_dir.join(".starpod");
+
+    // Validate blueprint has agent.toml
+    let src_toml = blueprint_dir.join("agent.toml");
+    if !src_toml.is_file() {
+        return Err(StarpodError::Config(format!(
+            "Blueprint directory {} does not contain agent.toml",
+            blueprint_dir.display()
+        )));
+    }
+
+    // 1. Create directory structure
+    std::fs::create_dir_all(&starpod_dir)
+        .map_err(|e| StarpodError::Config(format!(
+            "Failed to create .starpod/ in {}: {}", output_dir.display(), e
+        )))?;
+    std::fs::create_dir_all(starpod_dir.join("db"))
+        .map_err(StarpodError::Io)?;
+    std::fs::create_dir_all(starpod_dir.join("users"))
+        .map_err(StarpodError::Io)?;
+
+    // Seed lifecycle files from blueprint
+    for name in &["HEARTBEAT.md", "BOOT.md", "BOOTSTRAP.md"] {
+        let src = blueprint_dir.join(name);
+        let dst = starpod_dir.join(name);
+        if src.is_file() {
+            std::fs::copy(&src, &dst).map_err(StarpodError::Io)?;
+        } else if !dst.exists() {
+            std::fs::write(&dst, "").map_err(StarpodError::Io)?;
+        }
+    }
+
+    // 2. Copy agent.toml (always refresh)
+    std::fs::copy(&src_toml, starpod_dir.join("agent.toml"))
+        .map_err(|e| StarpodError::Config(format!(
+            "Failed to copy agent.toml: {}", e
+        )))?;
+    debug!("Copied agent.toml from blueprint");
+
+    // 3. Copy SOUL.md (always refresh)
+    let src_soul = blueprint_dir.join("SOUL.md");
+    if src_soul.is_file() {
+        std::fs::copy(&src_soul, starpod_dir.join("SOUL.md"))
+            .map_err(|e| StarpodError::Config(format!(
+                "Failed to copy SOUL.md: {}", e
+            )))?;
+        debug!("Copied SOUL.md from blueprint");
+    }
+
+    // 4. Copy .env file from explicit path
+    if let Some(env_src) = env_file {
+        if env_src.is_file() {
+            std::fs::copy(env_src, starpod_dir.join(".env"))
+                .map_err(|e| StarpodError::Config(format!(
+                    "Failed to copy .env from {}: {}", env_src.display(), e
+                )))?;
+            debug!(source = %env_src.display(), "Copied .env");
+        } else {
+            return Err(StarpodError::Config(format!(
+                "Env file not found: {}", env_src.display()
+            )));
+        }
+    }
+
+    // 5. Sync files/ → output root (excluding .starpod/)
+    let files_dir = blueprint_dir.join("files");
+    if files_dir.is_dir() {
+        sync_files(&files_dir, output_dir)?;
+        debug!("Synced template files from blueprint");
+    }
+
+    // 6. Copy skills if provided
+    let instance_skills = starpod_dir.join("skills");
+    std::fs::create_dir_all(&instance_skills).map_err(StarpodError::Io)?;
+    if let Some(skills_src) = skills_dir {
+        if skills_src.is_dir() {
+            sync_skills(skills_src, &instance_skills)?;
+            debug!("Synced skills to instance");
+        }
+    }
+
+    // 7. Create default admin user if not exists
+    let admin_dir = starpod_dir.join("users").join("admin");
+    if !admin_dir.exists() {
+        std::fs::create_dir_all(&admin_dir)
+            .map_err(StarpodError::Io)?;
+        std::fs::create_dir_all(admin_dir.join("memory"))
+            .map_err(StarpodError::Io)?;
+
+        if !admin_dir.join("USER.md").exists() {
+            std::fs::write(
+                admin_dir.join("USER.md"),
+                DEFAULT_USER,
+            ).map_err(StarpodError::Io)?;
+        }
+        if !admin_dir.join("MEMORY.md").exists() {
+            std::fs::write(
+                admin_dir.join("MEMORY.md"),
+                "# Memory Index\n\nImportant facts and links to memory files.\n",
+            ).map_err(StarpodError::Io)?;
+        }
+        info!("Created default admin user directory");
+    }
+
+    info!(
+        blueprint = %blueprint_dir.display(),
+        output = %output_dir.display(),
+        "Standalone build complete"
+    );
+
+    Ok(())
+}
+
 /// Copy skill directories from workspace `skills/` to instance `.starpod/skills/`.
 ///
 /// Each skill is a directory containing `SKILL.md` and optional resource subdirs.
@@ -551,5 +682,189 @@ mod tests {
 
         // Instance skills dir should still be created (empty, ready for agent to create skills)
         assert!(instance.join(".starpod").join("skills").is_dir());
+    }
+
+    // ── build_standalone tests ──────────────────────────────────────────
+
+    #[test]
+    fn build_standalone_creates_structure() {
+        let tmp = TempDir::new().unwrap();
+        let blueprint = tmp.path().join("my-agent");
+        std::fs::create_dir_all(&blueprint).unwrap();
+        std::fs::write(
+            blueprint.join("agent.toml"),
+            "agent_name = \"TestBot\"\nmodel = \"claude-sonnet-4-6\"\n",
+        ).unwrap();
+        std::fs::write(
+            blueprint.join("SOUL.md"),
+            "# Soul\n\nYou are TestBot.\n",
+        ).unwrap();
+
+        let output = tmp.path().join("deploy");
+        std::fs::create_dir_all(&output).unwrap();
+
+        build_standalone(&blueprint, &output, None, None).unwrap();
+
+        let sp = output.join(".starpod");
+        assert!(sp.join("agent.toml").is_file());
+        assert!(sp.join("SOUL.md").is_file());
+        assert!(sp.join("db").is_dir());
+        assert!(sp.join("skills").is_dir());
+        assert!(sp.join("HEARTBEAT.md").exists());
+        assert!(sp.join("BOOT.md").exists());
+        assert!(sp.join("BOOTSTRAP.md").exists());
+        assert!(sp.join("users").join("admin").is_dir());
+        assert!(sp.join("users").join("admin").join("USER.md").is_file());
+        assert!(sp.join("users").join("admin").join("MEMORY.md").is_file());
+        assert!(sp.join("users").join("admin").join("memory").is_dir());
+    }
+
+    #[test]
+    fn build_standalone_fails_without_agent_toml() {
+        let tmp = TempDir::new().unwrap();
+        let blueprint = tmp.path().join("bad-agent");
+        std::fs::create_dir_all(&blueprint).unwrap();
+        // No agent.toml
+
+        let output = tmp.path().join("deploy");
+        std::fs::create_dir_all(&output).unwrap();
+
+        let err = build_standalone(&blueprint, &output, None, None).unwrap_err();
+        assert!(err.to_string().contains("agent.toml"));
+    }
+
+    #[test]
+    fn build_standalone_copies_env_file() {
+        let tmp = TempDir::new().unwrap();
+        let blueprint = tmp.path().join("my-agent");
+        std::fs::create_dir_all(&blueprint).unwrap();
+        std::fs::write(blueprint.join("agent.toml"), "").unwrap();
+
+        let env_file = tmp.path().join("my.env");
+        std::fs::write(&env_file, "SECRET=hunter2\n").unwrap();
+
+        let output = tmp.path().join("deploy");
+        std::fs::create_dir_all(&output).unwrap();
+
+        build_standalone(&blueprint, &output, None, Some(&env_file)).unwrap();
+
+        let content = std::fs::read_to_string(output.join(".starpod").join(".env")).unwrap();
+        assert!(content.contains("SECRET=hunter2"));
+    }
+
+    #[test]
+    fn build_standalone_fails_with_missing_env_file() {
+        let tmp = TempDir::new().unwrap();
+        let blueprint = tmp.path().join("my-agent");
+        std::fs::create_dir_all(&blueprint).unwrap();
+        std::fs::write(blueprint.join("agent.toml"), "").unwrap();
+
+        let output = tmp.path().join("deploy");
+        std::fs::create_dir_all(&output).unwrap();
+
+        let err = build_standalone(
+            &blueprint,
+            &output,
+            None,
+            Some(Path::new("/nonexistent/.env")),
+        ).unwrap_err();
+        assert!(err.to_string().contains("Env file not found"));
+    }
+
+    #[test]
+    fn build_standalone_copies_skills() {
+        let tmp = TempDir::new().unwrap();
+        let blueprint = tmp.path().join("my-agent");
+        std::fs::create_dir_all(&blueprint).unwrap();
+        std::fs::write(blueprint.join("agent.toml"), "").unwrap();
+
+        let skills = tmp.path().join("skills");
+        std::fs::create_dir_all(skills.join("code-review")).unwrap();
+        std::fs::write(
+            skills.join("code-review").join("SKILL.md"),
+            "---\nname: code-review\n---\nReview code.",
+        ).unwrap();
+
+        let output = tmp.path().join("deploy");
+        std::fs::create_dir_all(&output).unwrap();
+
+        build_standalone(&blueprint, &output, Some(&skills), None).unwrap();
+
+        assert!(output.join(".starpod").join("skills").join("code-review").join("SKILL.md").is_file());
+    }
+
+    #[test]
+    fn build_standalone_syncs_template_files() {
+        let tmp = TempDir::new().unwrap();
+        let blueprint = tmp.path().join("my-agent");
+        std::fs::create_dir_all(&blueprint).unwrap();
+        std::fs::write(blueprint.join("agent.toml"), "").unwrap();
+
+        let files = blueprint.join("files");
+        std::fs::create_dir_all(files.join("templates")).unwrap();
+        std::fs::write(files.join("templates").join("report.md"), "# Report\n").unwrap();
+
+        let output = tmp.path().join("deploy");
+        std::fs::create_dir_all(&output).unwrap();
+
+        build_standalone(&blueprint, &output, None, None).unwrap();
+
+        assert!(output.join("templates").join("report.md").is_file());
+    }
+
+    #[test]
+    fn build_standalone_copies_lifecycle_files_from_blueprint() {
+        let tmp = TempDir::new().unwrap();
+        let blueprint = tmp.path().join("my-agent");
+        std::fs::create_dir_all(&blueprint).unwrap();
+        std::fs::write(blueprint.join("agent.toml"), "").unwrap();
+        std::fs::write(blueprint.join("BOOT.md"), "Run migrations on startup.").unwrap();
+
+        let output = tmp.path().join("deploy");
+        std::fs::create_dir_all(&output).unwrap();
+
+        build_standalone(&blueprint, &output, None, None).unwrap();
+
+        let content = std::fs::read_to_string(output.join(".starpod").join("BOOT.md")).unwrap();
+        assert!(content.contains("Run migrations on startup"));
+    }
+
+    #[test]
+    fn build_standalone_preserves_existing_user_data() {
+        let tmp = TempDir::new().unwrap();
+        let blueprint = tmp.path().join("my-agent");
+        std::fs::create_dir_all(&blueprint).unwrap();
+        std::fs::write(blueprint.join("agent.toml"), "").unwrap();
+
+        let output = tmp.path().join("deploy");
+        std::fs::create_dir_all(&output).unwrap();
+
+        // First build
+        build_standalone(&blueprint, &output, None, None).unwrap();
+
+        // Modify admin USER.md
+        let admin_user = output.join(".starpod").join("users").join("admin").join("USER.md");
+        std::fs::write(&admin_user, "# Custom user data\n").unwrap();
+
+        // Second build — should NOT overwrite user data
+        build_standalone(&blueprint, &output, None, None).unwrap();
+
+        let content = std::fs::read_to_string(&admin_user).unwrap();
+        assert!(content.contains("Custom user data"), "User data should be preserved on re-build");
+    }
+
+    #[test]
+    fn build_standalone_no_env_when_not_provided() {
+        let tmp = TempDir::new().unwrap();
+        let blueprint = tmp.path().join("my-agent");
+        std::fs::create_dir_all(&blueprint).unwrap();
+        std::fs::write(blueprint.join("agent.toml"), "").unwrap();
+
+        let output = tmp.path().join("deploy");
+        std::fs::create_dir_all(&output).unwrap();
+
+        build_standalone(&blueprint, &output, None, None).unwrap();
+
+        assert!(!output.join(".starpod").join(".env").exists());
     }
 }

@@ -99,8 +99,14 @@ starpod dev backend-bot
 starpod dev journal --port 3001
 ```
 
-For production (single-agent mode without workspace):
+## Production Deployment
+
+Build a standalone `.starpod/` from a blueprint (no workspace required):
 
 ```bash
+starpod build --agent agents/my-agent --output /srv/my-agent --env .env
+cd /srv/my-agent
 starpod serve
 ```
+
+`starpod serve` walks up from the current directory to find the nearest `.starpod/agent.toml`, so it works from any subdirectory of the deployment target.

@@ -94,3 +94,119 @@ fn agent_new_agent_name_flag_overrides() {
         "SOUL.md should use the --agent-name value, got:\n{soul}"
     );
 }
+
+// ── build command ────────────────────────────────────────────────────────
+
+#[test]
+fn build_creates_starpod_directory() {
+    let tmp = TempDir::new().unwrap();
+
+    // Create a minimal agent blueprint
+    let agent_dir = tmp.path().join("my-agent");
+    fs::create_dir_all(&agent_dir).unwrap();
+    fs::write(
+        agent_dir.join("agent.toml"),
+        "agent_name = \"TestBot\"\nmodel = \"claude-sonnet-4-6\"\n",
+    ).unwrap();
+    fs::write(
+        agent_dir.join("SOUL.md"),
+        "# Soul\n\nYou are TestBot.\n",
+    ).unwrap();
+
+    let output_dir = tmp.path().join("deploy");
+    fs::create_dir_all(&output_dir).unwrap();
+
+    starpod()
+        .args([
+            "build",
+            "--agent", agent_dir.to_str().unwrap(),
+            "--output", output_dir.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let sp = output_dir.join(".starpod");
+    assert!(sp.join("agent.toml").is_file(), ".starpod/agent.toml should exist");
+    assert!(sp.join("SOUL.md").is_file(), ".starpod/SOUL.md should exist");
+    assert!(sp.join("db").is_dir(), ".starpod/db/ should exist");
+    assert!(sp.join("users/admin/USER.md").is_file(), "admin user should be created");
+}
+
+#[test]
+fn build_fails_without_agent_toml() {
+    let tmp = TempDir::new().unwrap();
+
+    let agent_dir = tmp.path().join("bad-agent");
+    fs::create_dir_all(&agent_dir).unwrap();
+    // No agent.toml
+
+    starpod()
+        .args([
+            "build",
+            "--agent", agent_dir.to_str().unwrap(),
+        ])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn build_with_env_file() {
+    let tmp = TempDir::new().unwrap();
+
+    let agent_dir = tmp.path().join("my-agent");
+    fs::create_dir_all(&agent_dir).unwrap();
+    fs::write(agent_dir.join("agent.toml"), "agent_name = \"Bot\"\n").unwrap();
+
+    let env_file = tmp.path().join("prod.env");
+    fs::write(&env_file, "API_KEY=secret123\n").unwrap();
+
+    let output_dir = tmp.path().join("deploy");
+    fs::create_dir_all(&output_dir).unwrap();
+
+    starpod()
+        .args([
+            "build",
+            "--agent", agent_dir.to_str().unwrap(),
+            "--output", output_dir.to_str().unwrap(),
+            "--env", env_file.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let env_content = fs::read_to_string(output_dir.join(".starpod/.env")).unwrap();
+    assert!(env_content.contains("API_KEY=secret123"));
+}
+
+#[test]
+fn build_with_skills() {
+    let tmp = TempDir::new().unwrap();
+
+    let agent_dir = tmp.path().join("my-agent");
+    fs::create_dir_all(&agent_dir).unwrap();
+    fs::write(agent_dir.join("agent.toml"), "agent_name = \"Bot\"\n").unwrap();
+
+    let skills_dir = tmp.path().join("skills");
+    fs::create_dir_all(skills_dir.join("greet")).unwrap();
+    fs::write(
+        skills_dir.join("greet").join("SKILL.md"),
+        "---\nname: greet\ndescription: Greet users.\n---\nSay hello.",
+    ).unwrap();
+
+    let output_dir = tmp.path().join("deploy");
+    fs::create_dir_all(&output_dir).unwrap();
+
+    starpod()
+        .args([
+            "build",
+            "--agent", agent_dir.to_str().unwrap(),
+            "--skills", skills_dir.to_str().unwrap(),
+            "--output", output_dir.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert!(
+        output_dir.join(".starpod/skills/greet/SKILL.md").is_file(),
+        "Skills should be copied"
+    );
+}
