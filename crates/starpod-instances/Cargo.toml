@@ -6,7 +6,7 @@ description = "Remote instance management client for Starpod"
 
 [dependencies]
 starpod-core = { path = "../starpod-core" }
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }

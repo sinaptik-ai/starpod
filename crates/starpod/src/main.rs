@@ -14,7 +14,7 @@ use starpod_core::{
     ChatMessage, StarpodConfig, ResolvedPaths,
     detect_mode, load_agent_config,
 };
-use starpod_instances::InstanceClient;
+use starpod_instances::{DeployClient, DeployOpts, InstanceClient, parse_env_file};
 
 #[derive(Parser)]
 #[command(name = "starpod", about = "Starpod — personal AI assistant platform", version)]
@@ -130,8 +130,20 @@ enum Commands {
 
     /// Deploy stub (future).
     Deploy {
-        /// Agent name.
+        /// Agent name from agents/ directory.
         agent_name: String,
+        /// Cloud zone for the instance.
+        #[arg(long)]
+        zone: Option<String>,
+        /// Machine type for the instance.
+        #[arg(long)]
+        machine_type: Option<String>,
+        /// Skip instance creation (upload files & secrets only).
+        #[arg(long)]
+        no_instance: bool,
+        /// Path to .env file with secrets (defaults to .env in workspace root).
+        #[arg(long)]
+        env_file: Option<String>,
     },
 }
 
@@ -373,6 +385,19 @@ fn tool_input_preview(name: &str, input: &serde_json::Value) -> String {
     } else {
         let s = serde_json::to_string(input).unwrap_or_default();
         truncate(&s, 80)
+    }
+}
+
+/// Walk up from `start` to find the nearest directory containing `starpod.toml`.
+fn find_workspace_root(start: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut dir = start.to_path_buf();
+    loop {
+        if dir.join("starpod.toml").is_file() {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
     }
 }
 
@@ -1687,12 +1712,208 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ── Deploy stub ───────────────────────────────────────────────
-        Commands::Deploy { agent_name } => {
+        Commands::Deploy {
+            agent_name,
+            zone,
+            machine_type,
+            no_instance,
+            env_file,
+        } => {
+            // Require backend URL and API key
+            let backend_url = std::env::var("STARPOD_INSTANCE_BACKEND_URL").ok();
+            let Some(backend_url) = backend_url else {
+                eprintln!(
+                    "  {} Deploy backend not configured.",
+                    "✗".red().bold()
+                );
+                eprintln!(
+                    "  {} Set env var {}.",
+                    "→".dimmed(),
+                    "STARPOD_INSTANCE_BACKEND_URL".bright_white()
+                );
+                std::process::exit(1);
+            };
+
+            let api_key = std::env::var("STARPOD_API_KEY").ok();
+            let Some(api_key) = api_key else {
+                eprintln!(
+                    "  {} Authentication required.",
+                    "✗".red().bold()
+                );
+                eprintln!(
+                    "  {} Set env var {}.",
+                    "→".dimmed(),
+                    "STARPOD_API_KEY".bright_white()
+                );
+                std::process::exit(1);
+            };
+
+            let client = DeployClient::new(&backend_url, &api_key)?;
+
+            // Resolve workspace paths
+            let cwd = std::env::current_dir()?;
+            let workspace_root = find_workspace_root(&cwd).unwrap_or_else(|| {
+                eprintln!(
+                    "  {} Not inside a starpod workspace (no starpod.toml found).",
+                    "✗".red().bold()
+                );
+                std::process::exit(1);
+            });
+
+            let agent_dir = workspace_root.join("agents").join(&agent_name);
+            if !agent_dir.exists() {
+                eprintln!(
+                    "  {} Agent '{}' not found in agents/ directory.",
+                    "✗".red().bold(),
+                    agent_name
+                );
+                std::process::exit(1);
+            }
+
+            let skills_dir = workspace_root.join("skills");
+
+            // Collect env vars from .env file
+            let env_path = if let Some(ref p) = env_file {
+                std::path::PathBuf::from(p)
+            } else {
+                workspace_root.join(".env")
+            };
+
+            let env_vars = if env_path.exists() {
+                parse_env_file(&env_path)?
+            } else {
+                std::collections::HashMap::new()
+            };
+
             println!(
-                "  {} Deploy is not yet implemented. Agent: {}",
-                "ℹ".bright_cyan(),
-                agent_name
+                "  {} Deploying agent {}...",
+                "⟳".bright_cyan(),
+                agent_name.bright_white().bold()
             );
+            println!(
+                "  {} Agent dir:  {}",
+                "│".dimmed(),
+                agent_dir.display()
+            );
+            if skills_dir.exists() {
+                println!(
+                    "  {} Skills dir: {}",
+                    "│".dimmed(),
+                    skills_dir.display()
+                );
+            }
+            if !env_vars.is_empty() {
+                println!(
+                    "  {} Secrets:    {} keys from {}",
+                    "│".dimmed(),
+                    env_vars.len(),
+                    env_path.display()
+                );
+            }
+            println!();
+
+            let skills_path = if skills_dir.exists() {
+                Some(skills_dir.as_path())
+            } else {
+                None
+            };
+
+            // Track last printed status so we only print on change
+            let last_status = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+            let last_status_clone = last_status.clone();
+
+            let on_poll: Option<Box<dyn FnMut(&starpod_instances::deploy::InstanceResponse) + Send>> =
+                if !no_instance {
+                    Some(Box::new(move |inst| {
+                        let mut last = last_status_clone.lock().unwrap();
+                        if *last != inst.status {
+                            eprint!(
+                                "\r  {} Instance: {}                    ",
+                                "⟳".bright_cyan(),
+                                inst.status.bright_yellow()
+                            );
+                            *last = inst.status.clone();
+                        }
+                    }))
+                } else {
+                    None
+                };
+
+            let summary = client
+                .deploy(DeployOpts {
+                    agent_name: &agent_name,
+                    agent_dir: &agent_dir,
+                    skills_dir: skills_path,
+                    env_vars,
+                    create_instance: !no_instance,
+                    zone: zone.as_deref(),
+                    machine_type: machine_type.as_deref(),
+                    on_instance_poll: on_poll,
+                })
+                .await?;
+
+            // Clear the status line if we were polling
+            if !no_instance && summary.instance.is_some() {
+                eprint!("\r                                                \r");
+            }
+
+            println!(
+                "  {} Agent deployed successfully!",
+                "✓".green().bold()
+            );
+            println!(
+                "  {} Agent ID:   {}",
+                "│".dimmed(),
+                summary.agent_id.bright_white()
+            );
+            println!(
+                "  {} Files:      {}",
+                "│".dimmed(),
+                summary.files_uploaded
+            );
+            println!(
+                "  {} Secrets:    {}",
+                "│".dimmed(),
+                summary.secrets_set
+            );
+
+            if let Some(ref inst) = summary.instance {
+                println!();
+                println!(
+                    "  {} Instance is running!",
+                    "✓".green().bold()
+                );
+                println!(
+                    "  {} ID:     {}",
+                    "│".dimmed(),
+                    inst.id.bright_white()
+                );
+                println!(
+                    "  {} Status: {}",
+                    "│".dimmed(),
+                    inst.status.bright_green()
+                );
+                if let Some(ref ip) = inst.ip_address {
+                    println!(
+                        "  {} IP:     {}",
+                        "│".dimmed(),
+                        ip.bright_white().bold()
+                    );
+                }
+                if let Some(ref z) = inst.zone {
+                    println!(
+                        "  {} Zone:   {}",
+                        "│".dimmed(),
+                        z
+                    );
+                }
+            } else {
+                println!(
+                    "\n  {} No instance created (use without {} to launch one).",
+                    "ℹ".bright_cyan(),
+                    "--no-instance".bright_white()
+                );
+            }
         }
 
     }
