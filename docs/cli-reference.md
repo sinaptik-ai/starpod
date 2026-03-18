@@ -169,7 +169,12 @@ starpod sessions list --limit 20
 
 ## Skills
 
-Skills follow the [AgentSkills](https://agentskills.io) open format.
+Skills follow the [AgentSkills](https://agentskills.io) open format. All skill commands accept an optional `--agent` / `-a` flag to target a specific agent's skills in workspace mode.
+
+```bash
+starpod skill list                          # auto-detect
+starpod skill --agent my-agent list         # target specific agent
+```
 
 ### `starpod skill list`
 
@@ -189,25 +194,30 @@ starpod skill show code-review
 
 ### `starpod skill new`
 
-Create a new AgentSkills-compatible skill with YAML frontmatter.
+Generate a new AgentSkills-compatible skill using AI. The name is required; description and body are AI-generated from the name (and optional extra context).
 
 ```bash
-# With inline instructions
-starpod skill new "code-review" \
-  --description "Review code for bugs and style issues." \
-  --body "Check for error handling, edge cases, and security."
+# Name only — AI generates description and instructions
+starpod skill new code-review
 
-# Instructions from a file
-starpod skill new "code-review" \
-  --description "Review code for bugs and style issues." \
-  --file code-review-instructions.md
+# With explicit description
+starpod skill new code-review \
+  --description "Review code for bugs, security issues, and style."
+
+# With extra context for the AI generator
+starpod skill new code-review \
+  --prompt "Focus on OWASP top 10 and always check error handling"
+
+# Both
+starpod skill new code-review \
+  --description "Review code for bugs and security." \
+  --prompt "Focus on OWASP top 10, always check error handling"
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--description`, `-d` | What the skill does and when to use it (required) |
-| `--body`, `-b` | Inline markdown instructions |
-| `--file`, `-f` | Read instructions from a file |
+| `--description`, `-d` | What the skill does and when to use it (overrides AI) |
+| `--prompt`, `-p` | Extra instructions or context for the AI generator |
 
 ### `starpod skill delete`
 
