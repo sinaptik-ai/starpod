@@ -8,7 +8,7 @@ use serde_json::json;
 use tracing::debug;
 
 use starpod_cron::store::epoch_to_rfc3339;
-use starpod_cron::CronStore;
+use starpod_cron::{CronStore, RunStatus};
 use starpod_memory::MemoryStore;
 use starpod_skills::SkillStore;
 
@@ -532,6 +532,17 @@ pub async fn handle_custom_tool(
 
             debug!(key = %key, "EnvGet");
 
+            // Block sensitive environment variables
+            let upper = key.to_uppercase();
+            const BLOCKED: &[&str] = &["KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "AUTH"];
+            if BLOCKED.iter().any(|pat| upper.contains(pat)) {
+                return Some(ToolResult {
+                    content: format!("Access to environment variable '{}' is restricted.", key),
+                    is_error: true,
+                    raw_content: None,
+                });
+            }
+
             match std::env::var(key) {
                 Ok(value) => Some(ToolResult {
                     content: value,
@@ -1035,10 +1046,21 @@ pub async fn handle_custom_tool(
                 }
             };
 
+            // Mark the run as complete immediately — the LLM will handle the
+            // job's prompt inline within the current conversation.
+            let _ = ctx
+                .cron
+                .record_run_complete(
+                    &run_id,
+                    RunStatus::Success,
+                    Some("Manual run triggered inline by CronRun tool"),
+                )
+                .await;
+
             Some(ToolResult {
                 content: format!(
-                    "Manual run started for job '{}' (run_id: {}). The job prompt will now execute with session_mode={}.",
-                    name, &run_id[..8], job.session_mode.as_str()
+                    "Manual run recorded for job '{}'. Execute the following prompt:\n\n{}",
+                    name, job.prompt
                 ),
                 is_error: false,
                 raw_content: None,
@@ -1223,13 +1245,13 @@ mod tests {
             user_id: Some("admin".into()),
         };
 
-        std::env::set_var("STARPOD_ENVGET_TEST_KEY", "test_value_42");
+        std::env::set_var("STARPOD_ENVGET_TEST_VAR", "test_value_42");
         let result = handle_custom_tool(
             &ctx,
             "EnvGet",
-            &serde_json::json!({"key": "STARPOD_ENVGET_TEST_KEY"}),
+            &serde_json::json!({"key": "STARPOD_ENVGET_TEST_VAR"}),
         ).await;
-        std::env::remove_var("STARPOD_ENVGET_TEST_KEY");
+        std::env::remove_var("STARPOD_ENVGET_TEST_VAR");
 
         let result = result.unwrap();
         assert!(!result.is_error);
@@ -1261,6 +1283,45 @@ mod tests {
         let result = result.unwrap();
         assert!(!result.is_error); // not an error, just "not set"
         assert!(result.content.contains("not set"));
+    }
+
+    #[tokio::test]
+    async fn env_get_blocks_sensitive_vars() {
+        let tmp = TempDir::new().unwrap();
+        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("db")).await.unwrap());
+        let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
+
+        let ctx = ToolContext {
+            memory,
+            skills,
+            cron,
+            user_tz: None,
+            instance_root: tmp.path().to_path_buf(),
+            user_id: Some("admin".into()),
+        };
+
+        // All of these should be blocked
+        for key in &["ANTHROPIC_API_KEY", "STARPOD_API_KEY", "TELEGRAM_BOT_TOKEN",
+                     "DB_PASSWORD", "MY_SECRET", "AWS_CREDENTIAL", "OAUTH_AUTH_CODE"] {
+            let result = handle_custom_tool(
+                &ctx,
+                "EnvGet",
+                &serde_json::json!({"key": key}),
+            ).await.unwrap();
+            assert!(result.is_error, "EnvGet should block sensitive var: {}", key);
+            assert!(result.content.contains("restricted"));
+        }
+
+        // These should be allowed
+        for key in &["HOME", "PATH", "LANG", "TERM", "SHELL"] {
+            let result = handle_custom_tool(
+                &ctx,
+                "EnvGet",
+                &serde_json::json!({"key": key}),
+            ).await.unwrap();
+            assert!(!result.is_error, "EnvGet should allow safe var: {}", key);
+        }
     }
 
     // ── File tool handlers ──────────────────────────────────────────

@@ -710,6 +710,7 @@ async fn run_agent_loop(
                         content: json!(format!("Permission denied: {}", reason)),
                         is_error: Some(true),
                         cache_control: None,
+                        name: Some(tool_name.clone()),
                     };
 
                     // Stream denial result to frontend immediately
@@ -799,6 +800,7 @@ async fn run_agent_loop(
                     None
                 },
                 cache_control: None,
+                name: Some(tool_name.to_string()),
             };
 
             // Stream this individual result to the frontend immediately
@@ -1477,6 +1479,7 @@ mod tests {
             content: json!("result text"),
             is_error: Some(true),
             cache_control: None,
+            name: None,
         };
 
         let content = api_block_to_content_block(&block);
@@ -1508,6 +1511,7 @@ mod tests {
                 content: json!(format!("result for {}", id)),
                 is_error: None,
                 cache_control: None,
+                name: None,
             };
 
             let result_msg = Message::User(UserMessage {

@@ -703,10 +703,14 @@ fn split_message(text: &str, max_len: usize) -> Vec<String> {
             break;
         }
 
+        // Find a safe byte boundary for slicing
+        let mut safe_max = max_len;
+        while safe_max > 0 && !remaining.is_char_boundary(safe_max) { safe_max -= 1; }
+
         // Find a good split point (newline before max_len)
-        let split_at = remaining[..max_len]
+        let split_at = remaining[..safe_max]
             .rfind('\n')
-            .unwrap_or(max_len);
+            .unwrap_or(safe_max);
 
         let (chunk, rest) = remaining.split_at(split_at);
         chunks.push(chunk.to_string());
@@ -851,5 +855,33 @@ mod tests {
             markdown_to_telegram_html("this is ~~deleted~~ text"),
             "this is <s>deleted</s> text"
         );
+    }
+
+    #[test]
+    fn test_split_message_multibyte_safe() {
+        // Create a string of multi-byte chars that forces a split mid-character
+        // Each "🌟" is 4 bytes. 10 of them = 40 bytes.
+        let emoji_str = "🌟".repeat(10);
+        assert_eq!(emoji_str.len(), 40);
+
+        // Split at 6 — would fall inside the second emoji (bytes 4-7)
+        let chunks = split_message(&emoji_str, 6);
+        // Should not panic and each chunk should be valid UTF-8
+        for chunk in &chunks {
+            assert!(chunk.len() <= 6 || chunk == "🌟"); // single emoji is 4 bytes, fits
+        }
+        // Reassembled should equal original
+        let reassembled: String = chunks.join("");
+        assert_eq!(reassembled, emoji_str);
+    }
+
+    #[test]
+    fn test_split_message_ascii() {
+        let text = "Hello World";
+        let chunks = split_message(text, 5);
+        assert!(!chunks.is_empty());
+        for chunk in &chunks {
+            assert!(chunk.len() <= 5);
+        }
     }
 }
