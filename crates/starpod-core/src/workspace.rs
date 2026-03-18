@@ -3,7 +3,7 @@
 //! Starpod supports three operating modes, detected automatically:
 //!
 //! - **Workspace** (dev): `starpod.toml` in CWD or parent walk-up, multiple
-//!   agents under `agents/<name>/`, shared skills in `skills/`.
+//!   agents under `agents/<name>/`, skills in `skills/` (copied to instances).
 //!   `starpod.toml` is **scaffolding only** — it provides defaults when
 //!   creating new agents (`starpod agent new`), but is NOT read at runtime.
 //!   Each `agent.toml` is self-contained.
@@ -220,7 +220,7 @@ pub struct ResolvedPaths {
     pub agent_home: PathBuf,
     /// Database directory for SQLite DBs (agent_home/db/).
     pub db_dir: PathBuf,
-    /// Skills directory (workspace skills/ or .starpod/skills/).
+    /// Skills directory (.starpod/skills/ — instance-local).
     pub skills_dir: PathBuf,
     /// Project/workspace root.
     pub project_root: PathBuf,
@@ -275,18 +275,9 @@ impl ResolvedPaths {
                 let db_dir = agent_home.join("db");
                 let users_dir = agent_home.join("users");
                 let env_path = agent_home.join(".env");
-                // Skills: check instance-level first, fall back to workspace
-                let instance_skills = agent_home.join("skills");
-                let workspace_root = instance_root
-                    .parent() // .instances/
-                    .and_then(|p| p.parent()); // workspace root
-                let skills_dir = if instance_skills.is_dir() {
-                    instance_skills
-                } else if let Some(root) = workspace_root {
-                    root.join("skills")
-                } else {
-                    instance_skills
-                };
+                // Skills always live at instance level (.starpod/skills/).
+                // Workspace skills are copied into the instance during blueprint application.
+                let skills_dir = agent_home.join("skills");
                 // The agent's sandbox is the instance directory, not the
                 // workspace root.  project_root controls cwd, system-prompt
                 // paths, and file-tool boundaries.
@@ -918,7 +909,6 @@ mod tests {
         let instance_dir = root.join(".instances").join("aster");
         let starpod_dir = instance_dir.join(".starpod");
         std::fs::create_dir_all(&starpod_dir).unwrap();
-        std::fs::create_dir_all(root.join("skills")).unwrap();
 
         let mode = Mode::Instance {
             instance_root: instance_dir.clone(),
@@ -929,7 +919,7 @@ mod tests {
         assert_eq!(paths.agent_toml, starpod_dir.join("agent.toml"));
         assert_eq!(paths.agent_home, starpod_dir);
         assert_eq!(paths.db_dir, instance_dir.join(".starpod/db"));
-        assert_eq!(paths.skills_dir, root.join("skills"));
+        assert_eq!(paths.skills_dir, starpod_dir.join("skills"));
         assert_eq!(paths.project_root, instance_dir);
         assert_eq!(paths.instance_root, instance_dir);
         assert_eq!(paths.users_dir, instance_dir.join(".starpod/users"));

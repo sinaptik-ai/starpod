@@ -115,8 +115,8 @@ fn format_skill_md(name: &str, description: &str, body: &str) -> String {
 /// directory containing a `SKILL.md` file with YAML frontmatter
 /// (`name`, `description`) and a markdown body with instructions.
 ///
-/// In workspace mode, `skills_dir` is `<workspace>/skills/` (shared across agents).
-/// In single-agent mode, it's `.starpod/skills/`.
+/// Skills always live at `.starpod/skills/` (instance-local). In workspace mode,
+/// workspace-level skills are copied into the instance during blueprint application.
 ///
 /// # Progressive disclosure
 ///

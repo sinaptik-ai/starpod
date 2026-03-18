@@ -65,6 +65,7 @@ pub enum EnvSource {
 /// │   ├── BOOT.md              ← startup instructions (empty default)
 /// │   ├── BOOTSTRAP.md         ← one-time init (empty default)
 /// │   ├── db/                  ← SQLite databases
+/// │   ├── skills/              ← copied from workspace skills/
 /// │   └── users/
 /// │       └── admin/           ← auto-created default user
 /// │           ├── USER.md
@@ -162,6 +163,15 @@ pub fn apply_blueprint(
         debug!("Synced template files from blueprint");
     }
 
+    // 5b. Copy workspace skills/ → instance .starpod/skills/
+    let instance_skills = starpod_dir.join("skills");
+    std::fs::create_dir_all(&instance_skills).map_err(StarpodError::Io)?;
+    let workspace_skills = workspace_dir.join("skills");
+    if workspace_skills.is_dir() {
+        sync_skills(&workspace_skills, &instance_skills)?;
+        debug!("Synced workspace skills to instance");
+    }
+
     // 6. Create default admin user if not exists
     let admin_dir = starpod_dir.join("users").join("admin");
     if !admin_dir.exists() {
@@ -192,6 +202,47 @@ pub fn apply_blueprint(
         "Blueprint applied to instance"
     );
 
+    Ok(())
+}
+
+/// Copy skill directories from workspace `skills/` to instance `.starpod/skills/`.
+///
+/// Each skill is a directory containing `SKILL.md` and optional resource subdirs.
+/// Only copies skills that don't already exist in the instance (preserves agent-created skills).
+fn sync_skills(workspace_skills: &Path, instance_skills: &Path) -> crate::Result<()> {
+    let entries = std::fs::read_dir(workspace_skills).map_err(StarpodError::Io)?;
+    for entry in entries {
+        let entry = entry.map_err(StarpodError::Io)?;
+        let src_path = entry.path();
+        if !src_path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let dst_path = instance_skills.join(&name);
+        if dst_path.exists() {
+            // Don't overwrite instance-level skills (may have been modified at runtime)
+            continue;
+        }
+        // Copy entire skill directory
+        copy_dir_recursive(&src_path, &dst_path)?;
+    }
+    Ok(())
+}
+
+/// Recursively copy a directory tree.
+fn copy_dir_recursive(src: &Path, dst: &Path) -> crate::Result<()> {
+    std::fs::create_dir_all(dst).map_err(StarpodError::Io)?;
+    let entries = std::fs::read_dir(src).map_err(StarpodError::Io)?;
+    for entry in entries {
+        let entry = entry.map_err(StarpodError::Io)?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else if src_path.is_file() {
+            std::fs::copy(&src_path, &dst_path).map_err(StarpodError::Io)?;
+        }
+    }
     Ok(())
 }
 
@@ -411,5 +462,94 @@ mod tests {
 
         assert!(dst.join("good.txt").is_file());
         assert!(!dst.join(".starpod").exists());
+    }
+
+    #[test]
+    fn apply_blueprint_copies_workspace_skills() {
+        let tmp = TempDir::new().unwrap();
+        let blueprint = setup_blueprint(&tmp);
+        let instance = tmp.path().join(".instances").join("test-bot");
+
+        // Create workspace skills
+        let ws_skills = tmp.path().join("skills");
+        std::fs::create_dir_all(ws_skills.join("code-review")).unwrap();
+        std::fs::write(
+            ws_skills.join("code-review").join("SKILL.md"),
+            "---\nname: code-review\ndescription: Review code.\n---\n\nCheck for bugs.",
+        ).unwrap();
+        std::fs::create_dir_all(ws_skills.join("summarize")).unwrap();
+        std::fs::write(
+            ws_skills.join("summarize").join("SKILL.md"),
+            "---\nname: summarize\ndescription: Summarize text.\n---\n\nBe concise.",
+        ).unwrap();
+
+        apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Dev).unwrap();
+
+        let inst_skills = instance.join(".starpod").join("skills");
+        assert!(inst_skills.is_dir());
+        assert!(inst_skills.join("code-review").join("SKILL.md").is_file());
+        assert!(inst_skills.join("summarize").join("SKILL.md").is_file());
+
+        // Verify content was copied correctly
+        let content = std::fs::read_to_string(
+            inst_skills.join("code-review").join("SKILL.md")
+        ).unwrap();
+        assert!(content.contains("Check for bugs"));
+    }
+
+    #[test]
+    fn apply_blueprint_preserves_instance_skills() {
+        let tmp = TempDir::new().unwrap();
+        let blueprint = setup_blueprint(&tmp);
+        let instance = tmp.path().join(".instances").join("test-bot");
+
+        // First apply with workspace skill
+        let ws_skills = tmp.path().join("skills");
+        std::fs::create_dir_all(ws_skills.join("ws-skill")).unwrap();
+        std::fs::write(
+            ws_skills.join("ws-skill").join("SKILL.md"),
+            "---\nname: ws-skill\ndescription: From workspace.\n---\n\nOriginal.",
+        ).unwrap();
+
+        apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Dev).unwrap();
+
+        // Agent creates a skill at runtime
+        let inst_skills = instance.join(".starpod").join("skills");
+        std::fs::create_dir_all(inst_skills.join("agent-skill")).unwrap();
+        std::fs::write(
+            inst_skills.join("agent-skill").join("SKILL.md"),
+            "---\nname: agent-skill\ndescription: Created by agent.\n---\n\nRuntime skill.",
+        ).unwrap();
+
+        // Modify the workspace skill
+        std::fs::write(
+            ws_skills.join("ws-skill").join("SKILL.md"),
+            "---\nname: ws-skill\ndescription: Updated.\n---\n\nModified.",
+        ).unwrap();
+
+        // Re-apply blueprint
+        apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Dev).unwrap();
+
+        // Agent-created skill should be preserved
+        assert!(inst_skills.join("agent-skill").join("SKILL.md").is_file());
+
+        // Instance-level ws-skill should NOT be overwritten (preserve runtime state)
+        let content = std::fs::read_to_string(
+            inst_skills.join("ws-skill").join("SKILL.md")
+        ).unwrap();
+        assert!(content.contains("Original"), "Instance skill should not be overwritten on re-apply");
+    }
+
+    #[test]
+    fn apply_blueprint_creates_skills_dir_even_without_workspace_skills() {
+        let tmp = TempDir::new().unwrap();
+        let blueprint = setup_blueprint(&tmp);
+        let instance = tmp.path().join(".instances").join("test-bot");
+
+        // No workspace skills/ directory
+        apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Dev).unwrap();
+
+        // Instance skills dir should still be created (empty, ready for agent to create skills)
+        assert!(instance.join(".starpod").join("skills").is_dir());
     }
 }
