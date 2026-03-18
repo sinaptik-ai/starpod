@@ -39,7 +39,11 @@ struct Asset;
 static DOCS_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../docs/.vitepress/dist");
 
 /// Serve embedded static files, falling back to index.html for SPA routing.
-async fn static_handler(uri: Uri) -> Response {
+/// When serving index.html, injects welcome config as `window.__STARPOD__`.
+async fn static_handler(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+    uri: Uri,
+) -> Response {
     let path = uri.path().trim_start_matches('/');
 
     // Try the exact path first
@@ -53,17 +57,29 @@ async fn static_handler(uri: Uri) -> Response {
         }
     }
 
-    // Fallback to index.html (SPA)
+    // Fallback to index.html (SPA) — inject welcome config
     match Asset::get("index.html") {
-        Some(file) => Response::builder()
-            .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-            .body(Body::from(file.data.to_vec()))
-            .unwrap(),
+        Some(file) => {
+            let html = String::from_utf8_lossy(&file.data);
+            let html = inject_frontend_config(&html, &state.paths.config_dir);
+            Response::builder()
+                .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+                .body(Body::from(html))
+                .unwrap()
+        }
         None => Response::builder()
             .status(StatusCode::NOT_FOUND)
             .body(Body::from("Web UI not found. Run `npm run build` in web/ first."))
             .unwrap(),
     }
+}
+
+/// Read frontend.toml and inject it as `window.__STARPOD__` into the HTML.
+fn inject_frontend_config(html: &str, config_dir: &std::path::Path) -> String {
+    let config = starpod_core::FrontendConfig::load(config_dir);
+    let json = serde_json::to_string(&config).unwrap_or_else(|_| "{}".to_string());
+    let script = format!("<script>window.__STARPOD__={}</script>", json);
+    html.replace("</head>", &format!("{}\n</head>", script))
 }
 
 /// Serve embedded docs under /docs, handling VitePress clean URLs.
@@ -322,4 +338,51 @@ fn start_config_watcher(
     });
 
     Some(debouncer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inject_frontend_config_with_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("frontend.toml"),
+            "greeting = \"Hi!\"\nprompts = [\"help me\"]\n",
+        ).unwrap();
+
+        let html = "<html><head><title>Test</title></head><body></body></html>";
+        let result = inject_frontend_config(html, dir.path());
+
+        assert!(result.contains("window.__STARPOD__="));
+        assert!(result.contains("\"greeting\":\"Hi!\""));
+        assert!(result.contains("\"prompts\":[\"help me\"]"));
+        assert!(result.contains("</head>"), "closing head tag should be preserved");
+    }
+
+    #[test]
+    fn inject_frontend_config_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let html = "<html><head></head><body></body></html>";
+        let result = inject_frontend_config(html, dir.path());
+
+        assert!(result.contains("window.__STARPOD__="));
+        assert!(result.contains("\"greeting\":null"));
+        assert!(result.contains("\"prompts\":[]"));
+    }
+
+    #[test]
+    fn inject_frontend_config_preserves_html_structure() {
+        let dir = tempfile::tempdir().unwrap();
+        let html = "<html><head><meta charset=\"UTF-8\"></head><body>content</body></html>";
+        let result = inject_frontend_config(html, dir.path());
+
+        assert!(result.contains("<meta charset=\"UTF-8\">"));
+        assert!(result.contains("<body>content</body>"));
+        // Script tag should be injected before </head>
+        let head_pos = result.find("</head>").unwrap();
+        let script_pos = result.find("<script>window.__STARPOD__=").unwrap();
+        assert!(script_pos < head_pos);
+    }
 }

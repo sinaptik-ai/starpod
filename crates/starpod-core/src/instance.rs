@@ -107,7 +107,7 @@ pub fn apply_blueprint(
 
     // 2. Copy blueprint-managed files into config/ (always refresh)
     // Lifecycle files from blueprint
-    for name in &["HEARTBEAT.md", "BOOT.md", "BOOTSTRAP.md"] {
+    for name in &["HEARTBEAT.md", "BOOT.md", "BOOTSTRAP.md", "frontend.toml"] {
         let src = blueprint_dir.join(name);
         let dst = config_dir.join(name);
         if src.is_file() {
@@ -253,7 +253,7 @@ pub fn build_standalone(
         .map_err(StarpodError::Io)?;
 
     // 2. Copy blueprint-managed files into config/ (always refresh)
-    for name in &["HEARTBEAT.md", "BOOT.md", "BOOTSTRAP.md"] {
+    for name in &["HEARTBEAT.md", "BOOT.md", "BOOTSTRAP.md", "frontend.toml"] {
         let src = blueprint_dir.join(name);
         let dst = config_dir.join(name);
         if src.is_file() {

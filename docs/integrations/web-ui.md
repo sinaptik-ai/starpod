@@ -38,6 +38,25 @@ The web UI is a single HTML file embedded in the `starpod-gateway` binary. It co
 3. Renders text deltas in real-time with markdown formatting
 4. Shows tool calls as expandable cards
 
+## Welcome Screen
+
+The welcome screen greeting and suggested prompts are configured via `.starpod/config/frontend.toml`:
+
+```toml
+greeting = "Hi! I'm Aster."
+
+prompts = [
+    "What can you help me with?",
+    "What do you remember about me?",
+]
+```
+
+Prompt chips appear as monospace terminal-style lines below the greeting. Clicking one sends it as a message immediately. If `frontend.toml` is missing or empty, the welcome screen shows the default `ready_` greeting with no chips.
+
+This file is read on every page load, so you can edit it and refresh the browser to see changes — no server restart needed.
+
+See [Configuration > Frontend](/getting-started/configuration#frontend-web-ui) for the full reference.
+
 ## Session Management
 
 Each conversation tab in the web UI uses a unique `channel_session_key` (UUID). The sidebar lists previous sessions with their auto-generated titles.

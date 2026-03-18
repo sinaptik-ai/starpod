@@ -250,6 +250,29 @@ allowed_extensions = ["jpg", "jpeg", "png", "gif", "webp", "pdf"]
 max_file_size = 5242880
 ```
 
+## Frontend (Web UI)
+
+The welcome screen of the web UI is configured via `frontend.toml` (in the agent blueprint, or `.starpod/config/frontend.toml` at runtime).
+
+```toml
+# Custom greeting shown below the logo (default: "ready_")
+greeting = "Hi! I'm Aster."
+
+# Suggested prompts shown as clickable chips on the welcome screen
+prompts = [
+    "What can you help me with?",
+    "What do you remember about me?",
+    "Summarize my recent notes",
+]
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `greeting` | string | — | Custom greeting text below the logo. If absent, shows `ready_` |
+| `prompts` | array | `[]` | Suggested prompt chips. Clicking one sends it as a message |
+
+This file is read on every page load — changes take effect on the next browser refresh without restarting the server.
+
 ## Environment Variables
 
 | Variable | Purpose |

@@ -641,13 +641,33 @@ function toggleSidebar() {
 // Open sidebar by default on desktop
 if (!isMobile()) openSidebar()
 
-const welcomeHTML =
-  '<div class="flex items-center justify-center text-center" id="welcome" style="min-height: calc(100dvh - 120px)">' +
+function buildWelcomeHTML() {
+  const cfg = window.__STARPOD__ || {}
+  const greeting = cfg.greeting || 'ready_'
+  let chips = ''
+  if (cfg.prompts && cfg.prompts.length > 0) {
+    chips = '<div class="mt-6 flex flex-col items-start gap-1.5">'
+    for (const p of cfg.prompts) {
+      chips += '<button class="prompt-chip" data-prompt="' + escapeHtml(p).replace(/"/g, '&quot;') + '">'
+        + '<span class="text-dim font-mono mr-2">&gt;</span>' + escapeHtml(p) + '</button>'
+    }
+    chips += '</div>'
+  }
+  return '<div class="flex items-center justify-center text-center" id="welcome" style="min-height: calc(100dvh - 120px)">' +
     '<div>' +
       '<div class="font-mono text-3xl font-extrabold tracking-tighter mb-3 bg-gradient-to-b from-primary to-muted bg-clip-text text-transparent select-none">starpod</div>' +
-      '<p class="text-sm text-dim font-mono">ready_</p>' +
+      '<p class="text-sm text-dim font-mono">' + escapeHtml(greeting) + '</p>' +
+      chips +
     '</div>' +
   '</div>'
+}
+const welcomeHTML = buildWelcomeHTML()
+
+// Send a prompt from a suggestion chip
+window._sendPrompt = function(text) {
+  inputText.value = text
+  sendMessage()
+}
 
 function newChat() {
   currentSessionId = null
@@ -664,6 +684,13 @@ sidebarClose.addEventListener('click', closeSidebar)
 sidebarOverlay.addEventListener('click', closeSidebar)
 newChatBtn.addEventListener('click', newChat)
 newChatHeaderBtn.addEventListener('click', newChat)
+
+// Prompt chip clicks (delegated)
+messages.addEventListener('click', (e) => {
+  const chip = e.target.closest('.prompt-chip')
+  if (!chip) return
+  window._sendPrompt(chip.dataset.prompt)
+})
 
 // Close transient sidebar when clicking outside it
 document.addEventListener('mousedown', (e) => {
@@ -844,4 +871,5 @@ document.addEventListener('keydown', (e) => {
 })
 
 // ── Init ──
+messages.innerHTML = welcomeHTML
 connect()

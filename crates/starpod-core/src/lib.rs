@@ -6,7 +6,7 @@ pub mod workspace;
 
 pub use config::{
     AttachmentsConfig, ChannelsConfig, CompactionConfig, CronConfig, FollowupMode,
-    MemoryConfig, StarpodConfig,
+    FrontendConfig, MemoryConfig, StarpodConfig,
     ProviderConfig, ProvidersConfig, ReasoningEffort, TelegramChannelConfig,
 };
 pub use error::{StarpodError, Result};

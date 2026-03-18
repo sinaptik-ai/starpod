@@ -735,6 +735,25 @@ server_addr = "{server_addr}"
         }
     }
 
+    // Seed frontend.toml with defaults
+    let frontend_path = agent_dir.join("frontend.toml");
+    if !frontend_path.exists() {
+        let frontend_toml = format!(
+            r#"# Frontend configuration for the web UI welcome screen.
+
+# Greeting text shown below the logo (default: "ready_")
+# greeting = "Hi! I'm {display_name}."
+
+# Suggested prompts shown as clickable chips
+prompts = [
+    "What can you help me with?",
+    "What do you remember about me?",
+]
+"#,
+        );
+        tokio::fs::write(&frontend_path, frontend_toml).await?;
+    }
+
     Ok(())
 }
 

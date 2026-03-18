@@ -363,6 +363,23 @@ html, body {
   margin: 0.5em 0;
 }
 
+/* ── Prompt chips ── */
+.prompt-chip {
+  display: flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--color-muted);
+  padding: 0.25rem 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+.prompt-chip:hover {
+  color: var(--color-primary);
+}
+
 /* ── Session items ── */
 .session-item {
   transition: background 0.15s ease;

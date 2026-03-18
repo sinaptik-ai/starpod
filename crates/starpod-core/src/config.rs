@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -455,6 +455,48 @@ pub struct StarpodConfig {
     /// The project root directory (not serialized — set at load time).
     #[serde(skip)]
     pub project_root: PathBuf,
+}
+
+/// Frontend configuration loaded from `frontend.toml`.
+///
+/// Controls the web UI welcome screen. Both fields are optional — if the file
+/// is missing or empty, the frontend falls back to defaults (`"ready_"` greeting,
+/// no prompt chips).
+///
+/// # Example
+///
+/// ```toml
+/// greeting = "Hi! I'm Aster."
+///
+/// prompts = [
+///     "What can you help me with?",
+///     "What do you remember about me?",
+/// ]
+/// ```
+///
+/// The gateway reads this file on every page load and injects it into the HTML
+/// as `window.__STARPOD__`, so changes take effect on the next browser refresh
+/// without restarting the server.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FrontendConfig {
+    /// Custom greeting text shown below the logo on the welcome screen.
+    #[serde(default)]
+    pub greeting: Option<String>,
+
+    /// Suggested prompt chips shown on the welcome screen.
+    #[serde(default)]
+    pub prompts: Vec<String>,
+}
+
+impl FrontendConfig {
+    /// Load from `config_dir/frontend.toml`, returning `Default` if missing or malformed.
+    pub fn load(config_dir: &Path) -> Self {
+        let path = config_dir.join("frontend.toml");
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => toml::from_str(&contents).unwrap_or_default(),
+            Err(_) => Self::default(),
+        }
+    }
 }
 
 fn default_server_addr() -> String {
@@ -1301,5 +1343,89 @@ mod tests {
         assert_eq!(config.agent_name, "Aster"); // preserved
         let tg = config.channels.telegram.unwrap();
         assert_eq!(tg.gap_minutes, Some(120)); // added
+    }
+
+    // ── FrontendConfig ──────────────────────────────────────────────
+
+    #[test]
+    fn frontend_config_full() {
+        let toml = r#"
+            greeting = "Hi! I'm Aster."
+            prompts = ["What can you do?", "Tell me a joke"]
+        "#;
+        let config: FrontendConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.greeting.as_deref(), Some("Hi! I'm Aster."));
+        assert_eq!(config.prompts, vec!["What can you do?", "Tell me a joke"]);
+    }
+
+    #[test]
+    fn frontend_config_greeting_only() {
+        let toml = r#"greeting = "Hello!""#;
+        let config: FrontendConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.greeting.as_deref(), Some("Hello!"));
+        assert!(config.prompts.is_empty());
+    }
+
+    #[test]
+    fn frontend_config_prompts_only() {
+        let toml = r#"prompts = ["one", "two"]"#;
+        let config: FrontendConfig = toml::from_str(toml).unwrap();
+        assert!(config.greeting.is_none());
+        assert_eq!(config.prompts.len(), 2);
+    }
+
+    #[test]
+    fn frontend_config_empty() {
+        let config: FrontendConfig = toml::from_str("").unwrap();
+        assert!(config.greeting.is_none());
+        assert!(config.prompts.is_empty());
+    }
+
+    #[test]
+    fn frontend_config_default() {
+        let config = FrontendConfig::default();
+        assert!(config.greeting.is_none());
+        assert!(config.prompts.is_empty());
+    }
+
+    #[test]
+    fn frontend_config_load_from_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("frontend.toml"),
+            "greeting = \"ready_\"\nprompts = [\"test prompt\"]\n",
+        ).unwrap();
+        let config = FrontendConfig::load(dir.path());
+        assert_eq!(config.greeting.as_deref(), Some("ready_"));
+        assert_eq!(config.prompts, vec!["test prompt"]);
+    }
+
+    #[test]
+    fn frontend_config_load_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = FrontendConfig::load(dir.path());
+        assert!(config.greeting.is_none());
+        assert!(config.prompts.is_empty());
+    }
+
+    #[test]
+    fn frontend_config_load_malformed_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("frontend.toml"), "not valid { toml").unwrap();
+        let config = FrontendConfig::load(dir.path());
+        // Should fall back to default, not panic
+        assert!(config.greeting.is_none());
+        assert!(config.prompts.is_empty());
+    }
+
+    #[test]
+    fn frontend_config_serializes_to_json() {
+        let config = FrontendConfig {
+            greeting: Some("Hello".to_string()),
+            prompts: vec!["a".to_string(), "b".to_string()],
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"greeting\":\"Hello\""));
+        assert!(json.contains("\"prompts\":[\"a\",\"b\"]"));
     }
 }

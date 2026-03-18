@@ -66,6 +66,15 @@ fn agent_new_uses_name_as_display_name() {
         );
     }
 
+    // frontend.toml should be scaffolded with defaults
+    let frontend_path = ws.path().join("agents/mybot/frontend.toml");
+    assert!(frontend_path.exists(), "frontend.toml should be created by agent new");
+    let frontend_content = fs::read_to_string(&frontend_path).unwrap();
+    assert!(
+        frontend_content.contains("prompts"),
+        "frontend.toml should contain default prompts"
+    );
+
     // Blueprint should NOT contain a users/ directory (users live in the instance, not the template)
     assert!(
         !ws.path().join("agents/mybot/users").exists(),
