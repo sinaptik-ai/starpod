@@ -6,8 +6,11 @@ Persistent memory system: markdown files on disk + SQLite FTS5 full-text search 
 
 ```
 .starpod/
-├── SOUL.md            # Agent personality (agent-level)
-├── HEARTBEAT.md       # Periodic tasks (agent-level)
+├── config/            # Blueprint-managed files
+│   ├── SOUL.md        # Agent personality
+│   ├── HEARTBEAT.md   # Periodic tasks
+│   ├── BOOT.md        # Startup instructions
+│   └── BOOTSTRAP.md   # One-time init
 ├── db/
 │   └── memory.db      # FTS5 index + vector embeddings
 └── users/<id>/
@@ -17,14 +20,14 @@ Persistent memory system: markdown files on disk + SQLite FTS5 full-text search 
         └── YYYY-MM-DD.md  # Daily logs (per-user, temporal decay)
 ```
 
-- **MemoryStore** manages agent-level files (SOUL.md, lifecycle files) and the FTS5 index.
+- **MemoryStore** manages blueprint files (from `config_dir`) and runtime files (from `agent_home`) with the FTS5 index.
 - **UserMemoryView** overlays per-user files on top of the shared agent store.
 
 ## API
 
 ```rust
-// Agent-level store
-let store = MemoryStore::new(&agent_home, &db_dir).await?;
+// Agent-level store (config_dir has SOUL.md + lifecycle; agent_home has runtime data)
+let store = MemoryStore::new(&agent_home, &config_dir, &db_dir).await?;
 
 // Agent-level bootstrap context (SOUL.md only)
 let context = store.bootstrap_context()?;

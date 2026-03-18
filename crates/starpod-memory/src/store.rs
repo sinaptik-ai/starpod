@@ -47,7 +47,9 @@ pub struct SearchResult {
 
 /// The main memory store — manages agent-level markdown files with a hybrid search index.
 ///
-/// Agent-level files (SOUL.md, lifecycle files) live in `agent_home` (the `.starpod/` dir).
+/// Blueprint-managed files (SOUL.md, lifecycle files) live in `config_dir`
+/// (`.starpod/config/`). Runtime data files (daily logs, agent-written files)
+/// live in `agent_home` (`.starpod/`).
 /// The FTS5/vector database lives in `db_dir` (`.starpod/db/`).
 /// User-specific files (USER.md, MEMORY.md, daily logs) are handled by
 /// [`UserMemoryView`](crate::user_view::UserMemoryView), not this struct.
@@ -63,8 +65,10 @@ pub struct SearchResult {
 /// All file read/write operations validate paths via [`scoring::validate_path`]
 /// to prevent directory traversal. Writes are capped at 1 MB.
 pub struct MemoryStore {
-    /// Agent home directory (.starpod/) — contains SOUL.md, lifecycle files.
+    /// Agent home directory (.starpod/) — runtime data files, general read/write.
     agent_home: PathBuf,
+    /// Config directory (.starpod/config/) — blueprint-managed files (SOUL.md, lifecycle).
+    config_dir: PathBuf,
     pool: SqlitePool,
     /// Half-life in days for temporal decay on search results.
     half_life_days: f64,
@@ -83,11 +87,14 @@ pub struct MemoryStore {
 impl MemoryStore {
     /// Create a new MemoryStore.
     ///
-    /// - `agent_home`: the `.starpod/` directory (contains SOUL.md, lifecycle files)
+    /// - `agent_home`: the `.starpod/` directory (runtime data, general read/write)
+    /// - `config_dir`: the `.starpod/config/` directory (SOUL.md, lifecycle files)
     /// - `db_dir`: the `.starpod/db/` directory (contains memory.db)
-    pub async fn new(agent_home: &Path, db_dir: &Path) -> Result<Self> {
+    pub async fn new(agent_home: &Path, config_dir: &Path, db_dir: &Path) -> Result<Self> {
         // Ensure directories exist
         std::fs::create_dir_all(agent_home)
+            .map_err(StarpodError::Io)?;
+        std::fs::create_dir_all(config_dir)
             .map_err(StarpodError::Io)?;
         std::fs::create_dir_all(db_dir)
             .map_err(StarpodError::Io)?;
@@ -110,6 +117,7 @@ impl MemoryStore {
 
         let store = Self {
             agent_home: agent_home.to_path_buf(),
+            config_dir: config_dir.to_path_buf(),
             pool,
             half_life_days: DEFAULT_HALF_LIFE_DAYS,
             mmr_lambda: 0.7,
@@ -130,22 +138,22 @@ impl MemoryStore {
 
     /// Seed default lifecycle files on first run.
     ///
-    /// Only seeds agent-level lifecycle files (HEARTBEAT.md, BOOT.md, BOOTSTRAP.md).
-    /// SOUL.md is managed by the blueprint system. USER.md and MEMORY.md are
-    /// per-user files managed by [`UserMemoryView`](crate::user_view::UserMemoryView).
+    /// Blueprint-managed files (SOUL.md, HEARTBEAT.md, BOOT.md, BOOTSTRAP.md)
+    /// are seeded into `config_dir`. USER.md and MEMORY.md are per-user files
+    /// managed by [`UserMemoryView`](crate::user_view::UserMemoryView).
     ///
-    /// Returns `true` if this is a fresh agent home (SOUL.md didn't exist yet).
+    /// Returns `true` if this is a fresh config (SOUL.md didn't exist yet).
     fn seed_defaults(&self) -> Result<bool> {
-        let fresh = !self.agent_home.join("SOUL.md").exists();
+        let fresh = !self.config_dir.join("SOUL.md").exists();
 
         // Seed SOUL.md only if not present (first init without blueprint)
         if fresh {
-            let path = self.agent_home.join("SOUL.md");
+            let path = self.config_dir.join("SOUL.md");
             debug!(file = "SOUL.md", "Seeding default SOUL.md");
             std::fs::write(&path, defaults::DEFAULT_SOUL)?;
         }
 
-        // Lifecycle files at agent_home root
+        // Lifecycle files in config_dir
         let lifecycle_files = [
             ("HEARTBEAT.md", defaults::DEFAULT_HEARTBEAT),
             ("BOOT.md", defaults::DEFAULT_BOOT),
@@ -153,7 +161,7 @@ impl MemoryStore {
         ];
 
         for (name, content) in &lifecycle_files {
-            let path = self.agent_home.join(name);
+            let path = self.config_dir.join(name);
             if !path.exists() {
                 debug!(file = %name, "Seeding default file");
                 std::fs::write(&path, content)?;
@@ -168,16 +176,38 @@ impl MemoryStore {
         &self.agent_home
     }
 
+    /// Get the config directory path (.starpod/config/).
+    pub fn config_dir(&self) -> &Path {
+        &self.config_dir
+    }
+
+    /// Blueprint-managed file names that live in config_dir.
+    const CONFIG_FILES: &[&str] = &[
+        "SOUL.md", "HEARTBEAT.md", "BOOT.md", "BOOTSTRAP.md",
+    ];
+
+    /// Resolve a file path: config files go to config_dir, everything else to agent_home.
+    fn resolve_path(&self, name: &str) -> PathBuf {
+        // Check if this is a known config file (top-level only, not in subdirs)
+        if !name.contains('/') && Self::CONFIG_FILES.iter().any(|&f| f == name) {
+            self.config_dir.join(name)
+        } else {
+            self.agent_home.join(name)
+        }
+    }
+
     /// Returns `true` if BOOTSTRAP.md exists and has non-empty content.
     pub fn has_bootstrap(&self) -> bool {
-        self.read_file("BOOTSTRAP.md")
-            .map(|c| !c.trim().is_empty())
-            .unwrap_or(false)
+        let path = self.config_dir.join("BOOTSTRAP.md");
+        path.is_file()
+            && std::fs::read_to_string(&path)
+                .map(|c| !c.trim().is_empty())
+                .unwrap_or(false)
     }
 
     /// Delete BOOTSTRAP.md (called after successful bootstrap execution).
     pub fn clear_bootstrap(&self) -> Result<()> {
-        let path = self.agent_home.join("BOOTSTRAP.md");
+        let path = self.config_dir.join("BOOTSTRAP.md");
         if path.exists() {
             std::fs::write(&path, "")?;
         }
@@ -470,22 +500,26 @@ impl MemoryStore {
         Ok(())
     }
 
-    /// Read a file from the data directory.
+    /// Read a file from the appropriate directory (config_dir for config files, agent_home otherwise).
     pub fn read_file(&self, name: &str) -> Result<String> {
+        // Validate against agent_home (the broader sandbox)
         scoring::validate_path(name, &self.agent_home)?;
-        let path = self.agent_home.join(name);
+        let path = self.resolve_path(name);
         if !path.exists() {
             return Ok(String::new());
         }
         std::fs::read_to_string(&path).map_err(StarpodError::Io)
     }
 
-    /// Write a file to agent_home and reindex it.
+    /// Write a file and reindex it.
+    ///
+    /// Config files (SOUL.md, lifecycle files) are written to config_dir,
+    /// everything else to agent_home.
     pub async fn write_file(&self, name: &str, content: &str) -> Result<()> {
         scoring::validate_path(name, &self.agent_home)?;
         scoring::validate_content_size(content)?;
 
-        let path = self.agent_home.join(name);
+        let path = self.resolve_path(name);
 
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
@@ -533,7 +567,8 @@ impl MemoryStore {
 
     /// Full reindex of agent-level markdown files.
     ///
-    /// Indexes top-level .md files in agent_home (SOUL.md, lifecycle files).
+    /// Indexes config files from config_dir (SOUL.md, lifecycle files) and
+    /// runtime files from agent_home (memory/ daily logs, agent-written files).
     /// User-level files are not indexed here — they're handled per-user.
     pub async fn reindex(&self) -> Result<()> {
         // Clear all existing FTS entries
@@ -548,8 +583,24 @@ impl MemoryStore {
             .await
             .map_err(|e| StarpodError::Database(format!("Failed to clear vectors: {}", e)))?;
 
-        // Index top-level .md files in agent_home (SOUL.md, HEARTBEAT.md, etc.)
-        self.index_dir(&self.agent_home.clone(), "").await?;
+        // Index config files (SOUL.md, HEARTBEAT.md, BOOT.md, BOOTSTRAP.md)
+        self.index_dir(&self.config_dir.clone(), "").await?;
+
+        // Index top-level .md files in agent_home (excluding config dir)
+        if let Ok(entries) = std::fs::read_dir(&self.agent_home) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
+                    let filename = entry.file_name().to_string_lossy().to_string();
+                    // Skip config files (already indexed from config_dir)
+                    if !Self::CONFIG_FILES.iter().any(|&f| f == filename) {
+                        let content = std::fs::read_to_string(&path)?;
+                        reindex_source(&self.pool, &filename, &content, self.chunk_size, self.chunk_overlap).await?;
+                        self.embed_and_store_source(&filename, &content).await?;
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
@@ -598,11 +649,12 @@ mod tests {
 
     // ── Helper ──────────────────────────────────────────────────────────
 
-    /// Create a MemoryStore for tests with agent_home and db_dir as siblings.
+    /// Create a MemoryStore for tests with agent_home, config_dir, and db_dir as siblings.
     async fn test_store(tmp: &TempDir) -> MemoryStore {
         let agent_home = tmp.path().join("agent_home");
+        let config_dir = tmp.path().join("agent_home").join("config");
         let db_dir = tmp.path().join("db");
-        MemoryStore::new(&agent_home, &db_dir).await.unwrap()
+        MemoryStore::new(&agent_home, &config_dir, &db_dir).await.unwrap()
     }
 
     // ── Existing tests ──────────────────────────────────────────────────
@@ -611,22 +663,22 @@ mod tests {
     async fn test_new_seeds_defaults() {
         let tmp = TempDir::new().unwrap();
         let store = test_store(&tmp).await;
-        let agent_home = tmp.path().join("agent_home");
+        let config_dir = tmp.path().join("agent_home").join("config");
 
-        // Agent-level files should exist
-        assert!(agent_home.join("SOUL.md").exists());
-        assert!(agent_home.join("HEARTBEAT.md").exists());
-        assert!(agent_home.join("BOOT.md").exists());
-        assert!(agent_home.join("BOOTSTRAP.md").exists());
+        // Config files should exist in config_dir
+        assert!(config_dir.join("SOUL.md").exists());
+        assert!(config_dir.join("HEARTBEAT.md").exists());
+        assert!(config_dir.join("BOOT.md").exists());
+        assert!(config_dir.join("BOOTSTRAP.md").exists());
 
-        // User-level files should NOT exist at agent level
-        assert!(!agent_home.join("USER.md").exists());
-        assert!(!agent_home.join("MEMORY.md").exists());
+        // User-level files should NOT exist
+        assert!(!config_dir.join("USER.md").exists());
+        assert!(!config_dir.join("MEMORY.md").exists());
 
         // DB should exist
         assert!(tmp.path().join("db").join("memory.db").exists());
 
-        // Should be readable
+        // Should be readable via read_file (routes to config_dir)
         let soul = store.read_file("SOUL.md").unwrap();
         assert!(soul.contains("Aster"));
     }
@@ -1039,19 +1091,106 @@ mod tests {
     async fn test_bootstrap_context_multibyte_safe() {
         let tmp = TempDir::new().unwrap();
         let agent_home = tmp.path().join("agent_home");
+        let config_dir = agent_home.join("config");
         let db_dir = tmp.path().join("db");
-        std::fs::create_dir_all(&agent_home).unwrap();
+        std::fs::create_dir_all(&config_dir).unwrap();
 
         // Write SOUL.md with multibyte chars that would cause a panic if
         // the cap falls on a char boundary
         let soul = "# Soul\n".to_string() + &"café 🌟 ".repeat(5000);
-        std::fs::write(agent_home.join("SOUL.md"), &soul).unwrap();
+        std::fs::write(config_dir.join("SOUL.md"), &soul).unwrap();
 
-        let store = MemoryStore::new(&agent_home, &db_dir).await.unwrap();
+        let store = MemoryStore::new(&agent_home, &config_dir, &db_dir).await.unwrap();
         // Should not panic even though the cap likely falls mid-character
         let ctx = store.bootstrap_context().unwrap();
         assert!(ctx.contains("SOUL.md"));
         // The content should be valid UTF-8
         assert!(ctx.is_char_boundary(ctx.len()));
+    }
+
+    // ── Config/agent_home separation ──────────────────────────────
+
+    #[tokio::test]
+    async fn config_files_routed_to_config_dir() {
+        let tmp = TempDir::new().unwrap();
+        let store = test_store(&tmp).await;
+        let config_dir = tmp.path().join("agent_home").join("config");
+
+        // Writing SOUL.md should go to config_dir
+        store.write_file("SOUL.md", "# Soul\nCustom soul.").await.unwrap();
+        assert!(config_dir.join("SOUL.md").is_file());
+        let content = std::fs::read_to_string(config_dir.join("SOUL.md")).unwrap();
+        assert!(content.contains("Custom soul"));
+
+        // Reading should return from config_dir
+        let read = store.read_file("SOUL.md").unwrap();
+        assert!(read.contains("Custom soul"));
+    }
+
+    #[tokio::test]
+    async fn runtime_files_routed_to_agent_home() {
+        let tmp = TempDir::new().unwrap();
+        let store = test_store(&tmp).await;
+        let agent_home = tmp.path().join("agent_home");
+        let config_dir = agent_home.join("config");
+
+        // Writing a non-config .md file should go to agent_home
+        store.write_file("notes.md", "Some notes.").await.unwrap();
+        assert!(agent_home.join("notes.md").is_file());
+        assert!(!config_dir.join("notes.md").exists());
+
+        // Reading it back should work
+        let content = store.read_file("notes.md").unwrap();
+        assert!(content.contains("Some notes"));
+    }
+
+    #[tokio::test]
+    async fn reindex_covers_both_config_and_agent_home() {
+        let tmp = TempDir::new().unwrap();
+        let store = test_store(&tmp).await;
+
+        // Write a config file (SOUL.md → config_dir)
+        store.write_file("SOUL.md", "Soul content about quantum.").await.unwrap();
+
+        // Write a runtime file (notes.md → agent_home)
+        store.write_file("notes.md", "Notes about quantum.").await.unwrap();
+
+        // Reindex should pick up both
+        store.reindex().await.unwrap();
+
+        let results = store.search("quantum", 10).await.unwrap();
+        let sources: Vec<&str> = results.iter().map(|r| r.source.as_str()).collect();
+        assert!(sources.contains(&"SOUL.md"), "SOUL.md from config_dir should be indexed");
+        assert!(sources.contains(&"notes.md"), "notes.md from agent_home should be indexed");
+    }
+
+    #[tokio::test]
+    async fn bootstrap_context_reads_from_config_dir() {
+        let tmp = TempDir::new().unwrap();
+        let store = test_store(&tmp).await;
+
+        // Overwrite SOUL.md in config_dir
+        store.write_file("SOUL.md", "# Soul\nI am ConfigBot.").await.unwrap();
+
+        let ctx = store.bootstrap_context().unwrap();
+        assert!(ctx.contains("ConfigBot"), "bootstrap should read from config_dir");
+    }
+
+    #[tokio::test]
+    async fn has_bootstrap_checks_config_dir() {
+        let tmp = TempDir::new().unwrap();
+        let store = test_store(&tmp).await;
+        let config_dir = tmp.path().join("agent_home").join("config");
+
+        // Default BOOTSTRAP.md should be empty
+        assert!(!store.has_bootstrap(), "Default BOOTSTRAP.md should be empty");
+
+        // Write content to BOOTSTRAP.md in config_dir
+        std::fs::write(config_dir.join("BOOTSTRAP.md"), "Do something on first run.").unwrap();
+        assert!(store.has_bootstrap(), "BOOTSTRAP.md with content should be detected");
+
+        // Clear it
+        store.clear_bootstrap().unwrap();
+        assert!(!store.has_bootstrap(), "Cleared BOOTSTRAP.md should not be detected");
     }
 }

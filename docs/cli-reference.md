@@ -73,7 +73,7 @@ starpod serve -a my-agent
 |------|-------------|
 | `--agent`, `-a` | Agent name (required in workspace mode, optional in single-agent) |
 
-In single-agent mode, walks up from the current directory to find the nearest `.starpod/agent.toml`. Serves the web UI, REST API, WebSocket endpoint, and (if configured) Telegram bot. All share the same agent instance.
+In single-agent mode, walks up from the current directory to find the nearest `.starpod/config/agent.toml`. Serves the web UI, REST API, WebSocket endpoint, and (if configured) Telegram bot. All share the same agent instance.
 
 ### `starpod chat`
 

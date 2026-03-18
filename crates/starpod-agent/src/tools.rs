@@ -1232,7 +1232,7 @@ mod tests {
     #[tokio::test]
     async fn env_get_returns_value() {
         let tmp = TempDir::new().unwrap();
-        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("db")).await.unwrap());
+        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("agent").join("config"), &tmp.path().join("db")).await.unwrap());
         let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
         let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
 
@@ -1261,7 +1261,7 @@ mod tests {
     #[tokio::test]
     async fn env_get_missing_key() {
         let tmp = TempDir::new().unwrap();
-        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("db")).await.unwrap());
+        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("agent").join("config"), &tmp.path().join("db")).await.unwrap());
         let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
         let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
 
@@ -1288,7 +1288,7 @@ mod tests {
     #[tokio::test]
     async fn env_get_blocks_sensitive_vars() {
         let tmp = TempDir::new().unwrap();
-        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("db")).await.unwrap());
+        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("agent").join("config"), &tmp.path().join("db")).await.unwrap());
         let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
         let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
 
@@ -1329,7 +1329,7 @@ mod tests {
     #[tokio::test]
     async fn file_write_and_read() {
         let tmp = TempDir::new().unwrap();
-        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("db")).await.unwrap());
+        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("agent").join("config"), &tmp.path().join("db")).await.unwrap());
         let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
         let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
 
@@ -1366,7 +1366,7 @@ mod tests {
     #[tokio::test]
     async fn file_list_hides_starpod() {
         let tmp = TempDir::new().unwrap();
-        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("db")).await.unwrap());
+        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("agent").join("config"), &tmp.path().join("db")).await.unwrap());
         let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
         let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
 
@@ -1396,7 +1396,7 @@ mod tests {
     #[tokio::test]
     async fn file_delete_works() {
         let tmp = TempDir::new().unwrap();
-        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("db")).await.unwrap());
+        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("agent").join("config"), &tmp.path().join("db")).await.unwrap());
         let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
         let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
 
@@ -1425,7 +1425,7 @@ mod tests {
     #[tokio::test]
     async fn file_read_rejects_starpod() {
         let tmp = TempDir::new().unwrap();
-        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("db")).await.unwrap());
+        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("agent").join("config"), &tmp.path().join("db")).await.unwrap());
         let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
         let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
 
@@ -1454,7 +1454,7 @@ mod tests {
     #[tokio::test]
     async fn file_write_rejects_traversal() {
         let tmp = TempDir::new().unwrap();
-        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("db")).await.unwrap());
+        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("agent").join("config"), &tmp.path().join("db")).await.unwrap());
         let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
         let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
 

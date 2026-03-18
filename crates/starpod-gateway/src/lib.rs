@@ -195,7 +195,7 @@ fn start_config_watcher(
                     root.join("starpod.toml"),
                     paths.agent_toml.clone(),
                 ];
-                let watch = paths.agent_home.clone();
+                let watch = paths.config_dir.clone();
                 let p = paths_clone.clone();
                 (watch, watch_files, Box::new(move || {
                     let agent_cfg = reload_agent_config(&p)?;
@@ -203,7 +203,7 @@ fn start_config_watcher(
                 }))
             }
             starpod_core::Mode::Instance { .. } => {
-                let watch = paths.agent_home.clone();
+                let watch = paths.config_dir.clone();
                 let agent_toml = paths.agent_toml.clone();
                 let p = paths_clone.clone();
                 (watch, vec![agent_toml], Box::new(move || {
@@ -211,8 +211,8 @@ fn start_config_watcher(
                     Ok(agent_cfg.into_starpod_config(&p))
                 }))
             }
-            starpod_core::Mode::SingleAgent { starpod_dir } => {
-                let watch = starpod_dir.clone();
+            starpod_core::Mode::SingleAgent { .. } => {
+                let watch = paths.config_dir.clone();
                 let agent_toml = paths.agent_toml.clone();
                 let p = paths_clone.clone();
                 (watch, vec![agent_toml], Box::new(move || {

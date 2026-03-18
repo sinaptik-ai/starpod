@@ -65,12 +65,17 @@ your-project/
 └── .instances/
     └── my-agent/           Agent's filesystem sandbox
         ├── .starpod/       Internal state (like .git/)
-        │   ├── agent.toml  Copied from blueprint
-        │   ├── SOUL.md     Copied from blueprint
-        │   ├── .env        From .env.dev (dev) or .env (prod)
-        │   ├── db/         SQLite databases
+        │   ├── .env        Secrets (from .env.dev or .env)
+        │   ├── config/     Blueprint-managed (overwritten on build)
+        │   │   ├── agent.toml
+        │   │   ├── SOUL.md
+        │   │   ├── HEARTBEAT.md
+        │   │   ├── BOOT.md
+        │   │   └── BOOTSTRAP.md
+        │   ├── skills/     Merged on build
+        │   ├── db/         SQLite databases (runtime)
         │   └── users/
-        │       └── admin/  Auto-created default user
+        │       └── admin/  Auto-created default user (runtime)
         │           ├── USER.md
         │           ├── MEMORY.md
         │           └── memory/
@@ -79,9 +84,9 @@ your-project/
 ```
 
 - **`starpod.toml`** — workspace-level defaults shared across all agents.
-- **`agents/<name>/agent.toml`** — per-agent overrides (deep-merged on top of workspace config).
+- **`agents/<name>/`** — agent **blueprints** (git-tracked). Each contains `agent.toml`, `SOUL.md`, and optional lifecycle files. This is the source of truth for what the agent *is*.
 - **`.env`** — API key for your chosen provider (e.g. `ANTHROPIC_API_KEY=sk-ant-...`).
-- **`.instances/`** — runtime state, never committed. Created automatically by `starpod dev`.
+- **`.instances/`** — agent **instances** (gitignored). Created automatically by `starpod dev`. Contains databases, memory, user data — everything the agent accumulates at runtime. Blueprint files are copied into `.starpod/config/` and refreshed on every `starpod dev`, but runtime data (`db/`, `users/`) is always preserved.
 
 ## Multiple Agents
 
@@ -101,7 +106,7 @@ starpod dev journal --port 3001
 
 ## Production Deployment
 
-Build a standalone `.starpod/` from a blueprint (no workspace required):
+In production, there's no workspace — you build a standalone instance directly from a blueprint:
 
 ```bash
 starpod build --agent agents/my-agent --output /srv/my-agent --env .env
@@ -109,4 +114,6 @@ cd /srv/my-agent
 starpod serve
 ```
 
-`starpod serve` walks up from the current directory to find the nearest `.starpod/agent.toml`, so it works from any subdirectory of the deployment target.
+`starpod build` takes the blueprint and creates a self-contained `.starpod/` directory with `config/` (from the blueprint), `skills/`, `db/`, and `users/`. The `.env` is copied once via `--env`. On subsequent builds to the same output, `config/` is refreshed but runtime data is preserved — same semantics as `starpod dev`.
+
+`starpod serve` walks up from the current directory to find the nearest `.starpod/config/agent.toml`, so it works from any subdirectory of the deployment target.

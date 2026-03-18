@@ -28,15 +28,16 @@
 //! +-- .instances/                     # RUNTIME (gitignored)
 //!     +-- aster/                      # agent's filesystem root
 //!         +-- .starpod/
-//!         |   +-- agent.toml          # copied from blueprint
-//!         |   +-- SOUL.md
-//!         |   +-- .env                # single file (from workspace .env.dev or .env)
-//!         |   +-- HEARTBEAT.md        # agent-level heartbeat (optional)
-//!         |   +-- BOOT.md             # startup instructions (optional)
-//!         |   +-- BOOTSTRAP.md        # one-time init (self-destructing)
-//!         |   +-- db/                 # SQLite databases
-//!         |   +-- users/admin/        # per-user data
-//!         |   +-- skills/
+//!         |   +-- .env                # secrets (from workspace .env.dev or .env)
+//!         |   +-- config/             # blueprint-managed (overwritten on build)
+//!         |   |   +-- agent.toml
+//!         |   |   +-- SOUL.md
+//!         |   |   +-- HEARTBEAT.md
+//!         |   |   +-- BOOT.md
+//!         |   |   +-- BOOTSTRAP.md
+//!         |   +-- skills/             # merged on build (blueprint overrides, user additions preserved)
+//!         |   +-- db/                 # SQLite databases (runtime, never touched by build)
+//!         |   +-- users/admin/        # per-user data (runtime)
 //!         +-- reports/                # agent creates freely
 //! ```
 //!
@@ -44,15 +45,16 @@
 //! ```text
 //! /srv/aster/                         # agent's filesystem root
 //! +-- .starpod/
-//! |   +-- agent.toml
-//! |   +-- SOUL.md
-//! |   +-- .env
-//! |   +-- HEARTBEAT.md
-//! |   +-- BOOT.md
-//! |   +-- BOOTSTRAP.md
-//! |   +-- db/                         # SQLite databases
-//! |   +-- users/admin/
-//! |   +-- skills/
+//! |   +-- .env                        # secrets (environment-specific)
+//! |   +-- config/                     # blueprint-managed (overwritten on build)
+//! |   |   +-- agent.toml
+//! |   |   +-- SOUL.md
+//! |   |   +-- HEARTBEAT.md
+//! |   |   +-- BOOT.md
+//! |   |   +-- BOOTSTRAP.md
+//! |   +-- skills/                     # merged on build
+//! |   +-- db/                         # SQLite databases (runtime)
+//! |   +-- users/admin/                # per-user data (runtime)
 //! +-- reports/                        # agent-produced files
 //! ```
 //!
@@ -105,12 +107,15 @@ pub fn detect_mode(agent_name: Option<&str>) -> crate::Result<Mode> {
 
 /// Like `detect_mode` but starting from a given directory instead of CWD.
 pub fn detect_mode_from(agent_name: Option<&str>, start_dir: &Path) -> crate::Result<Mode> {
-    // Check single-agent mode: walk up looking for .starpod/agent.toml
+    // Check single-agent mode: walk up looking for .starpod/config/agent.toml (new)
+    // or .starpod/agent.toml (old layout, will be migrated on startup)
     {
         let mut dir = start_dir.to_path_buf();
         loop {
             let starpod_dir = dir.join(".starpod");
-            if starpod_dir.join("agent.toml").is_file() {
+            if starpod_dir.join("config").join("agent.toml").is_file()
+                || starpod_dir.join("agent.toml").is_file()
+            {
                 return Ok(Mode::SingleAgent { starpod_dir });
             }
             if !dir.pop() {
@@ -225,13 +230,15 @@ fn infer_agent_name_from_cwd(cwd: &Path, workspace_root: &Path) -> Option<String
 pub struct ResolvedPaths {
     /// The detected operating mode.
     pub mode: Mode,
-    /// Path to agent.toml.
+    /// Path to agent.toml (inside config_dir).
     pub agent_toml: PathBuf,
     /// Agent home directory (.starpod/ dir — internal state).
     pub agent_home: PathBuf,
+    /// Config directory (.starpod/config/) — blueprint-managed files.
+    pub config_dir: PathBuf,
     /// Database directory for SQLite DBs (agent_home/db/).
     pub db_dir: PathBuf,
-    /// Skills directory (.starpod/skills/ — instance-local).
+    /// Skills directory (.starpod/skills/ — merged on build).
     pub skills_dir: PathBuf,
     /// Project/workspace root.
     pub project_root: PathBuf,
@@ -250,7 +257,8 @@ impl ResolvedPaths {
     pub fn resolve(mode: &Mode) -> crate::Result<Self> {
         match mode {
             Mode::SingleAgent { starpod_dir } => {
-                let agent_toml = starpod_dir.join("agent.toml");
+                let config_dir = starpod_dir.join("config");
+                let agent_toml = config_dir.join("agent.toml");
                 let agent_home = starpod_dir.clone();
                 let db_dir = starpod_dir.join("db");
                 let skills_dir = starpod_dir.join("skills");
@@ -268,6 +276,7 @@ impl ResolvedPaths {
                     mode: mode.clone(),
                     agent_toml,
                     agent_home,
+                    config_dir,
                     db_dir,
                     skills_dir,
                     project_root,
@@ -282,7 +291,8 @@ impl ResolvedPaths {
             }
             Mode::Instance { instance_root, agent_name: _ } => {
                 let agent_home = instance_root.join(".starpod");
-                let agent_toml = agent_home.join("agent.toml");
+                let config_dir = agent_home.join("config");
+                let agent_toml = config_dir.join("agent.toml");
                 let db_dir = agent_home.join("db");
                 let users_dir = agent_home.join("users");
                 let env_path = agent_home.join(".env");
@@ -298,6 +308,7 @@ impl ResolvedPaths {
                     mode: mode.clone(),
                     agent_toml,
                     agent_home,
+                    config_dir,
                     db_dir,
                     skills_dir,
                     project_root,
@@ -313,7 +324,11 @@ impl ResolvedPaths {
             Mode::Workspace { root, agent_name } => {
                 // Check if an instance exists — if so, use it
                 let instance_dir = root.join(".instances").join(agent_name);
-                if instance_dir.join(".starpod").join("agent.toml").is_file() {
+                let instance_starpod = instance_dir.join(".starpod");
+                // Check both new layout (config/agent.toml) and old layout (agent.toml)
+                if instance_starpod.join("config").join("agent.toml").is_file()
+                    || instance_starpod.join("agent.toml").is_file()
+                {
                     // Instance exists, resolve as instance
                     let instance_mode = Mode::Instance {
                         instance_root: instance_dir,
@@ -334,6 +349,7 @@ impl ResolvedPaths {
                     mode: mode.clone(),
                     agent_toml,
                     agent_home: agents_dir.clone(),
+                    config_dir: agents_dir.clone(),
                     db_dir,
                     skills_dir,
                     project_root: root.clone(),
@@ -429,6 +445,45 @@ impl ResolvedPaths {
         let _ = std::fs::remove_dir(&data_dir);
 
         tracing::info!("Migration complete: data/ → db/ + root-level files");
+    }
+
+    /// Migrate old flat layout to new `config/` subdirectory layout.
+    ///
+    /// If `config_dir` doesn't exist but `agent_home` has blueprint files at root level,
+    /// moves them into `config/`:
+    /// - `agent.toml`, `SOUL.md`, `BOOT.md`, `HEARTBEAT.md`, `BOOTSTRAP.md` → `config/`
+    /// - `.env` stays at `agent_home` root (environment-specific, not blueprint-managed)
+    /// - `skills/` stays at `agent_home` root (merged on build, not purely blueprint-managed)
+    pub fn migrate_config_dir_if_needed(&self) {
+        if self.config_dir.is_dir() {
+            return; // Already migrated or new layout
+        }
+
+        // Check if old layout exists (blueprint files at agent_home root)
+        let old_agent_toml = self.agent_home.join("agent.toml");
+        if !old_agent_toml.is_file() {
+            return; // Nothing to migrate
+        }
+
+        tracing::info!("Migrating .starpod/ layout: moving blueprint files to config/");
+
+        if let Err(e) = std::fs::create_dir_all(&self.config_dir) {
+            tracing::error!(error = %e, "Migration: failed to create config/");
+            return;
+        }
+
+        // Move blueprint-managed files to config/
+        for name in &["agent.toml", "SOUL.md", "BOOT.md", "HEARTBEAT.md", "BOOTSTRAP.md"] {
+            let src = self.agent_home.join(name);
+            let dst = self.config_dir.join(name);
+            if src.is_file() && !dst.exists() {
+                if let Err(e) = std::fs::rename(&src, &dst) {
+                    tracing::warn!(file = %name, error = %e, "Migration: failed to move file to config/");
+                }
+            }
+        }
+
+        tracing::info!("Migration complete: blueprint files → config/");
     }
 
     /// Build a `UserContext` for a specific user ID.
@@ -877,8 +932,9 @@ mod tests {
         };
         let paths = ResolvedPaths::resolve(&mode).unwrap();
 
-        assert_eq!(paths.agent_toml, PathBuf::from("/app/.starpod/agent.toml"));
+        assert_eq!(paths.agent_toml, PathBuf::from("/app/.starpod/config/agent.toml"));
         assert_eq!(paths.agent_home, PathBuf::from("/app/.starpod"));
+        assert_eq!(paths.config_dir, PathBuf::from("/app/.starpod/config"));
         assert_eq!(paths.db_dir, PathBuf::from("/app/.starpod/db"));
         assert_eq!(paths.skills_dir, PathBuf::from("/app/.starpod/skills"));
         assert_eq!(paths.project_root, PathBuf::from("/app"));
@@ -927,8 +983,10 @@ mod tests {
         };
         let paths = ResolvedPaths::resolve(&mode).unwrap();
 
-        assert_eq!(paths.agent_toml, starpod_dir.join("agent.toml"));
+        let config_dir = starpod_dir.join("config");
+        assert_eq!(paths.agent_toml, config_dir.join("agent.toml"));
         assert_eq!(paths.agent_home, starpod_dir);
+        assert_eq!(paths.config_dir, config_dir);
         assert_eq!(paths.db_dir, instance_dir.join(".starpod/db"));
         assert_eq!(paths.skills_dir, starpod_dir.join("skills"));
         assert_eq!(paths.project_root, instance_dir);
@@ -937,14 +995,15 @@ mod tests {
     }
 
     #[test]
-    fn resolved_paths_workspace_with_instance() {
-        // When a workspace has an active instance, resolve should use it
+    fn resolved_paths_workspace_with_instance_old_layout() {
+        // When a workspace has an active instance (old layout), resolve should use it
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         std::fs::write(root.join("starpod.toml"), "").unwrap();
         let instance_dir = root.join(".instances").join("bot");
         let starpod_dir = instance_dir.join(".starpod");
         std::fs::create_dir_all(&starpod_dir).unwrap();
+        // Old layout: agent.toml at starpod root (will be migrated)
         std::fs::write(starpod_dir.join("agent.toml"), "").unwrap();
 
         let mode = Mode::Workspace {
@@ -956,6 +1015,28 @@ mod tests {
         // Should resolve as instance since .instances/bot/.starpod/agent.toml exists
         assert_eq!(paths.instance_root, instance_dir);
         assert_eq!(paths.agent_home, starpod_dir);
+    }
+
+    #[test]
+    fn resolved_paths_workspace_with_instance_new_layout() {
+        // When a workspace has an active instance (new layout), resolve should use it
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("starpod.toml"), "").unwrap();
+        let instance_dir = root.join(".instances").join("bot");
+        let config_dir = instance_dir.join(".starpod").join("config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("agent.toml"), "").unwrap();
+
+        let mode = Mode::Workspace {
+            root: root.to_path_buf(),
+            agent_name: "bot".to_string(),
+        };
+        let paths = ResolvedPaths::resolve(&mode).unwrap();
+
+        assert_eq!(paths.instance_root, instance_dir);
+        assert_eq!(paths.agent_home, instance_dir.join(".starpod"));
+        assert_eq!(paths.config_dir, config_dir);
     }
 
     // ── UserContext ─────────────────────────────────────────────────────
@@ -982,9 +1063,10 @@ mod tests {
     fn load_single_agent_config() {
         let tmp = TempDir::new().unwrap();
         let starpod_dir = tmp.path().join(".starpod");
-        std::fs::create_dir_all(&starpod_dir).unwrap();
+        let config_dir = starpod_dir.join("config");
+        std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::write(
-            starpod_dir.join("agent.toml"),
+            config_dir.join("agent.toml"),
             r#"
 agent_name = "TestBot"
 model = "claude-sonnet-4-6"
@@ -1082,8 +1164,9 @@ max_turns = 30
             mode: Mode::SingleAgent {
                 starpod_dir: PathBuf::from("/app/.starpod"),
             },
-            agent_toml: PathBuf::from("/app/.starpod/agent.toml"),
+            agent_toml: PathBuf::from("/app/.starpod/config/agent.toml"),
             agent_home: PathBuf::from("/app/.starpod"),
+            config_dir: PathBuf::from("/app/.starpod/config"),
             db_dir: PathBuf::from("/app/.starpod/db"),
             skills_dir: PathBuf::from("/app/.starpod/skills"),
             project_root: PathBuf::from("/app"),
@@ -1234,9 +1317,10 @@ max_turns = 30
     fn reload_agent_config_returns_updated_values() {
         let tmp = TempDir::new().unwrap();
         let starpod_dir = tmp.path().join(".starpod");
-        std::fs::create_dir_all(&starpod_dir).unwrap();
+        let config_dir = starpod_dir.join("config");
+        std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::write(
-            starpod_dir.join("agent.toml"),
+            config_dir.join("agent.toml"),
             "model = \"claude-haiku-4-5\"\n",
         ).unwrap();
 
@@ -1248,7 +1332,7 @@ max_turns = 30
 
         // Update config on disk
         std::fs::write(
-            starpod_dir.join("agent.toml"),
+            config_dir.join("agent.toml"),
             "model = \"claude-sonnet-4-6\"\n",
         ).unwrap();
 
@@ -1321,9 +1405,10 @@ model = "claude-sonnet-4-6"
     fn load_single_agent_name_from_agent_name() {
         let tmp = TempDir::new().unwrap();
         let starpod_dir = tmp.path().join(".starpod");
-        std::fs::create_dir_all(&starpod_dir).unwrap();
+        let config_dir = starpod_dir.join("config");
+        std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::write(
-            starpod_dir.join("agent.toml"),
+            config_dir.join("agent.toml"),
             "agent_name = \"CustomBot\"\n",
         ).unwrap();
 
@@ -1342,9 +1427,10 @@ model = "claude-sonnet-4-6"
     fn load_config_with_legacy_api_key_still_parses() {
         let tmp = TempDir::new().unwrap();
         let starpod_dir = tmp.path().join(".starpod");
-        std::fs::create_dir_all(&starpod_dir).unwrap();
+        let config_dir = starpod_dir.join("config");
+        std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::write(
-            starpod_dir.join("agent.toml"),
+            config_dir.join("agent.toml"),
             r#"
             [providers.anthropic]
             api_key = "sk-ant-should-be-ignored"
@@ -1404,10 +1490,10 @@ model = "claude-sonnet-4-6"
         let root = tmp.path();
         std::fs::write(root.join("starpod.toml"), "").unwrap();
         let instance_dir = root.join(".instances").join("aster");
-        let starpod_dir = instance_dir.join(".starpod");
-        std::fs::create_dir_all(&starpod_dir).unwrap();
+        let config_dir = instance_dir.join(".starpod").join("config");
+        std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::write(
-            starpod_dir.join("agent.toml"),
+            config_dir.join("agent.toml"),
             r#"
 agent_name = "Aster"
 model = "claude-sonnet-4-6"
@@ -1481,9 +1567,9 @@ model = "claude-sonnet-4-6"
 
         // Instance with agent.toml but NO .env
         let instance_dir = root.join(".instances").join("bot");
-        let starpod_dir = instance_dir.join(".starpod");
-        std::fs::create_dir_all(&starpod_dir).unwrap();
-        std::fs::write(starpod_dir.join("agent.toml"), "").unwrap();
+        let config_dir = instance_dir.join(".starpod").join("config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("agent.toml"), "").unwrap();
 
         let mode = Mode::Instance {
             instance_root: instance_dir,
@@ -1510,11 +1596,12 @@ model = "claude-sonnet-4-6"
         std::fs::write(root.join("starpod.toml"), "").unwrap();
         std::fs::write(root.join(".env"), "STARPOD_INST_OVERRIDE_TEST=workspace_val\n").unwrap();
 
-        // Instance .env overrides
+        // Instance .env overrides (agent.toml in config/, .env at starpod root)
         let instance_dir = root.join(".instances").join("bot");
         let starpod_dir = instance_dir.join(".starpod");
-        std::fs::create_dir_all(&starpod_dir).unwrap();
-        std::fs::write(starpod_dir.join("agent.toml"), "").unwrap();
+        let config_dir = starpod_dir.join("config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("agent.toml"), "").unwrap();
         std::fs::write(starpod_dir.join(".env"), "STARPOD_INST_OVERRIDE_TEST=instance_val\n").unwrap();
 
         let mode = Mode::Instance {
@@ -1531,5 +1618,123 @@ model = "claude-sonnet-4-6"
             "Instance .env should override workspace .env"
         );
         std::env::remove_var("STARPOD_INST_OVERRIDE_TEST");
+    }
+
+    // ── Config dir migration ──────────────────────────────────────
+
+    #[test]
+    fn migrate_config_dir_moves_blueprint_files() {
+        let tmp = TempDir::new().unwrap();
+        let starpod_dir = tmp.path().join(".starpod");
+        std::fs::create_dir_all(&starpod_dir).unwrap();
+
+        // Old layout: files at starpod root
+        std::fs::write(starpod_dir.join("agent.toml"), "model = \"test\"\n").unwrap();
+        std::fs::write(starpod_dir.join("SOUL.md"), "# Soul\nI am TestBot.\n").unwrap();
+        std::fs::write(starpod_dir.join("BOOT.md"), "Boot instructions.").unwrap();
+        std::fs::write(starpod_dir.join("HEARTBEAT.md"), "Heartbeat.").unwrap();
+        std::fs::write(starpod_dir.join("BOOTSTRAP.md"), "Bootstrap.").unwrap();
+        // .env should NOT be moved
+        std::fs::write(starpod_dir.join(".env"), "SECRET=val\n").unwrap();
+
+        let mode = Mode::SingleAgent { starpod_dir: starpod_dir.clone() };
+        let paths = ResolvedPaths::resolve(&mode).unwrap();
+        paths.migrate_config_dir_if_needed();
+
+        let config_dir = starpod_dir.join("config");
+        // Blueprint files should be in config/
+        assert!(config_dir.join("agent.toml").is_file());
+        assert!(config_dir.join("SOUL.md").is_file());
+        assert!(config_dir.join("BOOT.md").is_file());
+        assert!(config_dir.join("HEARTBEAT.md").is_file());
+        assert!(config_dir.join("BOOTSTRAP.md").is_file());
+
+        // Old locations should be gone
+        assert!(!starpod_dir.join("agent.toml").exists());
+        assert!(!starpod_dir.join("SOUL.md").exists());
+        assert!(!starpod_dir.join("BOOT.md").exists());
+
+        // .env should stay at root
+        assert!(starpod_dir.join(".env").is_file());
+        assert!(!config_dir.join(".env").exists());
+
+        // Content should be preserved
+        let soul = std::fs::read_to_string(config_dir.join("SOUL.md")).unwrap();
+        assert!(soul.contains("TestBot"));
+    }
+
+    #[test]
+    fn migrate_config_dir_is_idempotent() {
+        let tmp = TempDir::new().unwrap();
+        let starpod_dir = tmp.path().join(".starpod");
+        let config_dir = starpod_dir.join("config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+
+        // New layout already in place
+        std::fs::write(config_dir.join("agent.toml"), "model = \"new\"\n").unwrap();
+
+        let mode = Mode::SingleAgent { starpod_dir: starpod_dir.clone() };
+        let paths = ResolvedPaths::resolve(&mode).unwrap();
+
+        // Should be a no-op (config/ exists)
+        paths.migrate_config_dir_if_needed();
+
+        let content = std::fs::read_to_string(config_dir.join("agent.toml")).unwrap();
+        assert!(content.contains("new"), "Existing config should not be modified");
+    }
+
+    #[test]
+    fn migrate_config_dir_skips_when_no_old_files() {
+        let tmp = TempDir::new().unwrap();
+        let starpod_dir = tmp.path().join(".starpod");
+        std::fs::create_dir_all(&starpod_dir).unwrap();
+        // No agent.toml at all — nothing to migrate
+
+        let mode = Mode::SingleAgent { starpod_dir: starpod_dir.clone() };
+        let paths = ResolvedPaths::resolve(&mode).unwrap();
+        paths.migrate_config_dir_if_needed();
+
+        // config/ should not be created
+        assert!(!starpod_dir.join("config").exists());
+    }
+
+    #[test]
+    fn detect_mode_works_with_new_layout() {
+        let tmp = TempDir::new().unwrap();
+        let starpod_dir = tmp.path().join(".starpod");
+        let config_dir = starpod_dir.join("config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("agent.toml"), "").unwrap();
+
+        let mode = detect_mode_from(None, tmp.path()).unwrap();
+        assert!(matches!(mode, Mode::SingleAgent { .. }));
+    }
+
+    #[test]
+    fn detect_mode_works_with_old_layout() {
+        let tmp = TempDir::new().unwrap();
+        let starpod_dir = tmp.path().join(".starpod");
+        std::fs::create_dir_all(&starpod_dir).unwrap();
+        std::fs::write(starpod_dir.join("agent.toml"), "").unwrap();
+
+        let mode = detect_mode_from(None, tmp.path()).unwrap();
+        assert!(matches!(mode, Mode::SingleAgent { .. }));
+    }
+
+    #[test]
+    fn env_file_resolved_at_starpod_root_not_config() {
+        let tmp = TempDir::new().unwrap();
+        let starpod_dir = tmp.path().join(".starpod");
+        let config_dir = starpod_dir.join("config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("agent.toml"), "").unwrap();
+        // .env at starpod root
+        std::fs::write(starpod_dir.join(".env"), "KEY=val").unwrap();
+
+        let mode = Mode::SingleAgent { starpod_dir };
+        let paths = ResolvedPaths::resolve(&mode).unwrap();
+
+        assert!(paths.env_file.is_some());
+        assert!(paths.env_file.unwrap().ends_with(".starpod/.env"));
     }
 }

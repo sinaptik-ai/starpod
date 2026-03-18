@@ -3,9 +3,9 @@
 Starpod uses a two-file configuration model:
 
 - **`starpod.toml`** — workspace-level defaults shared across all agents (git-tracked).
-- **`agent.toml`** — per-agent overrides (lives in `agents/<name>/agent.toml` in workspace mode, or `.starpod/agent.toml` in single-agent mode). Can contain any setting from `starpod.toml` as an override, plus **channels** (which can _only_ be configured here).
+- **`agent.toml`** — per-agent overrides (lives in `agents/<name>/agent.toml` in workspace mode, or `.starpod/config/agent.toml` in single-agent mode). Can contain any setting from `starpod.toml` as an override, plus **channels** (which can _only_ be configured here).
 
-Agent personality lives in `.starpod/SOUL.md`. User profile lives in `.starpod/users/<id>/USER.md`. These are not part of the config files.
+Agent personality lives in `.starpod/config/SOUL.md`. User profile lives in `.starpod/users/<id>/USER.md`. These are not part of the config files.
 
 ## Full Reference
 
@@ -124,7 +124,7 @@ Personality and user profile are **not** config settings — they live in markdo
 
 | File | Purpose |
 |------|---------|
-| `.starpod/SOUL.md` | Agent personality, tone, and instructions. Loaded into every system prompt via bootstrap context. |
+| `.starpod/config/SOUL.md` | Agent personality, tone, and instructions. Loaded into every system prompt via bootstrap context. |
 | `.starpod/users/<id>/USER.md` | User name, timezone, preferences. Loaded into every system prompt via bootstrap context. |
 
 Edit these files directly to customize agent behavior or update user info. The agent can also update them itself through memory tools.
@@ -221,7 +221,7 @@ When a restart-required setting changes, Starpod logs a warning but continues ru
 
 ### How it works
 
-A file watcher (debounced at 2 seconds) monitors the `.starpod/` directory. On change, it reloads both config files with the same layering logic as startup, then atomically swaps the config in both the agent and gateway. The next chat request uses the new settings.
+A file watcher (debounced at 2 seconds) monitors the `.starpod/config/` directory. On change, it reloads both config files with the same layering logic as startup, then atomically swaps the config in both the agent and gateway. The next chat request uses the new settings.
 
 ## Config Layering
 

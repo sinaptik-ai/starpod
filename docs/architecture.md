@@ -18,14 +18,78 @@ crates/
 └── starpod/              CLI binary
 ```
 
-## Blueprint / Instance Separation
+## Blueprints vs Instances
 
-Starpod separates **blueprints** (git-tracked agent definitions) from **instances** (runtime state):
+An **agent** in Starpod has two halves: a **blueprint** (what you design) and an **instance** (what actually runs).
 
-- **Blueprint** (`agents/<name>/`) — config, personality, secrets templates. Committed to git.
-- **Instance** (`.instances/<name>/`) — databases, memory, user data, agent-created files. Gitignored.
+### Blueprint — the source of truth
 
-`starpod dev <agent>` copies the blueprint into an instance via `apply_blueprint()`, then serves it. For standalone deployments, `starpod build --agent <path>` creates a self-contained `.starpod/` via `build_standalone()` without requiring a workspace.
+A blueprint is a folder under `agents/<name>/` in your workspace. It's git-tracked and contains everything that defines *what* the agent is:
+
+```
+agents/aster/
+├── agent.toml       # Config: model, provider, max_turns, channels
+├── SOUL.md          # Personality and instructions
+├── BOOT.md          # Startup prompt (optional)
+├── HEARTBEAT.md     # Background prompt (optional)
+├── BOOTSTRAP.md     # First-run prompt (optional)
+└── files/           # Template files synced to the instance root
+```
+
+Think of it like a Dockerfile — it describes the agent, but nothing runs here. No databases, no memory, no user data.
+
+### Instance — the running agent
+
+An instance is the runtime environment created from a blueprint. It lives in `.instances/<name>/` (gitignored) and contains everything the agent accumulates while running:
+
+```
+.instances/aster/                   # Agent's filesystem sandbox
+├── .starpod/                       # Internal state
+│   ├── .env                        # Secrets (environment-specific)
+│   ├── config/                     # ← Copied from blueprint (overwritten on rebuild)
+│   │   ├── agent.toml
+│   │   ├── SOUL.md
+│   │   ├── BOOT.md
+│   │   ├── HEARTBEAT.md
+│   │   └── BOOTSTRAP.md
+│   ├── skills/                     # ← Merged from blueprint (user additions preserved)
+│   ├── db/                         # SQLite databases (created on first serve)
+│   │   ├── memory.db
+│   │   ├── session.db
+│   │   └── cron.db
+│   └── users/
+│       └── admin/                  # Per-user data
+│           ├── USER.md
+│           ├── MEMORY.md
+│           └── memory/             # Daily logs
+├── reports/                        # Agent-created files
+└── ...                             # Anything the agent writes
+```
+
+### What goes where
+
+| | Blueprint (`agents/`) | Instance (`.instances/`) |
+|---|---|---|
+| **Tracked in git** | Yes | No (gitignored) |
+| **Contains** | Config, personality, templates | Databases, memory, user data, files |
+| **Editable by** | Developer | Agent + users at runtime |
+| **On `starpod dev`** | Read-only source | Created/updated from blueprint |
+| **On rebuild** | Source of truth | `config/` overwritten, `db/` + `users/` preserved |
+
+### The three ownership zones inside `.starpod/`
+
+| Directory | Owned by | On rebuild |
+|---|---|---|
+| `config/` | Blueprint | **Always overwritten** — you're shipping a new version of the agent |
+| `skills/` | Both | **Merged** — blueprint skills overwrite by filename, agent-created skills preserved |
+| `.env` | Environment | **Not overwritten** — secrets are deployment-specific |
+| `db/`, `users/` | Runtime | **Never touched** — this is the agent's accumulated state |
+
+### How they connect
+
+`starpod dev <agent>` copies the blueprint into an instance via `apply_blueprint()`, then serves it. Re-running `starpod dev` refreshes the config but preserves runtime data — so you can iterate on the agent's personality without losing its memory.
+
+For standalone deployments without a workspace, `starpod build --agent <path>` creates a self-contained `.starpod/` via `build_standalone()`, ready for `starpod serve`.
 
 ## Dependency Graph
 
@@ -142,15 +206,20 @@ workspace/
 └── .instances/                     # RUNTIME (gitignored)
     └── aster/                      # agent's filesystem root
         ├── .starpod/               # internal (like .git/)
-        │   ├── agent.toml          # copied from blueprint
-        │   ├── SOUL.md             # copied from blueprint
-        │   ├── .env                # ONE file (from workspace .env.dev or .env)
-        │   ├── users/
-        │   │   └── admin/          # auto-created
-        │   │       ├── USER.md
-        │   │       ├── MEMORY.md
-        │   │       └── memory/
-        │   └── db/                 # SQLite DBs
+        │   ├── .env                # secrets (from workspace .env.dev or .env)
+        │   ├── config/             # blueprint-managed (overwritten on build)
+        │   │   ├── agent.toml
+        │   │   ├── SOUL.md
+        │   │   ├── HEARTBEAT.md
+        │   │   ├── BOOT.md
+        │   │   └── BOOTSTRAP.md
+        │   ├── skills/             # merged on build
+        │   ├── db/                 # SQLite DBs (runtime)
+        │   └── users/
+        │       └── admin/          # auto-created (runtime)
+        │           ├── USER.md
+        │           ├── MEMORY.md
+        │           └── memory/
         ├── reports/                # agent creates freely
         └── ...                     # full filesystem sandbox
 ```
@@ -160,17 +229,22 @@ workspace/
 ```
 /srv/aster/                         # agent's filesystem root
 ├── .starpod/
-│   ├── agent.toml
-│   ├── SOUL.md
-│   ├── .env
-│   ├── users/admin/
-│   └── db/
+│   ├── .env                        # secrets
+│   ├── config/                     # blueprint-managed
+│   │   ├── agent.toml
+│   │   ├── SOUL.md
+│   │   ├── HEARTBEAT.md
+│   │   ├── BOOT.md
+│   │   └── BOOTSTRAP.md
+│   ├── skills/                     # merged on build
+│   ├── users/admin/                # runtime
+│   └── db/                         # runtime
 ├── reports/                        # agent-produced files
 └── ...
 ```
 
 Starpod auto-detects the mode by walking up from the current directory:
-- `.starpod/agent.toml` found (in CWD or any parent) → **SingleAgent** mode
+- `.starpod/config/agent.toml` found (in CWD or any parent) → **SingleAgent** mode
 - Inside `.instances/<name>/` with `starpod.toml` sibling → **Instance** mode
 - `starpod.toml` found → **Workspace** mode
 

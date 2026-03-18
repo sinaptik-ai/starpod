@@ -1,6 +1,6 @@
 # Lifecycle Prompts
 
-Starpod has three **lifecycle prompt files** that let the agent act autonomously at key moments — without being prompted by a user. All three live in `.starpod/` and are **disabled by default** (empty on init). Add instructions to activate them.
+Starpod has three **lifecycle prompt files** that let the agent act autonomously at key moments — without being prompted by a user. All three live in `.starpod/config/` (blueprint-managed) and are **disabled by default** (empty on init). Add instructions to activate them.
 
 | File | When it runs | How often | Session |
 |------|-------------|-----------|---------|
@@ -155,14 +155,14 @@ Bootstrap runs first, then boot, then the heartbeat loop begins. All are indepen
 starpod init
 ```
 
-This creates empty `BOOTSTRAP.md`, `BOOT.md`, and `HEARTBEAT.md` files in `.starpod/`.
+This creates empty `BOOTSTRAP.md`, `BOOT.md`, and `HEARTBEAT.md` files in `.starpod/config/`.
 
 ### 2. Edit the files you want to activate
 
 ```bash
 # Edit with your preferred editor
-$EDITOR .starpod/BOOT.md
-$EDITOR .starpod/HEARTBEAT.md
+$EDITOR .starpod/config/BOOT.md
+$EDITOR .starpod/config/HEARTBEAT.md
 ```
 
 ### 3. Start the server

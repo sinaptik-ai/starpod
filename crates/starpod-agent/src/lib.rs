@@ -82,8 +82,9 @@ impl StarpodAgent {
             mode: starpod_core::Mode::SingleAgent {
                 starpod_dir: starpod_dir.clone(),
             },
-            agent_toml: starpod_dir.join("agent.toml"),
+            agent_toml: starpod_dir.join("config").join("agent.toml"),
             agent_home: starpod_dir.clone(),
+            config_dir: starpod_dir.join("config"),
             db_dir: config.db_dir.clone(),
             skills_dir: starpod_dir.join("skills"),
             project_root: config.project_root.clone(),
@@ -100,14 +101,15 @@ impl StarpodAgent {
     /// This is the workspace-aware constructor that uses resolved paths for
     /// all file locations instead of deriving them from `db_dir`.
     pub async fn with_paths(agent_config: AgentConfig, paths: ResolvedPaths) -> Result<Self> {
-        // Migrate old data/ layout if needed
+        // Migrate old layouts if needed (data/ → db/, then flat → config/)
         paths.migrate_if_needed();
+        paths.migrate_config_dir_if_needed();
 
         // Convert AgentConfig → StarpodConfig for the config RwLock
         let config = agent_config.clone().into_starpod_config(&paths);
 
-        // Memory: agent_home contains SOUL.md, lifecycle files; db_dir has memory.db
-        let mut memory = MemoryStore::new(&paths.agent_home, &paths.db_dir).await?;
+        // Memory: config_dir has SOUL.md + lifecycle files; agent_home for runtime data; db_dir has memory.db
+        let mut memory = MemoryStore::new(&paths.agent_home, &paths.config_dir, &paths.db_dir).await?;
         memory.set_half_life_days(config.memory.half_life_days);
         memory.set_mmr_lambda(config.memory.mmr_lambda);
         memory.set_chunk_size(config.memory.chunk_size);
@@ -1148,6 +1150,7 @@ mod tests {
             },
             agent_toml: agent_home.join("agent.toml"),
             agent_home: agent_home.clone(),
+            config_dir: agent_home.clone(),
             db_dir: db_dir.clone(),
             skills_dir: skills_dir.clone(),
             project_root: tmp.path().to_path_buf(),
@@ -1198,6 +1201,7 @@ mod tests {
             },
             agent_toml: agent_home.join("agent.toml"),
             agent_home: agent_home.clone(),
+            config_dir: agent_home.clone(),
             db_dir: agent_home.join("db"),
             skills_dir: skills_dir.clone(),
             project_root: tmp.path().to_path_buf(),

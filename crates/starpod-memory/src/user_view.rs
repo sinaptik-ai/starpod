@@ -218,8 +218,9 @@ mod tests {
     async fn setup() -> (TempDir, Arc<MemoryStore>, PathBuf) {
         let tmp = TempDir::new().unwrap();
         let agent_home = tmp.path().join("agent_home");
+        let config_dir = agent_home.join("config");
         let db_dir = tmp.path().join("db");
-        let store = Arc::new(MemoryStore::new(&agent_home, &db_dir).await.unwrap());
+        let store = Arc::new(MemoryStore::new(&agent_home, &config_dir, &db_dir).await.unwrap());
         let user_dir = tmp.path().join("users").join("alice");
         (tmp, store, user_dir)
     }
