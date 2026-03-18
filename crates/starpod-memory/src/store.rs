@@ -191,7 +191,9 @@ impl MemoryStore {
     pub fn bootstrap_context(&self) -> Result<String> {
         let content = self.read_file("SOUL.md")?;
         let capped = if content.len() > self.bootstrap_file_cap {
-            &content[..self.bootstrap_file_cap]
+            let mut end = self.bootstrap_file_cap;
+            while end > 0 && !content.is_char_boundary(end) { end -= 1; }
+            &content[..end]
         } else {
             &content
         };
@@ -504,6 +506,11 @@ impl MemoryStore {
         let today = Local::now().format("%Y-%m-%d").to_string();
         let filename = format!("memory/{}.md", today);
         let path = self.agent_home.join(&filename);
+
+        // Ensure parent directory exists
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
 
         let timestamp = Local::now().format("%H:%M:%S").to_string();
         let entry = format!("\n## {}\n{}\n", timestamp, text);
@@ -1009,5 +1016,42 @@ mod tests {
         let results = store.search("quantum physics relativity", 10).await.unwrap();
         // Should find the evergreen file at minimum
         assert!(!results.is_empty(), "Should find at least the evergreen file");
+    }
+
+    #[tokio::test]
+    async fn test_append_daily_creates_memory_dir() {
+        let tmp = TempDir::new().unwrap();
+        let store = test_store(&tmp).await;
+        let agent_home = tmp.path().join("agent_home");
+
+        // Do NOT create memory/ dir — append_daily should create it
+        assert!(!agent_home.join("memory").exists());
+
+        store.append_daily("First entry without pre-existing dir.").await.unwrap();
+
+        assert!(agent_home.join("memory").exists());
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        let content = store.read_file(&format!("memory/{}.md", today)).unwrap();
+        assert!(content.contains("First entry"));
+    }
+
+    #[tokio::test]
+    async fn test_bootstrap_context_multibyte_safe() {
+        let tmp = TempDir::new().unwrap();
+        let agent_home = tmp.path().join("agent_home");
+        let db_dir = tmp.path().join("db");
+        std::fs::create_dir_all(&agent_home).unwrap();
+
+        // Write SOUL.md with multibyte chars that would cause a panic if
+        // the cap falls on a char boundary
+        let soul = "# Soul\n".to_string() + &"café 🌟 ".repeat(5000);
+        std::fs::write(agent_home.join("SOUL.md"), &soul).unwrap();
+
+        let store = MemoryStore::new(&agent_home, &db_dir).await.unwrap();
+        // Should not panic even though the cap likely falls mid-character
+        let ctx = store.bootstrap_context().unwrap();
+        assert!(ctx.contains("SOUL.md"));
+        // The content should be valid UTF-8
+        assert!(ctx.is_char_boundary(ctx.len()));
     }
 }

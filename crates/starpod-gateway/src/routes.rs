@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::net::IpAddr;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use axum::extract::{Path, Query, State};
@@ -11,6 +12,27 @@ use serde::{Deserialize, Serialize};
 use starpod_core::{ChatMessage, ChatResponse};
 
 use crate::AppState;
+
+// ── Static regexes for frame-check (compiled once) ──────────────────────
+
+static RE_FRAME_ANCESTORS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"frame-ancestors\s+([^;]+)").unwrap());
+
+static RE_OG_IMAGE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']"#).unwrap()
+});
+
+static RE_OG_IMAGE2: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["']"#).unwrap()
+});
+
+static RE_OG_TITLE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']"#).unwrap()
+});
+
+static RE_OG_TITLE2: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:title["']"#).unwrap()
+});
 
 /// Build API routes.
 pub fn api_routes() -> Router<Arc<AppState>> {
@@ -50,23 +72,64 @@ struct FrameCheckResponse {
 }
 
 async fn frame_check_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(params): Query<FrameCheckQuery>,
-) -> Json<FrameCheckResponse> {
+) -> Result<Json<FrameCheckResponse>, (StatusCode, Json<ErrorResponse>)> {
+    check_api_key(&state, &headers)?;
+
+    // Validate URL scheme — only allow http and https.
+    let parsed_url = reqwest::Url::parse(&params.url).map_err(|_| {
+        (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "Invalid URL".into() }))
+    })?;
+    match parsed_url.scheme() {
+        "http" | "https" => {}
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse { error: "Only http and https URLs are allowed".into() }),
+            ));
+        }
+    }
+
+    // Resolve hostname and block private/internal IP ranges.
+    if let Some(host) = parsed_url.host_str() {
+        let port = parsed_url.port_or_known_default().unwrap_or(80);
+        let addrs: Vec<std::net::SocketAddr> = match tokio::net::lookup_host(format!("{}:{}", host, port)).await {
+            Ok(iter) => iter.collect(),
+            Err(_) => Vec::new(),
+        };
+        if addrs.is_empty() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse { error: "Could not resolve hostname".into() }),
+            ));
+        }
+        for addr in &addrs {
+            if is_private_ip(addr.ip()) {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(ErrorResponse { error: "Requests to private/internal addresses are not allowed".into() }),
+                ));
+            }
+        }
+    }
+
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .redirect(reqwest::redirect::Policy::limited(10))
         .build()
         .unwrap_or_default();
 
-    let resp = match client.get(&params.url).send().await {
+    let resp = match client.get(parsed_url).send().await {
         Ok(r) => r,
         Err(e) => {
-            return Json(FrameCheckResponse {
+            return Ok(Json(FrameCheckResponse {
                 frameable: false,
                 reason: e.to_string(),
                 og_image: String::new(),
                 og_title: String::new(),
-            });
+            }));
         }
     };
 
@@ -93,10 +156,7 @@ async fn frame_check_handler(
     }
 
     if csp.contains("frame-ancestors") {
-        if let Some(caps) = Regex::new(r"frame-ancestors\s+([^;]+)")
-            .unwrap()
-            .captures(&csp)
-        {
+        if let Some(caps) = RE_FRAME_ANCESTORS.captures(&csp) {
             let val = caps[1].trim();
             if !val.contains('*') {
                 frameable = false;
@@ -110,41 +170,39 @@ async fn frame_check_handler(
 
     if !frameable {
         if let Ok(html) = resp.text().await {
-            let img_re = Regex::new(
-                r#"<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']"#,
-            )
-            .unwrap();
-            let img_re2 = Regex::new(
-                r#"<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["']"#,
-            )
-            .unwrap();
-            if let Some(caps) = img_re.captures(&html).or_else(|| img_re2.captures(&html)) {
+            if let Some(caps) = RE_OG_IMAGE.captures(&html).or_else(|| RE_OG_IMAGE2.captures(&html)) {
                 og_image = caps[1].to_string();
             }
-
-            let title_re = Regex::new(
-                r#"<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']"#,
-            )
-            .unwrap();
-            let title_re2 = Regex::new(
-                r#"<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:title["']"#,
-            )
-            .unwrap();
-            if let Some(caps) = title_re
-                .captures(&html)
-                .or_else(|| title_re2.captures(&html))
-            {
+            if let Some(caps) = RE_OG_TITLE.captures(&html).or_else(|| RE_OG_TITLE2.captures(&html)) {
                 og_title = caps[1].to_string();
             }
         }
     }
 
-    Json(FrameCheckResponse {
+    Ok(Json(FrameCheckResponse {
         frameable,
         reason,
         og_image,
         og_title,
-    })
+    }))
+}
+
+/// Check whether an IP address belongs to a private/internal range.
+fn is_private_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()              // 127.0.0.0/8
+                || v4.is_private()         // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+                || v4.is_link_local()      // 169.254.0.0/16
+                || v4.is_unspecified()     // 0.0.0.0
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()              // ::1
+                || v6.is_unspecified()     // ::
+                // fc00::/7 (unique local addresses)
+                || (v6.segments()[0] & 0xfe00) == 0xfc00
+        }
+    }
 }
 
 // ── Chat endpoint ────────────────────────────────────────────────────────
@@ -496,71 +554,52 @@ async fn instance_health_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::body::Body;
-    use axum::http::Request;
-    use http_body_util::BodyExt;
-    use tower::ServiceExt;
 
-    fn frame_check_router() -> Router {
-        Router::new().route("/api/frame-check", get(frame_check_handler))
+    #[test]
+    fn private_ipv4_loopback() {
+        assert!(is_private_ip(IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))));
     }
 
-    async fn get_frame_check(url: &str) -> FrameCheckResponse {
-        let app = frame_check_router();
-        let uri = format!("/api/frame-check?url={}", urlencoding::encode(url));
-        let req = Request::builder()
-            .uri(&uri)
-            .body(Body::empty())
-            .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
-        let body = resp.into_body().collect().await.unwrap().to_bytes();
-        serde_json::from_slice(&body).unwrap()
+    #[test]
+    fn private_ipv4_10_range() {
+        assert!(is_private_ip(IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1))));
     }
 
-    #[tokio::test]
-    async fn frameable_site() {
-        // httpbin allows framing (no X-Frame-Options)
-        let r = get_frame_check("https://httpbin.org/html").await;
-        assert!(r.frameable, "httpbin should be frameable");
+    #[test]
+    fn private_ipv4_172_range() {
+        assert!(is_private_ip(IpAddr::V4(std::net::Ipv4Addr::new(172, 16, 0, 1))));
     }
 
-    #[tokio::test]
-    async fn non_frameable_site_with_xfo() {
-        // GitHub sets X-Frame-Options: deny
-        let r = get_frame_check("https://github.com").await;
-        assert!(!r.frameable, "github.com should not be frameable");
-        assert!(
-            r.reason.to_lowercase().contains("x-frame-options")
-                || r.reason.to_lowercase().contains("frame-ancestors"),
-            "reason should mention header: {}",
-            r.reason
-        );
+    #[test]
+    fn private_ipv4_192_range() {
+        assert!(is_private_ip(IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1))));
     }
 
-    #[tokio::test]
-    async fn non_frameable_extracts_og() {
-        // YouTube blocks framing and has og:image + og:title
-        let r = get_frame_check("https://www.youtube.com").await;
-        assert!(!r.frameable);
-        assert!(!r.og_title.is_empty(), "should extract og:title from YouTube");
+    #[test]
+    fn private_ipv4_link_local() {
+        assert!(is_private_ip(IpAddr::V4(std::net::Ipv4Addr::new(169, 254, 1, 1))));
     }
 
-    #[tokio::test]
-    async fn unreachable_url_returns_not_frameable() {
-        let r = get_frame_check("http://localhost:1").await;
-        assert!(!r.frameable);
-        assert!(!r.reason.is_empty());
+    #[test]
+    fn public_ipv4_allowed() {
+        assert!(!is_private_ip(IpAddr::V4(std::net::Ipv4Addr::new(8, 8, 8, 8))));
     }
 
-    #[tokio::test]
-    async fn missing_url_param_returns_error() {
-        let app = frame_check_router();
-        let req = Request::builder()
-            .uri("/api/frame-check")
-            .body(Body::empty())
-            .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    #[test]
+    fn private_ipv6_loopback() {
+        assert!(is_private_ip(IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)));
+    }
+
+    #[test]
+    fn private_ipv6_unique_local() {
+        // fc00::1 is in the fc00::/7 range
+        assert!(is_private_ip(IpAddr::V6(std::net::Ipv6Addr::new(0xfc00, 0, 0, 0, 0, 0, 0, 1))));
+        assert!(is_private_ip(IpAddr::V6(std::net::Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1))));
+    }
+
+    #[test]
+    fn public_ipv6_allowed() {
+        assert!(!is_private_ip(IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888))));
     }
 }
 

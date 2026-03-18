@@ -729,6 +729,7 @@ mod tests {
                 content: serde_json::json!("file1.txt\nfile2.txt"),
                 is_error: None,
                 cache_control: None,
+                name: None,
             }],
         };
         let result = translate_message(&msg);

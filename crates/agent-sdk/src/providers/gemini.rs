@@ -192,20 +192,20 @@ fn translate_message_to_gemini(msg: &ApiMessage) -> Option<serde_json::Value> {
             ApiContentBlock::ToolResult {
                 tool_use_id,
                 content,
+                name,
                 ..
             } => {
                 // Gemini uses functionResponse keyed by function name.
-                // We store tool_use_id but Gemini wants the function name.
-                // The agent loop stores tool_use_id = the call id.
-                // We use a placeholder name derived from context; in practice
-                // the name is set by the orchestrator when building results.
+                // Use the stored tool name; fall back to tool_use_id for
+                // backward compatibility with older serialized messages.
+                let fn_name = name.as_deref().unwrap_or(tool_use_id);
                 let text = match content {
                     serde_json::Value::String(s) => s.clone(),
                     other => other.to_string(),
                 };
                 parts.push(serde_json::json!({
                     "functionResponse": {
-                        "name": tool_use_id,
+                        "name": fn_name,
                         "response": {"result": text},
                     }
                 }));
@@ -856,14 +856,36 @@ mod tests {
         let msg = ApiMessage {
             role: "user".into(),
             content: vec![ApiContentBlock::ToolResult {
-                tool_use_id: "Bash".into(),
+                tool_use_id: "call_123".into(),
                 content: serde_json::json!("file1.txt"),
                 is_error: None,
                 cache_control: None,
+                name: Some("Bash".into()),
             }],
         };
         let result = translate_message_to_gemini(&msg).unwrap();
         assert_eq!(result["role"], "user");
-        assert!(result["parts"][0]["functionResponse"].is_object());
+        let func_resp = &result["parts"][0]["functionResponse"];
+        assert!(func_resp.is_object());
+        // The function name should be "Bash", NOT the tool_use_id "call_123"
+        assert_eq!(func_resp["name"], "Bash");
+    }
+
+    #[test]
+    fn translate_tool_result_falls_back_to_id_when_no_name() {
+        let msg = ApiMessage {
+            role: "user".into(),
+            content: vec![ApiContentBlock::ToolResult {
+                tool_use_id: "legacy_call_456".into(),
+                content: serde_json::json!("output"),
+                is_error: None,
+                cache_control: None,
+                name: None, // no name stored (backward compat)
+            }],
+        };
+        let result = translate_message_to_gemini(&msg).unwrap();
+        let func_resp = &result["parts"][0]["functionResponse"];
+        // Falls back to tool_use_id when name is missing
+        assert_eq!(func_resp["name"], "legacy_call_456");
     }
 }

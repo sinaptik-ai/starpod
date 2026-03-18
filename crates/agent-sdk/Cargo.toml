@@ -30,7 +30,6 @@ anyhow = "1"
 
 # Logging
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Hook system
 starpod-hooks = { path = "../starpod-hooks" }
@@ -41,11 +40,6 @@ regex = "1"
 # UUID for session IDs
 uuid = { version = "1", features = ["v4", "serde"] }
 
-# Chrono for timestamps
-chrono = { version = "0.4", features = ["serde"] }
-
-# Process management
-which = "7"
 
 # Glob patterns
 glob = "0.3"
@@ -60,3 +54,4 @@ tempfile = "3"
 tokio-test = "0.4"
 pretty_assertions = "1"
 colored = "3"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
