@@ -17,7 +17,6 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "bytes",
- "chrono",
  "colored",
  "futures",
  "glob",
@@ -36,7 +35,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
- "which",
 ]
 
 [[package]]
@@ -4071,8 +4069,6 @@ dependencies = [
 name = "starpod-core"
 version = "0.1.0"
 dependencies = [
- "chrono",
- "dirs",
  "dotenvy",
  "serde",
  "serde_json",
@@ -4081,7 +4077,6 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -4160,7 +4155,6 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
- "uuid",
  "wiremock",
 ]
 

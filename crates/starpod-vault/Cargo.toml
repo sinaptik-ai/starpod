@@ -8,9 +8,7 @@ description = "Encrypted credential storage for Starpod - AES-256-GCM"
 starpod-core = { path = "../starpod-core" }
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 aes-gcm = "0.10"
-base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
-rand = "0.8"
 tracing = "0.1"
 tokio = { version = "1", features = ["full"] }
 

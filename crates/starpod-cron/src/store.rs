@@ -398,37 +398,49 @@ impl CronStore {
     /// Update a job's fields dynamically (only provided fields are changed).
     pub async fn update_job(&self, id: &str, update: &JobUpdate) -> Result<()> {
 
-        // Build dynamic SQL
-        let mut parts: Vec<String> = Vec::new();
+        // Build dynamic SQL with parameterized queries.
+        // We reserve ?1 for the WHERE clause (id), so SET params start at ?2.
+        let mut set_clauses: Vec<String> = Vec::new();
+        let mut params: Vec<String> = Vec::new(); // collected as strings for binding
 
         if let Some(ref prompt) = update.prompt {
-            parts.push(format!("prompt = '{}'", prompt.replace('\'', "''")));
+            params.push(prompt.clone());
+            set_clauses.push(format!("prompt = ?{}", params.len() + 1));
         }
         if let Some(ref schedule) = update.schedule {
             let (stype, svalue) = schedule_to_db(schedule);
-            parts.push(format!("schedule_type = '{}'", stype));
-            parts.push(format!("schedule_value = '{}'", svalue.replace('\'', "''")));
+            params.push(stype.to_string());
+            set_clauses.push(format!("schedule_type = ?{}", params.len() + 1));
+            params.push(svalue);
+            set_clauses.push(format!("schedule_value = ?{}", params.len() + 1));
         }
         if let Some(enabled) = update.enabled {
-            parts.push(format!("enabled = {}", enabled as i64));
+            params.push((enabled as i64).to_string());
+            set_clauses.push(format!("enabled = ?{}", params.len() + 1));
         }
         if let Some(max_retries) = update.max_retries {
-            parts.push(format!("max_retries = {}", max_retries));
+            params.push(max_retries.to_string());
+            set_clauses.push(format!("max_retries = ?{}", params.len() + 1));
         }
         if let Some(timeout_secs) = update.timeout_secs {
-            parts.push(format!("timeout_secs = {}", timeout_secs));
+            params.push(timeout_secs.to_string());
+            set_clauses.push(format!("timeout_secs = ?{}", params.len() + 1));
         }
         if let Some(ref session_mode) = update.session_mode {
-            parts.push(format!("session_mode = '{}'", session_mode.as_str()));
+            params.push(session_mode.as_str().to_string());
+            set_clauses.push(format!("session_mode = ?{}", params.len() + 1));
         }
 
-        if parts.is_empty() {
+        if set_clauses.is_empty() {
             return Ok(()); // nothing to update
         }
 
-        let sql = format!("UPDATE cron_jobs SET {} WHERE id = ?1", parts.join(", "));
-        sqlx::query(&sql)
-            .bind(id)
+        let sql = format!("UPDATE cron_jobs SET {} WHERE id = ?1", set_clauses.join(", "));
+        let mut query = sqlx::query(&sql).bind(id.to_string());
+        for param in &params {
+            query = query.bind(param.clone());
+        }
+        query
             .execute(&self.pool)
             .await
             .map_err(|e| StarpodError::Cron(format!("Failed to update job: {}", e)))?;
@@ -1108,5 +1120,41 @@ mod tests {
         assert_eq!(store.count_running(&id1).await.unwrap(), 1);
         assert_eq!(store.count_running(&id2).await.unwrap(), 2);
         assert_eq!(store.count_all_running().await.unwrap(), 3);
+    }
+
+    // ── SQL injection regression tests ──────────────────────────────────
+
+    #[tokio::test]
+    async fn test_update_job_with_sql_injection_in_prompt() {
+        let store = setup().await;
+        let schedule = Schedule::Interval { every_ms: 60000 };
+        let id = store.add_job("inject-test", "original", &schedule, false, None).await.unwrap();
+
+        // Attempt SQL injection via prompt — this would corrupt data with string formatting
+        store.update_job(&id, &JobUpdate {
+            prompt: Some("'); DROP TABLE cron_jobs; --".into()),
+            ..Default::default()
+        }).await.unwrap();
+
+        // Table should still exist and contain our job
+        let jobs = store.list_jobs().await.unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].prompt, "'); DROP TABLE cron_jobs; --");
+    }
+
+    #[tokio::test]
+    async fn test_update_job_with_special_chars_in_prompt() {
+        let store = setup().await;
+        let schedule = Schedule::Interval { every_ms: 60000 };
+        let id = store.add_job("special-chars", "original", &schedule, false, None).await.unwrap();
+
+        let special = "Hello 'world' \"quotes\" \\ backslash; semicolon -- comment /* block */";
+        store.update_job(&id, &JobUpdate {
+            prompt: Some(special.into()),
+            ..Default::default()
+        }).await.unwrap();
+
+        let job = store.get_job_by_name("special-chars").await.unwrap().unwrap();
+        assert_eq!(job.prompt, special);
     }
 }

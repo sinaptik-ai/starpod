@@ -191,6 +191,7 @@ fn is_user_file(name: &str) -> bool {
 
 /// Read a file from the user directory, returning empty string if not found.
 fn read_user_file(user_dir: &Path, name: &str) -> Result<String> {
+    scoring::validate_path(name, user_dir)?;
     let path = user_dir.join(name);
     if !path.exists() {
         return Ok(String::new());
@@ -201,7 +202,9 @@ fn read_user_file(user_dir: &Path, name: &str) -> Result<String> {
 /// Cap a string at a maximum length.
 fn cap_str(s: &str, max: usize) -> &str {
     if s.len() > max {
-        &s[..max]
+        let mut end = max;
+        while end > 0 && !s.is_char_boundary(end) { end -= 1; }
+        &s[..end]
     } else {
         s
     }
@@ -304,5 +307,42 @@ mod tests {
         assert!(!is_user_file("SOUL.md"));
         assert!(!is_user_file("test.md"));
         assert!(!is_user_file("HEARTBEAT.md"));
+    }
+
+    #[test]
+    fn cap_str_handles_multibyte_utf8() {
+        // "café" = 5 bytes: c(1) a(1) f(1) é(2)
+        let s = "café";
+        assert_eq!(s.len(), 5);
+        // Slicing at 4 would split the 'é' (bytes 3-4). cap_str should not panic.
+        let result = cap_str(s, 4);
+        assert_eq!(result, "caf"); // truncates before the multi-byte char
+        // Slicing at 5 returns the full string
+        assert_eq!(cap_str(s, 5), "café");
+        assert_eq!(cap_str(s, 100), "café");
+        // Edge: cap at 0
+        assert_eq!(cap_str(s, 0), "");
+    }
+
+    #[test]
+    fn cap_str_handles_emoji() {
+        // "hi 👋" = 7 bytes: h(1) i(1) (1) 👋(4)
+        let s = "hi 👋";
+        assert_eq!(s.len(), 7);
+        for i in 4..7 {
+            // Slicing at 4,5,6 would all split the emoji; cap_str should truncate before it
+            assert_eq!(cap_str(s, i), "hi ");
+        }
+        assert_eq!(cap_str(s, 7), "hi 👋");
+    }
+
+    #[tokio::test]
+    async fn read_user_file_rejects_traversal() {
+        let (_tmp, store, user_dir) = setup().await;
+        let _view = UserMemoryView::new(Arc::clone(&store), user_dir.clone()).unwrap();
+
+        // Attempt path traversal via user file path
+        let result = read_user_file(&user_dir, "memory/../../../etc/passwd");
+        assert!(result.is_err(), "read_user_file should reject path traversal");
     }
 }

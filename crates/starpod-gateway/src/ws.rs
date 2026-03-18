@@ -47,7 +47,9 @@ async fn ws_handler(
         }
     }
 
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+    ws.max_frame_size(1024 * 1024) // 1 MB
+        .max_message_size(1024 * 1024) // 1 MB
+        .on_upgrade(move |socket| handle_socket(socket, state))
         .into_response()
 }
 
@@ -494,7 +496,9 @@ async fn handle_stream_message(
                         .unwrap_or_else(|| serde_json::to_string(content).unwrap_or_default());
 
                     let preview = if content_str.len() > 500 {
-                        format!("{}...", &content_str[..500])
+                        let mut end = 500;
+                        while end > 0 && !content_str.is_char_boundary(end) { end -= 1; }
+                        format!("{}...", &content_str[..end])
                     } else {
                         content_str
                     };
