@@ -4,6 +4,9 @@
 //!
 //! - **Workspace** (dev): `starpod.toml` in CWD or parent walk-up, multiple
 //!   agents under `agents/<name>/`, shared skills in `skills/`.
+//!   `starpod.toml` is **scaffolding only** — it provides defaults when
+//!   creating new agents (`starpod agent new`), but is NOT read at runtime.
+//!   Each `agent.toml` is self-contained.
 //! - **Instance** (dev runtime): CWD inside `.instances/<name>/`, workspace
 //!   root identified by sibling `starpod.toml`.
 //! - **SingleAgent** (prod): `.starpod/agent.toml` in CWD, everything self-contained.
@@ -13,7 +16,7 @@
 //! **Workspace mode (blueprints):**
 //! ```text
 //! workspace/
-//! +-- starpod.toml                    # workspace defaults (git-tracked)
+//! +-- starpod.toml                    # scaffolding template (git-tracked, not read at runtime)
 //! +-- .env                            # production secrets (gitignored)
 //! +-- .env.dev                        # development overrides (gitignored)
 //! +-- skills/                         # shared skills (git-tracked)
@@ -70,7 +73,7 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::config::{
-    deep_merge, AttachmentsConfig, ChannelsConfig, CompactionConfig, CronConfig, FollowupMode,
+    AttachmentsConfig, ChannelsConfig, CompactionConfig, CronConfig, FollowupMode,
     MemoryConfig, ProvidersConfig, ReasoningEffort, StarpodConfig,
 };
 use crate::error::StarpodError;
@@ -672,10 +675,9 @@ pub struct WorkspaceConfig {
 
 /// Load agent config from resolved paths.
 ///
-/// - **SingleAgent**: parse `.starpod/agent.toml` directly
-/// - **Instance**: parse `.starpod/agent.toml` directly (already copied from blueprint)
-/// - **Workspace**: parse `starpod.toml` as base, deep-merge `agent.toml` on top
-/// - Loads `.env` via dotenvy if present
+/// All modes load `agent.toml` directly — each agent is self-contained.
+/// `starpod.toml` is scaffolding only (used when creating agents, not at runtime).
+/// Loads `.env` via dotenvy if present.
 pub fn load_agent_config(paths: &ResolvedPaths) -> crate::Result<AgentConfig> {
     // Load .env hierarchy
     match &paths.mode {
@@ -705,90 +707,47 @@ pub fn load_agent_config(paths: &ResolvedPaths) -> crate::Result<AgentConfig> {
         }
     }
 
-    match &paths.mode {
-        Mode::SingleAgent { .. } | Mode::Instance { .. } => {
-            // Direct load from agent.toml
-            if !paths.agent_toml.is_file() {
-                return Err(StarpodError::Config(format!(
-                    "Agent config not found: {}",
-                    paths.agent_toml.display()
-                )));
-            }
-            let content = std::fs::read_to_string(&paths.agent_toml).map_err(|e| {
-                StarpodError::Config(format!(
-                    "Failed to read {}: {}",
-                    paths.agent_toml.display(),
-                    e
-                ))
-            })?;
+    // All modes: direct load from agent.toml (no merge with starpod.toml)
+    if !paths.agent_toml.is_file() {
+        return Err(StarpodError::Config(format!(
+            "Agent config not found: {}",
+            paths.agent_toml.display()
+        )));
+    }
+    let content = std::fs::read_to_string(&paths.agent_toml).map_err(|e| {
+        StarpodError::Config(format!(
+            "Failed to read {}: {}",
+            paths.agent_toml.display(),
+            e
+        ))
+    })?;
 
-            // Warn about any credentials left in the config file
-            if let Ok(raw) = toml::from_str::<toml::Value>(&content) {
-                crate::config::warn_credentials_in_toml(&raw, &paths.agent_toml.display().to_string());
-            }
+    // Warn about any credentials left in the config file
+    if let Ok(raw) = toml::from_str::<toml::Value>(&content) {
+        crate::config::warn_credentials_in_toml(&raw, &paths.agent_toml.display().to_string());
+    }
 
-            let mut config: AgentConfig = toml::from_str(&content)
-                .map_err(|e| StarpodError::Config(format!("Invalid agent.toml: {}", e)))?;
+    let mut config: AgentConfig = toml::from_str(&content)
+        .map_err(|e| StarpodError::Config(format!("Invalid agent.toml: {}", e)))?;
 
-            // Use agent_name as name if name wasn't explicitly set
-            if config.name == "Aster" && config.agent_name != "Aster" {
-                config.name = config.agent_name.clone();
-            }
+    // Use agent_name as name if name wasn't explicitly set
+    if config.name == "Aster" && config.agent_name != "Aster" {
+        config.name = config.agent_name.clone();
+    }
 
-            // For Instance mode, set name from the agent_name in the mode
-            if let Mode::Instance { agent_name, .. } = &paths.mode {
-                if config.name == "Aster" {
-                    config.name = agent_name.clone();
-                }
-            }
-
-            Ok(config)
-        }
-        Mode::Workspace { root, agent_name } => {
-            // Parse starpod.toml as TOML value tree (base defaults)
-            let workspace_toml = root.join("starpod.toml");
-            let mut base_value = if workspace_toml.is_file() {
-                let content = std::fs::read_to_string(&workspace_toml).map_err(|e| {
-                    StarpodError::Config(format!(
-                        "Failed to read {}: {}",
-                        workspace_toml.display(),
-                        e
-                    ))
-                })?;
-                let val = toml::from_str::<toml::Value>(&content)
-                    .map_err(|e| StarpodError::Config(format!("Invalid starpod.toml: {}", e)))?;
-                crate::config::warn_credentials_in_toml(&val, &workspace_toml.display().to_string());
-                val
-            } else {
-                toml::Value::Table(Default::default())
-            };
-
-            // Deep-merge agent.toml on top
-            if paths.agent_toml.is_file() {
-                let content = std::fs::read_to_string(&paths.agent_toml).map_err(|e| {
-                    StarpodError::Config(format!(
-                        "Failed to read {}: {}",
-                        paths.agent_toml.display(),
-                        e
-                    ))
-                })?;
-                let agent_value: toml::Value = toml::from_str(&content)
-                    .map_err(|e| StarpodError::Config(format!("Invalid agent.toml: {}", e)))?;
-                crate::config::warn_credentials_in_toml(&agent_value, &paths.agent_toml.display().to_string());
-                deep_merge(&mut base_value, agent_value);
-            }
-
-            // Deserialize merged config
-            let mut config: AgentConfig = base_value
-                .try_into()
-                .map_err(|e| StarpodError::Config(format!("Invalid config: {}", e)))?;
-
-            // Set the agent name from the directory name
+    // For Instance mode, set name from the agent_name in the mode
+    if let Mode::Instance { agent_name, .. } = &paths.mode {
+        if config.name == "Aster" {
             config.name = agent_name.clone();
-
-            Ok(config)
         }
     }
+
+    // For Workspace mode, set name from directory
+    if let Mode::Workspace { agent_name, .. } = &paths.mode {
+        config.name = agent_name.clone();
+    }
+
+    Ok(config)
 }
 
 /// Synchronous config reload for file watcher (workspace-aware).
@@ -1044,29 +1003,31 @@ provider = "anthropic"
     }
 
     #[test]
-    fn load_workspace_config_merges() {
+    fn load_workspace_config_self_contained() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        // Workspace defaults
+        // starpod.toml exists but is NOT read at runtime
         std::fs::write(
             root.join("starpod.toml"),
             r#"
-provider = "anthropic"
-model = "claude-haiku-4-5"
-max_turns = 20
+provider = "openai"
+model = "gpt-4o"
+max_turns = 99
 "#,
         )
         .unwrap();
 
-        // Agent overrides
+        // Agent is self-contained — has all its own values
         let agent_dir = root.join("agents").join("my-agent");
         std::fs::create_dir_all(&agent_dir).unwrap();
         std::fs::write(
             agent_dir.join("agent.toml"),
             r#"
+provider = "anthropic"
 model = "claude-sonnet-4-6"
 agent_name = "MyAgent"
+max_turns = 30
 "#,
         )
         .unwrap();
@@ -1078,44 +1039,35 @@ agent_name = "MyAgent"
         let paths = ResolvedPaths::resolve(&mode).unwrap();
         let config = load_agent_config(&paths).unwrap();
 
-        // Agent override wins
+        // All values from agent.toml, NOT starpod.toml
         assert_eq!(config.model, "claude-sonnet-4-6");
         assert_eq!(config.agent_name, "MyAgent");
-        // Workspace default applies
         assert_eq!(config.provider, "anthropic");
-        assert_eq!(config.max_turns, 20);
+        assert_eq!(config.max_turns, 30);
         // Name is from directory
         assert_eq!(config.name, "my-agent");
     }
 
     #[test]
-    fn load_workspace_config_no_agent_toml() {
+    fn load_workspace_config_no_agent_toml_errors() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        std::fs::write(
-            root.join("starpod.toml"),
-            r#"
-provider = "openai"
-model = "gpt-4o"
-"#,
-        )
-        .unwrap();
+        std::fs::write(root.join("starpod.toml"), "").unwrap();
 
         let agent_dir = root.join("agents").join("no-config");
         std::fs::create_dir_all(&agent_dir).unwrap();
+        // No agent.toml — should error since agents must be self-contained
 
         let mode = Mode::Workspace {
             root: root.to_path_buf(),
             agent_name: "no-config".to_string(),
         };
         let paths = ResolvedPaths::resolve(&mode).unwrap();
-        let config = load_agent_config(&paths).unwrap();
+        let result = load_agent_config(&paths);
 
-        // Gets workspace defaults
-        assert_eq!(config.provider, "openai");
-        assert_eq!(config.model, "gpt-4o");
-        assert_eq!(config.name, "no-config");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Agent config not found"));
     }
 
     #[test]
@@ -1156,7 +1108,7 @@ model = "gpt-4o"
 
         let agent_dir = root.join("agents").join("env-test");
         std::fs::create_dir_all(&agent_dir).unwrap();
-        std::fs::write(agent_dir.join("agent.toml"), "").unwrap();
+        std::fs::write(agent_dir.join("agent.toml"), "provider = \"anthropic\"\n").unwrap();
 
         let mode = Mode::Workspace {
             root: root.to_path_buf(),

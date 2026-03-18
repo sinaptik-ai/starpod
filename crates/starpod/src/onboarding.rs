@@ -141,7 +141,8 @@ pub fn run_wizard() -> Option<InitAnswers> {
 pub fn generate_workspace_config_with(provider: &str, model: &str) -> String {
     format!(
         r#"# Starpod workspace configuration
-# These are defaults for all agents. Each agent can override in its own agent.toml.
+# This is a template — values here are baked into each agent's agent.toml when created.
+# It is NOT read at runtime. Edit each agent's agent.toml directly to change settings.
 
 provider = "{provider}"
 model = "{model}"
