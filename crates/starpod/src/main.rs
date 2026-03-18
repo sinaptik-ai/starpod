@@ -90,6 +90,9 @@ enum Commands {
 
     /// Skill management.
     Skill {
+        /// Agent name (manages instance-level skills for this agent).
+        #[arg(short, long)]
+        agent: Option<String>,
         #[command(subcommand)]
         action: SkillAction,
     },
@@ -1226,30 +1229,33 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ── Skills ────────────────────────────────────────────────────
-        Commands::Skill { action } => {
-            // Skills are workspace-level, resolve from workspace root
+        Commands::Skill { agent: agent_name, action } => {
+            // Resolve skills directory: use agent's instance skills if --agent given,
+            // otherwise detect mode and use resolved skills_dir.
             let cwd = std::env::current_dir()?;
-            let skills_dir = if cwd.join("starpod.toml").is_file() {
-                cwd.join("skills")
+            let skills_dir = if let Some(ref name) = agent_name {
+                // Workspace mode: resolve to instance skills
+                let mode = starpod_core::detect_mode_from(Some(name), &cwd)?;
+                let paths = starpod_core::ResolvedPaths::resolve(&mode)?;
+                paths.skills_dir
             } else {
-                // Walk up
-                let mut dir = cwd.clone();
-                let mut found = None;
-                loop {
-                    if dir.join("starpod.toml").is_file() {
-                        found = Some(dir.join("skills"));
-                        break;
+                // Try to detect mode automatically
+                match starpod_core::detect_mode(None) {
+                    Ok(mode) => {
+                        let paths = starpod_core::ResolvedPaths::resolve(&mode)?;
+                        paths.skills_dir
                     }
-                    if !dir.pop() { break; }
+                    Err(_) => {
+                        // Fallback: workspace skills/ or .starpod/skills/
+                        if cwd.join("starpod.toml").is_file() {
+                            cwd.join("skills")
+                        } else if cwd.join(".starpod").is_dir() {
+                            cwd.join(".starpod").join("skills")
+                        } else {
+                            cwd.join("skills")
+                        }
+                    }
                 }
-                found.unwrap_or_else(|| {
-                    // Fall back to .starpod/data for legacy
-                    if cwd.join(".starpod").is_dir() {
-                        cwd.join(".starpod").join("data")
-                    } else {
-                        cwd.join("skills")
-                    }
-                })
             };
 
             let store = starpod_skills::SkillStore::new(&skills_dir)?;
