@@ -229,9 +229,18 @@ pub fn build_standalone(
     output_dir: &Path,
     skills_dir: Option<&Path>,
     env_file: Option<&Path>,
+    force: bool,
 ) -> crate::Result<()> {
     let starpod_dir = output_dir.join(".starpod");
     let config_dir = starpod_dir.join("config");
+
+    // Refuse to overwrite an existing instance unless --force is passed
+    if starpod_dir.exists() && !force {
+        return Err(StarpodError::Config(format!(
+            ".starpod/ already exists in {}. Use --force to overwrite blueprint files.",
+            output_dir.display()
+        )));
+    }
 
     // Validate blueprint has agent.toml
     let src_toml = blueprint_dir.join("agent.toml");
@@ -713,7 +722,7 @@ mod tests {
         let output = tmp.path().join("deploy");
         std::fs::create_dir_all(&output).unwrap();
 
-        build_standalone(&blueprint, &output, None, None).unwrap();
+        build_standalone(&blueprint, &output, None, None, false).unwrap();
 
         let sp = output.join(".starpod");
         let cfg = sp.join("config");
@@ -740,8 +749,30 @@ mod tests {
         let output = tmp.path().join("deploy");
         std::fs::create_dir_all(&output).unwrap();
 
-        let err = build_standalone(&blueprint, &output, None, None).unwrap_err();
+        let err = build_standalone(&blueprint, &output, None, None, false).unwrap_err();
         assert!(err.to_string().contains("agent.toml"));
+    }
+
+    #[test]
+    fn build_standalone_fails_if_starpod_exists_without_force() {
+        let tmp = TempDir::new().unwrap();
+        let blueprint = tmp.path().join("my-agent");
+        std::fs::create_dir_all(&blueprint).unwrap();
+        std::fs::write(blueprint.join("agent.toml"), "").unwrap();
+
+        let output = tmp.path().join("deploy");
+        std::fs::create_dir_all(&output).unwrap();
+
+        // First build succeeds
+        build_standalone(&blueprint, &output, None, None, false).unwrap();
+
+        // Second build without --force should fail
+        let err = build_standalone(&blueprint, &output, None, None, false).unwrap_err();
+        assert!(err.to_string().contains("already exists"));
+        assert!(err.to_string().contains("--force"));
+
+        // With --force should succeed
+        build_standalone(&blueprint, &output, None, None, true).unwrap();
     }
 
     #[test]
@@ -757,7 +788,7 @@ mod tests {
         let output = tmp.path().join("deploy");
         std::fs::create_dir_all(&output).unwrap();
 
-        build_standalone(&blueprint, &output, None, Some(&env_file)).unwrap();
+        build_standalone(&blueprint, &output, None, Some(&env_file), false).unwrap();
 
         // .env should be at starpod root, not in config/
         let content = std::fs::read_to_string(output.join(".starpod").join(".env")).unwrap();
@@ -779,6 +810,7 @@ mod tests {
             &output,
             None,
             Some(Path::new("/nonexistent/.env")),
+            false,
         ).unwrap_err();
         assert!(err.to_string().contains("Env file not found"));
     }
@@ -800,7 +832,7 @@ mod tests {
         let output = tmp.path().join("deploy");
         std::fs::create_dir_all(&output).unwrap();
 
-        build_standalone(&blueprint, &output, Some(&skills), None).unwrap();
+        build_standalone(&blueprint, &output, Some(&skills), None, false).unwrap();
 
         // Skills stay at starpod root, not in config/
         assert!(output.join(".starpod").join("skills").join("code-review").join("SKILL.md").is_file());
@@ -820,7 +852,7 @@ mod tests {
         let output = tmp.path().join("deploy");
         std::fs::create_dir_all(&output).unwrap();
 
-        build_standalone(&blueprint, &output, None, None).unwrap();
+        build_standalone(&blueprint, &output, None, None, false).unwrap();
 
         assert!(output.join("templates").join("report.md").is_file());
     }
@@ -836,7 +868,7 @@ mod tests {
         let output = tmp.path().join("deploy");
         std::fs::create_dir_all(&output).unwrap();
 
-        build_standalone(&blueprint, &output, None, None).unwrap();
+        build_standalone(&blueprint, &output, None, None, false).unwrap();
 
         let content = std::fs::read_to_string(output.join(".starpod").join("config").join("BOOT.md")).unwrap();
         assert!(content.contains("Run migrations on startup"));
@@ -853,14 +885,14 @@ mod tests {
         std::fs::create_dir_all(&output).unwrap();
 
         // First build
-        build_standalone(&blueprint, &output, None, None).unwrap();
+        build_standalone(&blueprint, &output, None, None, false).unwrap();
 
         // Modify admin USER.md
         let admin_user = output.join(".starpod").join("users").join("admin").join("USER.md");
         std::fs::write(&admin_user, "# Custom user data\n").unwrap();
 
-        // Second build — should NOT overwrite user data
-        build_standalone(&blueprint, &output, None, None).unwrap();
+        // Second build with --force — should NOT overwrite user data
+        build_standalone(&blueprint, &output, None, None, true).unwrap();
 
         let content = std::fs::read_to_string(&admin_user).unwrap();
         assert!(content.contains("Custom user data"), "User data should be preserved on re-build");
@@ -876,7 +908,7 @@ mod tests {
         let output = tmp.path().join("deploy");
         std::fs::create_dir_all(&output).unwrap();
 
-        build_standalone(&blueprint, &output, None, None).unwrap();
+        build_standalone(&blueprint, &output, None, None, false).unwrap();
 
         assert!(!output.join(".starpod").join(".env").exists());
         // But config/ should exist with agent.toml
@@ -904,7 +936,7 @@ mod tests {
         let output = tmp.path().join("deploy");
         std::fs::create_dir_all(&output).unwrap();
 
-        build_standalone(&blueprint, &output, Some(&skills), Some(&env_file)).unwrap();
+        build_standalone(&blueprint, &output, Some(&skills), Some(&env_file), false).unwrap();
 
         let sp = output.join(".starpod");
         let cfg = sp.join("config");
@@ -941,7 +973,7 @@ mod tests {
         std::fs::create_dir_all(&output).unwrap();
 
         // First build
-        build_standalone(&blueprint, &output, None, None).unwrap();
+        build_standalone(&blueprint, &output, None, None, false).unwrap();
 
         let sp = output.join(".starpod");
 
@@ -954,8 +986,8 @@ mod tests {
         std::fs::write(blueprint.join("agent.toml"), "model = \"v2\"\n").unwrap();
         std::fs::write(blueprint.join("SOUL.md"), "# Soul\nVersion 2.").unwrap();
 
-        // Second build
-        build_standalone(&blueprint, &output, None, None).unwrap();
+        // Second build with --force
+        build_standalone(&blueprint, &output, None, None, true).unwrap();
 
         // Config should be updated
         let toml = std::fs::read_to_string(sp.join("config").join("agent.toml")).unwrap();
@@ -988,7 +1020,7 @@ mod tests {
         std::fs::create_dir_all(&output).unwrap();
 
         // First build
-        build_standalone(&blueprint, &output, Some(&skills), None).unwrap();
+        build_standalone(&blueprint, &output, Some(&skills), None, false).unwrap();
 
         // Agent creates a skill at runtime
         let inst_skills = output.join(".starpod").join("skills");
@@ -1004,8 +1036,8 @@ mod tests {
             "---\nname: bp-skill\n---\nBlueprint v2.",
         ).unwrap();
 
-        // Second build
-        build_standalone(&blueprint, &output, Some(&skills), None).unwrap();
+        // Second build with --force
+        build_standalone(&blueprint, &output, Some(&skills), None, true).unwrap();
 
         // Blueprint skill should be updated
         let bp = std::fs::read_to_string(inst_skills.join("bp-skill").join("SKILL.md")).unwrap();
