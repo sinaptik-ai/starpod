@@ -198,6 +198,7 @@ impl LlmProvider for AnthropicProvider {
     async fn create_message(&self, request: &CreateMessageRequest) -> Result<MessageResponse> {
         let mut req = request.clone();
         req.stream = false;
+        strip_tool_result_names(&mut req);
 
         let body = serde_json::to_value(&req)?;
 
@@ -244,6 +245,7 @@ impl LlmProvider for AnthropicProvider {
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>> {
         let mut req = request.clone();
         req.stream = true;
+        strip_tool_result_names(&mut req);
 
         let body = serde_json::to_value(&req)?;
         let response = self.send_with_retry(&body).await?;
@@ -398,6 +400,21 @@ fn parse_stream_event(event_type: &str, data: &str) -> Result<StreamEvent> {
         other => {
             debug!(event_type = other, "Unknown SSE event type, ignoring");
             Ok(StreamEvent::Ping)
+        }
+    }
+}
+
+/// Strip the `name` field from `ToolResult` blocks.
+///
+/// The Anthropic API does not accept `name` on `tool_result` content blocks
+/// (it's only needed by Gemini's `functionResponse`). Sending it causes
+/// "Extra inputs are not permitted" validation errors.
+fn strip_tool_result_names(req: &mut CreateMessageRequest) {
+    for msg in &mut req.messages {
+        for block in &mut msg.content {
+            if let ApiContentBlock::ToolResult { name, .. } = block {
+                *name = None;
+            }
         }
     }
 }

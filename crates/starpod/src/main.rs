@@ -548,28 +548,69 @@ fn print_result(result_text: &str, result_msg: &agent_sdk::ResultMessage, start:
 // ── Blueprint scaffold helper ────────────────────────────────────────────
 
 /// Create agent blueprint directory structure (used by both `init` and `agent new`).
+///
+/// Reads `starpod.toml` (if it exists in `workspace_root`) and bakes its values
+/// into the generated `agent.toml`, making each agent self-contained.
 async fn scaffold_agent_blueprint(
     agent_dir: &std::path::Path,
     name: &str,
     display_name: &str,
     model: &str,
+    provider: &str,
     soul: Option<&str>,
+    workspace_root: Option<&std::path::Path>,
 ) -> anyhow::Result<()> {
     tokio::fs::create_dir_all(agent_dir.join("users")).await?;
     tokio::fs::create_dir_all(agent_dir.join("files")).await?;
 
+    // Read workspace starpod.toml to inherit defaults (scaffolding)
+    let ws_config: Option<toml::Value> = if let Some(root) = workspace_root {
+        let ws_toml = root.join("starpod.toml");
+        if ws_toml.is_file() {
+            let content = tokio::fs::read_to_string(&ws_toml).await?;
+            toml::from_str(&content).ok()
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Helper to read a string field from workspace config
+    let ws_str = |key: &str, fallback: &str| -> String {
+        ws_config
+            .as_ref()
+            .and_then(|v| v.get(key))
+            .and_then(|v| v.as_str())
+            .unwrap_or(fallback)
+            .to_string()
+    };
+    let ws_int = |key: &str, fallback: i64| -> i64 {
+        ws_config
+            .as_ref()
+            .and_then(|v| v.get(key))
+            .and_then(|v| v.as_integer())
+            .unwrap_or(fallback)
+    };
+
+    // Bake workspace defaults into agent.toml (self-contained)
+    let effective_provider = ws_str("provider", provider);
+    let effective_model = ws_str("model", model);
+    let effective_max_turns = ws_int("max_turns", 30);
+    let effective_server_addr = ws_str("server_addr", "127.0.0.1:3000");
+
     let agent_toml = format!(
         r#"# Agent configuration for {name}
-# Overrides workspace starpod.toml defaults for this agent.
+# This file is self-contained — all settings are here (not inherited from starpod.toml).
 
 agent_name = "{display_name}"
+provider = "{provider}"
 model = "{model}"
+max_turns = {max_turns}
+server_addr = "{server_addr}"
 # skills = []  # empty = all workspace skills
 
-# provider = "anthropic"
-# max_turns = 30
 # max_tokens = 16384
-# server_addr = "127.0.0.1:3000"
 # reasoning_effort = "low"  # low, medium, high
 # compaction_model = "{model}"
 # timezone = "Europe/Rome"  # IANA format, used for cron scheduling
@@ -599,7 +640,6 @@ model = "{model}"
 # allowed_extensions = []
 # max_file_size = 20971520
 
-# Channel config is only valid in agent.toml (not in starpod.toml).
 # [channels.telegram]
 # enabled = true
 # gap_minutes = 360  # inactivity gap before auto-closing session (6h)
@@ -608,7 +648,10 @@ model = "{model}"
 "#,
         name = name,
         display_name = display_name,
-        model = model,
+        provider = effective_provider,
+        model = effective_model,
+        max_turns = effective_max_turns,
+        server_addr = effective_server_addr,
     );
     tokio::fs::write(agent_dir.join("agent.toml"), agent_toml).await?;
 
@@ -773,7 +816,7 @@ async fn main() -> anyhow::Result<()> {
             if let Some(agent_name) = first_agent {
                 let display_name = agent_display.as_deref().unwrap_or("Aster");
                 let agent_dir = cwd.join("agents").join(&agent_name);
-                scaffold_agent_blueprint(&agent_dir, &agent_name, display_name, &model, None).await?;
+                scaffold_agent_blueprint(&agent_dir, &agent_name, display_name, &model, &provider, None, Some(&cwd)).await?;
 
                 println!(
                     "  {} Created agent '{}'",
@@ -840,7 +883,9 @@ async fn main() -> anyhow::Result<()> {
                     &name,
                     display_name,
                     &model,
+                    "anthropic", // CLI default; starpod.toml values baked in via workspace_root
                     soul.as_deref(),
+                    Some(&root),
                 ).await?;
 
                 println!();
