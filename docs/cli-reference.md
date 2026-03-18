@@ -73,7 +73,7 @@ starpod serve -a my-agent
 |------|-------------|
 | `--agent`, `-a` | Agent name (required in workspace mode, optional in single-agent) |
 
-Serves the web UI, REST API, WebSocket endpoint, and (if configured) Telegram bot. All share the same agent instance.
+In single-agent mode, walks up from the current directory to find the nearest `.starpod/agent.toml`. Serves the web UI, REST API, WebSocket endpoint, and (if configured) Telegram bot. All share the same agent instance.
 
 ### `starpod chat`
 
@@ -100,6 +100,24 @@ starpod repl -a my-agent
 | Flag | Description |
 |------|-------------|
 | `--agent`, `-a` | Agent name |
+
+### `starpod build`
+
+Build a standalone `.starpod/` from an agent blueprint. Used for creating deployment-ready agent instances without a workspace.
+
+```bash
+starpod build --agent agents/my-agent
+starpod build --agent agents/my-agent --skills skills/ --output /srv/my-agent --env .env
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--agent` | Path to agent blueprint folder (must contain `agent.toml`) | Required |
+| `--skills` | Path to skills folder to include | — |
+| `--output` | Where to create the `.starpod/` directory | Current directory |
+| `--env` | Path to `.env` file to include | — |
+
+Creates a self-contained `.starpod/` at the output directory, ready for `starpod serve`.
 
 ### `starpod deploy`
 

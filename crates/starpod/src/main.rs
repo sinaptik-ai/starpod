@@ -112,6 +112,22 @@ enum Commands {
         action: InstanceCommand,
     },
 
+    /// Build a standalone .starpod/ from an agent blueprint.
+    Build {
+        /// Path to agent blueprint folder (must contain agent.toml).
+        #[arg(long)]
+        agent: String,
+        /// Path to skills folder to include.
+        #[arg(long)]
+        skills: Option<String>,
+        /// Where to create the .starpod/ directory (default: current dir).
+        #[arg(long)]
+        output: Option<String>,
+        /// Path to .env file to include.
+        #[arg(long = "env")]
+        env_file: Option<String>,
+    },
+
     /// Deploy stub (future).
     Deploy {
         /// Agent name.
@@ -712,6 +728,52 @@ async fn resolve_agent(
     Ok((agent, starpod_config, paths))
 }
 
+/// Set up telegram bot + cron notifier from config.
+///
+/// Spawns the telegram bot task if configured, and returns the cron notifier sender.
+fn setup_telegram_and_notifier(
+    agent: &Arc<StarpodAgent>,
+    config: &StarpodConfig,
+) -> Option<starpod_cron::NotificationSender> {
+    let telegram_token = config.resolved_telegram_token();
+    let telegram_allowed = config.resolved_telegram_allowed_user_ids();
+    let telegram_allowed_usernames = config.resolved_telegram_allowed_usernames();
+
+    let cron_notifier: Option<starpod_cron::NotificationSender> =
+        if let Some(ref token) = telegram_token {
+            if !telegram_allowed.is_empty() {
+                let token = token.clone();
+                let users = telegram_allowed.clone();
+                Some(Arc::new(move |_job_name, result_text, _success| {
+                    let token = token.clone();
+                    let users = users.clone();
+                    Box::pin(async move {
+                        starpod_telegram::send_notification(&token, &users, &result_text).await;
+                    })
+                }))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+    if let Some(token) = telegram_token {
+        let tg_agent = Arc::clone(agent);
+        let allowed = telegram_allowed;
+        let allowed_names = telegram_allowed_usernames;
+        tokio::spawn(async move {
+            if let Err(e) =
+                starpod_telegram::run_with_agent_filtered(tg_agent, token, allowed, allowed_names).await
+            {
+                tracing::error!(error = %e, "Telegram bot error");
+            }
+        });
+    }
+
+    cron_notifier
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -969,36 +1031,6 @@ async fn main() -> anyhow::Result<()> {
             let blueprint_dir = workspace_root.join("agents").join(&agent_name);
             let instance_dir = workspace_root.join(".instances").join(&agent_name);
 
-            // Auto-migrate old layout: move data/, memory/, knowledge/, USER.md, MEMORY.md
-            let old_data = blueprint_dir.join("data");
-            let new_starpod = instance_dir.join(".starpod");
-            if old_data.exists() && !new_starpod.exists() {
-                println!("  {} Migrating old layout to new instance layout...", "↻".bright_yellow());
-                std::fs::create_dir_all(&new_starpod)?;
-                // Move data/
-                if old_data.is_dir() {
-                    let _ = std::fs::rename(&old_data, new_starpod.join("data"));
-                }
-                // Move memory/ and knowledge/ if at blueprint level
-                for dir_name in &["memory", "knowledge"] {
-                    let old = blueprint_dir.join(dir_name);
-                    if old.is_dir() {
-                        let _ = std::fs::rename(&old, new_starpod.join(dir_name));
-                    }
-                }
-                // Move USER.md, MEMORY.md to users/admin/
-                let admin_dir = new_starpod.join("users").join("admin");
-                std::fs::create_dir_all(&admin_dir)?;
-                std::fs::create_dir_all(admin_dir.join("memory"))?;
-                for file_name in &["USER.md", "MEMORY.md"] {
-                    let old = blueprint_dir.join(file_name);
-                    if old.is_file() {
-                        let _ = std::fs::rename(&old, admin_dir.join(file_name));
-                    }
-                }
-                println!("  {} Migration complete. Old data moved to {}", "✓".green().bold(), instance_dir.display());
-            }
-
             starpod_core::apply_blueprint(
                 &blueprint_dir,
                 &instance_dir,
@@ -1012,6 +1044,10 @@ async fn main() -> anyhow::Result<()> {
                 agent_name: agent_name.clone(),
             };
             let paths = starpod_core::ResolvedPaths::resolve(&instance_mode)?;
+
+            // Run migration if old data/ layout exists
+            paths.migrate_if_needed();
+
             let mut agent_config = starpod_core::load_agent_config(&paths)?;
 
             // Override port if specified
@@ -1024,43 +1060,7 @@ async fn main() -> anyhow::Result<()> {
             let display_name = config.agent_name.clone();
 
             let agent = Arc::new(StarpodAgent::with_paths(agent_config, paths.clone()).await?);
-
-            // Telegram + notifier setup (same as Serve)
-            let telegram_token = config.resolved_telegram_token();
-            let telegram_allowed = config.resolved_telegram_allowed_user_ids();
-            let telegram_allowed_usernames = config.resolved_telegram_allowed_usernames();
-
-            let cron_notifier: Option<starpod_cron::NotificationSender> =
-                if let Some(ref token) = telegram_token {
-                    if !telegram_allowed.is_empty() {
-                        let token = token.clone();
-                        let users = telegram_allowed.clone();
-                        Some(Arc::new(move |_job_name, result_text, _success| {
-                            let token = token.clone();
-                            let users = users.clone();
-                            Box::pin(async move {
-                                starpod_telegram::send_notification(&token, &users, &result_text).await;
-                            })
-                        }))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-            if let Some(token) = telegram_token.clone() {
-                let tg_agent = Arc::clone(&agent);
-                let allowed = telegram_allowed.clone();
-                let allowed_names = telegram_allowed_usernames.clone();
-                tokio::spawn(async move {
-                    if let Err(e) =
-                        starpod_telegram::run_with_agent_filtered(tg_agent, token, allowed, allowed_names).await
-                    {
-                        tracing::error!(error = %e, "Telegram bot error");
-                    }
-                });
-            }
+            let cron_notifier = setup_telegram_and_notifier(&agent, &config);
 
             print_header_with_name(&display_name);
             println!("  {} {} → {}", "DEV".bright_yellow().bold(), agent_name.bright_cyan(), instance_dir.display().to_string().dimmed());
@@ -1075,45 +1075,9 @@ async fn main() -> anyhow::Result<()> {
             let (agent, config, paths) = resolve_agent(agent_name).await?;
             let addr = config.server_addr.clone();
             let display_name = config.agent_name.clone();
+            let telegram_active = config.resolved_telegram_token().is_some();
             let agent = Arc::new(agent);
-
-            // Telegram setup
-            let telegram_token = config.resolved_telegram_token();
-            let telegram_allowed = config.resolved_telegram_allowed_user_ids();
-            let telegram_allowed_usernames = config.resolved_telegram_allowed_usernames();
-            let telegram_active = telegram_token.is_some();
-
-            let cron_notifier: Option<starpod_cron::NotificationSender> =
-                if let Some(ref token) = telegram_token {
-                    if !telegram_allowed.is_empty() {
-                        let token = token.clone();
-                        let users = telegram_allowed.clone();
-                        Some(Arc::new(move |_job_name, result_text, _success| {
-                            let token = token.clone();
-                            let users = users.clone();
-                            Box::pin(async move {
-                                starpod_telegram::send_notification(&token, &users, &result_text).await;
-                            })
-                        }))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-            if let Some(token) = telegram_token.clone() {
-                let tg_agent = Arc::clone(&agent);
-                let allowed = telegram_allowed.clone();
-                let allowed_names = telegram_allowed_usernames.clone();
-                tokio::spawn(async move {
-                    if let Err(e) =
-                        starpod_telegram::run_with_agent_filtered(tg_agent, token, allowed, allowed_names).await
-                    {
-                        tracing::error!(error = %e, "Telegram bot error");
-                    }
-                });
-            }
+            let cron_notifier = setup_telegram_and_notifier(&agent, &config);
 
             // Print startup banner
             println!();
@@ -1678,6 +1642,48 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
             }
+        }
+
+        // ── Build ─────────────────────────────────────────────────────
+        Commands::Build { agent, skills, output, env_file } => {
+            let agent_path = std::path::PathBuf::from(&agent);
+            if !agent_path.join("agent.toml").is_file() {
+                eprintln!(
+                    "  {} Blueprint directory {} does not contain agent.toml.",
+                    "✗".red().bold(),
+                    agent_path.display()
+                );
+                std::process::exit(1);
+            }
+
+            let output_dir = match output {
+                Some(p) => std::path::PathBuf::from(p),
+                None => std::env::current_dir()?,
+            };
+            let skills_path = skills.map(std::path::PathBuf::from);
+            let env_path = env_file.map(std::path::PathBuf::from);
+
+            starpod_core::build_standalone(
+                &agent_path,
+                &output_dir,
+                skills_path.as_deref(),
+                env_path.as_deref(),
+            )?;
+
+            let starpod_dir = output_dir.join(".starpod");
+            println!();
+            println!(
+                "  {} Built standalone agent at {}",
+                "✓".green().bold(),
+                starpod_dir.display().to_string().bright_white()
+            );
+            println!(
+                "  {} Run {} from {} to start.",
+                "→".dimmed(),
+                "starpod serve".bright_white(),
+                output_dir.display().to_string().bright_white()
+            );
+            println!();
         }
 
         // ── Deploy stub ───────────────────────────────────────────────
