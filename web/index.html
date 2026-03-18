@@ -18,21 +18,19 @@
   <aside id="sidebar">
     <div id="sidebar-inner">
       <!-- Sidebar header -->
-      <div class="flex items-center justify-between px-5 h-12 border-b border-border-subtle shrink-0">
+      <div class="flex items-center justify-between px-4 h-12 border-b border-border-subtle shrink-0">
         <span class="text-xs font-semibold text-muted tracking-wider uppercase">Sessions</span>
-        <button class="text-muted hover:text-primary p-1 rounded-md hover:bg-elevated transition-colors cursor-pointer" id="sidebar-close">
-          <svg class="w-4 h-4 stroke-current fill-none stroke-2" viewBox="0 0 24 24" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
-        </button>
-      </div>
-      <!-- New chat -->
-      <div class="px-4 pt-4 pb-2 shrink-0">
-        <button class="w-full px-3 py-2 bg-elevated hover:bg-border-subtle text-secondary hover:text-primary border border-border-main rounded-lg text-xs font-medium cursor-pointer transition-all flex items-center justify-center gap-1.5" id="new-chat-btn">
-          <svg class="w-3.5 h-3.5 stroke-current fill-none stroke-2" viewBox="0 0 24 24" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          New chat
-        </button>
+        <div class="flex items-center gap-1">
+          <button class="text-muted hover:text-primary p-1.5 rounded-md hover:bg-elevated transition-colors cursor-pointer" id="new-chat-btn" title="New chat">
+            <svg class="w-3.5 h-3.5 stroke-current fill-none stroke-[1.5]" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          </button>
+          <button class="text-muted hover:text-primary p-1.5 rounded-md hover:bg-elevated transition-colors cursor-pointer" id="sidebar-close">
+            <svg class="w-3.5 h-3.5 stroke-current fill-none stroke-2" viewBox="0 0 24 24" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
       </div>
       <!-- Session list -->
-      <div class="flex-1 overflow-y-auto px-3 py-1" id="session-list">
+      <div class="flex-1 overflow-y-auto px-3 py-2" id="session-list">
         <div class="text-center text-dim text-xs py-8">Loading sessions...</div>
       </div>
     </div>
@@ -42,9 +40,12 @@
   <div id="app" class="flex flex-col min-w-0 flex-1">
 
     <!-- Header -->
-    <header class="flex items-center gap-3 px-5 h-12 shrink-0 border-b border-border-subtle">
-      <button class="text-muted hover:text-primary p-1.5 -ml-1.5 rounded-lg hover:bg-elevated transition-colors cursor-pointer" id="menu-btn" aria-label="Sessions">
+    <header class="flex items-center gap-3 px-4 h-12 shrink-0 border-b border-border-subtle">
+      <button class="text-muted hover:text-primary p-1.5 rounded-lg hover:bg-elevated transition-colors cursor-pointer" id="menu-btn" aria-label="Sessions">
         <svg class="w-4 h-4 stroke-current fill-none stroke-[1.5]" viewBox="0 0 24 24" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+      <button class="text-muted hover:text-primary p-1.5 rounded-lg hover:bg-elevated transition-colors cursor-pointer" id="new-chat-header-btn" aria-label="New chat" title="New chat">
+        <svg class="w-4 h-4 stroke-current fill-none stroke-[1.5]" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
       </button>
       <div class="flex items-center gap-2">
         <span class="font-mono text-sm font-bold tracking-tight text-primary">starpod</span>
@@ -60,18 +61,8 @@
       <div id="messages" class="max-w-[740px] mx-auto px-5 pt-4 pb-8 flex flex-col gap-0.5">
         <div class="flex items-center justify-center text-center" id="welcome" style="min-height: calc(100dvh - 120px)">
           <div>
-            <div class="font-mono text-3xl font-extrabold tracking-tighter mb-2 bg-gradient-to-b from-primary to-muted bg-clip-text text-transparent select-none">starpod</div>
-            <p class="text-sm text-muted mb-8">What can I help you with?</p>
-            <div class="flex gap-3 justify-center flex-wrap">
-              <div class="flex items-center gap-2 text-xs text-muted px-3 py-1.5 bg-surface border border-border-subtle rounded-lg">
-                <kbd class="bg-elevated border border-border-main rounded px-1.5 py-0.5 font-mono text-[11px] text-secondary">Enter</kbd>
-                <span>send</span>
-              </div>
-              <div class="flex items-center gap-2 text-xs text-muted px-3 py-1.5 bg-surface border border-border-subtle rounded-lg">
-                <kbd class="bg-elevated border border-border-main rounded px-1.5 py-0.5 font-mono text-[11px] text-secondary">Shift+Enter</kbd>
-                <span>new line</span>
-              </div>
-            </div>
+            <div class="font-mono text-3xl font-extrabold tracking-tighter mb-3 bg-gradient-to-b from-primary to-muted bg-clip-text text-transparent select-none">starpod</div>
+            <p class="text-sm text-dim font-mono">ready_</p>
           </div>
         </div>
       </div>

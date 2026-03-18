@@ -54,6 +54,7 @@ const menuBtn = document.getElementById('menu-btn')
 const sidebarClose = document.getElementById('sidebar-close')
 const sidebarOverlay = document.getElementById('sidebar-overlay')
 const newChatBtn = document.getElementById('new-chat-btn')
+const newChatHeaderBtn = document.getElementById('new-chat-header-btn')
 const attachBtn = document.getElementById('attach-btn')
 const fileInput = document.getElementById('file-input')
 const attachmentPreview = document.getElementById('attachment-preview')
@@ -616,9 +617,11 @@ inputText.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shift
 inputText.addEventListener('input', autoResize)
 
 // ── Sidebar ──
+const isMobile = () => window.innerWidth <= 768
+
 function openSidebar() {
   sidebar.classList.add('open')
-  if (window.innerWidth <= 768) {
+  if (isMobile()) {
     sidebarOverlay.classList.remove('hidden')
     sidebarOverlay.classList.add('active')
   }
@@ -635,17 +638,14 @@ function toggleSidebar() {
   sidebar.classList.contains('open') ? closeSidebar() : openSidebar()
 }
 
+// Open sidebar by default on desktop
+if (!isMobile()) openSidebar()
+
 const welcomeHTML =
   '<div class="flex items-center justify-center text-center" id="welcome" style="min-height: calc(100dvh - 120px)">' +
     '<div>' +
-      '<div class="font-mono text-3xl font-extrabold tracking-tighter mb-2 bg-gradient-to-b from-primary to-muted bg-clip-text text-transparent select-none">starpod</div>' +
-      '<p class="text-sm text-muted mb-8">What can I help you with?</p>' +
-      '<div class="flex gap-3 justify-center flex-wrap">' +
-        '<div class="flex items-center gap-2 text-xs text-muted px-3 py-1.5 bg-surface border border-border-subtle rounded-lg">' +
-          '<kbd class="bg-elevated border border-border-main rounded px-1.5 py-0.5 font-mono text-[11px] text-secondary">Enter</kbd> <span>send</span></div>' +
-        '<div class="flex items-center gap-2 text-xs text-muted px-3 py-1.5 bg-surface border border-border-subtle rounded-lg">' +
-          '<kbd class="bg-elevated border border-border-main rounded px-1.5 py-0.5 font-mono text-[11px] text-secondary">Shift+Enter</kbd> <span>new line</span></div>' +
-      '</div>' +
+      '<div class="font-mono text-3xl font-extrabold tracking-tighter mb-3 bg-gradient-to-b from-primary to-muted bg-clip-text text-transparent select-none">starpod</div>' +
+      '<p class="text-sm text-dim font-mono">ready_</p>' +
     '</div>' +
   '</div>'
 
@@ -653,7 +653,9 @@ function newChat() {
   currentSessionId = null
   currentSessionKey = generateUUID()
   messages.innerHTML = welcomeHTML
-  closeSidebar()
+  if (isMobile()) closeSidebar()
+  // Deselect active session in sidebar
+  sessionList.querySelectorAll('.session-item').forEach(el => el.classList.remove('active'))
   inputText.focus()
 }
 
@@ -661,6 +663,7 @@ menuBtn.addEventListener('click', toggleSidebar)
 sidebarClose.addEventListener('click', closeSidebar)
 sidebarOverlay.addEventListener('click', closeSidebar)
 newChatBtn.addEventListener('click', newChat)
+newChatHeaderBtn.addEventListener('click', newChat)
 
 // Close transient sidebar when clicking outside it
 document.addEventListener('mousedown', (e) => {
@@ -727,7 +730,7 @@ function renderSessions(sessions) {
 }
 
 function selectSession(session) {
-  if (sidebar.classList.contains('transient')) closeSidebar()
+  if (isMobile() || sidebar.classList.contains('transient')) closeSidebar()
   currentSessionId = session.id
   currentSessionKey = session.channel_session_key || generateUUID()
   // Update active state in sidebar
@@ -837,7 +840,7 @@ function selectSession(session) {
 // ── Keyboard shortcuts ──
 document.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); inputText.focus() }
-  if (e.key === 'Escape' && sidebar.classList.contains('open')) closeSidebar()
+  if (e.key === 'Escape' && sidebar.classList.contains('open') && isMobile()) closeSidebar()
 })
 
 // ── Init ──
