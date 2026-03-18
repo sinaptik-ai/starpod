@@ -116,6 +116,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(routes::api_routes())
         .merge(ws::ws_routes())
         .route("/docs", get(docs_handler))
+        .route("/docs/", get(docs_handler))
         .route("/docs/{*path}", get(docs_handler))
         .fallback(get(static_handler))
         .layer(CorsLayer::permissive())
