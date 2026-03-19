@@ -266,7 +266,7 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
                             },
                             "at": {
                                 "type": "string",
-                                "description": "ISO 8601 timestamp (for 'one_shot' kind)"
+                                "description": "ISO 8601 timestamp for 'one_shot' kind. Prefer RFC 3339 with offset (e.g. '2026-03-19T09:00:00+01:00'). Naive timestamps (no offset) are interpreted in the user's configured timezone."
                             }
                         },
                         "required": ["kind"]
@@ -370,7 +370,7 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
                             },
                             "every_ms": { "type": "integer" },
                             "expr": { "type": "string" },
-                            "at": { "type": "string" }
+                            "at": { "type": "string", "description": "ISO 8601 timestamp with offset preferred (e.g. '2026-03-19T09:00:00+01:00')" }
                         },
                         "required": ["kind"]
                     },
