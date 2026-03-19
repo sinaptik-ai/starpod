@@ -337,30 +337,35 @@ impl ResolvedPaths {
                     return Self::resolve(&instance_mode);
                 }
 
-                // Fall back to old workspace layout (backward compat)
-                let agents_dir = root.join("agents").join(agent_name);
-                let agent_toml = agents_dir.join("agent.toml");
-                let db_dir = agents_dir.join("db");
-                let skills_dir = root.join("skills");
-                let users_dir = agents_dir.join("users");
-                let env_path = root.join(".env");
+                // No instance yet — auto-apply blueprint to create one.
+                // This prevents runtime state (db, memory, sessions) from
+                // polluting the git-tracked blueprint directory.
+                let blueprint_dir = root.join("agents").join(agent_name);
+                if blueprint_dir.join("agent.toml").is_file() {
+                    tracing::info!(
+                        "Auto-applying blueprint for agent '{}' (no instance found)",
+                        agent_name
+                    );
+                    crate::apply_blueprint(
+                        &blueprint_dir,
+                        &instance_dir,
+                        root,
+                        crate::EnvSource::Dev,
+                    )?;
+                    let instance_mode = Mode::Instance {
+                        instance_root: instance_dir,
+                        agent_name: agent_name.clone(),
+                    };
+                    return Self::resolve(&instance_mode);
+                }
 
-                Ok(Self {
-                    mode: mode.clone(),
-                    agent_toml,
-                    agent_home: agents_dir.clone(),
-                    config_dir: agents_dir.clone(),
-                    db_dir,
-                    skills_dir,
-                    project_root: root.clone(),
-                    instance_root: agents_dir,
-                    users_dir,
-                    env_file: if env_path.is_file() {
-                        Some(env_path)
-                    } else {
-                        None
-                    },
-                })
+                // No blueprint either — fail with a clear message
+                Err(StarpodError::Config(format!(
+                    "Agent '{}' not found. No instance at '{}' and no blueprint at '{}'.",
+                    agent_name,
+                    instance_starpod.display(),
+                    blueprint_dir.display(),
+                )))
             }
         }
     }
@@ -943,11 +948,20 @@ mod tests {
     }
 
     #[test]
-    fn resolved_paths_workspace() {
+    fn resolved_paths_workspace_auto_applies_blueprint() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().to_path_buf();
         // Create .env so it gets picked up
         std::fs::write(root.join(".env"), "KEY=val").unwrap();
+
+        // Create a blueprint with agent.toml
+        let blueprint_dir = root.join("agents").join("sales-rep");
+        std::fs::create_dir_all(&blueprint_dir).unwrap();
+        std::fs::write(
+            blueprint_dir.join("agent.toml"),
+            "agent_name = \"SalesRep\"\n",
+        )
+        .unwrap();
 
         let mode = Mode::Workspace {
             root: root.clone(),
@@ -955,17 +969,28 @@ mod tests {
         };
         let paths = ResolvedPaths::resolve(&mode).unwrap();
 
-        assert_eq!(
-            paths.agent_toml,
-            root.join("agents/sales-rep/agent.toml")
-        );
-        assert_eq!(paths.agent_home, root.join("agents/sales-rep"));
-        assert_eq!(paths.db_dir, root.join("agents/sales-rep/db"));
-        assert_eq!(paths.skills_dir, root.join("skills"));
-        assert_eq!(paths.project_root, root);
-        assert_eq!(paths.instance_root, root.join("agents/sales-rep"));
-        assert_eq!(paths.users_dir, root.join("agents/sales-rep/users"));
+        // Should auto-apply and resolve as instance
+        let instance_dir = root.join(".instances").join("sales-rep");
+        assert_eq!(paths.instance_root, instance_dir);
+        assert_eq!(paths.agent_home, instance_dir.join(".starpod"));
+        assert_eq!(paths.db_dir, instance_dir.join(".starpod/db"));
         assert!(paths.env_file.is_some());
+    }
+
+    #[test]
+    fn resolved_paths_workspace_no_blueprint_errors() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().to_path_buf();
+
+        let mode = Mode::Workspace {
+            root: root.clone(),
+            agent_name: "nonexistent".to_string(),
+        };
+        let result = ResolvedPaths::resolve(&mode);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not found"), "expected 'not found' in: {}", err);
     }
 
     #[test]
@@ -1119,6 +1144,7 @@ max_turns = 30
             root: root.to_path_buf(),
             agent_name: "my-agent".to_string(),
         };
+        // resolve now auto-applies blueprint → instance
         let paths = ResolvedPaths::resolve(&mode).unwrap();
         let config = load_agent_config(&paths).unwrap();
 
@@ -1127,8 +1153,6 @@ max_turns = 30
         assert_eq!(config.agent_name, "MyAgent");
         assert_eq!(config.provider, "anthropic");
         assert_eq!(config.max_turns, 30);
-        // Name is from directory
-        assert_eq!(config.name, "my-agent");
     }
 
     #[test]
@@ -1140,17 +1164,16 @@ max_turns = 30
 
         let agent_dir = root.join("agents").join("no-config");
         std::fs::create_dir_all(&agent_dir).unwrap();
-        // No agent.toml — should error since agents must be self-contained
+        // No agent.toml — resolve should error since no blueprint exists
 
         let mode = Mode::Workspace {
             root: root.to_path_buf(),
             agent_name: "no-config".to_string(),
         };
-        let paths = ResolvedPaths::resolve(&mode).unwrap();
-        let result = load_agent_config(&paths);
+        let result = ResolvedPaths::resolve(&mode);
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Agent config not found"));
+        assert!(result.unwrap_err().to_string().contains("not found"));
     }
 
     #[test]

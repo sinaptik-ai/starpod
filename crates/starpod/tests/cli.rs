@@ -147,13 +147,16 @@ fn skill_new_mirrors_agent_new_pattern() {
         .unwrap();
     let skill_help = String::from_utf8_lossy(&skill_output.stdout);
 
-    // Both should show <NAME> as a positional argument in usage.
+    // Both should show NAME as a positional argument in usage
+    // (required <NAME> or optional [NAME]).
     assert!(
-        agent_help.contains("<NAME>") || agent_help.contains("<name>"),
+        agent_help.contains("<NAME>") || agent_help.contains("<name>")
+            || agent_help.contains("[NAME]") || agent_help.contains("[name]"),
         "agent new should have a positional NAME arg, got:\n{agent_help}"
     );
     assert!(
-        skill_help.contains("<NAME>") || skill_help.contains("<name>"),
+        skill_help.contains("<NAME>") || skill_help.contains("<name>")
+            || skill_help.contains("[NAME]") || skill_help.contains("[name]"),
         "skill new should have a positional NAME arg, got:\n{skill_help}"
     );
 }
