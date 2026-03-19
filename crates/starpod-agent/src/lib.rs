@@ -573,7 +573,7 @@ impl StarpodAgent {
             builder = builder.compaction_model(cm);
         }
 
-        if let Some(key) = config.resolved_api_key() {
+        if let Some(key) = config.resolved_provider_api_key(&config.provider) {
             builder = builder.api_key(key);
         }
         if let Some(thinking) = Self::thinking_config(&config) {
@@ -757,7 +757,7 @@ impl StarpodAgent {
             builder = builder.compaction_model(cm);
         }
 
-        if let Some(key) = config.resolved_api_key() {
+        if let Some(key) = config.resolved_provider_api_key(&config.provider) {
             builder = builder.api_key(key);
         }
         if let Some(thinking) = Self::thinking_config(&config) {
