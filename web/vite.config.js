@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import tailwindcss from '@tailwindcss/vite'
+import react from '@vitejs/plugin-react'
 
 function frameCheckPlugin() {
   return {
@@ -72,7 +73,7 @@ function frameCheckPlugin() {
 
 export default defineConfig({
   root: '.',
-  plugins: [tailwindcss(), frameCheckPlugin()],
+  plugins: [react(), tailwindcss(), frameCheckPlugin()],
   build: {
     outDir: '../crates/starpod-gateway/static/dist',
     emptyOutDir: true,
