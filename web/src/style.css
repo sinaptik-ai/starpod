@@ -464,3 +464,193 @@ html, body {
   from { opacity: 1; transform: translateX(0); }
   to { opacity: 0; transform: translateX(20px); }
 }
+
+/* ── Settings page ── */
+#settings-btn.active {
+  color: var(--color-accent);
+  background: var(--color-accent-muted);
+}
+
+.settings-tab {
+  border-bottom: 2px solid transparent;
+  padding-bottom: calc(0.5rem - 2px);
+  background: none;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+}
+
+.settings-tab.active {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+.settings-field {
+  margin-bottom: 1.25rem;
+}
+
+.settings-field label {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--color-primary);
+  margin-bottom: 0.25rem;
+}
+
+.settings-field .field-desc {
+  font-size: 0.75rem;
+  color: var(--color-dim);
+  margin-bottom: 0.5rem;
+}
+
+.settings-input {
+  width: 100%;
+  background: var(--color-input-bg);
+  border: 1px solid var(--color-border-main);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--color-primary);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  font-family: var(--font-sans);
+}
+
+.settings-input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-glow);
+}
+
+.settings-input::placeholder { color: var(--color-dim); }
+
+textarea.settings-input {
+  font-family: var(--font-mono);
+  resize: vertical;
+  line-height: 1.6;
+}
+
+select.settings-input {
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  padding-right: 2rem;
+}
+
+/* Toggle switch */
+.toggle-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.toggle-switch input { display: none; }
+
+.toggle-track {
+  width: 36px;
+  height: 20px;
+  background: var(--color-elevated);
+  border: 1px solid var(--color-border-main);
+  border-radius: 999px;
+  position: relative;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.toggle-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-muted);
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.toggle-switch input:checked + .toggle-track {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.toggle-switch input:checked + .toggle-track::after {
+  transform: translateX(16px);
+  background: white;
+}
+
+/* User card */
+.user-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-main);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 8px;
+  transition: border-color 0.15s ease;
+}
+
+.user-card:hover { border-color: var(--color-dim); }
+
+/* Range input */
+.settings-range {
+  width: 100%;
+  accent-color: var(--color-accent);
+  cursor: pointer;
+  height: 4px;
+}
+
+/* Save bar */
+.settings-save-bar {
+  position: sticky;
+  bottom: 0;
+  padding: 1rem 0 0.5rem;
+  background: linear-gradient(to top, var(--color-bg) 60%, transparent);
+}
+
+/* Section divider */
+.settings-section {
+  padding-top: 1.25rem;
+  margin-top: 1.25rem;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.settings-section:first-child {
+  padding-top: 0;
+  margin-top: 0;
+  border-top: none;
+}
+
+.settings-section-title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  margin-bottom: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+}
+
+/* Prompt chip editor */
+.prompt-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.prompt-item input { flex: 1; }
+
+.prompt-item button {
+  background: none;
+  border: none;
+  color: var(--color-dim);
+  cursor: pointer;
+  padding: 0.25rem;
+  font-size: 1rem;
+  line-height: 1;
+  transition: color 0.15s ease;
+}
+
+.prompt-item button:hover { color: var(--color-err); }

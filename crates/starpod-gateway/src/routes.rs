@@ -52,6 +52,7 @@ pub fn api_routes() -> Router<Arc<AppState>> {
         .route("/api/instances/{id}/restart", post(restart_instance_handler))
         .route("/api/instances/{id}/health", get(instance_health_handler))
         .route("/api/health", get(health_handler))
+        .merge(crate::settings::settings_routes())
 }
 
 // ── Frame-check endpoint ─────────────────────────────────────────────────
@@ -390,8 +391,8 @@ async fn health_handler() -> Json<serde_json::Value> {
 
 /// Error response body.
 #[derive(Debug, Serialize, Deserialize)]
-struct ErrorResponse {
-    error: String,
+pub(crate) struct ErrorResponse {
+    pub(crate) error: String,
 }
 
 // ── Instance routes ──────────────────────────────────────────────────────
@@ -604,7 +605,7 @@ mod tests {
 }
 
 /// Check X-API-Key header if an API key is configured.
-fn check_api_key(
+pub(crate) fn check_api_key(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
