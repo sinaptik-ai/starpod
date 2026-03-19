@@ -540,15 +540,41 @@ pub fn compute_next_run(
     let now = Utc::now();
     match schedule {
         Schedule::OneShot { at } => {
-            if let Ok(dt) = DateTime::parse_from_rfc3339(at) {
-                let dt_utc = dt.with_timezone(&Utc);
-                if dt_utc > now && last_run.is_none() {
-                    Ok(Some(dt_utc.timestamp()))
-                } else {
-                    Ok(None)
+            // Try RFC 3339 first (has explicit timezone offset)
+            let dt_utc = if let Ok(dt) = DateTime::parse_from_rfc3339(at) {
+                dt.with_timezone(&Utc)
+            } else if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(at, "%Y-%m-%dT%H:%M:%S") {
+                // Naive timestamp (no offset) — interpret in user_tz if available, else UTC
+                match user_tz.and_then(|s| s.parse::<chrono_tz::Tz>().ok()) {
+                    Some(tz) => {
+                        match naive.and_local_timezone(tz) {
+                            chrono::LocalResult::Single(local) => local.with_timezone(&Utc),
+                            chrono::LocalResult::Ambiguous(earliest, _) => earliest.with_timezone(&Utc),
+                            chrono::LocalResult::None => {
+                                return Err(StarpodError::Cron(format!(
+                                    "Timestamp '{}' does not exist in timezone '{}'", at, tz
+                                )));
+                            }
+                        }
+                    }
+                    None => {
+                        warn!(
+                            timestamp = %at,
+                            "One-shot timestamp has no timezone offset and no user timezone configured — assuming UTC"
+                        );
+                        naive.and_utc()
+                    }
                 }
             } else {
-                Err(StarpodError::Cron(format!("Invalid timestamp: {}", at)))
+                return Err(StarpodError::Cron(format!(
+                    "Invalid timestamp '{}': expected ISO 8601 format (e.g. '2026-03-19T09:00:00Z' or '2026-03-19T09:00:00')", at
+                )));
+            };
+
+            if dt_utc > now && last_run.is_none() {
+                Ok(Some(dt_utc.timestamp()))
+            } else {
+                Ok(None)
             }
         }
         Schedule::Interval { every_ms } => {
@@ -1156,5 +1182,151 @@ mod tests {
 
         let job = store.get_job_by_name("special-chars").await.unwrap().unwrap();
         assert_eq!(job.prompt, special);
+    }
+
+    // ── OneShot timezone tests ──
+
+    #[tokio::test]
+    async fn test_compute_next_run_oneshot_rfc3339() {
+        // RFC 3339 timestamp with Z suffix — should work
+        let future = (Utc::now() + Duration::hours(1)).to_rfc3339();
+        let schedule = Schedule::OneShot { at: future };
+        let next = compute_next_run(&schedule, None, None).unwrap();
+        assert!(next.is_some(), "Future RFC 3339 timestamp should be scheduled");
+    }
+
+    #[tokio::test]
+    async fn test_compute_next_run_oneshot_past_returns_none() {
+        let past = (Utc::now() - Duration::hours(1)).to_rfc3339();
+        let schedule = Schedule::OneShot { at: past };
+        let next = compute_next_run(&schedule, None, None).unwrap();
+        assert!(next.is_none(), "Past timestamp should return None");
+    }
+
+    #[tokio::test]
+    async fn test_compute_next_run_oneshot_naive_with_timezone() {
+        // A naive timestamp 1 hour from now in Europe/Rome
+        let rome_tz: chrono_tz::Tz = "Europe/Rome".parse().unwrap();
+        let rome_now = Utc::now().with_timezone(&rome_tz);
+        let future_rome = rome_now + Duration::hours(1);
+        let naive_str = future_rome.format("%Y-%m-%dT%H:%M:%S").to_string();
+
+        let schedule = Schedule::OneShot { at: naive_str };
+        let next = compute_next_run(&schedule, None, Some("Europe/Rome")).unwrap();
+        assert!(next.is_some(), "Naive timestamp with user_tz should be scheduled");
+    }
+
+    #[tokio::test]
+    async fn test_compute_next_run_oneshot_naive_no_timezone_assumes_utc() {
+        // A naive timestamp 1 hour from now — should assume UTC
+        let future_utc = Utc::now() + Duration::hours(1);
+        let naive_str = future_utc.format("%Y-%m-%dT%H:%M:%S").to_string();
+
+        let schedule = Schedule::OneShot { at: naive_str };
+        let next = compute_next_run(&schedule, None, None).unwrap();
+        assert!(next.is_some(), "Naive timestamp without user_tz should assume UTC");
+    }
+
+    #[tokio::test]
+    async fn test_compute_next_run_oneshot_naive_timezone_matters() {
+        // Create a timestamp that is "23:00" today. Depending on timezone,
+        // this could be in the future or the past relative to UTC now.
+        // Use a timezone far ahead of UTC to test the difference.
+        let schedule = Schedule::OneShot {
+            at: "2099-01-01T00:00:00".to_string(),
+        };
+
+        let next_utc = compute_next_run(&schedule, None, None).unwrap();
+        let next_tokyo = compute_next_run(&schedule, None, Some("Asia/Tokyo")).unwrap();
+
+        // Both should be Some (far future), but the UTC timestamps should differ
+        // because Tokyo is UTC+9, so 2099-01-01T00:00:00 Tokyo = 2098-12-31T15:00:00 UTC
+        assert!(next_utc.is_some());
+        assert!(next_tokyo.is_some());
+        assert_ne!(
+            next_utc.unwrap(), next_tokyo.unwrap(),
+            "Same naive timestamp should produce different UTC epochs for different timezones"
+        );
+        // Tokyo interpretation should be 9 hours earlier in UTC
+        assert_eq!(next_utc.unwrap() - next_tokyo.unwrap(), 9 * 3600);
+    }
+
+    #[tokio::test]
+    async fn test_compute_next_run_oneshot_invalid_format() {
+        let schedule = Schedule::OneShot {
+            at: "not-a-date".to_string(),
+        };
+        assert!(compute_next_run(&schedule, None, None).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_compute_next_run_oneshot_rfc3339_with_offset() {
+        // Explicit non-Z offset (e.g. India Standard Time +05:30)
+        let schedule = Schedule::OneShot {
+            at: "2099-06-15T10:00:00+05:30".to_string(),
+        };
+        let next = compute_next_run(&schedule, None, None).unwrap();
+        assert!(next.is_some());
+        // 10:00 IST = 04:30 UTC
+        let expected = chrono::DateTime::parse_from_rfc3339("2099-06-15T04:30:00Z")
+            .unwrap()
+            .timestamp();
+        assert_eq!(next.unwrap(), expected);
+    }
+
+    #[tokio::test]
+    async fn test_compute_next_run_oneshot_naive_past_with_timezone() {
+        // Naive timestamp well in the past — should return None even with user_tz
+        let schedule = Schedule::OneShot {
+            at: "2020-01-01T00:00:00".to_string(),
+        };
+        let next = compute_next_run(&schedule, None, Some("America/New_York")).unwrap();
+        assert!(next.is_none(), "Past naive timestamp should return None");
+    }
+
+    #[tokio::test]
+    async fn test_compute_next_run_oneshot_naive_invalid_timezone_falls_to_utc() {
+        // Invalid timezone string — should fall through to UTC
+        let future_utc = Utc::now() + Duration::hours(1);
+        let naive_str = future_utc.format("%Y-%m-%dT%H:%M:%S").to_string();
+
+        let schedule = Schedule::OneShot { at: naive_str.clone() };
+        let next_bad_tz = compute_next_run(&schedule, None, Some("Not/A/Timezone")).unwrap();
+        let next_no_tz = compute_next_run(&schedule, None, None).unwrap();
+
+        // Both should produce the same result (UTC fallback)
+        assert_eq!(next_bad_tz, next_no_tz);
+    }
+
+    #[tokio::test]
+    async fn test_compute_next_run_oneshot_dst_gap_returns_error() {
+        // 2026-03-29 02:30:00 doesn't exist in Europe/Rome (spring DST: clocks jump 02:00 → 03:00)
+        let schedule = Schedule::OneShot {
+            at: "2026-03-29T02:30:00".to_string(),
+        };
+        let result = compute_next_run(&schedule, None, Some("Europe/Rome"));
+        assert!(result.is_err(), "DST gap timestamp should return error");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("does not exist"), "Error should mention the timestamp doesn't exist: {}", err_msg);
+    }
+
+    #[tokio::test]
+    async fn test_compute_next_run_oneshot_dst_ambiguous_uses_earliest() {
+        // 2026-10-25 02:30:00 is ambiguous in Europe/Rome (fall DST: clocks go 03:00 → 02:00)
+        let schedule = Schedule::OneShot {
+            at: "2026-10-25T02:30:00".to_string(),
+        };
+        let result = compute_next_run(&schedule, None, Some("Europe/Rome"));
+        assert!(result.is_ok(), "Ambiguous DST timestamp should succeed (use earliest)");
+        assert!(result.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_compute_next_run_oneshot_already_ran() {
+        // Even if the timestamp is in the future, last_run = Some means it already executed
+        let future = (Utc::now() + Duration::hours(1)).to_rfc3339();
+        let schedule = Schedule::OneShot { at: future };
+        let next = compute_next_run(&schedule, Some(Utc::now()), None).unwrap();
+        assert!(next.is_none(), "OneShot with last_run=Some should return None");
     }
 }

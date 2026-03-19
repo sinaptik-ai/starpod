@@ -348,7 +348,7 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
         },
         CustomToolDefinition {
             name: "CronUpdate".into(),
-            description: "Update properties of an existing cron job by name.".into(),
+            description: "Update properties of an existing cron job by name. Can change the schedule, prompt, and other settings. When the schedule changes, next_run_at is recomputed.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -359,6 +359,20 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
                     "prompt": {
                         "type": "string",
                         "description": "New prompt for the job"
+                    },
+                    "schedule": {
+                        "type": "object",
+                        "description": "New schedule (same format as CronAdd)",
+                        "properties": {
+                            "kind": {
+                                "type": "string",
+                                "enum": ["interval", "cron", "one_shot"]
+                            },
+                            "every_ms": { "type": "integer" },
+                            "expr": { "type": "string" },
+                            "at": { "type": "string" }
+                        },
+                        "required": ["kind"]
                     },
                     "enabled": {
                         "type": "boolean",
@@ -878,6 +892,30 @@ pub async fn handle_custom_tool(
                 }
             };
 
+            // Validate one-shot timestamps: parseable and in the future
+            if let starpod_cron::Schedule::OneShot { ref at } = schedule {
+                match starpod_cron::store::compute_next_run(&schedule, None, ctx.user_tz.as_deref()) {
+                    Ok(Some(_)) => {} // valid and in the future
+                    Ok(None) => {
+                        return Some(ToolResult {
+                            content: format!(
+                                "One-shot timestamp '{}' is in the past. Use a future timestamp.",
+                                at
+                            ),
+                            is_error: true,
+                            raw_content: None,
+                        });
+                    }
+                    Err(e) => {
+                        return Some(ToolResult {
+                            content: format!("Invalid one-shot timestamp '{}': {}", at, e),
+                            is_error: true,
+                            raw_content: None,
+                        });
+                    }
+                }
+            }
+
             debug!(job = %name, "CronAdd");
 
             match ctx.cron.add_job_full(name, prompt, &schedule, delete_after_run, ctx.user_tz.as_deref(), max_retries, timeout_secs, session_mode, ctx.user_id.as_deref()).await {
@@ -1090,9 +1128,48 @@ pub async fn handle_custom_tool(
                 }
             };
 
+            // Parse optional new schedule
+            let new_schedule: Option<starpod_cron::Schedule> = match input.get("schedule") {
+                Some(val) => match serde_json::from_value(val.clone()) {
+                    Ok(s) => Some(s),
+                    Err(e) => {
+                        return Some(ToolResult {
+                            content: format!("Invalid schedule: {}", e),
+                            is_error: true,
+                            raw_content: None,
+                        });
+                    }
+                },
+                None => None,
+            };
+
+            // Validate one-shot timestamps: parseable and in the future
+            if let Some(ref sched @ starpod_cron::Schedule::OneShot { ref at }) = new_schedule {
+                match starpod_cron::store::compute_next_run(sched, None, ctx.user_tz.as_deref()) {
+                    Ok(Some(_)) => {} // valid and in the future
+                    Ok(None) => {
+                        return Some(ToolResult {
+                            content: format!(
+                                "One-shot timestamp '{}' is in the past. Use a future timestamp.",
+                                at
+                            ),
+                            is_error: true,
+                            raw_content: None,
+                        });
+                    }
+                    Err(e) => {
+                        return Some(ToolResult {
+                            content: format!("Invalid one-shot timestamp '{}': {}", at, e),
+                            is_error: true,
+                            raw_content: None,
+                        });
+                    }
+                }
+            }
+
             let update = starpod_cron::JobUpdate {
                 prompt: input.get("prompt").and_then(|v| v.as_str()).map(String::from),
-                schedule: None,
+                schedule: new_schedule.clone(),
                 enabled: input.get("enabled").and_then(|v| v.as_bool()),
                 max_retries: input.get("max_retries").and_then(|v| v.as_u64()).map(|v| v as u32),
                 timeout_secs: input.get("timeout_secs").and_then(|v| v.as_u64()).map(|v| v as u32),
@@ -1101,18 +1178,35 @@ pub async fn handle_custom_tool(
                 }),
             };
 
-            match ctx.cron.update_job(&job.id, &update).await {
-                Ok(()) => Some(ToolResult {
-                    content: format!("Updated job '{}'.", name),
-                    is_error: false,
-                    raw_content: None,
-                }),
-                Err(e) => Some(ToolResult {
+            if let Err(e) = ctx.cron.update_job(&job.id, &update).await {
+                return Some(ToolResult {
                     content: format!("Cron update error: {}", e),
                     is_error: true,
                     raw_content: None,
-                }),
+                });
             }
+
+            // If schedule changed, recompute next_run_at
+            if let Some(ref schedule) = new_schedule {
+                match starpod_cron::store::compute_next_run(schedule, None, ctx.user_tz.as_deref()) {
+                    Ok(next) => {
+                        let _ = ctx.cron.update_next_run(&job.id, next).await;
+                    }
+                    Err(e) => {
+                        return Some(ToolResult {
+                            content: format!("Updated job '{}' but failed to recompute schedule: {}", name, e),
+                            is_error: true,
+                            raw_content: None,
+                        });
+                    }
+                }
+            }
+
+            Some(ToolResult {
+                content: format!("Updated job '{}'.", name),
+                is_error: false,
+                raw_content: None,
+            })
         }
 
         "HeartbeatWake" => {
