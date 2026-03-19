@@ -11,7 +11,7 @@ starpod init
 
 The wizard walks you through:
 1. **Provider selection** — pick from Anthropic, OpenAI, Gemini, Groq, DeepSeek, OpenRouter, or Ollama
-2. **Model** — pre-filled with the default for your chosen provider (e.g. `claude-sonnet-4-6` for Anthropic)
+2. **Model** — pre-filled with the default for your chosen provider (e.g. `claude-haiku-4-5` for Anthropic)
 3. **API key** — masked input, saved to `.env`. Skipped if already set in your environment or if the provider doesn't need one (Ollama)
 4. **First agent** — optionally create your first agent right away with a slug and display name
 
@@ -21,7 +21,7 @@ The wizard walks you through:
 starpod init --default
 ```
 
-Uses Anthropic / `claude-sonnet-4-6` with no API key and no agent.
+Uses Anthropic / `claude-haiku-4-5` with no API key and no agent.
 
 ## Create Agents
 
@@ -38,7 +38,7 @@ starpod agent new my-agent --agent-name "Jarvis" --soul "You are a coding assist
 |------|-------------|---------|
 | `--agent-name` | Agent's display name | Agent name |
 | `--soul` | Personality/instructions | Empty |
-| `--model` | Claude model to use | `claude-sonnet-4-6` |
+| `--model` | Claude model to use | `claude-haiku-4-5` |
 | `--default` | Skip the wizard | — |
 
 ## What Gets Created
@@ -97,7 +97,7 @@ your-project/
 Each agent in the workspace can have its own model, personality, and memory:
 
 ```bash
-starpod agent new backend-bot --agent-name "Backend Bot" --model "claude-sonnet-4-6"
+starpod agent new backend-bot --agent-name "Backend Bot" --model "claude-haiku-4-5"
 starpod agent new journal --agent-name "Journal" --soul "You help me reflect on my day"
 ```
 

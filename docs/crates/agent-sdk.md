@@ -76,7 +76,7 @@ impl LlmProvider for MyProvider {
 
 ```rust
 Options::builder()
-    .model("claude-sonnet-4-6")
+    .model("claude-haiku-4-5")
     .max_turns(30)
     .system_prompt("You are a helpful assistant")
     .allowed_tools(vec!["Bash".into(), "Read".into()])

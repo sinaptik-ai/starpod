@@ -42,7 +42,7 @@ starpod init
 
 The interactive wizard walks you through provider selection (Anthropic, OpenAI, Gemini, Groq, DeepSeek, OpenRouter, Ollama), model, API key (saved to `.env`), and optionally creating your first agent.
 
-To skip the wizard and use defaults (Anthropic / `claude-sonnet-4-6`):
+To skip the wizard and use defaults (Anthropic / `claude-haiku-4-5`):
 
 ```bash
 starpod init --default
@@ -88,7 +88,7 @@ When you run `starpod dev`, you'll see:
 
 ```toml
 provider = "anthropic"
-model = "claude-sonnet-4-6"
+model = "claude-haiku-4-5"
 max_turns = 30
 ```
 

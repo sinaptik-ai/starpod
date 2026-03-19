@@ -21,7 +21,7 @@ The interactive wizard prompts for:
 
 | Flag | Description |
 |------|-------------|
-| `--default` | Skip the wizard, use Anthropic / `claude-sonnet-4-6` |
+| `--default` | Skip the wizard, use Anthropic / `claude-haiku-4-5` |
 
 Creates: `starpod.toml`, `agents/`, `skills/`, `.env`, `.gitignore`.
 
@@ -40,7 +40,7 @@ starpod agent new my-agent --agent-name "Jarvis" --model "claude-opus-4-6"
 |------|-------------|---------|
 | `--agent-name` | Agent's display name | `Aster` |
 | `--soul` | Personality/instructions | Generic helpful assistant |
-| `--model` | LLM model | `claude-sonnet-4-6` |
+| `--model` | LLM model | `claude-haiku-4-5` |
 | `--default` | Skip interactive prompts | — |
 
 ### `starpod agent list`

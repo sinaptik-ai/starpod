@@ -1280,12 +1280,12 @@ mod tests {
 
         // Reload with updated config
         let mut new_config = test_config(&tmp);
-        new_config.model = "claude-sonnet-4-6".to_string();
+        new_config.model = "claude-opus-4-6".to_string();
         new_config.agent_name = "Nova".to_string();
         agent.reload_config(new_config);
 
         let snapshot = agent.config();
-        assert_eq!(snapshot.model, "claude-sonnet-4-6");
+        assert_eq!(snapshot.model, "claude-opus-4-6");
         assert_eq!(snapshot.agent_name, "Nova");
     }
 
@@ -1652,10 +1652,10 @@ mod tests {
 
         // Reload with a new model
         let mut new_cfg = test_config(&tmp);
-        new_cfg.model = "claude-sonnet-4-6".to_string();
+        new_cfg.model = "claude-opus-4-6".to_string();
         agent.reload_config(new_cfg);
 
-        assert_eq!(agent.config().model, "claude-sonnet-4-6");
+        assert_eq!(agent.config().model, "claude-opus-4-6");
     }
 
     #[tokio::test]

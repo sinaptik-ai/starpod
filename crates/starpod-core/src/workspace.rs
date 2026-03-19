@@ -1094,7 +1094,7 @@ mod tests {
             config_dir.join("agent.toml"),
             r#"
 agent_name = "TestBot"
-model = "claude-sonnet-4-6"
+model = "claude-haiku-4-5"
 provider = "anthropic"
 "#,
         )
@@ -1107,7 +1107,7 @@ provider = "anthropic"
         let config = load_agent_config(&paths).unwrap();
 
         assert_eq!(config.agent_name, "TestBot");
-        assert_eq!(config.model, "claude-sonnet-4-6");
+        assert_eq!(config.model, "claude-haiku-4-5");
     }
 
     #[test]
@@ -1133,7 +1133,7 @@ max_turns = 99
             agent_dir.join("agent.toml"),
             r#"
 provider = "anthropic"
-model = "claude-sonnet-4-6"
+model = "claude-haiku-4-5"
 agent_name = "MyAgent"
 max_turns = 30
 "#,
@@ -1149,7 +1149,7 @@ max_turns = 30
         let config = load_agent_config(&paths).unwrap();
 
         // All values from agent.toml, NOT starpod.toml
-        assert_eq!(config.model, "claude-sonnet-4-6");
+        assert_eq!(config.model, "claude-haiku-4-5");
         assert_eq!(config.agent_name, "MyAgent");
         assert_eq!(config.provider, "anthropic");
         assert_eq!(config.max_turns, 30);
@@ -1180,7 +1180,7 @@ max_turns = 30
     fn agent_config_to_starpod_config_bridge() {
         let config = AgentConfig {
             agent_name: "TestBot".to_string(),
-            model: "claude-sonnet-4-6".to_string(),
+            model: "claude-haiku-4-5".to_string(),
             ..Default::default()
         };
         let paths = ResolvedPaths {
@@ -1200,7 +1200,7 @@ max_turns = 30
 
         let starpod_config = config.into_starpod_config(&paths);
         assert_eq!(starpod_config.agent_name, "TestBot");
-        assert_eq!(starpod_config.model, "claude-sonnet-4-6");
+        assert_eq!(starpod_config.model, "claude-haiku-4-5");
         assert_eq!(starpod_config.db_dir, PathBuf::from("/app/.starpod/db"));
         assert_eq!(starpod_config.project_root, PathBuf::from("/app"));
     }
@@ -1356,11 +1356,11 @@ max_turns = 30
         // Update config on disk
         std::fs::write(
             config_dir.join("agent.toml"),
-            "model = \"claude-sonnet-4-6\"\n",
+            "model = \"claude-opus-4-6\"\n",
         ).unwrap();
 
         let config2 = reload_agent_config(&paths).unwrap();
-        assert_eq!(config2.model, "claude-sonnet-4-6");
+        assert_eq!(config2.model, "claude-opus-4-6");
     }
 
     // ── AgentConfig defaults ────────────────────────────────────────
@@ -1401,11 +1401,11 @@ model = "gpt-4o"
     fn workspace_config_parses_partial() {
         let toml = r#"
 provider = "anthropic"
-model = "claude-sonnet-4-6"
+model = "claude-haiku-4-5"
 "#;
         let config: WorkspaceConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.provider.as_deref(), Some("anthropic"));
-        assert_eq!(config.model.as_deref(), Some("claude-sonnet-4-6"));
+        assert_eq!(config.model.as_deref(), Some("claude-haiku-4-5"));
         assert!(config.max_turns.is_none());
     }
 
@@ -1519,7 +1519,7 @@ model = "claude-sonnet-4-6"
             config_dir.join("agent.toml"),
             r#"
 agent_name = "Aster"
-model = "claude-sonnet-4-6"
+model = "claude-haiku-4-5"
 "#,
         ).unwrap();
 
@@ -1530,7 +1530,7 @@ model = "claude-sonnet-4-6"
         let paths = ResolvedPaths::resolve(&mode).unwrap();
         let config = load_agent_config(&paths).unwrap();
 
-        assert_eq!(config.model, "claude-sonnet-4-6");
+        assert_eq!(config.model, "claude-haiku-4-5");
         assert_eq!(config.name, "aster");
     }
 

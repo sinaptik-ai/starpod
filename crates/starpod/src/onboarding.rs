@@ -17,14 +17,14 @@ pub const PROVIDERS: &[&str] = &[
 /// Default models per provider.
 pub fn default_model(provider: &str) -> &'static str {
     match provider {
-        "anthropic" => "claude-sonnet-4-6",
+        "anthropic" => "claude-haiku-4-5",
         "openai" => "gpt-4o",
         "gemini" => "gemini-2.5-pro",
         "groq" => "llama-3.3-70b-versatile",
         "deepseek" => "deepseek-chat",
-        "openrouter" => "anthropic/claude-sonnet-4-6",
+        "openrouter" => "anthropic/claude-haiku-4-5",
         "ollama" => "llama3.3",
-        _ => "claude-sonnet-4-6",
+        _ => "claude-haiku-4-5",
     }
 }
 
@@ -189,7 +189,7 @@ server_addr = "127.0.0.1:3000"
 /// Generate a default `starpod.toml` for a new workspace (used by `--default` path and tests).
 #[cfg(test)]
 fn generate_workspace_config() -> String {
-    generate_workspace_config_with("anthropic", "claude-sonnet-4-6")
+    generate_workspace_config_with("anthropic", "claude-haiku-4-5")
 }
 
 /// Generate the `.env` content for the selected provider.
@@ -227,7 +227,7 @@ mod tests {
             .expect("Generated workspace config must be valid TOML");
         let table = val.as_table().unwrap();
         assert_eq!(table["provider"].as_str(), Some("anthropic"));
-        assert_eq!(table["model"].as_str(), Some("claude-sonnet-4-6"));
+        assert_eq!(table["model"].as_str(), Some("claude-haiku-4-5"));
         assert_eq!(table["max_turns"].as_integer(), Some(30));
     }
 
@@ -236,7 +236,7 @@ mod tests {
         let config_str = generate_workspace_config();
         let config: starpod_core::AgentConfig = toml::from_str(&config_str).unwrap();
         assert_eq!(config.provider, "anthropic");
-        assert_eq!(config.model, "claude-sonnet-4-6");
+        assert_eq!(config.model, "claude-haiku-4-5");
         assert_eq!(config.max_turns, 30);
         assert_eq!(config.server_addr, "127.0.0.1:3000");
     }
@@ -329,7 +329,7 @@ mod tests {
 
     #[test]
     fn default_models_are_set() {
-        assert_eq!(default_model("anthropic"), "claude-sonnet-4-6");
+        assert_eq!(default_model("anthropic"), "claude-haiku-4-5");
         assert_eq!(default_model("openai"), "gpt-4o");
         assert_eq!(default_model("ollama"), "llama3.3");
     }
@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn unknown_provider_falls_back() {
-        assert_eq!(default_model("unknown"), "claude-sonnet-4-6");
+        assert_eq!(default_model("unknown"), "claude-haiku-4-5");
         assert_eq!(env_key_for_provider("unknown"), None);
     }
 
