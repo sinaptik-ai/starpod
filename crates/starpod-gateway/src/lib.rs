@@ -1,4 +1,5 @@
 mod routes;
+mod settings;
 mod ws;
 
 use std::path::PathBuf;

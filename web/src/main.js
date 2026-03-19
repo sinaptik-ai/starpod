@@ -983,10 +983,536 @@ function selectSession(session) {
   inputText.focus()
 }
 
+// ── Settings ──
+const settingsBtn = document.getElementById('settings-btn')
+let settingsVisible = false
+let settingsActiveTab = 'general'
+
+function apiHeaders() {
+  const h = { 'Content-Type': 'application/json' }
+  const token = localStorage.getItem('starpod_api_key')
+  if (token) h['X-API-Key'] = token
+  return h
+}
+
+function showSettings() {
+  settingsVisible = true
+  settingsBtn.classList.add('active')
+  document.querySelector('#input-form').closest('.shrink-0.pt-2').style.display = 'none'
+  renderSettingsView()
+}
+
+function hideSettings() {
+  settingsVisible = false
+  settingsBtn.classList.remove('active')
+  document.querySelector('#input-form').closest('.shrink-0.pt-2').style.display = ''
+  if (currentSessionId) {
+    const s = cachedSessions.find(s => s.id === currentSessionId)
+    if (s) selectSession(s)
+    else messages.innerHTML = welcomeHTML
+  } else {
+    messages.innerHTML = welcomeHTML
+  }
+}
+
+settingsBtn.addEventListener('click', () => {
+  settingsVisible ? hideSettings() : showSettings()
+})
+
+function renderSettingsView() {
+  const tabs = [
+    { id: 'general', label: 'General' },
+    { id: 'soul', label: 'Soul' },
+    { id: 'frontend', label: 'Frontend' },
+    { id: 'memory', label: 'Memory' },
+    { id: 'cron', label: 'Cron' },
+    { id: 'users', label: 'Users' },
+  ]
+
+  const scroll = document.getElementById('messages-scroll')
+  scroll.innerHTML = ''
+
+  const container = document.createElement('div')
+  container.className = 'max-w-[740px] mx-auto px-5 py-6'
+
+  container.innerHTML =
+    '<div class="flex items-center gap-3 mb-6">' +
+      '<button id="settings-back" class="text-muted hover:text-primary p-1.5 rounded-lg hover:bg-elevated transition-colors cursor-pointer">' +
+        '<svg class="w-4 h-4 stroke-current fill-none stroke-2" viewBox="0 0 24 24" stroke-linecap="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>' +
+      '</button>' +
+      '<h1 class="text-lg font-semibold text-primary">Settings</h1>' +
+    '</div>' +
+    '<div class="flex gap-1 mb-6 overflow-x-auto pb-1 border-b border-border-subtle" id="settings-tabs"></div>' +
+    '<div id="settings-content"></div>'
+
+  scroll.appendChild(container)
+
+  const tabBar = document.getElementById('settings-tabs')
+  tabs.forEach(tab => {
+    const btn = document.createElement('button')
+    btn.className = 'settings-tab px-3 py-2 text-sm font-medium whitespace-nowrap cursor-pointer transition-colors ' +
+      (tab.id === settingsActiveTab ? 'active text-accent' : 'text-muted hover:text-primary')
+    btn.textContent = tab.label
+    btn.addEventListener('click', () => { settingsActiveTab = tab.id; renderSettingsView() })
+    tabBar.appendChild(btn)
+  })
+
+  document.getElementById('settings-back').addEventListener('click', hideSettings)
+  loadTabContent(settingsActiveTab)
+}
+
+async function loadTabContent(tab) {
+  const el = document.getElementById('settings-content')
+  el.innerHTML = '<div class="text-center text-dim text-sm py-8">Loading...</div>'
+  try {
+    switch (tab) {
+      case 'general': await renderGeneralTab(el); break
+      case 'soul': await renderSoulTab(el); break
+      case 'frontend': await renderFrontendTab(el); break
+      case 'memory': await renderMemoryTab(el); break
+      case 'cron': await renderCronTab(el); break
+      case 'users': await renderUsersTab(el); break
+    }
+  } catch (e) {
+    el.innerHTML = '<div class="text-center text-err text-sm py-8">Failed to load: ' + escapeHtml(e.message) + '</div>'
+  }
+}
+
+// ── Form helpers ──
+
+function sField(label, desc, html) {
+  return '<div class="settings-field">' +
+    '<label>' + escapeHtml(label) + '</label>' +
+    (desc ? '<div class="field-desc">' + escapeHtml(desc) + '</div>' : '') +
+    html +
+  '</div>'
+}
+
+function sInput(id, value, type, attrs) {
+  return '<input id="' + id + '" type="' + (type || 'text') + '" value="' + escapeHtml(String(value ?? '')) + '" ' + (attrs || '') + ' class="settings-input">'
+}
+
+function sSelect(id, value, options) {
+  let html = '<select id="' + id + '" class="settings-input">'
+  options.forEach(o => {
+    const val = typeof o === 'string' ? o : o.value
+    const label = typeof o === 'string' ? o : o.label
+    html += '<option value="' + escapeHtml(val) + '"' + (val === value ? ' selected' : '') + '>' + escapeHtml(label) + '</option>'
+  })
+  return html + '</select>'
+}
+
+function sToggle(id, checked) {
+  return '<label class="toggle-switch"><input type="checkbox" id="' + id + '"' + (checked ? ' checked' : '') + '><div class="toggle-track"></div></label>'
+}
+
+function sTextarea(id, value, rows) {
+  return '<textarea id="' + id + '" rows="' + (rows || 10) + '" class="settings-input">' + escapeHtml(value || '') + '</textarea>'
+}
+
+function sSaveBar() {
+  return '<div class="settings-save-bar">' +
+    '<button id="settings-save" class="bg-accent text-white px-6 py-2.5 rounded-xl text-sm font-medium hover:bg-blue-500 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default">Save changes</button>' +
+    '<span id="settings-status" class="ml-3 text-xs text-dim"></span>' +
+  '</div>'
+}
+
+async function doSave(url, gatherFn) {
+  const btn = document.getElementById('settings-save')
+  const status = document.getElementById('settings-status')
+  btn.disabled = true
+  status.textContent = 'Saving...'
+  status.className = 'ml-3 text-xs text-dim'
+  try {
+    const body = gatherFn()
+    const resp = await fetch(url, { method: 'PUT', headers: apiHeaders(), body: JSON.stringify(body) })
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}))
+      throw new Error(data.error || resp.statusText)
+    }
+    status.textContent = 'Saved!'
+    status.className = 'ml-3 text-xs text-ok'
+    setTimeout(() => { if (status) { status.textContent = ''; status.className = 'ml-3 text-xs text-dim' } }, 2500)
+  } catch (e) {
+    status.textContent = 'Error: ' + e.message
+    status.className = 'ml-3 text-xs text-err'
+  } finally {
+    btn.disabled = false
+  }
+}
+
+// ── General tab ──
+
+async function renderGeneralTab(el) {
+  const resp = await fetch('/api/settings/general', { headers: apiHeaders() })
+  if (!resp.ok) throw new Error('Failed to load')
+  const d = await resp.json()
+
+  el.innerHTML =
+    sField('Provider', 'LLM provider to use', sSelect('s-provider', d.provider, [
+      'anthropic', 'openai', 'gemini', 'groq', 'deepseek', 'openrouter', 'ollama'
+    ])) +
+    sField('Model', 'Model identifier', sInput('s-model', d.model)) +
+    '<div class="grid grid-cols-2 gap-4">' +
+      sField('Max turns', 'Agentic turns per request', sInput('s-max-turns', d.max_turns, 'number', 'min="1" max="200"')) +
+      sField('Max tokens', 'Response token limit', sInput('s-max-tokens', d.max_tokens, 'number', 'min="256" max="131072" step="256"')) +
+    '</div>' +
+    sField('Agent name', 'Display name for the AI assistant', sInput('s-agent-name', d.agent_name)) +
+    sField('Timezone', 'IANA timezone for cron scheduling', sInput('s-timezone', d.timezone || '', 'text', 'placeholder="e.g. Europe/Rome"')) +
+    sField('Reasoning effort', 'Extended thinking level', sSelect('s-reasoning', d.reasoning_effort || '', [
+      { value: '', label: 'None' }, { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' }, { value: 'high', label: 'High' }
+    ])) +
+    sField('Compaction model', 'Model for conversation compaction (blank = same as primary)', sInput('s-compaction-model', d.compaction_model || '', 'text', 'placeholder="same as primary"')) +
+    sField('Followup mode', 'How followup messages are handled during active loops', sSelect('s-followup', d.followup_mode, [
+      { value: 'inject', label: 'Inject' }, { value: 'queue', label: 'Queue' }
+    ])) +
+    sField('Server address', 'Bind address (restart required to take effect)', sInput('s-server-addr', d.server_addr)) +
+    sSaveBar()
+
+  document.getElementById('settings-save').addEventListener('click', () => {
+    doSave('/api/settings/general', () => ({
+      provider: document.getElementById('s-provider').value,
+      model: document.getElementById('s-model').value,
+      max_turns: parseInt(document.getElementById('s-max-turns').value) || 30,
+      max_tokens: parseInt(document.getElementById('s-max-tokens').value) || 16384,
+      agent_name: document.getElementById('s-agent-name').value,
+      timezone: document.getElementById('s-timezone').value || null,
+      reasoning_effort: document.getElementById('s-reasoning').value || null,
+      compaction_model: document.getElementById('s-compaction-model').value || null,
+      followup_mode: document.getElementById('s-followup').value,
+      server_addr: document.getElementById('s-server-addr').value,
+    }))
+  })
+}
+
+// ── Soul tab ──
+
+async function renderSoulTab(el) {
+  const [soulResp, hbResp] = await Promise.all([
+    fetch('/api/settings/files/SOUL.md', { headers: apiHeaders() }),
+    fetch('/api/settings/files/HEARTBEAT.md', { headers: apiHeaders() }),
+  ])
+  const soul = soulResp.ok ? await soulResp.json() : { content: '' }
+  const hb = hbResp.ok ? await hbResp.json() : { content: '' }
+
+  el.innerHTML =
+    '<div class="settings-section">' +
+      '<div class="settings-section-title">Soul / Personality</div>' +
+      '<div class="field-desc mb-3" style="color: var(--color-dim); font-size: 0.75rem;">Defines the agent\'s personality, tone, and behavior. Loaded at the start of every conversation.</div>' +
+      sTextarea('s-soul', soul.content, 20) +
+      '<div class="mt-2"><button id="save-soul" class="bg-accent text-white px-5 py-2 rounded-xl text-sm font-medium hover:bg-blue-500 transition-colors cursor-pointer">Save SOUL.md</button>' +
+      '<span id="soul-status" class="ml-3 text-xs text-dim"></span></div>' +
+    '</div>' +
+    '<div class="settings-section">' +
+      '<div class="settings-section-title">Heartbeat</div>' +
+      '<div class="field-desc mb-3" style="color: var(--color-dim); font-size: 0.75rem;">Instructions for periodic heartbeat jobs. Runs on a schedule to perform maintenance, check-ins, etc.</div>' +
+      sTextarea('s-heartbeat', hb.content, 12) +
+      '<div class="mt-2"><button id="save-hb" class="bg-accent text-white px-5 py-2 rounded-xl text-sm font-medium hover:bg-blue-500 transition-colors cursor-pointer">Save HEARTBEAT.md</button>' +
+      '<span id="hb-status" class="ml-3 text-xs text-dim"></span></div>' +
+    '</div>'
+
+  async function saveFile(btnId, statusId, name, textareaId) {
+    const btn = document.getElementById(btnId)
+    const status = document.getElementById(statusId)
+    btn.disabled = true
+    status.textContent = 'Saving...'
+    status.className = 'ml-3 text-xs text-dim'
+    try {
+      const content = document.getElementById(textareaId).value
+      const resp = await fetch('/api/settings/files/' + name, {
+        method: 'PUT', headers: apiHeaders(), body: JSON.stringify({ content })
+      })
+      if (!resp.ok) { const d = await resp.json().catch(() => ({})); throw new Error(d.error || resp.statusText) }
+      status.textContent = 'Saved!'
+      status.className = 'ml-3 text-xs text-ok'
+      setTimeout(() => { status.textContent = ''; status.className = 'ml-3 text-xs text-dim' }, 2500)
+    } catch (e) {
+      status.textContent = 'Error: ' + e.message
+      status.className = 'ml-3 text-xs text-err'
+    } finally {
+      btn.disabled = false
+    }
+  }
+
+  document.getElementById('save-soul').addEventListener('click', () => saveFile('save-soul', 'soul-status', 'SOUL.md', 's-soul'))
+  document.getElementById('save-hb').addEventListener('click', () => saveFile('save-hb', 'hb-status', 'HEARTBEAT.md', 's-heartbeat'))
+}
+
+// ── Frontend tab ──
+
+async function renderFrontendTab(el) {
+  const resp = await fetch('/api/settings/frontend', { headers: apiHeaders() })
+  if (!resp.ok) throw new Error('Failed to load')
+  const d = await resp.json()
+
+  function renderPrompts(prompts) {
+    let html = '<div id="prompts-list">'
+    prompts.forEach((p, i) => {
+      html += '<div class="prompt-item">' +
+        '<input type="text" class="settings-input prompt-input" value="' + escapeHtml(p) + '" placeholder="Prompt text...">' +
+        '<button onclick="removePromptItem(this)" title="Remove">&times;</button>' +
+      '</div>'
+    })
+    html += '</div>' +
+      '<button id="add-prompt" class="text-accent text-sm font-medium mt-1 cursor-pointer bg-transparent border-none hover:underline">+ Add prompt</button>'
+    return html
+  }
+
+  el.innerHTML =
+    sField('Greeting', 'Welcome text shown on the home screen', sInput('s-greeting', d.greeting || '', 'text', 'placeholder="ready_"')) +
+    '<div class="settings-field">' +
+      '<label>Suggested prompts</label>' +
+      '<div class="field-desc">Prompt chips shown on the welcome screen</div>' +
+      renderPrompts(d.prompts || []) +
+    '</div>' +
+    sSaveBar()
+
+  document.getElementById('add-prompt').addEventListener('click', () => {
+    const list = document.getElementById('prompts-list')
+    const item = document.createElement('div')
+    item.className = 'prompt-item'
+    item.innerHTML = '<input type="text" class="settings-input prompt-input" value="" placeholder="Prompt text...">' +
+      '<button onclick="removePromptItem(this)" title="Remove">&times;</button>'
+    list.appendChild(item)
+    item.querySelector('input').focus()
+  })
+
+  document.getElementById('settings-save').addEventListener('click', () => {
+    doSave('/api/settings/frontend', () => {
+      const prompts = Array.from(document.querySelectorAll('.prompt-input')).map(i => i.value.trim()).filter(Boolean)
+      return {
+        greeting: document.getElementById('s-greeting').value || null,
+        prompts,
+      }
+    })
+  })
+}
+
+window.removePromptItem = function(btn) {
+  btn.closest('.prompt-item').remove()
+}
+
+// ── Memory tab ──
+
+async function renderMemoryTab(el) {
+  const resp = await fetch('/api/settings/memory', { headers: apiHeaders() })
+  if (!resp.ok) throw new Error('Failed to load')
+  const d = await resp.json()
+
+  el.innerHTML =
+    sField('Half-life days', 'Temporal decay on daily logs — lower = faster forgetting', sInput('s-half-life', d.half_life_days, 'number', 'min="1" step="1"')) +
+    sField('MMR lambda', '0 = max diversity, 1 = pure relevance',
+      '<div class="flex items-center gap-3">' +
+        '<input type="range" id="s-mmr" class="settings-range flex-1" min="0" max="1" step="0.05" value="' + d.mmr_lambda + '">' +
+        '<span id="mmr-val" class="text-sm font-mono text-secondary w-10 text-right">' + d.mmr_lambda.toFixed(2) + '</span>' +
+      '</div>'
+    ) +
+    '<div class="flex items-center justify-between settings-field">' +
+      '<div><label>Vector search</label><div class="field-desc">Enable vector-based semantic search</div></div>' +
+      sToggle('s-vector', d.vector_search) +
+    '</div>' +
+    '<div class="grid grid-cols-2 gap-4">' +
+      sField('Chunk size', 'Characters per chunk for indexing', sInput('s-chunk-size', d.chunk_size, 'number', 'min="200" step="100"')) +
+      sField('Chunk overlap', 'Overlap in characters between chunks', sInput('s-chunk-overlap', d.chunk_overlap, 'number', 'min="0" step="50"')) +
+    '</div>' +
+    '<div class="flex items-center justify-between settings-field">' +
+      '<div><label>Export sessions</label><div class="field-desc">Export closed session transcripts for long-term recall</div></div>' +
+      sToggle('s-export', d.export_sessions) +
+    '</div>' +
+    sSaveBar()
+
+  document.getElementById('s-mmr').addEventListener('input', (e) => {
+    document.getElementById('mmr-val').textContent = parseFloat(e.target.value).toFixed(2)
+  })
+
+  document.getElementById('settings-save').addEventListener('click', () => {
+    doSave('/api/settings/memory', () => ({
+      half_life_days: parseFloat(document.getElementById('s-half-life').value) || 30,
+      mmr_lambda: parseFloat(document.getElementById('s-mmr').value) || 0.7,
+      vector_search: document.getElementById('s-vector').checked,
+      chunk_size: parseInt(document.getElementById('s-chunk-size').value) || 1600,
+      chunk_overlap: parseInt(document.getElementById('s-chunk-overlap').value) || 320,
+      export_sessions: document.getElementById('s-export').checked,
+    }))
+  })
+}
+
+// ── Cron tab ──
+
+async function renderCronTab(el) {
+  const resp = await fetch('/api/settings/cron', { headers: apiHeaders() })
+  if (!resp.ok) throw new Error('Failed to load')
+  const d = await resp.json()
+
+  function timeoutHint(secs) {
+    if (secs >= 3600) return (secs / 3600).toFixed(1).replace(/\.0$/, '') + ' hours'
+    return (secs / 60).toFixed(0) + ' minutes'
+  }
+
+  el.innerHTML =
+    sField('Max retries', 'Default maximum retries for failed jobs', sInput('s-retries', d.default_max_retries, 'number', 'min="0" max="20"')) +
+    sField('Timeout', 'Default job timeout in seconds',
+      sInput('s-timeout', d.default_timeout_secs, 'number', 'min="60" step="60"') +
+      '<div class="field-desc mt-1" id="timeout-hint">= ' + timeoutHint(d.default_timeout_secs) + '</div>'
+    ) +
+    sField('Max concurrent runs', 'Maximum jobs running simultaneously', sInput('s-concurrent', d.max_concurrent_runs, 'number', 'min="1" max="10"')) +
+    sSaveBar()
+
+  document.getElementById('s-timeout').addEventListener('input', (e) => {
+    const hint = document.getElementById('timeout-hint')
+    const v = parseInt(e.target.value)
+    if (v > 0) hint.textContent = '= ' + timeoutHint(v)
+  })
+
+  document.getElementById('settings-save').addEventListener('click', () => {
+    doSave('/api/settings/cron', () => ({
+      default_max_retries: parseInt(document.getElementById('s-retries').value) || 3,
+      default_timeout_secs: parseInt(document.getElementById('s-timeout').value) || 7200,
+      max_concurrent_runs: parseInt(document.getElementById('s-concurrent').value) || 1,
+    }))
+  })
+}
+
+// ── Users tab ──
+
+async function renderUsersTab(el) {
+  const resp = await fetch('/api/settings/users', { headers: apiHeaders() })
+  if (!resp.ok) throw new Error('Failed to load')
+  const users = await resp.json()
+
+  let html =
+    '<div class="flex items-center gap-3 mb-4">' +
+      '<input type="text" id="new-user-id" class="settings-input flex-1" placeholder="New user ID...">' +
+      '<button id="create-user-btn" class="bg-accent text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-blue-500 transition-colors cursor-pointer shrink-0">Create</button>' +
+    '</div>' +
+    '<div id="create-user-status" class="text-xs mb-3"></div>' +
+    '<div id="users-list">'
+
+  if (users.length === 0) {
+    html += '<div class="text-center text-dim text-sm py-8">No users yet</div>'
+  } else {
+    users.forEach(u => {
+      html +=
+        '<div class="user-card" data-user="' + escapeHtml(u.id) + '">' +
+          '<div class="flex items-center justify-between mb-2">' +
+            '<div class="flex items-center gap-2">' +
+              '<span class="font-mono text-sm font-semibold text-primary">' + escapeHtml(u.id) + '</span>' +
+              '<span class="font-mono text-[11px] text-dim">' + u.daily_log_count + ' daily log' + (u.daily_log_count !== 1 ? 's' : '') + '</span>' +
+            '</div>' +
+            '<div class="flex items-center gap-1">' +
+              '<button class="user-edit-btn text-muted hover:text-accent text-xs font-medium px-2 py-1 rounded hover:bg-accent-muted transition-colors cursor-pointer" data-uid="' + escapeHtml(u.id) + '">Edit</button>' +
+              '<button class="user-delete-btn text-muted hover:text-err text-xs font-medium px-2 py-1 rounded hover:bg-err-muted transition-colors cursor-pointer" data-uid="' + escapeHtml(u.id) + '">Delete</button>' +
+            '</div>' +
+          '</div>' +
+          '<div class="user-edit-area hidden" id="user-edit-' + escapeHtml(u.id) + '"></div>' +
+        '</div>'
+    })
+  }
+  html += '</div>'
+  el.innerHTML = html
+
+  // Create user
+  document.getElementById('create-user-btn').addEventListener('click', async () => {
+    const input = document.getElementById('new-user-id')
+    const status = document.getElementById('create-user-status')
+    const id = input.value.trim()
+    if (!id) return
+    status.textContent = 'Creating...'
+    status.className = 'text-xs mb-3 text-dim'
+    try {
+      const resp = await fetch('/api/settings/users', {
+        method: 'POST', headers: apiHeaders(), body: JSON.stringify({ id })
+      })
+      if (!resp.ok) { const d = await resp.json().catch(() => ({})); throw new Error(d.error || resp.statusText) }
+      input.value = ''
+      status.textContent = ''
+      renderUsersTab(el)
+    } catch (e) {
+      status.textContent = 'Error: ' + e.message
+      status.className = 'text-xs mb-3 text-err'
+    }
+  })
+
+  // Edit buttons
+  el.querySelectorAll('.user-edit-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const uid = btn.dataset.uid
+      const area = document.getElementById('user-edit-' + uid)
+      if (!area.classList.contains('hidden')) {
+        area.classList.add('hidden')
+        return
+      }
+      area.innerHTML = '<div class="text-dim text-xs py-2">Loading...</div>'
+      area.classList.remove('hidden')
+
+      try {
+        const resp = await fetch('/api/settings/users/' + encodeURIComponent(uid), { headers: apiHeaders() })
+        if (!resp.ok) throw new Error('Failed to load')
+        const data = await resp.json()
+
+        area.innerHTML =
+          '<div class="mt-2">' +
+            '<div class="font-mono text-[11px] text-dim uppercase tracking-wider mb-1">USER.md</div>' +
+            '<textarea id="user-md-' + escapeHtml(uid) + '" rows="12" class="settings-input">' + escapeHtml(data.user_md) + '</textarea>' +
+            '<div class="flex items-center gap-2 mt-2">' +
+              '<button class="user-save-btn bg-accent text-white px-4 py-1.5 rounded-lg text-xs font-medium hover:bg-blue-500 transition-colors cursor-pointer" data-uid="' + escapeHtml(uid) + '">Save</button>' +
+              '<span class="user-save-status text-xs text-dim"></span>' +
+            '</div>' +
+          '</div>'
+
+        area.querySelector('.user-save-btn').addEventListener('click', async function() {
+          const saveBtn = this
+          const status = this.nextElementSibling
+          saveBtn.disabled = true
+          status.textContent = 'Saving...'
+          try {
+            const content = document.getElementById('user-md-' + uid).value
+            const resp = await fetch('/api/settings/users/' + encodeURIComponent(uid), {
+              method: 'PUT', headers: apiHeaders(), body: JSON.stringify({ content })
+            })
+            if (!resp.ok) { const d = await resp.json().catch(() => ({})); throw new Error(d.error || resp.statusText) }
+            status.textContent = 'Saved!'
+            status.className = 'user-save-status text-xs text-ok'
+            setTimeout(() => { status.textContent = ''; status.className = 'user-save-status text-xs text-dim' }, 2500)
+          } catch (e) {
+            status.textContent = 'Error: ' + e.message
+            status.className = 'user-save-status text-xs text-err'
+          } finally {
+            saveBtn.disabled = false
+          }
+        })
+      } catch (e) {
+        area.innerHTML = '<div class="text-err text-xs py-2">Error: ' + escapeHtml(e.message) + '</div>'
+      }
+    })
+  })
+
+  // Delete buttons
+  el.querySelectorAll('.user-delete-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const uid = btn.dataset.uid
+      if (!confirm('Delete user "' + uid + '"? This removes all their data including daily logs and memory.')) return
+      try {
+        const resp = await fetch('/api/settings/users/' + encodeURIComponent(uid), {
+          method: 'DELETE', headers: apiHeaders()
+        })
+        if (!resp.ok) { const d = await resp.json().catch(() => ({})); throw new Error(d.error || resp.statusText) }
+        renderUsersTab(el)
+      } catch (e) {
+        alert('Failed to delete: ' + e.message)
+      }
+    })
+  })
+}
+
 // ── Keyboard shortcuts ──
 document.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); inputText.focus() }
-  if (e.key === 'Escape' && sidebar.classList.contains('open') && isMobile()) closeSidebar()
+  if (e.key === 'Escape') {
+    if (settingsVisible) { hideSettings(); return }
+    if (sidebar.classList.contains('open') && isMobile()) closeSidebar()
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key === ',') { e.preventDefault(); settingsVisible ? hideSettings() : showSettings() }
 })
 
 // ── Init ──
