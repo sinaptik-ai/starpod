@@ -297,7 +297,7 @@ fn build_creates_starpod_directory() {
     fs::create_dir_all(&agent_dir).unwrap();
     fs::write(
         agent_dir.join("agent.toml"),
-        "agent_name = \"TestBot\"\nmodel = \"claude-sonnet-4-6\"\n",
+        "agent_name = \"TestBot\"\nmodel = \"claude-haiku-4-5\"\n",
     ).unwrap();
     fs::write(
         agent_dir.join("SOUL.md"),

@@ -435,7 +435,7 @@ mod tests {
         std::fs::create_dir_all(&blueprint).unwrap();
         std::fs::write(
             blueprint.join("agent.toml"),
-            "agent_name = \"TestBot\"\nmodel = \"claude-sonnet-4-6\"\n",
+            "agent_name = \"TestBot\"\nmodel = \"claude-haiku-4-5\"\n",
         ).unwrap();
         std::fs::write(
             blueprint.join("SOUL.md"),
@@ -709,7 +709,7 @@ mod tests {
         std::fs::create_dir_all(&blueprint).unwrap();
         std::fs::write(
             blueprint.join("agent.toml"),
-            "agent_name = \"TestBot\"\nmodel = \"claude-sonnet-4-6\"\n",
+            "agent_name = \"TestBot\"\nmodel = \"claude-haiku-4-5\"\n",
         ).unwrap();
         std::fs::write(
             blueprint.join("SOUL.md"),

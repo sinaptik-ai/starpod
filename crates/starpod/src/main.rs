@@ -175,7 +175,7 @@ enum AgentCommand {
         #[arg(long)]
         soul: Option<String>,
         /// Claude model to use.
-        #[arg(long, default_value = "claude-sonnet-4-6")]
+        #[arg(long, default_value = "claude-haiku-4-5")]
         model: String,
     },
     /// List agents in the workspace.
@@ -999,7 +999,7 @@ async fn main() -> anyhow::Result<()> {
                 ),
                 None => (
                     "anthropic".to_string(),
-                    "claude-sonnet-4-6".to_string(),
+                    "claude-haiku-4-5".to_string(),
                     None,
                     None,
                     None,
