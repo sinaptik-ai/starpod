@@ -261,9 +261,10 @@ enum SkillAction {
         name: String,
     },
     /// Create a new skill (AI-generated from name + optional prompt).
+    /// If name/description/prompt are omitted, prompts interactively.
     New {
         /// Skill name (lowercase, hyphens, e.g. 'code-review').
-        name: String,
+        name: Option<String>,
         /// Description of what the skill does and when to use it.
         #[arg(short, long)]
         description: Option<String>,
@@ -1367,6 +1368,44 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
                 SkillAction::New { name, description, prompt } => {
+                    // Interactive prompts for missing fields
+                    use dialoguer::{Input, theme::ColorfulTheme};
+                    let theme = ColorfulTheme::default();
+
+                    let name: String = match name {
+                        Some(n) => n,
+                        None => Input::with_theme(&theme)
+                            .with_prompt("Skill name (lowercase, hyphens)")
+                            .interact_text()?,
+                    };
+                    let description: Option<String> = match description {
+                        Some(d) => Some(d),
+                        None => {
+                            let d: String = Input::with_theme(&theme)
+                                .with_prompt("Description (what the skill does)")
+                                .allow_empty(true)
+                                .interact_text()?;
+                            if d.is_empty() { None } else { Some(d) }
+                        }
+                    };
+                    let prompt: Option<String> = match prompt {
+                        Some(p) => Some(p),
+                        None => {
+                            let p: String = Input::with_theme(&theme)
+                                .with_prompt("Extra instructions / context (optional)")
+                                .allow_empty(true)
+                                .interact_text()?;
+                            if p.is_empty() { None } else { Some(p) }
+                        }
+                    };
+
+                    // Load .env so ANTHROPIC_API_KEY (and other provider keys) are available
+                    if let Ok(mode) = starpod_core::detect_mode(agent_name.as_deref()) {
+                        if let Ok(paths) = starpod_core::ResolvedPaths::resolve(&mode) {
+                            let _ = starpod_core::load_agent_config(&paths);
+                        }
+                    }
+
                     println!(
                         "  {} Generating skill '{}'...\n",
                         "⚡".bright_yellow(),
