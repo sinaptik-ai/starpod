@@ -1763,25 +1763,12 @@ async fn main() -> anyhow::Result<()> {
         // ── Instance commands ──────────────────────────────────────────
         Commands::Instance { action } => {
             let saved = auth::load_credentials();
-            let backend_url = std::env::var("STARPOD_INSTANCE_BACKEND_URL")
+            let backend_url = std::env::var(auth::SPAWNER_URL_ENV)
                 .ok()
-                .or_else(|| saved.as_ref().map(|c| c.backend_url.clone()));
+                .or_else(|| saved.as_ref().map(|c| c.backend_url.clone()))
+                .unwrap_or_else(|| auth::DEFAULT_SPAWNER_URL.to_string());
 
-            let Some(backend_url) = backend_url else {
-                eprintln!(
-                    "  {} Instance backend not configured.",
-                    "✗".red().bold()
-                );
-                eprintln!(
-                    "  {} Run {} or set env var {}.",
-                    "→".dimmed(),
-                    "starpod auth login".bright_white(),
-                    "STARPOD_INSTANCE_BACKEND_URL".bright_white()
-                );
-                std::process::exit(1);
-            };
-
-            let api_key = std::env::var("ANTHROPIC_API_KEY")
+            let api_key = std::env::var("STARPOD_API_KEY")
                 .ok()
                 .or_else(|| saved.as_ref().map(|c| c.api_key.clone()));
             let client = InstanceClient::new_with_timeout(&backend_url, api_key, 30)?;
@@ -2040,24 +2027,12 @@ async fn main() -> anyhow::Result<()> {
             no_instance,
             env_file,
         } => {
-            // Require backend URL and API key (env vars > saved credentials)
+            // Resolve backend URL and API key: env vars > saved credentials > default
             let saved = auth::load_credentials();
-            let backend_url = std::env::var("STARPOD_INSTANCE_BACKEND_URL")
+            let backend_url = std::env::var(auth::SPAWNER_URL_ENV)
                 .ok()
-                .or_else(|| saved.as_ref().map(|c| c.backend_url.clone()));
-            let Some(backend_url) = backend_url else {
-                eprintln!(
-                    "  {} Deploy backend not configured.",
-                    "✗".red().bold()
-                );
-                eprintln!(
-                    "  {} Run {} or set env var {}.",
-                    "→".dimmed(),
-                    "starpod auth login".bright_white(),
-                    "STARPOD_INSTANCE_BACKEND_URL".bright_white()
-                );
-                std::process::exit(1);
-            };
+                .or_else(|| saved.as_ref().map(|c| c.backend_url.clone()))
+                .unwrap_or_else(|| auth::DEFAULT_SPAWNER_URL.to_string());
 
             let api_key = std::env::var("STARPOD_API_KEY")
                 .ok()
@@ -2068,10 +2043,9 @@ async fn main() -> anyhow::Result<()> {
                     "✗".red().bold()
                 );
                 eprintln!(
-                    "  {} Run {} or set env var {}.",
+                    "  {} Run {} to authenticate.",
                     "→".dimmed(),
-                    "starpod auth login".bright_white(),
-                    "STARPOD_API_KEY".bright_white()
+                    "starpod auth login".bright_white()
                 );
                 std::process::exit(1);
             };
