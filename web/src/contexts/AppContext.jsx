@@ -15,11 +15,22 @@ function persistReadSessions(readSessions) {
   localStorage.setItem(UNREAD_KEY, JSON.stringify([...readSessions]))
 }
 
+function initialSettingsFromHash() {
+  const hash = window.location.hash
+  if (hash.startsWith('#/settings')) {
+    const tab = hash.split('/')[2]
+    return { visible: true, tab: tab || 'general' }
+  }
+  return { visible: false, tab: 'general' }
+}
+
+const initSettings = initialSettingsFromHash()
+
 const initialState = {
   wsStatus: 'connecting',
-  sidebarOpen: false,
-  settingsVisible: false,
-  settingsActiveTab: 'general',
+  sidebarOpen: window.innerWidth > 768,
+  settingsVisible: initSettings.visible,
+  settingsActiveTab: initSettings.tab,
   currentSessionId: null,
   currentSessionKey: generateUUID(),
   sessions: [],
@@ -42,12 +53,15 @@ function appReducer(state, action) {
       return { ...state, sidebarOpen: false }
 
     case 'SHOW_SETTINGS':
+      window.history.pushState(null, '', '#/settings/' + state.settingsActiveTab)
       return { ...state, settingsVisible: true }
 
     case 'HIDE_SETTINGS':
+      window.history.pushState(null, '', '#/')
       return { ...state, settingsVisible: false }
 
     case 'SET_SETTINGS_TAB':
+      if (state.settingsVisible) window.history.replaceState(null, '', '#/settings/' + action.payload)
       return { ...state, settingsActiveTab: action.payload }
 
     case 'SET_SESSION':
@@ -65,7 +79,7 @@ function appReducer(state, action) {
       }
 
     case 'SET_SESSIONS': {
-      const sessions = action.payload
+      const sessions = action.payload || []
       // Prune stale readSessions entries
       const ids = new Set(sessions.map(s => s.id))
       const pruned = new Set([...state.readSessions].filter(id => ids.has(id)))

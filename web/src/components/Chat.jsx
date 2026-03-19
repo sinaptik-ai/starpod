@@ -36,8 +36,8 @@ const Chat = forwardRef(function Chat({ wsRef }, ref) {
     switch (data.type) {
       case 'stream_start': {
         if (data.session_id) {
-          dispatch({ type: 'SET_SESSION', sessionId: data.session_id, sessionKey: null })
-          dispatch({ type: 'MARK_READ', sessionId: data.session_id })
+          dispatch({ type: 'SET_SESSION', payload: { id: data.session_id, key: null } })
+          dispatch({ type: 'MARK_READ', payload: data.session_id })
         }
         setStreamingMessage({ bubbles: [{ text: '', done: false }], tools: [], stats: null })
         break
@@ -137,7 +137,7 @@ const Chat = forwardRef(function Chat({ wsRef }, ref) {
         })
 
         if (data.session_id || currentSessionId) {
-          dispatch({ type: 'MARK_READ', sessionId: data.session_id || currentSessionId })
+          dispatch({ type: 'MARK_READ', payload: data.session_id || currentSessionId })
         }
         break
       }

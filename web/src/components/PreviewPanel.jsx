@@ -88,7 +88,7 @@ function PreviewPanel() {
   // Register global _openPreview for markdown links
   useEffect(() => {
     window._openPreview = (url) => {
-      dispatch({ type: 'OPEN_PREVIEW', url })
+      dispatch({ type: 'OPEN_PREVIEW', payload: url })
     }
     return () => { delete window._openPreview }
   }, [dispatch])

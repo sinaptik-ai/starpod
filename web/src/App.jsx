@@ -132,6 +132,22 @@ function AppInner() {
     }
   }, [state.sessions, handleSelectSession, fetchSessionList])
 
+  // ── Hash-based routing for /settings ──
+  useEffect(() => {
+    const onPopState = () => {
+      const hash = window.location.hash
+      if (hash.startsWith('#/settings')) {
+        const tab = hash.split('/')[2]
+        if (!settingsVisible) dispatch({ type: 'SHOW_SETTINGS' })
+        if (tab) dispatch({ type: 'SET_SETTINGS_TAB', payload: tab })
+      } else {
+        if (settingsVisible) dispatch({ type: 'HIDE_SETTINGS' })
+      }
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [dispatch, settingsVisible])
+
   // ── Keyboard shortcuts ──
   useEffect(() => {
     const handler = (e) => {
@@ -150,14 +166,28 @@ function AppInner() {
     return () => document.removeEventListener('keydown', handler)
   }, [dispatch, settingsVisible, previewUrl, state.sidebarOpen])
 
+  // Settings is a full-page takeover
+  if (settingsVisible) {
+    return (
+      <>
+        <SettingsView />
+        <ToastContainer ref={toastsRef} onNavigateToSession={handleToastNavigate} />
+      </>
+    )
+  }
+
   return (
     <>
       {/* Mobile sidebar overlay */}
       <div
-        className={`fixed inset-0 bg-black/50 z-[99] ${state.sidebarOpen && isMobile() ? 'active' : 'hidden'}`}
+        className="fixed inset-0 bg-black/50 z-[99]"
         id="sidebar-overlay"
         onClick={() => dispatch({ type: 'CLOSE_SIDEBAR' })}
-        style={{ opacity: state.sidebarOpen && isMobile() ? 1 : 0, pointerEvents: state.sidebarOpen && isMobile() ? 'auto' : 'none' }}
+        style={{
+          opacity: state.sidebarOpen && isMobile() ? 1 : 0,
+          pointerEvents: state.sidebarOpen && isMobile() ? 'auto' : 'none',
+          transition: 'opacity 0.2s ease',
+        }}
       />
 
       <div id="layout">
@@ -175,25 +205,11 @@ function AppInner() {
         {/* Main app */}
         <div id="app" className="flex flex-col min-w-0 flex-1">
           <Header onNewChat={handleNewChat} />
-
-          {/* Messages / Settings area */}
-          <div className="flex-1 overflow-y-auto w-full" id="messages-scroll">
-            <div id="messages" className="max-w-[740px] mx-auto px-5 pt-4 pb-8 flex flex-col gap-0.5">
-              {settingsVisible ? (
-                <SettingsView />
-              ) : (
-                <Chat ref={chatRef} wsRef={wsRef} onSendPrompt={(text) => handleSend(text, [])} />
-              )}
-            </div>
-          </div>
-
-          {/* Input bar — hidden during settings */}
-          {!settingsVisible && (
-            <InputBar
-              onSend={handleSend}
-              disabled={wsStatus !== 'connected'}
-            />
-          )}
+          <Chat ref={chatRef} wsRef={wsRef} onSendPrompt={(text) => handleSend(text, [])} />
+          <InputBar
+            onSend={handleSend}
+            disabled={wsStatus !== 'connected'}
+          />
         </div>
 
         {/* Preview panel */}
