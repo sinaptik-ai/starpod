@@ -45,6 +45,35 @@ const DEFAULT_USER: &str = "\
 <!-- Anything else the agent should know: current projects, goals, constraints. -->
 ";
 
+/// Default user IDs seeded at build time.
+const DEFAULT_USERS: &[&str] = &["admin", "user"];
+
+/// Create a user directory with default USER.md and MEMORY.md if it doesn't exist.
+fn ensure_user_dir(users_dir: &Path, user_id: &str) -> crate::Result<()> {
+    let user_dir = users_dir.join(user_id);
+    if !user_dir.exists() {
+        std::fs::create_dir_all(&user_dir)
+            .map_err(StarpodError::Io)?;
+        std::fs::create_dir_all(user_dir.join("memory"))
+            .map_err(StarpodError::Io)?;
+
+        if !user_dir.join("USER.md").exists() {
+            std::fs::write(
+                user_dir.join("USER.md"),
+                DEFAULT_USER,
+            ).map_err(StarpodError::Io)?;
+        }
+        if !user_dir.join("MEMORY.md").exists() {
+            std::fs::write(
+                user_dir.join("MEMORY.md"),
+                "# Memory Index\n\nImportant facts and links to memory files.\n",
+            ).map_err(StarpodError::Io)?;
+        }
+        info!("Created default {user_id} user directory");
+    }
+    Ok(())
+}
+
 /// Which `.env` file to copy from the workspace root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnvSource {
@@ -71,7 +100,8 @@ pub enum EnvSource {
 /// │   ├── skills/              ← merged (blueprint overrides, user additions preserved)
 /// │   ├── db/                  ← SQLite databases (runtime)
 /// │   └── users/
-/// │       └── admin/           ← auto-created default user
+/// │       ├── admin/           ← auto-created default users
+/// │       └── user/
 /// │           ├── USER.md
 /// │           ├── MEMORY.md
 /// │           └── memory/      ← daily logs
@@ -179,28 +209,10 @@ pub fn apply_blueprint(
         debug!("Synced workspace skills to instance");
     }
 
-    // 6. Create default admin user if not exists
-    let admin_dir = starpod_dir.join("users").join("admin");
-    if !admin_dir.exists() {
-        std::fs::create_dir_all(&admin_dir)
-            .map_err(StarpodError::Io)?;
-        std::fs::create_dir_all(admin_dir.join("memory"))
-            .map_err(StarpodError::Io)?;
-
-        // Seed USER.md and MEMORY.md with defaults
-        if !admin_dir.join("USER.md").exists() {
-            std::fs::write(
-                admin_dir.join("USER.md"),
-                DEFAULT_USER,
-            ).map_err(StarpodError::Io)?;
-        }
-        if !admin_dir.join("MEMORY.md").exists() {
-            std::fs::write(
-                admin_dir.join("MEMORY.md"),
-                "# Memory Index\n\nImportant facts and links to memory files.\n",
-            ).map_err(StarpodError::Io)?;
-        }
-        info!("Created default admin user directory");
+    // 6. Create default users if not exist
+    let users_dir = starpod_dir.join("users");
+    for user_id in DEFAULT_USERS {
+        ensure_user_dir(&users_dir, user_id)?;
     }
 
     info!(
@@ -321,27 +333,10 @@ pub fn build_standalone(
         }
     }
 
-    // 6. Create default admin user if not exists
-    let admin_dir = starpod_dir.join("users").join("admin");
-    if !admin_dir.exists() {
-        std::fs::create_dir_all(&admin_dir)
-            .map_err(StarpodError::Io)?;
-        std::fs::create_dir_all(admin_dir.join("memory"))
-            .map_err(StarpodError::Io)?;
-
-        if !admin_dir.join("USER.md").exists() {
-            std::fs::write(
-                admin_dir.join("USER.md"),
-                DEFAULT_USER,
-            ).map_err(StarpodError::Io)?;
-        }
-        if !admin_dir.join("MEMORY.md").exists() {
-            std::fs::write(
-                admin_dir.join("MEMORY.md"),
-                "# Memory Index\n\nImportant facts and links to memory files.\n",
-            ).map_err(StarpodError::Io)?;
-        }
-        info!("Created default admin user directory");
+    // 6. Create default users if not exist
+    let users_dir = starpod_dir.join("users");
+    for user_id in DEFAULT_USERS {
+        ensure_user_dir(&users_dir, user_id)?;
     }
 
     info!(
@@ -477,10 +472,12 @@ mod tests {
         assert!(cfg.join("BOOT.md").exists());
         assert!(cfg.join("BOOTSTRAP.md").exists());
         assert!(sp.join("users").is_dir());
-        assert!(sp.join("users").join("admin").is_dir());
-        assert!(sp.join("users").join("admin").join("USER.md").is_file());
-        assert!(sp.join("users").join("admin").join("MEMORY.md").is_file());
-        assert!(sp.join("users").join("admin").join("memory").is_dir());
+        for uid in &["admin", "user"] {
+            assert!(sp.join("users").join(uid).is_dir());
+            assert!(sp.join("users").join(uid).join("USER.md").is_file());
+            assert!(sp.join("users").join(uid).join("MEMORY.md").is_file());
+            assert!(sp.join("users").join(uid).join("memory").is_dir());
+        }
     }
 
     #[test]
@@ -733,10 +730,12 @@ mod tests {
         assert!(cfg.join("HEARTBEAT.md").exists());
         assert!(cfg.join("BOOT.md").exists());
         assert!(cfg.join("BOOTSTRAP.md").exists());
-        assert!(sp.join("users").join("admin").is_dir());
-        assert!(sp.join("users").join("admin").join("USER.md").is_file());
-        assert!(sp.join("users").join("admin").join("MEMORY.md").is_file());
-        assert!(sp.join("users").join("admin").join("memory").is_dir());
+        for uid in &["admin", "user"] {
+            assert!(sp.join("users").join(uid).is_dir());
+            assert!(sp.join("users").join(uid).join("USER.md").is_file());
+            assert!(sp.join("users").join(uid).join("MEMORY.md").is_file());
+            assert!(sp.join("users").join(uid).join("memory").is_dir());
+        }
     }
 
     #[test]

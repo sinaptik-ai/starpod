@@ -37,7 +37,7 @@
 //!         |   |   +-- BOOTSTRAP.md
 //!         |   +-- skills/             # merged on build (blueprint overrides, user additions preserved)
 //!         |   +-- db/                 # SQLite databases (runtime, never touched by build)
-//!         |   +-- users/admin/        # per-user data (runtime)
+//!         |   +-- users/{admin,user}/  # per-user data (runtime)
 //!         +-- reports/                # agent creates freely
 //! ```
 //!
@@ -54,7 +54,7 @@
 //! |   |   +-- BOOTSTRAP.md
 //! |   +-- skills/                     # merged on build
 //! |   +-- db/                         # SQLite databases (runtime)
-//! |   +-- users/admin/                # per-user data (runtime)
+//! |   +-- users/{admin,user}/          # per-user data (runtime)
 //! +-- reports/                        # agent-produced files
 //! ```
 //!

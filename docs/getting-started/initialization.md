@@ -75,7 +75,11 @@ your-project/
         │   ├── skills/     Merged on build
         │   ├── db/         SQLite databases (runtime)
         │   └── users/
-        │       └── admin/  Auto-created default user (runtime)
+        │       ├── admin/  Auto-created default users (runtime)
+        │       │   ├── USER.md
+        │       │   ├── MEMORY.md
+        │       │   └── memory/
+        │       └── user/
         │           ├── USER.md
         │           ├── MEMORY.md
         │           └── memory/

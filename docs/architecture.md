@@ -58,10 +58,14 @@ An instance is the runtime environment created from a blueprint. It lives in `.i
 │   │   ├── session.db
 │   │   └── cron.db
 │   └── users/
-│       └── admin/                  # Per-user data
+│       ├── admin/                  # Per-user data (auto-created)
+│       │   ├── USER.md
+│       │   ├── MEMORY.md
+│       │   └── memory/             # Daily logs
+│       └── user/                   # Default non-admin user (auto-created)
 │           ├── USER.md
 │           ├── MEMORY.md
-│           └── memory/             # Daily logs
+│           └── memory/
 ├── reports/                        # Agent-created files
 └── ...                             # Anything the agent writes
 ```
@@ -216,7 +220,11 @@ workspace/
         │   ├── skills/             # merged on build
         │   ├── db/                 # SQLite DBs (runtime)
         │   └── users/
-        │       └── admin/          # auto-created (runtime)
+        │       ├── admin/          # auto-created (runtime)
+        │       │   ├── USER.md
+        │       │   ├── MEMORY.md
+        │       │   └── memory/
+        │       └── user/           # auto-created (runtime)
         │           ├── USER.md
         │           ├── MEMORY.md
         │           └── memory/
@@ -237,7 +245,7 @@ workspace/
 │   │   ├── BOOT.md
 │   │   └── BOOTSTRAP.md
 │   ├── skills/                     # merged on build
-│   ├── users/admin/                # runtime
+│   ├── users/{admin,user}/          # runtime (auto-created)
 │   └── db/                         # runtime
 ├── reports/                        # agent-produced files
 └── ...
