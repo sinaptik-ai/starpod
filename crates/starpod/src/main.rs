@@ -368,6 +368,80 @@ fn strip_json_fence(raw: &str) -> &str {
     s.strip_suffix("```").unwrap_or(s).trim()
 }
 
+/// Call the LLM to generate skill description + body. Returns (description, body).
+async fn generate_skill_body(
+    name: &str,
+    description: &Option<String>,
+    prompt: &Option<String>,
+) -> anyhow::Result<(String, String)> {
+    let mut user_prompt = format!("Create a skill named \"{}\".", name);
+    if let Some(ref d) = description {
+        user_prompt.push_str(&format!("\n\nThe skill description MUST be: {}", d));
+    }
+    if let Some(ref p) = prompt {
+        user_prompt.push_str(&format!("\n\nAdditional context:\n{}", p));
+    }
+
+    let output_schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "description": {
+                "type": "string",
+                "description": "1-2 sentence description of what the skill does and when to use it. Max 1024 chars. Use imperative phrasing: 'Use this skill when...'"
+            },
+            "body": {
+                "type": "string",
+                "description": "Markdown instructions for the agent to follow when the skill is activated. Should be under 500 lines / ~5000 tokens."
+            }
+        },
+        "required": ["description", "body"],
+        "additionalProperties": false
+    });
+
+    let options = agent_sdk::Options::builder()
+        .system_prompt(agent_sdk::options::SystemPrompt::Custom(
+            SKILL_GEN_SYSTEM_PROMPT.to_string(),
+        ))
+        .output_format(output_schema)
+        .max_turns(1)
+        .persist_session(false)
+        .permission_mode(agent_sdk::PermissionMode::Plan)
+        .build();
+
+    let mut stream = agent_sdk::query(&user_prompt, options);
+
+    let mut result_msg = None;
+    while let Some(msg_result) = stream.next().await {
+        let msg = msg_result?;
+        if let agent_sdk::Message::Result(result) = msg {
+            result_msg = Some(result);
+        }
+    }
+
+    let result = result_msg
+        .ok_or_else(|| anyhow::anyhow!("No result from AI"))?;
+
+    if result.is_error {
+        anyhow::bail!("{}", result.errors.join("; "));
+    }
+
+    let result_text = result.result.ok_or_else(|| {
+        anyhow::anyhow!("No text returned from AI")
+    })?;
+
+    #[derive(serde::Deserialize)]
+    struct SkillGen {
+        description: String,
+        body: String,
+    }
+
+    let json_str = strip_json_fence(&result_text);
+    let gen: SkillGen = serde_json::from_str(json_str)
+        .map_err(|e| anyhow::anyhow!("Failed to parse AI response as JSON: {e}"))?;
+
+    Ok((gen.description, gen.body))
+}
+
 fn truncate(s: &str, max: usize) -> String {
     if s.len() > max {
         format!("{}...", &s[..max])
@@ -1405,6 +1479,10 @@ async fn main() -> anyhow::Result<()> {
                             if d.is_empty() { None } else { Some(d) }
                         }
                     };
+                    let version: String = Input::with_theme(&theme)
+                        .with_prompt("Version")
+                        .default("0.1.0".to_string())
+                        .interact_text()?;
                     let prompt: Option<String> = match prompt {
                         Some(p) => Some(p),
                         None => {
@@ -1422,80 +1500,26 @@ async fn main() -> anyhow::Result<()> {
                         name.bright_white()
                     );
 
-                    // Build the user prompt for the AI.
-                    let mut user_prompt = format!("Create a skill named \"{}\".", name);
-                    if let Some(ref d) = description {
-                        user_prompt.push_str(&format!("\n\nThe skill description MUST be: {}", d));
-                    }
-                    if let Some(ref p) = prompt {
-                        user_prompt.push_str(&format!("\n\nAdditional context:\n{}", p));
-                    }
-
-                    let output_schema = serde_json::json!({
-                        "type": "object",
-                        "properties": {
-                            "description": {
-                                "type": "string",
-                                "description": "1-2 sentence description of what the skill does and when to use it. Max 1024 chars. Use imperative phrasing: 'Use this skill when...'"
-                            },
-                            "body": {
-                                "type": "string",
-                                "description": "Markdown instructions for the agent to follow when the skill is activated. Should be under 500 lines / ~5000 tokens."
-                            }
-                        },
-                        "required": ["description", "body"],
-                        "additionalProperties": false
-                    });
-
-                    let options = agent_sdk::Options::builder()
-                        .system_prompt(agent_sdk::options::SystemPrompt::Custom(
-                            SKILL_GEN_SYSTEM_PROMPT.to_string(),
-                        ))
-                        .output_format(output_schema)
-                        .max_turns(1)
-                        .persist_session(false)
-                        .permission_mode(agent_sdk::PermissionMode::Plan)
-                        .build();
-
-                    let mut stream = agent_sdk::query(&user_prompt, options);
-
-                    let mut result_msg = None;
-                    while let Some(msg_result) = stream.next().await {
-                        let msg = msg_result?;
-                        if let Message::Result(result) = msg {
-                            result_msg = Some(result);
+                    // Try AI generation; fall back to a stub skill on any LLM error.
+                    let (skill_desc, skill_body) = match generate_skill_body(&name, &description, &prompt).await {
+                        Ok((desc, body)) => {
+                            let desc = description.unwrap_or(desc);
+                            (desc, body)
                         }
-                    }
+                        Err(e) => {
+                            eprintln!(
+                                "  {} AI generation failed: {}\n  {} Creating skill with name and description only.\n",
+                                "⚠".bright_yellow(),
+                                e,
+                                "→".dimmed(),
+                            );
+                            let desc = description.unwrap_or_else(|| format!("Skill: {}", name));
+                            (desc, String::new())
+                        }
+                    };
 
-                    let result = result_msg
-                        .ok_or_else(|| anyhow::anyhow!("No result from AI"))?;
-
-                    if result.is_error {
-                        anyhow::bail!(
-                            "Skill generation failed: {}",
-                            result.errors.join("; ")
-                        );
-                    }
-
-                    let result_text = result.result.ok_or_else(|| {
-                        anyhow::anyhow!("No text returned from AI")
-                    })?;
-
-                    #[derive(serde::Deserialize)]
-                    struct SkillGen {
-                        description: String,
-                        body: String,
-                    }
-
-                    // The model returns JSON (possibly wrapped in a ```json fence).
-                    let json_str = strip_json_fence(&result_text);
-
-                    let gen: SkillGen = serde_json::from_str(json_str)
-                        .map_err(|e| anyhow::anyhow!("Failed to parse AI response as JSON: {e}"))?;
-
-                    let skill_desc = description.unwrap_or(gen.description);
-
-                    store.create(&name, &skill_desc, &gen.body)?;
+                    let version_opt = if version.is_empty() { None } else { Some(version.as_str()) };
+                    store.create(&name, &skill_desc, version_opt, &skill_body)?;
 
                     println!(
                         "  {} Created skill '{}'",
@@ -1507,8 +1531,10 @@ async fn main() -> anyhow::Result<()> {
                         "Description:".dimmed(),
                         skill_desc
                     );
-                    println!();
-                    println!("{}", gen.body);
+                    if !skill_body.is_empty() {
+                        println!();
+                        println!("{}", skill_body);
+                    }
                 }
                 SkillAction::Delete { name } => {
                     store.delete(&name)?;

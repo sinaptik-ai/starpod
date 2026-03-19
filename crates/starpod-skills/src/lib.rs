@@ -16,6 +16,9 @@ pub struct SkillFrontmatter {
     pub name: String,
     /// Human-readable description of what the skill does and when to use it.
     pub description: String,
+    /// Semantic version (e.g. "0.1.0").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
     /// Optional license.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub license: Option<String>,
@@ -37,6 +40,9 @@ pub struct Skill {
     pub name: String,
     /// Human-readable description from frontmatter (or auto-generated).
     pub description: String,
+    /// Semantic version (e.g. "0.1.0").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
     /// The instruction body (markdown after frontmatter).
     pub body: String,
     /// Full raw content of SKILL.md (frontmatter + body).
@@ -101,10 +107,14 @@ fn parse_skill_md(raw: &str) -> (Option<SkillFrontmatter>, String) {
 }
 
 /// Format frontmatter + body into a valid SKILL.md file.
-fn format_skill_md(name: &str, description: &str, body: &str) -> String {
+fn format_skill_md(name: &str, description: &str, version: Option<&str>, body: &str) -> String {
+    let version_line = match version {
+        Some(v) => format!("\nversion: {}", v),
+        None => String::new(),
+    };
     format!(
-        "---\nname: {}\ndescription: {}\n---\n\n{}",
-        name, description, body
+        "---\nname: {}\ndescription: {}{}\n---\n\n{}",
+        name, description, version_line, body
     )
 }
 
@@ -138,7 +148,7 @@ fn format_skill_md(name: &str, description: &str, body: &str) -> String {
 /// let store = SkillStore::new(tmp.path()).unwrap();
 ///
 /// // Create
-/// store.create("code-review", "Review code for bugs.", "Check error handling.").unwrap();
+/// store.create("code-review", "Review code for bugs.", None, "Check error handling.").unwrap();
 ///
 /// // Catalog for system prompt
 /// let catalog = store.skill_catalog().unwrap();
@@ -191,6 +201,7 @@ impl SkillStore {
             Some(fm) => Ok(Skill {
                 name: fm.name.clone(),
                 description: fm.description,
+                version: fm.version,
                 body,
                 raw_content,
                 created_at,
@@ -214,6 +225,7 @@ impl SkillStore {
                 Ok(Skill {
                     name: name.to_string(),
                     description,
+                    version: None,
                     body: raw_content.clone(),
                     raw_content,
                     created_at,
@@ -269,7 +281,7 @@ impl SkillStore {
 
     /// Create a new skill with AgentSkills-compatible frontmatter.
     /// Fails if it already exists.
-    pub fn create(&self, name: &str, description: &str, body: &str) -> Result<()> {
+    pub fn create(&self, name: &str, description: &str, version: Option<&str>, body: &str) -> Result<()> {
         validate_skill_name(name)?;
         let skill_dir = self.skills_dir.join(name);
         if skill_dir.exists() {
@@ -279,14 +291,14 @@ impl SkillStore {
             )));
         }
         std::fs::create_dir_all(&skill_dir)?;
-        let content = format_skill_md(name, description, body);
+        let content = format_skill_md(name, description, version, body);
         std::fs::write(skill_dir.join("SKILL.md"), content)?;
         debug!(skill = %name, "Created skill");
         Ok(())
     }
 
     /// Update an existing skill's description and/or body.
-    pub fn update(&self, name: &str, description: &str, body: &str) -> Result<()> {
+    pub fn update(&self, name: &str, description: &str, version: Option<&str>, body: &str) -> Result<()> {
         validate_skill_name(name)?;
         let skill_file = self.skills_dir.join(name).join("SKILL.md");
         if !skill_file.exists() {
@@ -295,7 +307,7 @@ impl SkillStore {
                 name
             )));
         }
-        let content = format_skill_md(name, description, body);
+        let content = format_skill_md(name, description, version, body);
         std::fs::write(&skill_file, content)?;
         debug!(skill = %name, "Updated skill");
         Ok(())
@@ -545,20 +557,28 @@ mod tests {
 
     #[test]
     fn test_format_skill_md() {
-        let result = format_skill_md("test", "A test skill.", "Do things.");
+        let result = format_skill_md("test", "A test skill.", None, "Do things.");
         assert!(result.starts_with("---\n"));
         assert!(result.contains("name: test"));
         assert!(result.contains("description: A test skill."));
+        assert!(!result.contains("version:"));
         assert!(result.contains("---\n\nDo things."));
     }
 
     #[test]
+    fn test_format_skill_md_with_version() {
+        let result = format_skill_md("test", "A test skill.", Some("0.1.0"), "Do things.");
+        assert!(result.contains("version: 0.1.0"));
+    }
+
+    #[test]
     fn test_format_then_parse_roundtrip() {
-        let formatted = format_skill_md("roundtrip", "Round-trip test.", "Instructions here.");
+        let formatted = format_skill_md("roundtrip", "Round-trip test.", Some("1.2.3"), "Instructions here.");
         let (fm, body) = parse_skill_md(&formatted);
         let fm = fm.unwrap();
         assert_eq!(fm.name, "roundtrip");
         assert_eq!(fm.description, "Round-trip test.");
+        assert_eq!(fm.version.as_deref(), Some("1.2.3"));
         assert_eq!(body.trim(), "Instructions here.");
     }
 
@@ -569,8 +589,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("summarize-pr", "Summarize pull requests.", "Read the diff and summarize.").unwrap();
-        store.create("code-review", "Review code for issues.", "Check for bugs.").unwrap();
+        store.create("summarize-pr", "Summarize pull requests.", None, "Read the diff and summarize.").unwrap();
+        store.create("code-review", "Review code for issues.", None, "Check for bugs.").unwrap();
 
         let skills = store.list().unwrap();
         assert_eq!(skills.len(), 2);
@@ -585,7 +605,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("my-skill", "A useful skill.", "Step 1: Do this.\nStep 2: Do that.").unwrap();
+        store.create("my-skill", "A useful skill.", None, "Step 1: Do this.\nStep 2: Do that.").unwrap();
 
         // Verify the file on disk is a valid AgentSkills SKILL.md
         let path = tmp.path().join("my-skill").join("SKILL.md");
@@ -601,7 +621,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("my-skill", "Does useful things.", "Do something useful.").unwrap();
+        store.create("my-skill", "Does useful things.", None, "Do something useful.").unwrap();
 
         let skill = store.get("my-skill").unwrap().unwrap();
         assert_eq!(skill.name, "my-skill");
@@ -618,8 +638,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("my-skill", "v1 desc", "v1 body").unwrap();
-        store.update("my-skill", "v2 desc", "v2 body").unwrap();
+        store.create("my-skill", "v1 desc", None, "v1 body").unwrap();
+        store.update("my-skill", "v2 desc", None, "v2 body").unwrap();
 
         let skill = store.get("my-skill").unwrap().unwrap();
         assert_eq!(skill.description, "v2 desc");
@@ -627,11 +647,40 @@ mod tests {
     }
 
     #[test]
+    fn test_create_with_version() {
+        let tmp = TempDir::new().unwrap();
+        let store = SkillStore::new(tmp.path()).unwrap();
+
+        store.create("versioned", "A versioned skill.", Some("0.1.0"), "body").unwrap();
+
+        let skill = store.get("versioned").unwrap().unwrap();
+        assert_eq!(skill.version.as_deref(), Some("0.1.0"));
+
+        // Verify it's on disk
+        let raw = std::fs::read_to_string(tmp.path().join("versioned").join("SKILL.md")).unwrap();
+        assert!(raw.contains("version: 0.1.0"));
+    }
+
+    #[test]
+    fn test_create_without_version() {
+        let tmp = TempDir::new().unwrap();
+        let store = SkillStore::new(tmp.path()).unwrap();
+
+        store.create("no-ver", "No version.", None, "body").unwrap();
+
+        let skill = store.get("no-ver").unwrap().unwrap();
+        assert!(skill.version.is_none());
+
+        let raw = std::fs::read_to_string(tmp.path().join("no-ver").join("SKILL.md")).unwrap();
+        assert!(!raw.contains("version:"));
+    }
+
+    #[test]
     fn test_delete() {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("my-skill", "desc", "content").unwrap();
+        store.create("my-skill", "desc", None, "content").unwrap();
         store.delete("my-skill").unwrap();
 
         assert!(store.get("my-skill").unwrap().is_none());
@@ -645,8 +694,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("my-skill", "desc", "v1").unwrap();
-        let err = store.create("my-skill", "desc", "v2").unwrap_err();
+        store.create("my-skill", "desc", None, "v1").unwrap();
+        let err = store.create("my-skill", "desc", None, "v2").unwrap_err();
         assert!(err.to_string().contains("already exists"));
     }
 
@@ -655,7 +704,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        let err = store.update("nope", "desc", "content").unwrap_err();
+        let err = store.update("nope", "desc", None, "content").unwrap_err();
         assert!(err.to_string().contains("does not exist"));
     }
 
@@ -690,7 +739,7 @@ mod tests {
         // Regular file in skills dir — should be ignored
         std::fs::write(tmp.path().join("stray-file.txt"), "stray").unwrap();
 
-        store.create("real-skill", "A real skill.", "Content.").unwrap();
+        store.create("real-skill", "A real skill.", None, "Content.").unwrap();
 
         let skills = store.list().unwrap();
         assert_eq!(skills.len(), 1);
@@ -705,11 +754,11 @@ mod tests {
         let store = SkillStore::new(tmp.path()).unwrap();
 
         // All should succeed
-        store.create("a", "d", "c").unwrap();
-        store.create("my-skill", "d", "c").unwrap();
-        store.create("skill123", "d", "c").unwrap();
-        store.create("a1b2c3", "d", "c").unwrap();
-        store.create("x", "d", "c").unwrap();
+        store.create("a", "d", None, "c").unwrap();
+        store.create("my-skill", "d", None, "c").unwrap();
+        store.create("skill123", "d", None, "c").unwrap();
+        store.create("a1b2c3", "d", None, "c").unwrap();
+        store.create("x", "d", None, "c").unwrap();
         assert_eq!(store.list().unwrap().len(), 5);
     }
 
@@ -735,7 +784,7 @@ mod tests {
 
         for (name, reason) in cases {
             assert!(
-                store.create(name, "d", "c").is_err(),
+                store.create(name, "d", None, "c").is_err(),
                 "Expected '{}' to be rejected ({})",
                 name,
                 reason,
@@ -750,11 +799,11 @@ mod tests {
 
         // 64 chars — OK
         let name_64 = "a".repeat(64);
-        store.create(&name_64, "d", "c").unwrap();
+        store.create(&name_64, "d", None, "c").unwrap();
 
         // 65 chars — too long
         let name_65 = "a".repeat(65);
-        assert!(store.create(&name_65, "d", "c").is_err());
+        assert!(store.create(&name_65, "d", None, "c").is_err());
     }
 
     // ── Progressive disclosure ─────────────────────────────────────────────
@@ -771,8 +820,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("alpha", "Alpha does things.", "Alpha body.").unwrap();
-        store.create("beta", "Beta does other things.", "Beta body.").unwrap();
+        store.create("alpha", "Alpha does things.", None, "Alpha body.").unwrap();
+        store.create("beta", "Beta does other things.", None, "Beta body.").unwrap();
 
         let catalog = store.skill_catalog().unwrap();
         assert!(catalog.starts_with("<available_skills>"));
@@ -790,7 +839,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("escaping", "Uses <tags> & \"quotes\".", "body").unwrap();
+        store.create("escaping", "Uses <tags> & \"quotes\".", None, "body").unwrap();
 
         let catalog = store.skill_catalog().unwrap();
         assert!(catalog.contains("&lt;tags&gt;"));
@@ -803,7 +852,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("my-skill", "A skill.", "Do the thing.\nStep by step.").unwrap();
+        store.create("my-skill", "A skill.", None, "Do the thing.\nStep by step.").unwrap();
 
         let activated = store.activate_skill("my-skill").unwrap().unwrap();
         assert!(activated.contains("<skill_content name=\"my-skill\">"));
@@ -824,7 +873,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("minimal", "Minimal.", "Just instructions.").unwrap();
+        store.create("minimal", "Minimal.", None, "Just instructions.").unwrap();
 
         let activated = store.activate_skill("minimal").unwrap().unwrap();
         assert!(!activated.contains("<skill_resources>"));
@@ -835,7 +884,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("my-skill", "A skill.", "Instructions.").unwrap();
+        store.create("my-skill", "A skill.", None, "Instructions.").unwrap();
 
         // Create resource files in all three standard directories
         let skill_dir = tmp.path().join("my-skill");
@@ -913,8 +962,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("beta", "B.", "b").unwrap();
-        store.create("alpha", "A.", "a").unwrap();
+        store.create("beta", "B.", None, "b").unwrap();
+        store.create("alpha", "A.", None, "a").unwrap();
 
         let names = store.skill_names().unwrap();
         assert_eq!(names, vec!["alpha", "beta"]);
@@ -932,7 +981,7 @@ mod tests {
     fn test_list_skill_resources_empty() {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
-        store.create("bare", "Bare skill.", "No resources.").unwrap();
+        store.create("bare", "Bare skill.", None, "No resources.").unwrap();
 
         let skill_dir = tmp.path().join("bare");
         assert!(list_skill_resources(&skill_dir).is_empty());
@@ -945,9 +994,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("alpha", "A.", "a").unwrap();
-        store.create("beta", "B.", "b").unwrap();
-        store.create("gamma", "G.", "g").unwrap();
+        store.create("alpha", "A.", None, "a").unwrap();
+        store.create("beta", "B.", None, "b").unwrap();
+        store.create("gamma", "G.", None, "g").unwrap();
 
         let filtered = SkillStore::new(tmp.path())
             .unwrap()
@@ -964,8 +1013,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("alpha", "A.", "a").unwrap();
-        store.create("beta", "B.", "b").unwrap();
+        store.create("alpha", "A.", None, "a").unwrap();
+        store.create("beta", "B.", None, "b").unwrap();
 
         let filtered = SkillStore::new(tmp.path())
             .unwrap()
@@ -981,8 +1030,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("alpha", "A.", "a").unwrap();
-        store.create("beta", "B.", "b").unwrap();
+        store.create("alpha", "A.", None, "a").unwrap();
+        store.create("beta", "B.", None, "b").unwrap();
 
         let filtered = SkillStore::new(tmp.path())
             .unwrap()
@@ -999,8 +1048,8 @@ mod tests {
             .unwrap()
             .with_filter(vec![]);
 
-        store.create("alpha", "A.", "a").unwrap();
-        store.create("beta", "B.", "b").unwrap();
+        store.create("alpha", "A.", None, "a").unwrap();
+        store.create("beta", "B.", None, "b").unwrap();
 
         assert_eq!(store.list().unwrap().len(), 2);
     }
@@ -1009,7 +1058,7 @@ mod tests {
     fn test_list_skill_resources_sorted() {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
-        store.create("res", "Has resources.", "Content.").unwrap();
+        store.create("res", "Has resources.", None, "Content.").unwrap();
 
         let skill_dir = tmp.path().join("res");
         std::fs::create_dir_all(skill_dir.join("scripts")).unwrap();

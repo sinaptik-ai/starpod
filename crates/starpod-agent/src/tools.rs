@@ -775,7 +775,7 @@ pub async fn handle_custom_tool(
 
             debug!(skill = %name, "SkillCreate");
 
-            match ctx.skills.create(name, description, body) {
+            match ctx.skills.create(name, description, None, body) {
                 Ok(()) => Some(ToolResult {
                     content: format!("Created skill '{}'.", name),
                     is_error: false,
@@ -796,7 +796,7 @@ pub async fn handle_custom_tool(
 
             debug!(skill = %name, "SkillUpdate");
 
-            match ctx.skills.update(name, description, body) {
+            match ctx.skills.update(name, description, None, body) {
                 Ok(()) => Some(ToolResult {
                     content: format!("Updated skill '{}'.", name),
                     is_error: false,
