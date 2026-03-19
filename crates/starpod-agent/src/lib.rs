@@ -310,13 +310,14 @@ impl StarpodAgent {
         let bootstrap = self.memory.bootstrap_context()?;
         let skill_catalog = self.skills.skill_catalog()?;
         let date_str = Local::now().format("%A, %B %d, %Y at %H:%M").to_string();
+        let tz_str = config.resolved_timezone().unwrap_or_else(|| "UTC".to_string());
         let project_root = config.project_root.display();
 
         let agent_home_display = self.paths.agent_home.display().to_string();
 
         let mut prompt = format!(
             "You are {agent_name}, a personal AI assistant.\n\n{bootstrap}\n\n---\n\
-             Current date/time: {date_str}\nSession ID: {session_id}\n\
+             Current date/time: {date_str}\nTimezone: {tz_str}\nSession ID: {session_id}\n\
              Project root: {project_root}\n\
              Working directory: {project_root}\n\n\
              You have access to memory tools (MemorySearch, MemoryWrite, MemoryAppendDaily), \
@@ -351,6 +352,36 @@ impl StarpodAgent {
         Ok(prompt)
     }
 
+}
+
+/// Append execution-context block to the system prompt when the message
+/// originates from a scheduled job (cron or heartbeat) so the LLM knows
+/// to act directly rather than re-scheduling.
+fn append_execution_context(prompt: &mut String, user_id: Option<&str>) {
+    match user_id {
+        Some("cron") => {
+            prompt.push_str(
+                "\n\n--- EXECUTION CONTEXT ---\n\
+                 You are executing a SCHEDULED CRON JOB right now. The message below is the \
+                 cron job's prompt — carry out the instruction directly. Do NOT schedule \
+                 another reminder or cron job unless the prompt explicitly asks you to. \
+                 If the task is to remind or notify the user, deliver the reminder content \
+                 directly in your response.",
+            );
+        }
+        Some("heartbeat") => {
+            prompt.push_str(
+                "\n\n--- EXECUTION CONTEXT ---\n\
+                 You are executing a HEARTBEAT (periodic background check). The message below \
+                 comes from HEARTBEAT.md. Carry out the instructions directly. Do NOT schedule \
+                 new cron jobs unless the heartbeat instructions explicitly ask you to.",
+            );
+        }
+        _ => {}
+    }
+}
+
+impl StarpodAgent {
     /// Map reasoning effort config to ThinkingConfig.
     fn thinking_config(config: &StarpodConfig) -> Option<ThinkingConfig> {
         config.reasoning_effort.map(|effort| match effort {
@@ -503,7 +534,9 @@ impl StarpodAgent {
         };
 
         // Step 3: Build system prompt
-        let system_prompt = self.build_system_prompt(&session_id, &config)?;
+        let mut system_prompt = self.build_system_prompt(&session_id, &config)?;
+
+        append_execution_context(&mut system_prompt, message.user_id.as_deref());
 
         // Step 4: Build provider and options, then run query
         let provider = Self::build_provider(&config)?;
@@ -1712,5 +1745,37 @@ mod tests {
         // Both image and non-image files now get save-path notes
         assert!(extra_text.contains("report.pdf"));
         assert!(extra_text.contains("photo.jpg"));
+    }
+
+    #[test]
+    fn test_append_execution_context_cron() {
+        let mut prompt = "Base prompt.".to_string();
+        append_execution_context(&mut prompt, Some("cron"));
+        assert!(prompt.contains("--- EXECUTION CONTEXT ---"));
+        assert!(prompt.contains("SCHEDULED CRON JOB"));
+        assert!(prompt.contains("Do NOT schedule"));
+    }
+
+    #[test]
+    fn test_append_execution_context_heartbeat() {
+        let mut prompt = "Base prompt.".to_string();
+        append_execution_context(&mut prompt, Some("heartbeat"));
+        assert!(prompt.contains("--- EXECUTION CONTEXT ---"));
+        assert!(prompt.contains("HEARTBEAT"));
+        assert!(prompt.contains("HEARTBEAT.md"));
+    }
+
+    #[test]
+    fn test_append_execution_context_regular_user() {
+        let mut prompt = "Base prompt.".to_string();
+        append_execution_context(&mut prompt, Some("admin"));
+        assert_eq!(prompt, "Base prompt.");
+    }
+
+    #[test]
+    fn test_append_execution_context_none() {
+        let mut prompt = "Base prompt.".to_string();
+        append_execution_context(&mut prompt, None);
+        assert_eq!(prompt, "Base prompt.");
     }
 }
