@@ -611,7 +611,13 @@ impl StarpodAgent {
             }
         }
 
-        // Step 5: Append summary to daily log
+        // Step 5: Save messages to session history
+        let _ = self.session_mgr.save_message(&session_id, "user", &message.text).await;
+        if !result_text.is_empty() {
+            let _ = self.session_mgr.save_message(&session_id, "assistant", &result_text).await;
+        }
+
+        // Step 6: Append summary to daily log
         let summary = truncate(&result_text, 200);
         let agent_name = &config.agent_name;
         let _ = self.memory.append_daily(&format!(
