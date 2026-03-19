@@ -66,6 +66,7 @@ impl StarpodAgent {
             max_tokens: config.max_tokens,
             reasoning_effort: config.reasoning_effort,
             compaction_model: config.compaction_model.clone(),
+            compaction_provider: config.compaction_provider.clone(),
             agent_name: config.agent_name.clone(),
             timezone: config.timezone.clone(),
             followup_mode: config.followup_mode,
@@ -402,7 +403,11 @@ impl StarpodAgent {
 
     /// Build the LLM provider based on `config.provider`.
     fn build_provider(config: &StarpodConfig) -> Result<Box<dyn LlmProvider>> {
-        let provider_name = &config.provider;
+        Self::build_provider_for(&config.provider, config)
+    }
+
+    /// Build an LLM provider for the given provider name using config for API key / base URL.
+    fn build_provider_for(provider_name: &str, config: &StarpodConfig) -> Result<Box<dyn LlmProvider>> {
         let api_key = config.resolved_provider_api_key(provider_name)
             .ok_or_else(|| StarpodError::Config(format!(
                 "No API key found for provider '{}'. Set it in config.toml or via environment variable.",
@@ -414,7 +419,7 @@ impl StarpodAgent {
                 provider_name
             )))?;
 
-        let provider: Box<dyn LlmProvider> = match provider_name.as_str() {
+        let provider: Box<dyn LlmProvider> = match provider_name {
             "anthropic" => Box::new(AnthropicProvider::new(api_key, base_url)),
             "gemini" => Box::new(GeminiProvider::with_base_url(api_key, base_url)),
             // OpenAI-compatible providers
@@ -571,6 +576,16 @@ impl StarpodAgent {
 
         if let Some(ref cm) = config.compaction_model {
             builder = builder.compaction_model(cm);
+        }
+        if let Some(ref cp) = config.compaction_provider {
+            if cp != &config.provider {
+                match Self::build_provider_for(cp, &config) {
+                    Ok(p) => { builder = builder.compaction_provider(p); }
+                    Err(e) => {
+                        tracing::warn!(provider = cp, error = %e, "Failed to build compaction provider, falling back to primary");
+                    }
+                }
+            }
         }
 
         if let Some(key) = config.resolved_api_key() {
@@ -755,6 +770,16 @@ impl StarpodAgent {
 
         if let Some(ref cm) = config.compaction_model {
             builder = builder.compaction_model(cm);
+        }
+        if let Some(ref cp) = config.compaction_provider {
+            if cp != &config.provider {
+                match Self::build_provider_for(cp, &config) {
+                    Ok(p) => { builder = builder.compaction_provider(p); }
+                    Err(e) => {
+                        tracing::warn!(provider = cp, error = %e, "Failed to build compaction provider, falling back to primary");
+                    }
+                }
+            }
         }
 
         if let Some(key) = config.resolved_api_key() {

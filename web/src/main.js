@@ -984,9 +984,10 @@ function selectSession(session) {
 }
 
 // ── Settings ──
-const settingsBtn = document.getElementById('settings-btn')
+const settingsBtn = document.getElementById('sidebar-settings-btn')
 let settingsVisible = false
 let settingsActiveTab = 'general'
+let cachedModels = null
 
 function apiHeaders() {
   const h = { 'Content-Type': 'application/json' }
@@ -1006,6 +1007,7 @@ function hideSettings() {
   settingsVisible = false
   settingsBtn.classList.remove('active')
   document.querySelector('#input-form').closest('.shrink-0.pt-2').style.display = ''
+  messages.innerHTML = ''
   if (currentSessionId) {
     const s = cachedSessions.find(s => s.id === currentSessionId)
     if (s) selectSession(s)
@@ -1016,21 +1018,22 @@ function hideSettings() {
 }
 
 settingsBtn.addEventListener('click', () => {
-  settingsVisible ? hideSettings() : showSettings()
+  if (settingsVisible) hideSettings()
+  else { showSettings(); if (isMobile()) closeSidebar() }
 })
 
 function renderSettingsView() {
   const tabs = [
     { id: 'general', label: 'General' },
     { id: 'soul', label: 'Soul' },
+    { id: 'heartbeat', label: 'Heartbeat' },
     { id: 'frontend', label: 'Frontend' },
     { id: 'memory', label: 'Memory' },
     { id: 'cron', label: 'Cron' },
     { id: 'users', label: 'Users' },
   ]
 
-  const scroll = document.getElementById('messages-scroll')
-  scroll.innerHTML = ''
+  messages.innerHTML = ''
 
   const container = document.createElement('div')
   container.className = 'max-w-[740px] mx-auto px-5 py-6'
@@ -1045,7 +1048,7 @@ function renderSettingsView() {
     '<div class="flex gap-1 mb-6 overflow-x-auto pb-1 border-b border-border-subtle" id="settings-tabs"></div>' +
     '<div id="settings-content"></div>'
 
-  scroll.appendChild(container)
+  messages.appendChild(container)
 
   const tabBar = document.getElementById('settings-tabs')
   tabs.forEach(tab => {
@@ -1068,6 +1071,7 @@ async function loadTabContent(tab) {
     switch (tab) {
       case 'general': await renderGeneralTab(el); break
       case 'soul': await renderSoulTab(el); break
+      case 'heartbeat': await renderHeartbeatTab(el); break
       case 'frontend': await renderFrontendTab(el); break
       case 'memory': await renderMemoryTab(el); break
       case 'cron': await renderCronTab(el); break
@@ -1080,12 +1084,92 @@ async function loadTabContent(tab) {
 
 // ── Form helpers ──
 
-function sField(label, desc, html) {
+function sField(label, desc, html, helpTip) {
   return '<div class="settings-field">' +
-    '<label>' + escapeHtml(label) + '</label>' +
+    '<label>' + escapeHtml(label) +
+      (helpTip ? ' <span class="help-icon" title="' + escapeHtml(helpTip) + '">?</span>' : '') +
+    '</label>' +
     (desc ? '<div class="field-desc">' + escapeHtml(desc) + '</div>' : '') +
     html +
   '</div>'
+}
+
+function sSection(title) {
+  return '<div class="settings-section-header">' + escapeHtml(title) + '</div>'
+}
+
+async function fetchModels() {
+  if (cachedModels) return cachedModels
+  try {
+    const resp = await fetch('/api/settings/models', { headers: apiHeaders() })
+    if (resp.ok) cachedModels = (await resp.json()).models
+  } catch {}
+  return cachedModels || {}
+}
+
+function sModelSelect(id, currentValue, providerModels) {
+  const models = providerModels || []
+  const isCustom = currentValue && !models.includes(currentValue)
+  let html = '<div class="flex gap-2">'
+  html += '<select id="' + id + '-select" class="settings-input flex-1">'
+  models.forEach(m => {
+    html += '<option value="' + escapeHtml(m) + '"' + (m === currentValue ? ' selected' : '') + '>' + escapeHtml(m) + '</option>'
+  })
+  html += '<option value="__custom__"' + (isCustom ? ' selected' : '') + '>Custom...</option>'
+  html += '</select>'
+  html += '<input id="' + id + '-custom" type="text" class="settings-input flex-1' + (isCustom ? '' : ' hidden') + '" value="' + escapeHtml(isCustom ? currentValue : '') + '" placeholder="Model name...">'
+  html += '</div>'
+  return html
+}
+
+function wireModelSelect(id) {
+  const sel = document.getElementById(id + '-select')
+  const custom = document.getElementById(id + '-custom')
+  if (!sel || !custom) return
+  sel.addEventListener('change', () => {
+    if (sel.value === '__custom__') {
+      custom.classList.remove('hidden')
+      custom.focus()
+    } else {
+      custom.classList.add('hidden')
+      custom.value = ''
+    }
+  })
+}
+
+function getModelValue(id) {
+  const sel = document.getElementById(id + '-select')
+  const custom = document.getElementById(id + '-custom')
+  if (!sel) return ''
+  if (sel.value === '__custom__') return custom ? custom.value.trim() : ''
+  return sel.value
+}
+
+function updateModelOptions(id, models, currentValue) {
+  const sel = document.getElementById(id + '-select')
+  const custom = document.getElementById(id + '-custom')
+  if (!sel) return
+  const isCustom = currentValue && !models.includes(currentValue)
+  sel.innerHTML = ''
+  models.forEach(m => {
+    const opt = document.createElement('option')
+    opt.value = m
+    opt.textContent = m
+    if (m === currentValue) opt.selected = true
+    sel.appendChild(opt)
+  })
+  const customOpt = document.createElement('option')
+  customOpt.value = '__custom__'
+  customOpt.textContent = 'Custom...'
+  if (isCustom) customOpt.selected = true
+  sel.appendChild(customOpt)
+  if (isCustom) {
+    custom.classList.remove('hidden')
+    custom.value = currentValue
+  } else {
+    custom.classList.add('hidden')
+    custom.value = ''
+  }
 }
 
 function sInput(id, value, type, attrs) {
@@ -1144,41 +1228,77 @@ async function doSave(url, gatherFn) {
 // ── General tab ──
 
 async function renderGeneralTab(el) {
-  const resp = await fetch('/api/settings/general', { headers: apiHeaders() })
+  const [resp, allModels] = await Promise.all([
+    fetch('/api/settings/general', { headers: apiHeaders() }),
+    fetchModels(),
+  ])
   if (!resp.ok) throw new Error('Failed to load')
   const d = await resp.json()
+  const providerModels = allModels[d.provider] || []
+  const compactProvider = d.compaction_provider || d.provider
+  const compactModels = allModels[compactProvider] || []
 
   el.innerHTML =
+    sSection('Model') +
     sField('Provider', 'LLM provider to use', sSelect('s-provider', d.provider, [
       'anthropic', 'openai', 'gemini', 'groq', 'deepseek', 'openrouter', 'ollama'
     ])) +
-    sField('Model', 'Model identifier', sInput('s-model', d.model)) +
+    sField('Model', null, sModelSelect('s-model', d.model, providerModels)) +
+    sField('Reasoning effort', null, sSelect('s-reasoning', d.reasoning_effort || '', [
+      { value: '', label: 'None' }, { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' }, { value: 'high', label: 'High' }
+    ]), 'Higher = more "thinking time" before responding. Low is fastest, High gives most thorough answers. Only supported by some models.') +
+
+    sSection('Agent') +
+    sField('Agent name', 'Display name for the AI assistant', sInput('s-agent-name', d.agent_name)) +
+    sField('Timezone', 'IANA timezone for cron scheduling', sInput('s-timezone', d.timezone || '', 'text', 'placeholder="e.g. Europe/Rome"')) +
+    sField('Followup mode', null, sSelect('s-followup', d.followup_mode, [
+      { value: 'inject', label: 'Inject' }, { value: 'queue', label: 'Queue' }
+    ]), 'Inject: followup messages get woven into the current conversation turn. Queue: waits until the current turn finishes, then starts a new one.') +
+
+    sSection('Compaction') +
+    '<div class="field-desc mb-3" style="color: var(--color-dim); font-size: 0.75rem;">When conversations get long, older messages are summarized to save context space. The compaction model does this summarization.</div>' +
+    sField('Compaction provider', null, sSelect('s-compact-provider', d.compaction_provider || '', [
+      { value: '', label: 'Same as primary' }, 'anthropic', 'openai', 'gemini', 'groq', 'deepseek', 'openrouter', 'ollama'
+    ])) +
+    sField('Compaction model', null, sModelSelect('s-compact-model', d.compaction_model || '', compactModels)) +
+
+    sSection('Limits') +
     '<div class="grid grid-cols-2 gap-4">' +
       sField('Max turns', 'Agentic turns per request', sInput('s-max-turns', d.max_turns, 'number', 'min="1" max="200"')) +
       sField('Max tokens', 'Response token limit', sInput('s-max-tokens', d.max_tokens, 'number', 'min="256" max="131072" step="256"')) +
     '</div>' +
-    sField('Agent name', 'Display name for the AI assistant', sInput('s-agent-name', d.agent_name)) +
-    sField('Timezone', 'IANA timezone for cron scheduling', sInput('s-timezone', d.timezone || '', 'text', 'placeholder="e.g. Europe/Rome"')) +
-    sField('Reasoning effort', 'Extended thinking level', sSelect('s-reasoning', d.reasoning_effort || '', [
-      { value: '', label: 'None' }, { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' }, { value: 'high', label: 'High' }
-    ])) +
-    sField('Compaction model', 'Model for conversation compaction (blank = same as primary)', sInput('s-compaction-model', d.compaction_model || '', 'text', 'placeholder="same as primary"')) +
-    sField('Followup mode', 'How followup messages are handled during active loops', sSelect('s-followup', d.followup_mode, [
-      { value: 'inject', label: 'Inject' }, { value: 'queue', label: 'Queue' }
-    ])) +
-    sField('Server address', 'Bind address (restart required to take effect)', sInput('s-server-addr', d.server_addr)) +
+
+    sSection('Server') +
+    sField('Server address', null, sInput('s-server-addr', d.server_addr), 'Requires restart to take effect.') +
     sSaveBar()
+
+  wireModelSelect('s-model')
+  wireModelSelect('s-compact-model')
+
+  // When provider changes, update model dropdown
+  document.getElementById('s-provider').addEventListener('change', (e) => {
+    const models = allModels[e.target.value] || []
+    updateModelOptions('s-model', models, '')
+  })
+
+  // When compaction provider changes, update compaction model dropdown
+  document.getElementById('s-compact-provider').addEventListener('change', (e) => {
+    const p = e.target.value || document.getElementById('s-provider').value
+    const models = allModels[p] || []
+    updateModelOptions('s-compact-model', models, '')
+  })
 
   document.getElementById('settings-save').addEventListener('click', () => {
     doSave('/api/settings/general', () => ({
       provider: document.getElementById('s-provider').value,
-      model: document.getElementById('s-model').value,
+      model: getModelValue('s-model'),
       max_turns: parseInt(document.getElementById('s-max-turns').value) || 30,
       max_tokens: parseInt(document.getElementById('s-max-tokens').value) || 16384,
       agent_name: document.getElementById('s-agent-name').value,
       timezone: document.getElementById('s-timezone').value || null,
       reasoning_effort: document.getElementById('s-reasoning').value || null,
-      compaction_model: document.getElementById('s-compaction-model').value || null,
+      compaction_model: getModelValue('s-compact-model') || null,
+      compaction_provider: document.getElementById('s-compact-provider').value || null,
       followup_mode: document.getElementById('s-followup').value,
       server_addr: document.getElementById('s-server-addr').value,
     }))
@@ -1187,55 +1307,55 @@ async function renderGeneralTab(el) {
 
 // ── Soul tab ──
 
+async function saveConfigFile(btnId, statusId, name, textareaId) {
+  const btn = document.getElementById(btnId)
+  const status = document.getElementById(statusId)
+  btn.disabled = true
+  status.textContent = 'Saving...'
+  status.className = 'ml-3 text-xs text-dim'
+  try {
+    const content = document.getElementById(textareaId).value
+    const resp = await fetch('/api/settings/files/' + name, {
+      method: 'PUT', headers: apiHeaders(), body: JSON.stringify({ content })
+    })
+    if (!resp.ok) { const d = await resp.json().catch(() => ({})); throw new Error(d.error || resp.statusText) }
+    status.textContent = 'Saved!'
+    status.className = 'ml-3 text-xs text-ok'
+    setTimeout(() => { status.textContent = ''; status.className = 'ml-3 text-xs text-dim' }, 2500)
+  } catch (e) {
+    status.textContent = 'Error: ' + e.message
+    status.className = 'ml-3 text-xs text-err'
+  } finally {
+    btn.disabled = false
+  }
+}
+
 async function renderSoulTab(el) {
-  const [soulResp, hbResp] = await Promise.all([
-    fetch('/api/settings/files/SOUL.md', { headers: apiHeaders() }),
-    fetch('/api/settings/files/HEARTBEAT.md', { headers: apiHeaders() }),
-  ])
+  const soulResp = await fetch('/api/settings/files/SOUL.md', { headers: apiHeaders() })
   const soul = soulResp.ok ? await soulResp.json() : { content: '' }
+
+  el.innerHTML =
+    '<div class="field-desc mb-3" style="color: var(--color-dim); font-size: 0.75rem;">Defines the agent\'s personality, tone, and behavior. Loaded at the start of every conversation.</div>' +
+    sTextarea('s-soul', soul.content, 24) +
+    '<div class="mt-2"><button id="save-soul" class="bg-accent text-white px-5 py-2 rounded-xl text-sm font-medium hover:bg-blue-500 transition-colors cursor-pointer">Save SOUL.md</button>' +
+    '<span id="soul-status" class="ml-3 text-xs text-dim"></span></div>'
+
+  document.getElementById('save-soul').addEventListener('click', () => saveConfigFile('save-soul', 'soul-status', 'SOUL.md', 's-soul'))
+}
+
+// ── Heartbeat tab ──
+
+async function renderHeartbeatTab(el) {
+  const hbResp = await fetch('/api/settings/files/HEARTBEAT.md', { headers: apiHeaders() })
   const hb = hbResp.ok ? await hbResp.json() : { content: '' }
 
   el.innerHTML =
-    '<div class="settings-section">' +
-      '<div class="settings-section-title">Soul / Personality</div>' +
-      '<div class="field-desc mb-3" style="color: var(--color-dim); font-size: 0.75rem;">Defines the agent\'s personality, tone, and behavior. Loaded at the start of every conversation.</div>' +
-      sTextarea('s-soul', soul.content, 20) +
-      '<div class="mt-2"><button id="save-soul" class="bg-accent text-white px-5 py-2 rounded-xl text-sm font-medium hover:bg-blue-500 transition-colors cursor-pointer">Save SOUL.md</button>' +
-      '<span id="soul-status" class="ml-3 text-xs text-dim"></span></div>' +
-    '</div>' +
-    '<div class="settings-section">' +
-      '<div class="settings-section-title">Heartbeat</div>' +
-      '<div class="field-desc mb-3" style="color: var(--color-dim); font-size: 0.75rem;">Instructions for periodic heartbeat jobs. Runs on a schedule to perform maintenance, check-ins, etc.</div>' +
-      sTextarea('s-heartbeat', hb.content, 12) +
-      '<div class="mt-2"><button id="save-hb" class="bg-accent text-white px-5 py-2 rounded-xl text-sm font-medium hover:bg-blue-500 transition-colors cursor-pointer">Save HEARTBEAT.md</button>' +
-      '<span id="hb-status" class="ml-3 text-xs text-dim"></span></div>' +
-    '</div>'
+    '<div class="field-desc mb-3" style="color: var(--color-dim); font-size: 0.75rem;">Instructions for periodic heartbeat jobs. The heartbeat runs on a cron schedule to perform maintenance, check-ins, and proactive tasks. Leave empty to disable heartbeat behavior.</div>' +
+    sTextarea('s-heartbeat', hb.content, 20) +
+    '<div class="mt-2"><button id="save-hb" class="bg-accent text-white px-5 py-2 rounded-xl text-sm font-medium hover:bg-blue-500 transition-colors cursor-pointer">Save HEARTBEAT.md</button>' +
+    '<span id="hb-status" class="ml-3 text-xs text-dim"></span></div>'
 
-  async function saveFile(btnId, statusId, name, textareaId) {
-    const btn = document.getElementById(btnId)
-    const status = document.getElementById(statusId)
-    btn.disabled = true
-    status.textContent = 'Saving...'
-    status.className = 'ml-3 text-xs text-dim'
-    try {
-      const content = document.getElementById(textareaId).value
-      const resp = await fetch('/api/settings/files/' + name, {
-        method: 'PUT', headers: apiHeaders(), body: JSON.stringify({ content })
-      })
-      if (!resp.ok) { const d = await resp.json().catch(() => ({})); throw new Error(d.error || resp.statusText) }
-      status.textContent = 'Saved!'
-      status.className = 'ml-3 text-xs text-ok'
-      setTimeout(() => { status.textContent = ''; status.className = 'ml-3 text-xs text-dim' }, 2500)
-    } catch (e) {
-      status.textContent = 'Error: ' + e.message
-      status.className = 'ml-3 text-xs text-err'
-    } finally {
-      btn.disabled = false
-    }
-  }
-
-  document.getElementById('save-soul').addEventListener('click', () => saveFile('save-soul', 'soul-status', 'SOUL.md', 's-soul'))
-  document.getElementById('save-hb').addEventListener('click', () => saveFile('save-hb', 'hb-status', 'HEARTBEAT.md', 's-heartbeat'))
+  document.getElementById('save-hb').addEventListener('click', () => saveConfigFile('save-hb', 'hb-status', 'HEARTBEAT.md', 's-heartbeat'))
 }
 
 // ── Frontend tab ──
@@ -1300,23 +1420,31 @@ async function renderMemoryTab(el) {
   const d = await resp.json()
 
   el.innerHTML =
-    sField('Half-life days', 'Temporal decay on daily logs — lower = faster forgetting', sInput('s-half-life', d.half_life_days, 'number', 'min="1" step="1"')) +
-    sField('MMR lambda', '0 = max diversity, 1 = pure relevance',
+    sSection('Search') +
+    sField('Half-life days', null, sInput('s-half-life', d.half_life_days, 'number', 'min="1" step="1"'),
+      'How quickly daily logs fade from memory search. 7 = recent logs dominate. 90 = old logs stay relevant longer.') +
+    sField('MMR lambda', null,
       '<div class="flex items-center gap-3">' +
         '<input type="range" id="s-mmr" class="settings-range flex-1" min="0" max="1" step="0.05" value="' + d.mmr_lambda + '">' +
         '<span id="mmr-val" class="text-sm font-mono text-secondary w-10 text-right">' + d.mmr_lambda.toFixed(2) + '</span>' +
-      '</div>'
-    ) +
+      '</div>',
+      'Controls diversity in memory search results. 0 = maximum variety (different topics). 1 = pure relevance (may repeat similar content). 0.7 is a good default.') +
     '<div class="flex items-center justify-between settings-field">' +
-      '<div><label>Vector search</label><div class="field-desc">Enable vector-based semantic search</div></div>' +
+      '<div><label>Vector search <span class="help-icon" title="Enables semantic search using embeddings. More accurate for conceptual queries, but slower. Disable if you only need keyword matching.">?</span></label></div>' +
       sToggle('s-vector', d.vector_search) +
     '</div>' +
+
+    sSection('Indexing') +
     '<div class="grid grid-cols-2 gap-4">' +
-      sField('Chunk size', 'Characters per chunk for indexing', sInput('s-chunk-size', d.chunk_size, 'number', 'min="200" step="100"')) +
-      sField('Chunk overlap', 'Overlap in characters between chunks', sInput('s-chunk-overlap', d.chunk_overlap, 'number', 'min="0" step="50"')) +
+      sField('Chunk size', null, sInput('s-chunk-size', d.chunk_size, 'number', 'min="200" step="100"'),
+        'Controls how files are split for indexing. Larger chunks give more context per result.') +
+      sField('Chunk overlap', null, sInput('s-chunk-overlap', d.chunk_overlap, 'number', 'min="0" step="50"'),
+        'Overlap prevents important content from being split across chunk boundaries.') +
     '</div>' +
+
+    sSection('Storage') +
     '<div class="flex items-center justify-between settings-field">' +
-      '<div><label>Export sessions</label><div class="field-desc">Export closed session transcripts for long-term recall</div></div>' +
+      '<div><label>Export sessions <span class="help-icon" title="When a session closes, save the full transcript so the agent can search past conversations.">?</span></label></div>' +
       sToggle('s-export', d.export_sessions) +
     '</div>' +
     sSaveBar()

@@ -6,8 +6,9 @@
 
 use tracing::{debug, warn};
 
-use crate::client::{ApiClient, ApiContentBlock, ApiMessage, CreateMessageRequest};
+use crate::client::{ApiContentBlock, ApiMessage, CreateMessageRequest};
 use crate::error::Result;
+use crate::provider::LlmProvider;
 
 /// Default model for compaction summaries.
 pub const DEFAULT_COMPACTION_MODEL: &str = "claude-haiku-4-5";
@@ -119,11 +120,15 @@ pub fn build_summary_prompt(old_messages: &[ApiMessage]) -> String {
     )
 }
 
-/// Call the summarizer model. Falls back to `fallback_model` on failure.
+/// Call the summarizer model via an LLM provider. Falls back to `fallback_model` on failure.
+///
+/// If a separate `fallback_provider` is given it is used for the retry; otherwise
+/// the same `provider` is reused with `fallback_model`.
 pub async fn call_summarizer(
-    api_client: &ApiClient,
+    provider: &dyn LlmProvider,
     summary_prompt: &str,
     compaction_model: &str,
+    fallback_provider: Option<&dyn LlmProvider>,
     fallback_model: &str,
     summary_max_tokens: u32,
 ) -> Result<String> {
@@ -144,7 +149,7 @@ pub async fn call_summarizer(
         thinking: None,
     };
 
-    match api_client.create_message(&request).await {
+    match provider.create_message(&request).await {
         Ok(resp) => extract_text(&resp.content),
         Err(e) => {
             warn!(
@@ -152,10 +157,11 @@ pub async fn call_summarizer(
                 error = %e,
                 "Compaction model failed, falling back to primary model"
             );
-            // Retry with the fallback (primary) model
+            // Retry with the fallback (primary) model/provider
             let mut fallback_req = request;
             fallback_req.model = fallback_model.to_string();
-            let resp = api_client.create_message(&fallback_req).await?;
+            let fb = fallback_provider.unwrap_or(provider);
+            let resp = fb.create_message(&fallback_req).await?;
             extract_text(&resp.content)
         }
     }

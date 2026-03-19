@@ -407,6 +407,10 @@ pub struct StarpodConfig {
     #[serde(default)]
     pub compaction_model: Option<String>,
 
+    /// Provider for compaction model. If not set, uses the primary provider.
+    #[serde(default)]
+    pub compaction_provider: Option<String>,
+
     /// Agent display name (default: "Aster").
     /// Used in CLI headers, daily logs, and Telegram display.
     /// Personality and soul live in SOUL.md; user profile in USER.md.
@@ -535,6 +539,7 @@ impl Default for StarpodConfig {
             max_tokens: default_max_tokens(),
             reasoning_effort: None,
             compaction_model: None,
+            compaction_provider: None,
             followup_mode: FollowupMode::default(),
             memory: MemoryConfig::default(),
             cron: CronConfig::default(),

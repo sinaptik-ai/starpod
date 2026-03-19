@@ -173,6 +173,10 @@ pub struct Options {
     /// Falls back to the primary model if the compaction call fails.
     pub compaction_model: Option<String>,
 
+    /// Optional separate LLM provider for compaction (e.g. use Anthropic for compaction
+    /// while the primary provider is OpenAI). If `None`, the primary provider is used.
+    pub compaction_provider: Option<Box<dyn LlmProvider>>,
+
     /// System prompt configuration.
     pub system_prompt: Option<SystemPrompt>,
 
@@ -358,6 +362,7 @@ impl Default for Options {
             max_budget_usd: None,
             context_budget: None,
             compaction_model: None,
+            compaction_provider: None,
             system_prompt: None,
             thinking: None,
             hooks: HashMap::new(),
@@ -466,6 +471,11 @@ impl OptionsBuilder {
 
     pub fn compaction_model(mut self, model: impl Into<String>) -> Self {
         self.options.compaction_model = Some(model.into());
+        self
+    }
+
+    pub fn compaction_provider(mut self, provider: Box<dyn LlmProvider>) -> Self {
+        self.options.compaction_provider = Some(provider);
         self
     }
 

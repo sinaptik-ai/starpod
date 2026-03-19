@@ -19,7 +19,7 @@ use tracing::{debug, error, warn};
 use uuid::Uuid;
 
 use crate::client::{
-    ApiClient, ApiContentBlock, ApiMessage, CacheControl, CreateMessageRequest, ImageSource,
+    ApiContentBlock, ApiMessage, CacheControl, CreateMessageRequest, ImageSource,
     SystemBlock, ThinkingParam, ToolDefinition,
 };
 use crate::compact;
@@ -275,13 +275,6 @@ async fn run_agent_loop(
     if tx.send(Ok(init_msg)).is_err() {
         return Ok(());
     }
-
-    // Initialize API client (used for compaction calls)
-    let api_client = if let Some(key) = &options.api_key {
-        ApiClient::with_api_key(key)
-    } else {
-        ApiClient::new()?
-    };
 
     // Initialize LLM provider
     let provider: Box<dyn LlmProvider> = match options.provider.take() {
@@ -861,10 +854,20 @@ async fn run_agent_loop(
                         compact::build_summary_prompt(&conversation[..split_point]);
 
                     let summary_max_tokens = options.summary_max_tokens.unwrap_or(4096);
+                    let compact_provider: &dyn LlmProvider = match &options.compaction_provider {
+                        Some(cp) => cp.as_ref(),
+                        None => provider.as_ref(),
+                    };
+                    let fallback_provider: Option<&dyn LlmProvider> = if options.compaction_provider.is_some() {
+                        Some(provider.as_ref())
+                    } else {
+                        None
+                    };
                     match compact::call_summarizer(
-                        &api_client,
+                        compact_provider,
                         &summary_prompt,
                         compaction_model,
+                        fallback_provider,
                         &model,
                         summary_max_tokens,
                     )

@@ -67,8 +67,15 @@ struct GeneralSettings {
     #[serde(default)]
     compaction_model: Option<String>,
     #[serde(default)]
+    compaction_provider: Option<String>,
+    #[serde(default)]
     followup_mode: FollowupMode,
     server_addr: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ModelsResponse {
+    models: std::collections::HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -126,6 +133,7 @@ struct CreateUserRequest {
 pub fn settings_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/settings/general", get(get_general).put(put_general))
+        .route("/api/settings/models", get(get_models))
         .route("/api/settings/memory", get(get_memory).put(put_memory))
         .route("/api/settings/cron", get(get_cron).put(put_cron))
         .route("/api/settings/frontend", get(get_frontend).put(put_frontend))
@@ -154,6 +162,7 @@ async fn get_general(
         timezone: cfg.timezone.clone(),
         reasoning_effort: cfg.reasoning_effort,
         compaction_model: cfg.compaction_model.clone(),
+        compaction_provider: cfg.compaction_provider.clone(),
         followup_mode: cfg.followup_mode,
         server_addr: cfg.server_addr.clone(),
     }))
@@ -188,6 +197,7 @@ async fn put_general(
 
     set_or_remove_string(table, "timezone", settings.timezone);
     set_or_remove_string(table, "compaction_model", settings.compaction_model);
+    set_or_remove_string(table, "compaction_provider", settings.compaction_provider);
 
     match settings.reasoning_effort {
         Some(re) => {
@@ -209,6 +219,53 @@ async fn put_general(
 
     write_agent_toml(&state, &doc)?;
     Ok(ok_json())
+}
+
+// ── Models ──────────────────────────────────────────────────────────────
+
+/// Well-known models per provider, returned by `GET /api/settings/models`.
+fn well_known_models() -> std::collections::HashMap<String, Vec<String>> {
+    let mut m = std::collections::HashMap::new();
+    m.insert("anthropic".into(), vec![
+        "claude-opus-4-6".into(),
+        "claude-sonnet-4-6".into(),
+        "claude-haiku-4-5".into(),
+    ]);
+    m.insert("openai".into(), vec![
+        "gpt-4o".into(),
+        "gpt-4o-mini".into(),
+        "gpt-4-turbo".into(),
+        "o3-mini".into(),
+    ]);
+    m.insert("gemini".into(), vec![
+        "gemini-2.5-pro".into(),
+        "gemini-2.5-flash".into(),
+        "gemini-2.0-flash".into(),
+    ]);
+    m.insert("groq".into(), vec![
+        "llama-3.3-70b-versatile".into(),
+        "llama-3.1-8b-instant".into(),
+    ]);
+    m.insert("deepseek".into(), vec![
+        "deepseek-chat".into(),
+        "deepseek-reasoner".into(),
+    ]);
+    m.insert("openrouter".into(), vec![
+        "anthropic/claude-sonnet-4-6".into(),
+        "openai/gpt-4o".into(),
+        "google/gemini-2.5-pro".into(),
+        "meta-llama/llama-3.3-70b-instruct".into(),
+    ]);
+    m.insert("ollama".into(), vec![]);
+    m
+}
+
+async fn get_models(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> ApiResult<ModelsResponse> {
+    check_api_key(&state, &headers)?;
+    Ok(Json(ModelsResponse { models: well_known_models() }))
 }
 
 // ── Memory ──────────────────────────────────────────────────────────────
@@ -832,6 +889,7 @@ mod tests {
             timezone: Some("Europe/Rome".into()),
             reasoning_effort: Some(ReasoningEffort::High),
             compaction_model: None,
+            compaction_provider: None,
             followup_mode: FollowupMode::Inject,
             server_addr: "127.0.0.1:3000".into(),
         };
@@ -841,6 +899,7 @@ mod tests {
         assert_eq!(back.model, "claude-haiku-4-5");
         assert_eq!(back.timezone.as_deref(), Some("Europe/Rome"));
         assert!(back.compaction_model.is_none());
+        assert!(back.compaction_provider.is_none());
     }
 
     #[test]
@@ -852,6 +911,29 @@ mod tests {
         assert!(s.reasoning_effort.is_none());
         assert!(s.compaction_model.is_none());
         assert_eq!(s.followup_mode, FollowupMode::Inject); // default
+    }
+
+    #[test]
+    fn well_known_models_all_providers_present() {
+        let m = well_known_models();
+        assert!(m.contains_key("anthropic"));
+        assert!(m.contains_key("openai"));
+        assert!(m.contains_key("gemini"));
+        assert!(m.contains_key("groq"));
+        assert!(m.contains_key("deepseek"));
+        assert!(m.contains_key("openrouter"));
+        assert!(m.contains_key("ollama"));
+        assert!(m["anthropic"].contains(&"claude-sonnet-4-6".to_string()));
+        assert!(m["ollama"].is_empty()); // user must type for ollama
+    }
+
+    #[tokio::test]
+    async fn get_models_returns_all_providers() {
+        let (_tmp, state) = test_app_state().await;
+        let (status, json) = get_json(state, "/api/settings/models").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(json["models"]["anthropic"].as_array().unwrap().len() >= 3);
+        assert!(json["models"]["ollama"].as_array().unwrap().is_empty());
     }
 
     #[test]

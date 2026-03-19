@@ -593,6 +593,10 @@ pub struct AgentConfig {
     #[serde(default)]
     pub compaction_model: Option<String>,
 
+    /// Compaction provider override.
+    #[serde(default)]
+    pub compaction_provider: Option<String>,
+
     /// Agent display name.
     #[serde(default = "default_agent_name")]
     pub agent_name: String,
@@ -661,6 +665,7 @@ impl Default for AgentConfig {
             max_tokens: default_max_tokens(),
             reasoning_effort: None,
             compaction_model: None,
+            compaction_provider: None,
             agent_name: default_agent_name(),
             timezone: None,
             followup_mode: FollowupMode::default(),
@@ -687,6 +692,7 @@ impl AgentConfig {
             max_tokens: self.max_tokens,
             reasoning_effort: self.reasoning_effort,
             compaction_model: self.compaction_model,
+            compaction_provider: self.compaction_provider,
             agent_name: self.agent_name,
             timezone: self.timezone,
             followup_mode: self.followup_mode,
