@@ -5,7 +5,7 @@ import { markSessionRead } from '../lib/api'
 
 function Sidebar({ onSelectSession }) {
   const { state, dispatch } = useApp()
-  const { sidebarOpen, currentSessionId, sessions, settingsVisible } = state
+  const { sidebarOpen, currentSessionId, sessions, readSessions, settingsVisible, cronVisible } = state
 
   function closeSidebar() {
     dispatch({ type: 'CLOSE_SIDEBAR' })
@@ -48,15 +48,18 @@ function Sidebar({ onSelectSession }) {
   // Render the sidebar inner content — the <aside id="sidebar"> wrapper is in App.jsx
   return (
     <>
-      {/* Header with close button */}
-      <div className="flex items-center justify-end px-4 h-10 shrink-0">
+      {/* Header with branding and toggle */}
+      <div className="flex items-center justify-between px-4 h-12 shrink-0">
+        <span className="font-mono text-sm font-bold tracking-tight text-primary">starpod</span>
         <button
           onClick={closeSidebar}
-          className="text-muted hover:text-primary p-1.5 rounded-md hover:bg-elevated transition-colors cursor-pointer"
+          className="text-muted hover:text-primary p-1.5 rounded-lg hover:bg-elevated transition-colors cursor-pointer"
           id="sidebar-close"
+          aria-label="Close sidebar"
         >
-          <svg className="w-3.5 h-3.5 stroke-current fill-none stroke-2" viewBox="0 0 24 24" strokeLinecap="round">
-            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+          <svg className="w-4 h-4 stroke-current fill-none stroke-2" viewBox="0 0 24 24" strokeLinecap="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <line x1="9" y1="3" x2="9" y2="21" />
           </svg>
         </button>
       </div>
@@ -75,7 +78,7 @@ function Sidebar({ onSelectSession }) {
         </button>
         <button
           onClick={handleCronClick}
-          className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-secondary hover:text-primary hover:bg-elevated transition-colors cursor-pointer text-[13px] w-full text-left"
+          className={`flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors cursor-pointer text-[13px] w-full text-left ${cronVisible ? 'text-accent bg-accent-muted' : 'text-secondary hover:text-primary hover:bg-elevated'}`}
         >
           <svg className="w-4 h-4 stroke-current fill-none stroke-[1.5]" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />

@@ -200,16 +200,6 @@ function AppInner() {
     )
   }
 
-  // Cron jobs is a full-page takeover
-  if (cronVisible) {
-    return (
-      <>
-        <CronJobsView />
-        <ToastContainer ref={toastsRef} onNavigateToSession={handleToastNavigate} />
-      </>
-    )
-  }
-
   return (
     <>
       {/* Mobile sidebar overlay */}
@@ -238,11 +228,17 @@ function AppInner() {
         {/* Main app */}
         <div id="app" className="flex flex-col min-w-0 flex-1">
           <Header onNewChat={handleNewChat} onToggleSidebar={() => { if (!state.sidebarOpen) fetchSessionList() }} />
-          <Chat ref={chatRef} wsRef={wsRef} onSendPrompt={(text) => handleSend(text, [])} />
-          <InputBar
-            onSend={handleSend}
-            disabled={wsStatus !== 'connected'}
-          />
+          {cronVisible ? (
+            <CronJobsView />
+          ) : (
+            <>
+              <Chat ref={chatRef} wsRef={wsRef} onSendPrompt={(text) => handleSend(text, [])} />
+              <InputBar
+                onSend={handleSend}
+                disabled={wsStatus !== 'connected'}
+              />
+            </>
+          )}
         </div>
 
         {/* Preview panel */}

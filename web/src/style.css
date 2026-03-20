@@ -125,10 +125,7 @@ html, body {
 /* Hide header new-chat button when sidebar is open (it's in the sidebar header) */
 #sidebar.open ~ #app #new-chat-header-btn { display: none; }
 
-/* Hide sidebar close button on desktop — hamburger toggles instead */
-@media (min-width: 769px) {
-  #sidebar-close { display: none; }
-}
+/* Sidebar close button is now visible on all viewports (serves as sidebar toggle) */
 
 
 /* ── Animations ── */

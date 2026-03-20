@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react'
-import { useApp } from '../contexts/AppContext'
 import { useUser } from './AuthGate'
 import { authHeaders } from '../lib/api'
 
@@ -48,7 +47,6 @@ function formatSchedule(schedule) {
 }
 
 export default function CronJobsView() {
-  const { dispatch } = useApp()
   const { isAdmin } = useUser()
   const [jobs, setJobs] = useState([])
   const [loading, setLoading] = useState(true)
@@ -71,27 +69,9 @@ export default function CronJobsView() {
   }, [])
 
   return (
-    <div className="flex flex-col h-[100dvh] bg-bg">
-      {/* Fixed header */}
-      <div className="shrink-0 border-b border-border-subtle">
-        <div className="max-w-[740px] mx-auto px-5">
-          <div className="flex items-center gap-3 h-12">
-            <button
-              onClick={() => dispatch({ type: 'HIDE_CRON' })}
-              className="text-muted hover:text-primary p-1.5 rounded-lg hover:bg-elevated transition-colors cursor-pointer"
-            >
-              <svg className="w-4 h-4 stroke-current fill-none stroke-2" viewBox="0 0 24 24" strokeLinecap="round">
-                <path d="M19 12H5M12 19l-7-7 7-7" />
-              </svg>
-            </button>
-            <h1 className="text-primary text-lg font-semibold">Cron Jobs</h1>
-          </div>
-        </div>
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-[740px] mx-auto px-5 py-6">
+    <div className="flex-1 overflow-y-auto">
+      <div className="max-w-[740px] mx-auto px-5 py-6">
+        <h1 className="text-primary text-lg font-semibold mb-6">Cron Jobs</h1>
           {loading && (
             <div className="text-center text-dim text-sm py-12 font-mono">Loading...</div>
           )}
@@ -142,7 +122,6 @@ export default function CronJobsView() {
               ))}
             </div>
           )}
-        </div>
       </div>
     </div>
   )
