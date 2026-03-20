@@ -206,6 +206,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_user: Optio
                 channel_id: first.channel_id.clone(),
                 channel_session_key: first.channel_session_key.clone(),
                 attachments: Vec::new(),
+                triggered_by: None,
             };
 
             let (mut stream, session_id, _followup_tx) = match state.agent.chat_stream(&chat_msg).await {
@@ -315,6 +316,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_user: Optio
                     channel_id: channel_id.or(Some("main".into())),
                     channel_session_key,
                     attachments: chat_attachments,
+                    triggered_by: None,
                 };
 
                 // If a stream is already active, handle according to followup_mode
@@ -463,6 +465,7 @@ async fn process_stream_with_followups(
                                         channel_id: channel_id.or(Some("main".into())),
                                         channel_session_key,
                                         attachments: Vec::new(),
+                                        triggered_by: None,
                                     });
                                 }
                             }

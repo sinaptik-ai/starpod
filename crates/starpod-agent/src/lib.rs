@@ -516,7 +516,12 @@ impl StarpodAgent {
                 if let Some(ref closed_id) = closed_session_id {
                     self.export_session_to_memory(closed_id).await;
                 }
-                let id = self.session_mgr.create_session(&channel, &key).await?;
+                let id = self.session_mgr.create_session_full(
+                    &channel,
+                    &key,
+                    message.user_id.as_deref().unwrap_or("admin"),
+                    message.triggered_by.as_deref(),
+                ).await?;
                 debug!(session_id = %id, channel = %channel.as_str(), "Created new session");
                 (id, false)
             }
@@ -712,7 +717,12 @@ impl StarpodAgent {
                 if let Some(ref closed_id) = closed_session_id {
                     self.export_session_to_memory(closed_id).await;
                 }
-                let id = self.session_mgr.create_session(&channel, &key).await?;
+                let id = self.session_mgr.create_session_full(
+                    &channel,
+                    &key,
+                    message.user_id.as_deref().unwrap_or("admin"),
+                    message.triggered_by.as_deref(),
+                ).await?;
                 debug!(session_id = %id, channel = %channel.as_str(), "Created new session");
                 (id, false)
             }
@@ -984,6 +994,7 @@ impl StarpodAgent {
                     channel_id: Some(channel_id),
                     channel_session_key: session_key,
                     attachments: Vec::new(),
+                    triggered_by: Some(ctx.job_name.clone()),
                 };
                 match agent.chat(msg).await {
                     Ok(resp) => Ok(starpod_cron::JobResult {
@@ -1027,6 +1038,7 @@ async fn run_lifecycle_prompts(agent: &Arc<StarpodAgent>) {
                     channel_id: Some("main".into()),
                     channel_session_key: Some("main".into()),
                     attachments: Vec::new(),
+                    triggered_by: None,
                 };
                 match agent.chat(msg).await {
                     Ok(resp) => {
@@ -1053,6 +1065,7 @@ async fn run_lifecycle_prompts(agent: &Arc<StarpodAgent>) {
                 channel_id: Some("main".into()),
                 channel_session_key: Some("main".into()),
                 attachments: Vec::new(),
+                triggered_by: None,
             };
             match agent.chat(msg).await {
                 Ok(resp) => info!(response_len = resp.text.len(), "Boot completed"),
@@ -1137,6 +1150,7 @@ async fn execute_heartbeat(
         channel_id: Some("main".into()),
         channel_session_key: Some("main".into()),
         attachments: Vec::new(),
+        triggered_by: Some("__heartbeat__".into()),
     };
     match agent.chat(msg).await {
         Ok(resp) => Ok(starpod_cron::JobResult {

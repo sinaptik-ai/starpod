@@ -141,6 +141,8 @@ pub struct CronRun {
     pub status: RunStatus,
     /// Summary text from the execution result.
     pub result_summary: Option<String>,
+    /// Session ID created/used by this run.
+    pub session_id: Option<String>,
 }
 
 /// Status of a cron run.

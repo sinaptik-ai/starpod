@@ -308,7 +308,7 @@ impl CronStore {
     /// List recent runs for a job.
     pub async fn list_runs(&self, job_id: &str, limit: usize) -> Result<Vec<CronRun>> {
         let rows = sqlx::query(
-            "SELECT id, job_id, started_at, completed_at, status, result_summary
+            "SELECT id, job_id, started_at, completed_at, status, result_summary, session_id
              FROM cron_runs WHERE job_id = ?1
              ORDER BY started_at DESC LIMIT ?2",
         )
@@ -327,8 +327,20 @@ impl CronStore {
                 completed_at: row.get("completed_at"),
                 status: RunStatus::from_str(row.get::<&str, _>("status")),
                 result_summary: row.get("result_summary"),
+                session_id: row.try_get("session_id").unwrap_or(None),
             })
             .collect())
+    }
+
+    /// Link a run to the session it created/used.
+    pub async fn record_run_session(&self, run_id: &str, session_id: &str) -> Result<()> {
+        sqlx::query("UPDATE cron_runs SET session_id = ?2 WHERE id = ?1")
+            .bind(run_id)
+            .bind(session_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StarpodError::Cron(format!("Failed to record run session: {}", e)))?;
+        Ok(())
     }
 
     // ── Retry helpers (Phase 1) ───────────────────────────────────────────

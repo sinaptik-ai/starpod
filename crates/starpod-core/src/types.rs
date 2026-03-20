@@ -50,6 +50,11 @@ pub struct ChatMessage {
     /// File attachments (images, PDFs, etc.).
     #[serde(default)]
     pub attachments: Vec<Attachment>,
+
+    /// If this message was triggered by a cron job or heartbeat, the job name.
+    /// `None` for regular user messages.
+    #[serde(default)]
+    pub triggered_by: Option<String>,
 }
 
 /// Response from the Starpod agent.
@@ -156,6 +161,7 @@ mod tests {
                 mime_type: "image/png".into(),
                 data: "iVBORw0KGgo=".into(),
             }],
+            triggered_by: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let back: ChatMessage = serde_json::from_str(&json).unwrap();

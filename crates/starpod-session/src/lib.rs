@@ -62,6 +62,9 @@ pub struct SessionMeta {
     pub channel_session_key: Option<String>,
     pub user_id: String,
     pub is_read: bool,
+    /// Cron job name or `"__heartbeat__"` if this session was triggered by a scheduled job.
+    /// `None` for regular user sessions.
+    pub triggered_by: Option<String>,
 }
 
 /// A stored message in a session.
@@ -209,7 +212,7 @@ impl SessionManager {
         channel: &Channel,
         key: &str,
     ) -> Result<String> {
-        self.create_session_for_user(channel, key, "admin").await
+        self.create_session_full(channel, key, "admin", None).await
     }
 
     /// Create a new session for a channel, key, and user, returning its ID.
@@ -219,18 +222,33 @@ impl SessionManager {
         key: &str,
         user_id: &str,
     ) -> Result<String> {
+        self.create_session_full(channel, key, user_id, None).await
+    }
+
+    /// Create a new session with full metadata, including an optional trigger source.
+    ///
+    /// `triggered_by` records the cron job name (e.g. `"daily-digest"`) or
+    /// `"__heartbeat__"` when the session is created by the scheduler.
+    pub async fn create_session_full(
+        &self,
+        channel: &Channel,
+        key: &str,
+        user_id: &str,
+        triggered_by: Option<&str>,
+    ) -> Result<String> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
 
         sqlx::query(
-            "INSERT INTO session_metadata (id, created_at, last_message_at, is_closed, message_count, channel, channel_session_key, user_id)
-             VALUES (?1, ?2, ?2, 0, 0, ?3, ?4, ?5)",
+            "INSERT INTO session_metadata (id, created_at, last_message_at, is_closed, message_count, channel, channel_session_key, user_id, triggered_by)
+             VALUES (?1, ?2, ?2, 0, 0, ?3, ?4, ?5, ?6)",
         )
         .bind(&id)
         .bind(&now)
         .bind(channel.as_str())
         .bind(key)
         .bind(user_id)
+        .bind(triggered_by)
         .execute(&self.pool)
         .await
         .map_err(|e| StarpodError::Database(format!("Create session failed: {}", e)))?;
@@ -325,7 +343,7 @@ impl SessionManager {
     /// List sessions, most recent first.
     pub async fn list_sessions(&self, limit: usize) -> Result<Vec<SessionMeta>> {
         let rows = sqlx::query(
-            "SELECT id, created_at, last_message_at, is_closed, summary, title, message_count, channel, channel_session_key, user_id, is_read
+            "SELECT id, created_at, last_message_at, is_closed, summary, title, message_count, channel, channel_session_key, user_id, is_read, triggered_by
              FROM session_metadata
              ORDER BY last_message_at DESC
              LIMIT ?1",
@@ -346,7 +364,7 @@ impl SessionManager {
     /// Get a specific session by ID.
     pub async fn get_session(&self, id: &str) -> Result<Option<SessionMeta>> {
         let row = sqlx::query(
-            "SELECT id, created_at, last_message_at, is_closed, summary, title, message_count, channel, channel_session_key, user_id, is_read
+            "SELECT id, created_at, last_message_at, is_closed, summary, title, message_count, channel, channel_session_key, user_id, is_read, triggered_by
              FROM session_metadata WHERE id = ?1",
         )
         .bind(id)
@@ -491,6 +509,7 @@ fn session_meta_from_row(row: &sqlx::sqlite::SqliteRow) -> SessionMeta {
         channel_session_key: row.get("channel_session_key"),
         user_id: row.try_get("user_id").unwrap_or_else(|_| "admin".to_string()),
         is_read: row.try_get::<i64, _>("is_read").unwrap_or(1) != 0,
+        triggered_by: row.try_get("triggered_by").unwrap_or(None),
     }
 }
 

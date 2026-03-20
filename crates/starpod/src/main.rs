@@ -1349,6 +1349,7 @@ async fn main() -> anyhow::Result<()> {
                 channel_id: Some("main".into()),
                 channel_session_key: Some(uuid::Uuid::new_v4().to_string()),
                 attachments: Vec::new(),
+                triggered_by: None,
             };
             let (mut stream, session_id, _followup_tx) = agent.chat_stream(&chat_msg).await?;
             let (result_text, result_msg) = process_stream(&mut stream, &start).await?;
@@ -1648,6 +1649,7 @@ async fn main() -> anyhow::Result<()> {
                                         starpod_cron::SessionMode::Isolated => None,
                                     },
                                     attachments: Vec::new(),
+                                    triggered_by: Some(j.name.clone()),
                                 };
                                 match agent.chat(msg).await {
                                     Ok(resp) => println!("{}", resp.text),
@@ -2279,6 +2281,7 @@ async fn run_repl(agent: StarpodAgent, name: &str) -> anyhow::Result<()> {
             channel_id: Some("main".into()),
             channel_session_key: Some(session_key.clone()),
             attachments: Vec::new(),
+            triggered_by: None,
         };
         let (mut stream, session_id, _followup_tx) = agent.chat_stream(&chat_msg).await?;
         let (result_text, result_msg) = process_stream(&mut stream, &start).await?;

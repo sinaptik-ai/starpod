@@ -255,6 +255,11 @@ impl CronScheduler {
                 .record_run_complete(&run_id, status.clone(), Some(&summary))
                 .await;
 
+            // Link run to session
+            if !session_id.is_empty() {
+                let _ = self.store.record_run_session(&run_id, &session_id).await;
+            }
+
             // Send notification if configured
             if let Some(ref notifier) = self.notifier {
                 let success = status == RunStatus::Success;
@@ -343,6 +348,11 @@ impl CronScheduler {
                 .store
                 .record_run_complete(&run_id, status.clone(), Some(&summary))
                 .await;
+
+            // Link run to session
+            if !session_id.is_empty() {
+                let _ = self.store.record_run_session(&run_id, &session_id).await;
+            }
 
             if let Some(ref notifier) = self.notifier {
                 let success = status == RunStatus::Success;

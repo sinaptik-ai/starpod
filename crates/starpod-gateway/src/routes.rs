@@ -293,6 +293,7 @@ async fn chat_handler(
         channel_id: req.channel_id,
         channel_session_key: req.channel_session_key,
         attachments: Vec::new(),
+        triggered_by: None,
     };
 
     match state.agent.chat(message).await {
