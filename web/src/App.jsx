@@ -83,16 +83,6 @@ function AppInner() {
   const currentSessionIdRef = useRef(currentSessionId)
   useEffect(() => { currentSessionIdRef.current = currentSessionId }, [currentSessionId])
 
-  useEffect(() => { connect(); fetchSessionList() }, [connect, fetchSessionList])
-
-  // ── Load session from URL on mount ──
-  useEffect(() => {
-    if (currentSessionId && chatRef.current) {
-      chatRef.current.loadSession(currentSessionId)
-      dispatch({ type: 'MARK_READ', payload: currentSessionId })
-    }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
   // ── Session fetching ──
   const fetchSessionList = useCallback(() => {
     const token = localStorage.getItem('starpod_api_key')
@@ -106,6 +96,16 @@ function AppInner() {
       })
       .catch(() => [])
   }, [dispatch])
+
+  useEffect(() => { connect(); fetchSessionList() }, [connect, fetchSessionList])
+
+  // ── Load session from URL on mount ──
+  useEffect(() => {
+    if (currentSessionId && chatRef.current) {
+      chatRef.current.loadSession(currentSessionId)
+      dispatch({ type: 'MARK_READ', payload: currentSessionId })
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Send message ──
   const handleSend = useCallback((text, attachments) => {

@@ -167,11 +167,18 @@ html, body {
 
 /* ── Input focus ── */
 #input-form {
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease;
 }
 form#input-form:focus-within {
-  border-color: var(--color-accent);
-  box-shadow: 0 0 0 3px var(--color-accent-glow);
+  border-color: var(--color-dim);
+}
+
+/* Kill focus ring on input-form internals — the form border handles it */
+#input-form textarea:focus,
+#input-form textarea:focus-visible,
+#input-form button:focus,
+#input-form button:focus-visible {
+  outline: none;
 }
 
 /* ── Tool icon variants ── */

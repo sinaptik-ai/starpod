@@ -157,7 +157,7 @@ function InputBar({ onSend, disabled }) {
         {/* Input form */}
         <form
           id="input-form"
-          className="flex gap-2 items-center bg-input-bg border border-border-main rounded-xl pl-3.5 pr-1.5 py-1.5"
+          className="flex gap-2 items-center bg-input-bg border border-border-subtle rounded-lg pl-3 pr-1.5 py-1.5"
           onSubmit={handleSubmit}
         >
           <input
@@ -179,11 +179,12 @@ function InputBar({ onSend, disabled }) {
           >
             <PaperclipIcon />
           </button>
+          <span className="text-dim text-xs font-mono shrink-0 select-none">&gt;</span>
           <textarea
             ref={textareaRef}
-            className="flex-1 bg-transparent text-primary text-sm resize-none outline-none placeholder:text-dim leading-relaxed max-h-40"
+            className="flex-1 bg-transparent text-primary text-[13px] font-mono resize-none outline-none placeholder:text-dim leading-relaxed max-h-40"
             rows={1}
-            placeholder="Message..."
+            placeholder="..."
             onInput={autoResize}
             onKeyDown={handleKeyDown}
             disabled={disabled}
@@ -191,7 +192,7 @@ function InputBar({ onSend, disabled }) {
           />
           <button
             type="submit"
-            className="text-accent hover:text-accent-soft transition-colors shrink-0 cursor-pointer p-1.5 disabled:opacity-30 disabled:cursor-default"
+            className="text-dim hover:text-secondary transition-colors shrink-0 cursor-pointer p-1.5 disabled:opacity-20 disabled:cursor-default"
             disabled={disabled}
             aria-label="Send message"
           >
