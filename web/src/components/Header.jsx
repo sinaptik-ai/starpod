@@ -1,7 +1,7 @@
 import React from 'react'
 import { useApp } from '../contexts/AppContext'
 import IconButton from './ui/IconButton'
-import { MenuIcon, ComposeIcon } from './ui/Icons'
+import { SidebarOpenIcon, ComposeIcon } from './ui/Icons'
 
 function Header({ onToggleSidebar, onNewChat }) {
   const { state, dispatch } = useApp()
@@ -19,9 +19,11 @@ function Header({ onToggleSidebar, onNewChat }) {
 
   return (
     <header className="flex items-center gap-3 px-4 h-12 shrink-0 border-b border-border-subtle">
-      <IconButton onClick={toggleSidebar} aria-label="Sessions">
-        <MenuIcon />
-      </IconButton>
+      {!sidebarOpen && (
+        <IconButton onClick={toggleSidebar} aria-label="Open sidebar">
+          <SidebarOpenIcon />
+        </IconButton>
+      )}
       <IconButton onClick={newChat} id="new-chat-header-btn" title="New chat" aria-label="New chat">
         <ComposeIcon className="w-4 h-4 stroke-current fill-none stroke-2" />
       </IconButton>
