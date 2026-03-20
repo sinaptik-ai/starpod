@@ -83,7 +83,7 @@ function AppInner() {
   const currentSessionIdRef = useRef(currentSessionId)
   useEffect(() => { currentSessionIdRef.current = currentSessionId }, [currentSessionId])
 
-  useEffect(() => { connect() }, [connect])
+  useEffect(() => { connect(); fetchSessionList() }, [connect, fetchSessionList])
 
   // ── Load session from URL on mount ──
   useEffect(() => {
@@ -98,10 +98,13 @@ function AppInner() {
     const token = localStorage.getItem('starpod_api_key')
     const headers = {}
     if (token) headers['X-API-Key'] = token
-    fetch('/api/sessions?limit=50', { headers })
+    return fetch('/api/sessions?limit=50', { headers })
       .then(r => r.ok ? r.json() : Promise.reject())
-      .then(sessions => dispatch({ type: 'SET_SESSIONS', payload: sessions || [] }))
-      .catch(() => {})
+      .then(sessions => {
+        dispatch({ type: 'SET_SESSIONS', payload: sessions || [] })
+        return sessions || []
+      })
+      .catch(() => [])
   }, [dispatch])
 
   // ── Send message ──
@@ -137,12 +140,10 @@ function AppInner() {
     const session = state.sessions.find(s => s.id === sessionId)
     if (session) handleSelectSession(session)
     else {
-      fetchSessionList()
-      // Try again after fetch
-      setTimeout(() => {
-        const s = state.sessions.find(s => s.id === sessionId)
+      fetchSessionList().then(sessions => {
+        const s = sessions.find(s => s.id === sessionId)
         if (s) handleSelectSession(s)
-      }, 500)
+      })
     }
   }, [state.sessions, handleSelectSession, fetchSessionList])
 

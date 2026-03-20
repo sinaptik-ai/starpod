@@ -54,7 +54,8 @@ pub fn api_routes() -> Router<Arc<AppState>> {
         .route("/api/instances/{id}/restart", post(restart_instance_handler))
         .route("/api/instances/{id}/health", get(instance_health_handler))
         .route("/api/health", get(health_handler))
-        .route("/api/cron/jobs", get(list_cron_jobs_handler))
+        .route("/api/cron/jobs", get(list_cron_jobs_handler).post(create_cron_job_handler))
+        .route("/api/cron/jobs/{id}", axum::routing::put(update_cron_job_handler).delete(delete_cron_job_handler))
         .merge(crate::settings::settings_routes())
 }
 
@@ -1181,6 +1182,128 @@ mod tests {
         assert_eq!(jobs.len(), 1, "User should only see their own jobs");
         assert_eq!(jobs[0]["name"], "my-job");
     }
+
+    #[tokio::test]
+    async fn create_cron_job_via_api() {
+        let (_tmp, state) = test_app_state().await;
+
+        let app = build_router(Arc::clone(&state));
+        let body = serde_json::json!({
+            "name": "api-job",
+            "prompt": "Do something useful",
+            "schedule": { "kind": "interval", "every_ms": 300000 }
+        });
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/cron/jobs")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let job: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(job["name"], "api-job");
+        assert_eq!(job["prompt"], "Do something useful");
+        assert_eq!(job["enabled"], true);
+    }
+
+    #[tokio::test]
+    async fn update_cron_job_via_api() {
+        let (_tmp, state) = test_app_state().await;
+        let schedule = starpod_cron::Schedule::Interval { every_ms: 60000 };
+        let id = state.agent.cron().add_job("update-test", "old prompt", &schedule, false, None).await.unwrap();
+
+        let app = build_router(Arc::clone(&state));
+        let body = serde_json::json!({
+            "prompt": "new prompt",
+            "enabled": false
+        });
+        let req = Request::builder()
+            .method("PUT")
+            .uri(format!("/api/cron/jobs/{}", id))
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let job: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(job["prompt"], "new prompt");
+        assert_eq!(job["enabled"], false);
+    }
+
+    #[tokio::test]
+    async fn delete_cron_job_via_api() {
+        let (_tmp, state) = test_app_state().await;
+        let schedule = starpod_cron::Schedule::Interval { every_ms: 60000 };
+        let id = state.agent.cron().add_job("delete-me", "prompt", &schedule, false, None).await.unwrap();
+
+        let app = build_router(Arc::clone(&state));
+        let req = Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/cron/jobs/{}", id))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+        // Verify it's gone
+        let jobs = state.agent.cron().list_jobs().await.unwrap();
+        assert!(jobs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_cron_job_user_cannot_delete_others() {
+        let (_tmp, state) = test_app_state().await;
+        let _admin = state.auth.create_user(None, None, starpod_auth::Role::Admin).await.unwrap();
+        let user = state.auth.create_user(None, None, starpod_auth::Role::User).await.unwrap();
+        let key = state.auth.create_api_key(&user.id, None).await.unwrap();
+
+        let schedule = starpod_cron::Schedule::Interval { every_ms: 60000 };
+        let id = state.agent.cron()
+            .add_job_full("other-job", "not yours", &schedule, false, None, 3, 7200,
+                starpod_cron::SessionMode::Isolated, Some("someone-else"))
+            .await.unwrap();
+
+        let app = build_router(Arc::clone(&state));
+        let req = Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/cron/jobs/{}", id))
+            .header("x-api-key", &key.key)
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn update_cron_job_user_cannot_update_others() {
+        let (_tmp, state) = test_app_state().await;
+        let _admin = state.auth.create_user(None, None, starpod_auth::Role::Admin).await.unwrap();
+        let user = state.auth.create_user(None, None, starpod_auth::Role::User).await.unwrap();
+        let key = state.auth.create_api_key(&user.id, None).await.unwrap();
+
+        let schedule = starpod_cron::Schedule::Interval { every_ms: 60000 };
+        let id = state.agent.cron()
+            .add_job_full("other-job", "not yours", &schedule, false, None, 3, 7200,
+                starpod_cron::SessionMode::Isolated, Some("someone-else"))
+            .await.unwrap();
+
+        let app = build_router(Arc::clone(&state));
+        let body = serde_json::json!({ "prompt": "hacked" });
+        let req = Request::builder()
+            .method("PUT")
+            .uri(format!("/api/cron/jobs/{}", id))
+            .header("x-api-key", &key.key)
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
 }
 
 /// Authenticate a request via API key.
@@ -1272,5 +1395,164 @@ async fn list_cron_jobs_handler(
     })?;
 
     Ok(Json(jobs))
+}
+
+#[derive(Deserialize)]
+struct CreateCronJobRequest {
+    name: String,
+    prompt: String,
+    schedule: starpod_cron::Schedule,
+    #[serde(default)]
+    delete_after_run: bool,
+}
+
+async fn create_cron_job_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<CreateCronJobRequest>,
+) -> Result<(StatusCode, Json<starpod_cron::CronJob>), (StatusCode, Json<ErrorResponse>)> {
+    let auth_user = authenticate_request(&state, &headers).await?;
+    let user_id = auth_user.as_ref().map(|u| u.id.as_str());
+
+    let id = state
+        .agent
+        .cron()
+        .add_job_full(
+            &req.name,
+            &req.prompt,
+            &req.schedule,
+            req.delete_after_run,
+            None,
+            3,
+            7200,
+            starpod_cron::SessionMode::Isolated,
+            user_id,
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to create cron job: {}", e),
+                }),
+            )
+        })?;
+
+    let job = state.agent.cron().get_job(&id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to fetch created job: {}", e),
+            }),
+        )
+    })?;
+
+    Ok((StatusCode::CREATED, Json(job)))
+}
+
+#[derive(Deserialize)]
+struct UpdateCronJobRequest {
+    prompt: Option<String>,
+    schedule: Option<starpod_cron::Schedule>,
+    enabled: Option<bool>,
+}
+
+async fn update_cron_job_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateCronJobRequest>,
+) -> Result<Json<starpod_cron::CronJob>, (StatusCode, Json<ErrorResponse>)> {
+    let auth_user = authenticate_request(&state, &headers).await?;
+
+    // Non-admin users can only update their own jobs
+    if let Some(user) = &auth_user {
+        if user.role != starpod_auth::Role::Admin {
+            let job = state.agent.cron().get_job(&id).await.map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("Failed to fetch job: {}", e),
+                    }),
+                )
+            })?;
+            if job.user_id.as_deref() != Some(&user.id) {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(ErrorResponse {
+                        error: "Cannot update another user's job".into(),
+                    }),
+                ));
+            }
+        }
+    }
+
+    let update = starpod_cron::JobUpdate {
+        prompt: req.prompt,
+        schedule: req.schedule,
+        enabled: req.enabled,
+        ..Default::default()
+    };
+
+    state.agent.cron().update_job(&id, &update).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to update cron job: {}", e),
+            }),
+        )
+    })?;
+
+    let job = state.agent.cron().get_job(&id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to fetch updated job: {}", e),
+            }),
+        )
+    })?;
+
+    Ok(Json(job))
+}
+
+async fn delete_cron_job_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    let auth_user = authenticate_request(&state, &headers).await?;
+
+    // Non-admin users can only delete their own jobs
+    if let Some(user) = &auth_user {
+        if user.role != starpod_auth::Role::Admin {
+            let job = state.agent.cron().get_job(&id).await.map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("Failed to fetch job: {}", e),
+                    }),
+                )
+            })?;
+            if job.user_id.as_deref() != Some(&user.id) {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(ErrorResponse {
+                        error: "Cannot delete another user's job".into(),
+                    }),
+                ));
+            }
+        }
+    }
+
+    state.agent.cron().remove_job(&id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to delete cron job: {}", e),
+            }),
+        )
+    })?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 

@@ -175,6 +175,22 @@ impl CronStore {
     }
 
     /// Get a job by name.
+    /// Get a job by its unique ID.
+    pub async fn get_job(&self, id: &str) -> Result<CronJob> {
+        let row = sqlx::query(
+            "SELECT id, name, prompt, schedule_type, schedule_value, enabled, delete_after_run, created_at, last_run_at, next_run_at, retry_count, max_retries, last_error, retry_at, timeout_secs, session_mode, user_id
+             FROM cron_jobs WHERE id = ?1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| StarpodError::Cron(format!("Failed to get job: {}", e)))?;
+
+        row.as_ref()
+            .map(job_from_row)
+            .ok_or_else(|| StarpodError::Cron(format!("Job not found: {}", id)))
+    }
+
     pub async fn get_job_by_name(&self, name: &str) -> Result<Option<CronJob>> {
         let row = sqlx::query(
             "SELECT id, name, prompt, schedule_type, schedule_value, enabled, delete_after_run, created_at, last_run_at, next_run_at, retry_count, max_retries, last_error, retry_at, timeout_secs, session_mode, user_id
@@ -654,6 +670,25 @@ mod tests {
         assert_eq!(jobs[0].max_retries, 3); // default
         assert_eq!(jobs[0].timeout_secs, 7200); // default
         assert_eq!(jobs[0].session_mode, SessionMode::Isolated); // default
+    }
+
+    #[tokio::test]
+    async fn test_get_job_by_id() {
+        let store = setup().await;
+        let schedule = Schedule::Interval { every_ms: 60000 };
+        let id = store.add_job("find-by-id", "test prompt", &schedule, false, None).await.unwrap();
+
+        let job = store.get_job(&id).await.unwrap();
+        assert_eq!(job.id, id);
+        assert_eq!(job.name, "find-by-id");
+        assert_eq!(job.prompt, "test prompt");
+    }
+
+    #[tokio::test]
+    async fn test_get_job_not_found() {
+        let store = setup().await;
+        let result = store.get_job("nonexistent-id").await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]
