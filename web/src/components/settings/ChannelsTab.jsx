@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { apiHeaders } from '../../lib/api'
 import { Card, Row, Input, Select, Toggle, SaveBar } from './fields'
+import StepGuide from './StepGuide'
 
 export default function ChannelsTab() {
   const [config, setConfig] = useState(null)
@@ -42,9 +43,16 @@ export default function ChannelsTab() {
               <Input type="password" value={tg.bot_token ?? ''} onChange={v => setTg('bot_token', v)} placeholder="123456:ABC-DEF..." />
             </Row>
             {!hasToken && (
-              <div className="text-dim text-xs px-1 pb-2">
-                To get a bot token, message <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">@BotFather</a> on Telegram, send <code>/newbot</code>, and paste the token here. A restart is required after changing the token.
-              </div>
+              <StepGuide
+                title="How to get a bot token"
+                steps={[
+                  { text: <>Open <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">@BotFather</a> on Telegram</> },
+                  { text: <>Send <code className="text-secondary">/newbot</code> and choose a name for your bot</> },
+                  { text: <>BotFather will reply with a token — copy it</> },
+                  { text: 'Paste the token in the field above' },
+                ]}
+                note="A restart is required after changing the token."
+              />
             )}
             <Row label="Session gap" sub="minutes of inactivity before new session">
               <Input type="number" value={tg.gap_minutes ?? 360} onChange={v => setTg('gap_minutes', v === '' ? null : Number(v))} placeholder="360" />
