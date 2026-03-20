@@ -198,14 +198,13 @@ function AppInner() {
             <Sidebar
               onSelectSession={handleSelectSession}
               onNewChat={handleNewChat}
-              fetchSessions={fetchSessionList}
             />
           </div>
         </aside>
 
         {/* Main app */}
         <div id="app" className="flex flex-col min-w-0 flex-1">
-          <Header onNewChat={handleNewChat} />
+          <Header onNewChat={handleNewChat} onToggleSidebar={() => { if (!state.sidebarOpen) fetchSessionList() }} />
           <Chat ref={chatRef} wsRef={wsRef} onSendPrompt={(text) => handleSend(text, [])} />
           <InputBar
             onSend={handleSend}

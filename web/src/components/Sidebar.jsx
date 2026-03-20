@@ -1,24 +1,10 @@
-import React, { useEffect, useCallback } from 'react'
+import React from 'react'
 import { useApp, isMobile } from '../contexts/AppContext'
 import { formatSessionDate } from '../lib/utils'
-import { authHeaders } from '../lib/api'
 
 function Sidebar({ onSelectSession }) {
   const { state, dispatch } = useApp()
   const { sidebarOpen, currentSessionId, sessions, readSessions, settingsVisible } = state
-
-  const fetchSessions = useCallback(() => {
-    fetch('/api/sessions?limit=50', { headers: authHeaders() })
-      .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
-      .then(data => {
-        dispatch({ type: 'SET_SESSIONS', payload: data || [] })
-      })
-      .catch(() => {})
-  }, [dispatch])
-
-  useEffect(() => {
-    if (sidebarOpen) fetchSessions()
-  }, [sidebarOpen, fetchSessions])
 
   function closeSidebar() {
     dispatch({ type: 'CLOSE_SIDEBAR' })
