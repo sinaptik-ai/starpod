@@ -90,21 +90,21 @@ export default function CostsTab() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-muted text-xs">
-                    <th className="text-left py-1.5 font-medium">User</th>
+                    <th className="text-left py-1.5 pl-3 font-medium">User</th>
                     <th className="text-right py-1.5 font-medium">Cost</th>
                     <th className="text-right py-1.5 font-medium">Input</th>
                     <th className="text-right py-1.5 font-medium">Output</th>
-                    <th className="text-right py-1.5 font-medium">Turns</th>
+                    <th className="text-right py-1.5 pr-3 font-medium">Turns</th>
                   </tr>
                 </thead>
                 <tbody>
                   {data.by_user.map(u => (
                     <tr key={u.user_id} className="border-t border-border-subtle">
-                      <td className="py-1.5 text-primary">{u.user_id}</td>
+                      <td className="py-1.5 pl-3 text-primary">{u.user_id}</td>
                       <td className="py-1.5 text-right text-primary font-mono text-xs">{formatCost(u.total_cost_usd)}</td>
                       <td className="py-1.5 text-right text-muted font-mono text-xs">{formatTokens(u.total_input_tokens)}</td>
                       <td className="py-1.5 text-right text-muted font-mono text-xs">{formatTokens(u.total_output_tokens)}</td>
-                      <td className="py-1.5 text-right text-muted">{u.total_turns}</td>
+                      <td className="py-1.5 pr-3 text-right text-muted">{u.total_turns}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -118,21 +118,21 @@ export default function CostsTab() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-muted text-xs">
-                    <th className="text-left py-1.5 font-medium">Model</th>
+                    <th className="text-left py-1.5 pl-3 font-medium">Model</th>
                     <th className="text-right py-1.5 font-medium">Cost</th>
                     <th className="text-right py-1.5 font-medium">Input</th>
                     <th className="text-right py-1.5 font-medium">Output</th>
-                    <th className="text-right py-1.5 font-medium">Turns</th>
+                    <th className="text-right py-1.5 pr-3 font-medium">Turns</th>
                   </tr>
                 </thead>
                 <tbody>
                   {data.by_model.map(m => (
                     <tr key={m.model} className="border-t border-border-subtle">
-                      <td className="py-1.5 text-primary font-mono text-xs">{m.model || 'unknown'}</td>
+                      <td className="py-1.5 pl-3 text-primary font-mono text-xs">{m.model || 'unknown'}</td>
                       <td className="py-1.5 text-right text-primary font-mono text-xs">{formatCost(m.total_cost_usd)}</td>
                       <td className="py-1.5 text-right text-muted font-mono text-xs">{formatTokens(m.total_input_tokens)}</td>
                       <td className="py-1.5 text-right text-muted font-mono text-xs">{formatTokens(m.total_output_tokens)}</td>
-                      <td className="py-1.5 text-right text-muted">{m.total_turns}</td>
+                      <td className="py-1.5 pr-3 text-right text-muted">{m.total_turns}</td>
                     </tr>
                   ))}
                 </tbody>
