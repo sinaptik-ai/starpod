@@ -40,33 +40,53 @@ function Sidebar({ onSelectSession }) {
     return new Date(b.last_message_at || b.created_at) - new Date(a.last_message_at || a.created_at)
   })
 
+  function handleCronClick() {
+    dispatch({ type: 'SHOW_CRON' })
+    if (isMobile()) closeSidebar()
+  }
+
   // Render the sidebar inner content — the <aside id="sidebar"> wrapper is in App.jsx
   return (
     <>
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 h-12 border-b border-border-subtle shrink-0">
+      {/* Header with close button */}
+      <div className="flex items-center justify-end px-4 h-10 shrink-0">
+        <button
+          onClick={closeSidebar}
+          className="text-muted hover:text-primary p-1.5 rounded-md hover:bg-elevated transition-colors cursor-pointer"
+          id="sidebar-close"
+        >
+          <svg className="w-3.5 h-3.5 stroke-current fill-none stroke-2" viewBox="0 0 24 24" strokeLinecap="round">
+            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </div>
+
+      {/* Nav items */}
+      <div className="px-3 pb-2 flex flex-col gap-1">
+        <button
+          onClick={newChat}
+          className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-secondary hover:text-primary hover:bg-elevated transition-colors cursor-pointer text-[13px] w-full text-left"
+          id="new-chat-btn"
+        >
+          <svg className="w-4 h-4 stroke-current fill-none stroke-[1.5]" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
+          </svg>
+          <span>New Chat</span>
+        </button>
+        <button
+          onClick={handleCronClick}
+          className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-secondary hover:text-primary hover:bg-elevated transition-colors cursor-pointer text-[13px] w-full text-left"
+        >
+          <svg className="w-4 h-4 stroke-current fill-none stroke-[1.5]" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+          </svg>
+          <span>Cron Jobs</span>
+        </button>
+      </div>
+
+      {/* Chats label */}
+      <div className="px-4 pt-2 pb-1 border-t border-border-subtle">
         <span className="text-xs font-semibold text-muted tracking-wider uppercase">Chats</span>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={newChat}
-            className="text-muted hover:text-primary p-1.5 rounded-md hover:bg-elevated transition-colors cursor-pointer"
-            id="new-chat-btn"
-            title="New chat"
-          >
-            <svg className="w-3.5 h-3.5 stroke-current fill-none stroke-[1.5]" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
-            </svg>
-          </button>
-          <button
-            onClick={closeSidebar}
-            className="text-muted hover:text-primary p-1.5 rounded-md hover:bg-elevated transition-colors cursor-pointer"
-            id="sidebar-close"
-          >
-            <svg className="w-3.5 h-3.5 stroke-current fill-none stroke-2" viewBox="0 0 24 24" strokeLinecap="round">
-              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </div>
       </div>
 
       {/* Session list */}

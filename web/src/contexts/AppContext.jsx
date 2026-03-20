@@ -5,9 +5,16 @@ function initialSettingsFromHash() {
   const hash = window.location.hash
   if (hash.startsWith('#/settings')) {
     const tab = hash.split('/')[2]
-    return { visible: true, tab: tab || 'general' }
+    return { settings: { visible: true, tab: tab || 'general' }, cronVisible: false, sessionId: null }
   }
-  return { visible: false, tab: 'general' }
+  if (hash === '#/cron') {
+    return { settings: { visible: false, tab: 'general' }, cronVisible: true, sessionId: null }
+  }
+  if (hash.startsWith('#/chat/')) {
+    const id = hash.slice('#/chat/'.length)
+    if (id) return { settings: { visible: false, tab: 'general' }, cronVisible: false, sessionId: id }
+  }
+  return { settings: { visible: false, tab: 'general' }, cronVisible: false, sessionId: null }
 }
 
 const initSettings = initialSettingsFromHash()
@@ -15,9 +22,10 @@ const initSettings = initialSettingsFromHash()
 const initialState = {
   wsStatus: 'connecting',
   sidebarOpen: window.innerWidth > 768,
-  settingsVisible: initSettings.visible,
-  settingsActiveTab: initSettings.tab,
-  currentSessionId: null,
+  settingsVisible: initSettings.settings.visible,
+  settingsActiveTab: initSettings.settings.tab,
+  cronVisible: initSettings.cronVisible,
+  currentSessionId: initSettings.sessionId,
   currentSessionKey: generateUUID(),
   sessions: [],
   previewUrl: null,
@@ -39,11 +47,21 @@ function appReducer(state, action) {
 
     case 'SHOW_SETTINGS':
       window.history.pushState(null, '', '#/settings/' + state.settingsActiveTab)
-      return { ...state, settingsVisible: true }
+      return { ...state, settingsVisible: true, cronVisible: false }
 
     case 'HIDE_SETTINGS':
       window.history.pushState(null, '', '#/')
       return { ...state, settingsVisible: false }
+
+    case 'SHOW_CRON':
+      window.history.pushState(null, '', '#/cron')
+      return { ...state, cronVisible: true, settingsVisible: false }
+
+    case 'HIDE_CRON': {
+      const chatHash2 = state.currentSessionId ? '#/chat/' + state.currentSessionId : '#/'
+      window.history.pushState(null, '', chatHash2)
+      return { ...state, cronVisible: false }
+    }
 
     case 'SET_SETTINGS_TAB':
       if (state.settingsVisible) window.history.replaceState(null, '', '#/settings/' + action.payload)

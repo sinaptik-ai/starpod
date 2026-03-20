@@ -11,10 +11,11 @@ import InputBar from './components/InputBar'
 import PreviewPanel from './components/PreviewPanel'
 import ToastContainer from './components/Toasts'
 import SettingsView from './components/settings/SettingsView'
+import CronJobsView from './components/CronJobsView'
 
 function AppInner() {
   const { state, dispatch } = useApp()
-  const { wsStatus, settingsVisible, currentSessionId, currentSessionKey, previewUrl } = state
+  const { wsStatus, settingsVisible, cronVisible, currentSessionId, currentSessionKey, previewUrl } = state
   const wsRef = useRef(null)
   const chatRef = useRef(null)
   const toastsRef = useRef(null)
@@ -107,19 +108,21 @@ function AppInner() {
   // ── Session selection ──
   const handleSelectSession = useCallback((session) => {
     if (settingsVisible) dispatch({ type: 'HIDE_SETTINGS' })
+    if (cronVisible) dispatch({ type: 'HIDE_CRON' })
     dispatch({ type: 'SET_SESSION', payload: { id: session.id, key: session.channel_session_key || generateUUID() } })
     if (!session.is_read) markSessionRead(session.id)
     if (chatRef.current) chatRef.current.loadSession(session.id)
     if (isMobile()) dispatch({ type: 'CLOSE_SIDEBAR' })
-  }, [dispatch, settingsVisible])
+  }, [dispatch, settingsVisible, cronVisible])
 
   // ── New chat ──
   const handleNewChat = useCallback(() => {
     if (settingsVisible) dispatch({ type: 'HIDE_SETTINGS' })
+    if (cronVisible) dispatch({ type: 'HIDE_CRON' })
     dispatch({ type: 'NEW_CHAT' })
     if (chatRef.current) chatRef.current.showWelcome()
     if (isMobile()) dispatch({ type: 'CLOSE_SIDEBAR' })
-  }, [dispatch, settingsVisible])
+  }, [dispatch, settingsVisible, cronVisible])
 
   // ── Toast navigation ──
   const handleToastNavigate = useCallback((sessionId) => {
@@ -141,15 +144,32 @@ function AppInner() {
       const hash = window.location.hash
       if (hash.startsWith('#/settings')) {
         const tab = hash.split('/')[2]
+        if (cronVisible) dispatch({ type: 'HIDE_CRON' })
         if (!settingsVisible) dispatch({ type: 'SHOW_SETTINGS' })
         if (tab) dispatch({ type: 'SET_SETTINGS_TAB', payload: tab })
+      } else if (hash === '#/cron') {
+        if (settingsVisible) dispatch({ type: 'HIDE_SETTINGS' })
+        if (!cronVisible) dispatch({ type: 'SHOW_CRON' })
+      } else if (hash.startsWith('#/chat/')) {
+        const id = hash.slice('#/chat/'.length)
+        if (settingsVisible) dispatch({ type: 'HIDE_SETTINGS' })
+        if (cronVisible) dispatch({ type: 'HIDE_CRON' })
+        if (id && id !== currentSessionId) {
+          dispatch({ type: 'SET_SESSION', payload: { id, _fromPopState: true } })
+          if (chatRef.current) chatRef.current.loadSession(id)
+        }
       } else {
         if (settingsVisible) dispatch({ type: 'HIDE_SETTINGS' })
+        if (cronVisible) dispatch({ type: 'HIDE_CRON' })
+        if (currentSessionId) {
+          dispatch({ type: 'NEW_CHAT', _fromPopState: true })
+          if (chatRef.current) chatRef.current.showWelcome()
+        }
       }
     }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
-  }, [dispatch, settingsVisible])
+  }, [dispatch, settingsVisible, cronVisible, currentSessionId])
 
   // ── Keyboard shortcuts ──
   useEffect(() => {
@@ -158,6 +178,7 @@ function AppInner() {
       if (e.key === 'Escape') {
         if (previewUrl) { dispatch({ type: 'CLOSE_PREVIEW' }); return }
         if (settingsVisible) { dispatch({ type: 'HIDE_SETTINGS' }); return }
+        if (cronVisible) { dispatch({ type: 'HIDE_CRON' }); return }
         if (state.sidebarOpen && isMobile()) dispatch({ type: 'CLOSE_SIDEBAR' })
       }
       if ((e.metaKey || e.ctrlKey) && e.key === ',') {
@@ -174,6 +195,16 @@ function AppInner() {
     return (
       <>
         <SettingsView />
+        <ToastContainer ref={toastsRef} onNavigateToSession={handleToastNavigate} />
+      </>
+    )
+  }
+
+  // Cron jobs is a full-page takeover
+  if (cronVisible) {
+    return (
+      <>
+        <CronJobsView />
         <ToastContainer ref={toastsRef} onNavigateToSession={handleToastNavigate} />
       </>
     )

@@ -54,6 +54,7 @@ pub fn api_routes() -> Router<Arc<AppState>> {
         .route("/api/instances/{id}/restart", post(restart_instance_handler))
         .route("/api/instances/{id}/health", get(instance_health_handler))
         .route("/api/health", get(health_handler))
+        .route("/api/cron/jobs", get(list_cron_jobs_handler))
         .merge(crate::settings::settings_routes())
 }
 
@@ -1086,6 +1087,100 @@ mod tests {
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
+
+    // ── Cron jobs endpoint tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn cron_jobs_pre_bootstrap_returns_all() {
+        let (_tmp, state) = test_app_state().await;
+        // Add a cron job before any users exist
+        let schedule = starpod_cron::Schedule::Interval { every_ms: 60000 };
+        state.agent.cron().add_job("test-job", "do stuff", &schedule, false, None).await.unwrap();
+
+        let app = build_router(Arc::clone(&state));
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/cron/jobs")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let jobs: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0]["name"], "test-job");
+    }
+
+    #[tokio::test]
+    async fn cron_jobs_admin_sees_all() {
+        let (_tmp, state) = test_app_state().await;
+        let admin = state.auth.create_user(None, None, starpod_auth::Role::Admin).await.unwrap();
+        let key = state.auth.create_api_key(&admin.id, None).await.unwrap();
+
+        // Add jobs for different users
+        let schedule = starpod_cron::Schedule::Interval { every_ms: 60000 };
+        state.agent.cron()
+            .add_job_full("admin-job", "admin prompt", &schedule, false, None, 3, 7200,
+                starpod_cron::SessionMode::Isolated, Some(&admin.id))
+            .await.unwrap();
+        state.agent.cron()
+            .add_job_full("other-job", "other prompt", &schedule, false, None, 3, 7200,
+                starpod_cron::SessionMode::Isolated, Some("other-user"))
+            .await.unwrap();
+
+        let app = build_router(Arc::clone(&state));
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/cron/jobs")
+            .header("x-api-key", &key.key)
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let jobs: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(jobs.len(), 2, "Admin should see all jobs");
+    }
+
+    #[tokio::test]
+    async fn cron_jobs_user_sees_only_own() {
+        let (_tmp, state) = test_app_state().await;
+        // Need an admin first so auth is enabled
+        state.auth.create_user(None, None, starpod_auth::Role::Admin).await.unwrap();
+        let user = state.auth.create_user(None, None, starpod_auth::Role::User).await.unwrap();
+        let key = state.auth.create_api_key(&user.id, None).await.unwrap();
+
+        let schedule = starpod_cron::Schedule::Interval { every_ms: 60000 };
+        state.agent.cron()
+            .add_job_full("my-job", "my prompt", &schedule, false, None, 3, 7200,
+                starpod_cron::SessionMode::Isolated, Some(&user.id))
+            .await.unwrap();
+        state.agent.cron()
+            .add_job_full("other-job", "other prompt", &schedule, false, None, 3, 7200,
+                starpod_cron::SessionMode::Isolated, Some("someone-else"))
+            .await.unwrap();
+        state.agent.cron()
+            .add_job_full("agent-job", "agent prompt", &schedule, false, None, 3, 7200,
+                starpod_cron::SessionMode::Isolated, None)
+            .await.unwrap();
+
+        let app = build_router(Arc::clone(&state));
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/cron/jobs")
+            .header("x-api-key", &key.key)
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let jobs: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(jobs.len(), 1, "User should only see their own jobs");
+        assert_eq!(jobs[0]["name"], "my-job");
+    }
 }
 
 /// Authenticate a request via API key.
@@ -1150,5 +1245,32 @@ pub(crate) async fn authenticate_request(
             }),
         )),
     }
+}
+
+// ── Cron jobs listing ────────────────────────────────────────────────────
+
+async fn list_cron_jobs_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<starpod_cron::CronJob>>, (StatusCode, Json<ErrorResponse>)> {
+    let auth_user = authenticate_request(&state, &headers).await?;
+
+    let jobs = match &auth_user {
+        Some(u) if u.role != starpod_auth::Role::Admin => {
+            state.agent.cron().list_jobs_for_user(&u.id).await
+        }
+        _ => state.agent.cron().list_jobs().await,
+    };
+
+    let jobs = jobs.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Failed to list cron jobs: {}", e),
+            }),
+        )
+    })?;
+
+    Ok(Json(jobs))
 }
 

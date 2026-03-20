@@ -160,6 +160,20 @@ impl CronStore {
         Ok(rows.iter().map(job_from_row).collect())
     }
 
+    /// List jobs belonging to a specific user.
+    pub async fn list_jobs_for_user(&self, user_id: &str) -> Result<Vec<CronJob>> {
+        let rows = sqlx::query(
+            "SELECT id, name, prompt, schedule_type, schedule_value, enabled, delete_after_run, created_at, last_run_at, next_run_at, retry_count, max_retries, last_error, retry_at, timeout_secs, session_mode, user_id
+             FROM cron_jobs WHERE user_id = ?1 ORDER BY name",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StarpodError::Cron(format!("Failed to list jobs for user: {}", e)))?;
+
+        Ok(rows.iter().map(job_from_row).collect())
+    }
+
     /// Get a job by name.
     pub async fn get_job_by_name(&self, name: &str) -> Result<Option<CronJob>> {
         let row = sqlx::query(
@@ -1328,5 +1342,43 @@ mod tests {
         let schedule = Schedule::OneShot { at: future };
         let next = compute_next_run(&schedule, Some(Utc::now()), None).unwrap();
         assert!(next.is_none(), "OneShot with last_run=Some should return None");
+    }
+
+    #[tokio::test]
+    async fn test_list_jobs_for_user() {
+        let store = setup().await;
+        let schedule = Schedule::Interval { every_ms: 60000 };
+
+        // Add jobs for different users and an agent-level job
+        store
+            .add_job_full("alice-job", "Alice's job", &schedule, false, None, 3, 7200, SessionMode::Isolated, Some("alice"))
+            .await
+            .unwrap();
+        store
+            .add_job_full("bob-job", "Bob's job", &schedule, false, None, 3, 7200, SessionMode::Isolated, Some("bob"))
+            .await
+            .unwrap();
+        store
+            .add_job_full("agent-job", "Agent job", &schedule, false, None, 3, 7200, SessionMode::Isolated, None)
+            .await
+            .unwrap();
+
+        // list_jobs returns all
+        let all = store.list_jobs().await.unwrap();
+        assert_eq!(all.len(), 3);
+
+        // list_jobs_for_user returns only that user's jobs
+        let alice_jobs = store.list_jobs_for_user("alice").await.unwrap();
+        assert_eq!(alice_jobs.len(), 1);
+        assert_eq!(alice_jobs[0].name, "alice-job");
+        assert_eq!(alice_jobs[0].user_id, Some("alice".to_string()));
+
+        let bob_jobs = store.list_jobs_for_user("bob").await.unwrap();
+        assert_eq!(bob_jobs.len(), 1);
+        assert_eq!(bob_jobs[0].name, "bob-job");
+
+        // Unknown user returns empty
+        let none = store.list_jobs_for_user("nobody").await.unwrap();
+        assert!(none.is_empty());
     }
 }
