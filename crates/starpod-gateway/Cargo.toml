@@ -27,6 +27,7 @@ regex = "1"
 toml = "0.8"
 starpod-memory = { path = "../starpod-memory" }
 starpod-skills = { path = "../starpod-skills" }
+chrono = "0.4"
 notify = "7"
 notify-debouncer-mini = "0.5"
 

@@ -309,6 +309,7 @@ async fn handle_final_only(
     user_id_str: Option<String>,
     attachments: Vec<Attachment>,
 ) -> Result<(), teloxide::RequestError> {
+    let uid = user_id_str.clone();
     let chat_msg = build_chat_msg(text, user_id_str, chat_id, attachments);
     let (mut stream, session_id, _followup_tx) = match agent.chat_stream(&chat_msg).await {
         Ok(s) => s,
@@ -364,7 +365,7 @@ async fn handle_final_only(
 
     // Finalize (record usage, daily log)
     if let Some(ref result) = result_msg {
-        agent.finalize_chat(&session_id, text, &all_text, result).await;
+        agent.finalize_chat(&session_id, text, &all_text, result, uid.as_deref()).await;
     }
 
     Ok(())
@@ -380,6 +381,7 @@ async fn handle_all_messages(
     user_id_str: Option<String>,
     attachments: Vec<Attachment>,
 ) -> Result<(), teloxide::RequestError> {
+    let uid = user_id_str.clone();
     let chat_msg = build_chat_msg(text, user_id_str, chat_id, attachments);
     let (mut stream, session_id, _followup_tx) = match agent.chat_stream(&chat_msg).await {
         Ok(s) => s,
@@ -432,7 +434,7 @@ async fn handle_all_messages(
 
     // Finalize (record usage, daily log)
     if let Some(ref result) = result_msg {
-        agent.finalize_chat(&session_id, text, &all_text, result).await;
+        agent.finalize_chat(&session_id, text, &all_text, result, uid.as_deref()).await;
     }
 
     Ok(())

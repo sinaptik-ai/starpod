@@ -38,6 +38,7 @@ let router = starpod_gateway::build_router(state);
 | `GET/PUT` | `/api/settings/memory` | Memory settings |
 | `GET/PUT` | `/api/settings/cron` | Cron settings |
 | `GET/PUT` | `/api/settings/channels` | Channel settings (Telegram) |
+| `GET` | `/api/settings/costs?period=30d` | Cost overview (by user, by model) |
 | `GET/PUT` | `/api/settings/frontend` | Frontend config (greeting, prompts) |
 | `GET/PUT` | `/api/settings/files/:name` | Agent personality files (SOUL.md, etc.) |
 | `GET/POST` | `/api/settings/auth/users` | Auth user CRUD |

@@ -228,7 +228,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_user: Optio
 
             // Consume this queued batch stream (no followup injection needed here
             // since we're replaying buffered messages after the main stream finished).
-            process_stream(&mut stream, &mut sender, &state, &session_id, &combined_text).await;
+            process_stream(&mut stream, &mut sender, &state, &session_id, &combined_text, chat_msg.user_id.as_deref()).await;
             continue;
         }
 
@@ -367,6 +367,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_user: Optio
                     active_followup_tx.as_ref().unwrap(),
                     &auth_user,
                     &mut queued_messages,
+                    chat_msg.user_id.as_deref(),
                 ).await;
 
                 active_followup_tx = None;
@@ -394,6 +395,7 @@ async fn process_stream_with_followups(
     followup_tx: &mpsc::UnboundedSender<String>,
     auth_user: &Option<starpod_auth::User>,
     queued_messages: &mut Vec<starpod_core::ChatMessage>,
+    user_id: Option<&str>,
 ) -> bool {
     let mut result_text = String::new();
 
@@ -404,7 +406,7 @@ async fn process_stream_with_followups(
                 match stream_msg {
                     Some(Ok(msg)) => {
                         let action = handle_stream_message(
-                            msg, sender, state, session_id, user_text, &mut result_text,
+                            msg, sender, state, session_id, user_text, &mut result_text, user_id,
                         ).await;
                         match action {
                             StreamAction::Continue => {}
@@ -526,6 +528,7 @@ async fn handle_stream_message(
     session_id: &str,
     user_text: &str,
     result_text: &mut String,
+    user_id: Option<&str>,
 ) -> StreamAction {
     match msg {
         Message::Assistant(assistant) => {
@@ -629,8 +632,9 @@ async fn handle_stream_message(
             let sid = session_id.to_string();
             let ut = user_text.to_string();
             let rt = result_text.clone();
+            let uid = user_id.map(|s| s.to_string());
             tokio::spawn(async move {
-                agent.finalize_chat(&sid, &ut, &rt, &result).await;
+                agent.finalize_chat(&sid, &ut, &rt, &result, uid.as_deref()).await;
                 if !rt.is_empty() {
                     let _ = agent.session_mgr().save_message(&sid, "assistant", &rt).await;
                 }
@@ -650,13 +654,14 @@ async fn process_stream(
     state: &Arc<AppState>,
     session_id: &str,
     user_text: &str,
+    user_id: Option<&str>,
 ) {
     let mut result_text = String::new();
     while let Some(msg_result) = StreamExt::next(stream).await {
         match msg_result {
             Ok(msg) => {
                 let action = handle_stream_message(
-                    msg, sender, state, session_id, user_text, &mut result_text,
+                    msg, sender, state, session_id, user_text, &mut result_text, user_id,
                 ).await;
                 match action {
                     StreamAction::Continue => {}

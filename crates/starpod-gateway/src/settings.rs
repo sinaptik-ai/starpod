@@ -268,6 +268,8 @@ pub fn settings_routes() -> Router<Arc<AppState>> {
         .route("/api/settings/auth/api-keys/{id}/revoke", axum::routing::post(revoke_auth_api_key))
         // Channels
         .route("/api/settings/channels", get(get_channels).put(put_channels))
+        // Costs
+        .route("/api/settings/costs", get(get_costs))
         // Telegram linking per user
         .route(
             "/api/settings/auth/users/{id}/telegram",
@@ -1316,6 +1318,46 @@ async fn put_channels(
 
     write_agent_toml(&state, &doc)?;
     Ok(ok_json())
+}
+
+// ── Costs ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct CostsQuery {
+    /// Optional period filter: "7d", "30d", "90d", or "all". Defaults to "30d".
+    #[serde(default = "default_period")]
+    period: String,
+}
+
+fn default_period() -> String {
+    "30d".into()
+}
+
+async fn get_costs(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<CostsQuery>,
+) -> ApiResult<starpod_session::CostOverview> {
+    let auth_user = authenticate_request(&state, &headers).await?;
+    require_admin(&auth_user)?;
+
+    let since = match query.period.as_str() {
+        "7d" => Some(chrono::Utc::now() - chrono::Duration::days(7)),
+        "30d" => Some(chrono::Utc::now() - chrono::Duration::days(30)),
+        "90d" => Some(chrono::Utc::now() - chrono::Duration::days(90)),
+        "all" => None,
+        _ => Some(chrono::Utc::now() - chrono::Duration::days(30)),
+    };
+
+    let since_str = since.map(|dt| dt.to_rfc3339());
+    let overview = state
+        .agent
+        .session_mgr()
+        .cost_overview(since_str.as_deref())
+        .await
+        .map_err(|e| internal(format!("Cost query failed: {}", e)))?;
+
+    Ok(Json(overview))
 }
 
 // ── Telegram linking ────────────────────────────────────────────────────

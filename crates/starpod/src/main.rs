@@ -1355,7 +1355,7 @@ async fn main() -> anyhow::Result<()> {
 
             if let Some(ref result) = result_msg {
                 agent
-                    .finalize_chat(&session_id, &message, &result_text, result)
+                    .finalize_chat(&session_id, &message, &result_text, result, None)
                     .await;
                 print_result(&result_text, result, &start);
             }
@@ -2284,7 +2284,7 @@ async fn run_repl(agent: StarpodAgent, name: &str) -> anyhow::Result<()> {
         let (result_text, result_msg) = process_stream(&mut stream, &start).await?;
 
         if let Some(ref result) = result_msg {
-            agent.finalize_chat(&session_id, line, &result_text, result).await;
+            agent.finalize_chat(&session_id, line, &result_text, result, None).await;
             print_result(&result_text, result, &start);
         } else if !result_text.is_empty() {
             println!("\n  {}\n", result_text);

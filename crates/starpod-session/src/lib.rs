@@ -82,6 +82,7 @@ pub struct UsageRecord {
     pub cache_write: u64,
     pub cost_usd: f64,
     pub model: String,
+    pub user_id: String,
 }
 
 /// Manages session lifecycle — creation, channel-aware resolution, closure, and usage tracking.
@@ -291,8 +292,8 @@ impl SessionManager {
     pub async fn record_usage(&self, session_id: &str, usage: &UsageRecord, turn: u32) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         sqlx::query(
-            "INSERT INTO usage_stats (session_id, turn, input_tokens, output_tokens, cache_read, cache_write, cost_usd, model, timestamp)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO usage_stats (session_id, turn, input_tokens, output_tokens, cache_read, cache_write, cost_usd, model, user_id, timestamp)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         )
         .bind(session_id)
         .bind(turn as i64)
@@ -302,6 +303,7 @@ impl SessionManager {
         .bind(usage.cache_write as i64)
         .bind(usage.cost_usd)
         .bind(&usage.model)
+        .bind(&usage.user_id)
         .bind(&now)
         .execute(&self.pool)
         .await
@@ -365,6 +367,87 @@ impl SessionManager {
             total_cache_write: row.get::<i64, _>("cw") as u64,
             total_cost_usd: row.get::<f64, _>("cost"),
             total_turns: row.get::<i64, _>("turns") as u32,
+        })
+    }
+
+    /// Get a full cost overview with breakdowns by user and model.
+    ///
+    /// If `since` is provided (RFC 3339 timestamp), only usage after that time is included.
+    pub async fn cost_overview(&self, since: Option<&str>) -> Result<CostOverview> {
+        let (where_clause, bind_val) = match since {
+            Some(ts) => ("WHERE timestamp >= ?1", Some(ts)),
+            None => ("", None),
+        };
+
+        // Total
+        let total_sql = format!(
+            "SELECT COALESCE(SUM(cost_usd), 0.0) as cost,
+                    COALESCE(SUM(input_tokens), 0) as ti,
+                    COALESCE(SUM(output_tokens), 0) as to_,
+                    COUNT(*) as turns
+             FROM usage_stats {}",
+            where_clause
+        );
+        let mut q = sqlx::query(&total_sql);
+        if let Some(ts) = bind_val {
+            q = q.bind(ts);
+        }
+        let total_row = q.fetch_one(&self.pool).await
+            .map_err(|e| StarpodError::Database(format!("Cost total query failed: {}", e)))?;
+
+        // By user
+        let user_sql = format!(
+            "SELECT user_id,
+                    COALESCE(SUM(cost_usd), 0.0) as cost,
+                    COALESCE(SUM(input_tokens), 0) as ti,
+                    COALESCE(SUM(output_tokens), 0) as to_,
+                    COUNT(*) as turns
+             FROM usage_stats {} GROUP BY user_id ORDER BY cost DESC",
+            where_clause
+        );
+        let mut q = sqlx::query(&user_sql);
+        if let Some(ts) = bind_val {
+            q = q.bind(ts);
+        }
+        let user_rows = q.fetch_all(&self.pool).await
+            .map_err(|e| StarpodError::Database(format!("Cost by-user query failed: {}", e)))?;
+
+        // By model
+        let model_sql = format!(
+            "SELECT model,
+                    COALESCE(SUM(cost_usd), 0.0) as cost,
+                    COALESCE(SUM(input_tokens), 0) as ti,
+                    COALESCE(SUM(output_tokens), 0) as to_,
+                    COUNT(*) as turns
+             FROM usage_stats {} GROUP BY model ORDER BY cost DESC",
+            where_clause
+        );
+        let mut q = sqlx::query(&model_sql);
+        if let Some(ts) = bind_val {
+            q = q.bind(ts);
+        }
+        let model_rows = q.fetch_all(&self.pool).await
+            .map_err(|e| StarpodError::Database(format!("Cost by-model query failed: {}", e)))?;
+
+        Ok(CostOverview {
+            total_cost_usd: total_row.get::<f64, _>("cost"),
+            total_input_tokens: total_row.get::<i64, _>("ti") as u64,
+            total_output_tokens: total_row.get::<i64, _>("to_") as u64,
+            total_turns: total_row.get::<i64, _>("turns") as u32,
+            by_user: user_rows.iter().map(|r| UserCostSummary {
+                user_id: r.get("user_id"),
+                total_cost_usd: r.get::<f64, _>("cost"),
+                total_input_tokens: r.get::<i64, _>("ti") as u64,
+                total_output_tokens: r.get::<i64, _>("to_") as u64,
+                total_turns: r.get::<i64, _>("turns") as u32,
+            }).collect(),
+            by_model: model_rows.iter().map(|r| ModelCostSummary {
+                model: r.try_get("model").unwrap_or_else(|_| "unknown".to_string()),
+                total_cost_usd: r.get::<f64, _>("cost"),
+                total_input_tokens: r.get::<i64, _>("ti") as u64,
+                total_output_tokens: r.get::<i64, _>("to_") as u64,
+                total_turns: r.get::<i64, _>("turns") as u32,
+            }).collect(),
         })
     }
 
@@ -492,6 +575,37 @@ pub struct UsageSummary {
     pub total_turns: u32,
 }
 
+/// Cost summary per user.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserCostSummary {
+    pub user_id: String,
+    pub total_cost_usd: f64,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_turns: u32,
+}
+
+/// Cost summary per model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelCostSummary {
+    pub model: String,
+    pub total_cost_usd: f64,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_turns: u32,
+}
+
+/// Full cost overview with breakdowns.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostOverview {
+    pub total_cost_usd: f64,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_turns: u32,
+    pub by_user: Vec<UserCostSummary>,
+    pub by_model: Vec<ModelCostSummary>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -603,6 +717,7 @@ mod tests {
                 cache_write: 100,
                 cost_usd: 0.01,
                 model: "claude-sonnet".into(),
+                user_id: "admin".into(),
             },
             1,
         )
@@ -618,6 +733,7 @@ mod tests {
                 cache_write: 50,
                 cost_usd: 0.008,
                 model: "claude-sonnet".into(),
+                user_id: "admin".into(),
             },
             2,
         )
@@ -946,5 +1062,105 @@ mod tests {
             }
             SessionDecision::Continue(_) => panic!("Closed session should not be continued"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_cost_overview_empty() {
+        let (_tmp, mgr) = setup().await;
+
+        let overview = mgr.cost_overview(None).await.unwrap();
+        assert_eq!(overview.total_cost_usd, 0.0);
+        assert_eq!(overview.total_input_tokens, 0);
+        assert_eq!(overview.total_output_tokens, 0);
+        assert_eq!(overview.total_turns, 0);
+        assert!(overview.by_user.is_empty());
+        assert!(overview.by_model.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_cost_overview_by_user() {
+        let (_tmp, mgr) = setup().await;
+        let sid = mgr.create_session(&Channel::Main, "cost-test").await.unwrap();
+
+        // Record usage for two different users
+        mgr.record_usage(&sid, &UsageRecord {
+            input_tokens: 1000, output_tokens: 500, cache_read: 0, cache_write: 0,
+            cost_usd: 0.05, model: "claude-sonnet".into(), user_id: "alice".into(),
+        }, 1).await.unwrap();
+
+        mgr.record_usage(&sid, &UsageRecord {
+            input_tokens: 2000, output_tokens: 800, cache_read: 0, cache_write: 0,
+            cost_usd: 0.10, model: "claude-sonnet".into(), user_id: "bob".into(),
+        }, 2).await.unwrap();
+
+        mgr.record_usage(&sid, &UsageRecord {
+            input_tokens: 500, output_tokens: 200, cache_read: 0, cache_write: 0,
+            cost_usd: 0.02, model: "claude-haiku".into(), user_id: "alice".into(),
+        }, 3).await.unwrap();
+
+        let overview = mgr.cost_overview(None).await.unwrap();
+
+        // Totals
+        assert_eq!(overview.total_turns, 3);
+        assert!((overview.total_cost_usd - 0.17).abs() < 0.001);
+        assert_eq!(overview.total_input_tokens, 3500);
+        assert_eq!(overview.total_output_tokens, 1500);
+
+        // By user (sorted by cost desc)
+        assert_eq!(overview.by_user.len(), 2);
+        assert_eq!(overview.by_user[0].user_id, "bob");
+        assert!((overview.by_user[0].total_cost_usd - 0.10).abs() < 0.001);
+        assert_eq!(overview.by_user[0].total_turns, 1);
+        assert_eq!(overview.by_user[1].user_id, "alice");
+        assert!((overview.by_user[1].total_cost_usd - 0.07).abs() < 0.001);
+        assert_eq!(overview.by_user[1].total_turns, 2);
+
+        // By model (sorted by cost desc)
+        assert_eq!(overview.by_model.len(), 2);
+        assert_eq!(overview.by_model[0].model, "claude-sonnet");
+        assert!((overview.by_model[0].total_cost_usd - 0.15).abs() < 0.001);
+        assert_eq!(overview.by_model[1].model, "claude-haiku");
+        assert!((overview.by_model[1].total_cost_usd - 0.02).abs() < 0.001);
+    }
+
+    #[tokio::test]
+    async fn test_cost_overview_since_filter() {
+        let (_tmp, mgr) = setup().await;
+        let sid = mgr.create_session(&Channel::Main, "cost-filter").await.unwrap();
+
+        // Record usage now
+        mgr.record_usage(&sid, &UsageRecord {
+            input_tokens: 1000, output_tokens: 500, cache_read: 0, cache_write: 0,
+            cost_usd: 0.05, model: "claude-sonnet".into(), user_id: "admin".into(),
+        }, 1).await.unwrap();
+
+        // "Since" far in the future should return nothing
+        let future = (Utc::now() + Duration::hours(1)).to_rfc3339();
+        let overview = mgr.cost_overview(Some(&future)).await.unwrap();
+        assert_eq!(overview.total_turns, 0);
+        assert_eq!(overview.total_cost_usd, 0.0);
+
+        // "Since" far in the past should return everything
+        let past = (Utc::now() - Duration::days(365)).to_rfc3339();
+        let overview = mgr.cost_overview(Some(&past)).await.unwrap();
+        assert_eq!(overview.total_turns, 1);
+        assert!((overview.total_cost_usd - 0.05).abs() < 0.001);
+    }
+
+    #[tokio::test]
+    async fn test_cost_overview_user_id_recorded() {
+        let (_tmp, mgr) = setup().await;
+        let sid = mgr.create_session(&Channel::Main, "uid-test").await.unwrap();
+
+        mgr.record_usage(&sid, &UsageRecord {
+            input_tokens: 100, output_tokens: 50, cache_read: 0, cache_write: 0,
+            cost_usd: 0.01, model: "m".into(), user_id: "user-42".into(),
+        }, 1).await.unwrap();
+
+        let overview = mgr.cost_overview(None).await.unwrap();
+        assert_eq!(overview.by_user.len(), 1);
+        assert_eq!(overview.by_user[0].user_id, "user-42");
+        assert_eq!(overview.by_user[0].total_input_tokens, 100);
+        assert_eq!(overview.by_user[0].total_output_tokens, 50);
     }
 }
