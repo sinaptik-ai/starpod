@@ -179,56 +179,71 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
         }
 
         const parsed = []
-        let pendingToolUses = []
+
+        // Reconstruct the bubble/tool interleaving that streaming produces.
+        // DB order: assistant → tool_use* → tool_result* → assistant → …
+        // Streaming structure: bubble, tool, bubble, tool, … (one bubble per
+        // tool boundary plus initial text).
+        let bubbles = []
+        let tools = []
+
+        function flushAssistant() {
+          if (bubbles.length > 0 || tools.length > 0) {
+            parsed.push({
+              role: 'assistant_stream',
+              bubbles: bubbles.map(b => ({ ...b, done: true })),
+              tools,
+              stats: null,
+              errors: null,
+            })
+            bubbles = []
+            tools = []
+          }
+        }
 
         msgs.forEach(m => {
           if (m.role === 'user') {
+            flushAssistant()
             parsed.push({ role: 'user', content: m.content, attachments: m.attachments })
           } else if (m.role === 'assistant') {
-            // Flush any pending tools into a group with this text
-            if (pendingToolUses.length > 0 || m.content) {
-              parsed.push({
-                role: 'assistant_stream',
-                bubbles: m.content ? [{ text: m.content, done: true }] : [],
-                tools: pendingToolUses,
-                stats: null,
-                errors: null,
-              })
-              pendingToolUses = []
+            if (m.content) {
+              // If the last bubble is empty (placeholder after a tool),
+              // fill it with this text — just like streaming does.
+              const last = bubbles[bubbles.length - 1]
+              if (last && !last.text.trim()) {
+                last.text = m.content
+              } else {
+                bubbles.push({ text: m.content })
+              }
             }
           } else if (m.role === 'tool_use') {
             try {
               const data = JSON.parse(m.content)
-              pendingToolUses.push({
+              tools.push({
                 id: data.id || ('hist-' + Math.random().toString(36).slice(2)),
                 name: data.name,
                 input: data.input || {},
                 status: 'done',
                 result: null,
               })
+              // Create a placeholder bubble after each tool (mirrors streaming)
+              bubbles.push({ text: '' })
             } catch {}
           } else if (m.role === 'tool_result') {
             try {
               const data = JSON.parse(m.content)
-              if (pendingToolUses.length > 0) {
-                const last = pendingToolUses[pendingToolUses.length - 1]
-                if (data.is_error) last.status = 'error'
-                if (data.content) last.result = data.content
+              // Match by tool_use_id (not position) since concurrent tool
+              // execution can cause results to arrive out of order.
+              const target = tools.find(t => t.id === data.tool_use_id)
+              if (target) {
+                if (data.is_error) target.status = 'error'
+                if (data.content) target.result = data.content
               }
             } catch {}
           }
         })
 
-        // Flush remaining tools
-        if (pendingToolUses.length > 0) {
-          parsed.push({
-            role: 'assistant_stream',
-            bubbles: [],
-            tools: pendingToolUses,
-            stats: null,
-            errors: null,
-          })
-        }
+        flushAssistant()
 
         setMessages(parsed)
       })
