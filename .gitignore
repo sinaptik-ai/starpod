@@ -7,3 +7,4 @@ docs/.vitepress/.temp/
 web/node_modules/
 crates/starpod-gateway/static/dist/
 workspace/.fastembed_cache/
+.fastembed_cache

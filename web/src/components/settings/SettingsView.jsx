@@ -1,4 +1,6 @@
 import { useApp } from '../../contexts/AppContext'
+import IconButton from '../ui/IconButton'
+import { BackIcon } from '../ui/Icons'
 import GeneralTab from './GeneralTab'
 import FileTab from './FileTab'
 import HeartbeatTab from './HeartbeatTab'
@@ -60,48 +62,77 @@ function TabContent({ tab }) {
 export default function SettingsView() {
   const { state, dispatch } = useApp()
   const { settingsActiveTab } = state
-
-  const activeTabLabel = allTabs.find(t => t.id === settingsActiveTab)?.label || ''
+  const activeLabel = allTabs.find(t => t.id === settingsActiveTab)?.label || 'General'
 
   return (
     <div className="flex h-[100dvh] bg-bg">
-      {/* Left sidebar navigation */}
-      <div className="shrink-0 w-52 border-r border-border-subtle flex flex-col">
+      {/* Settings sidebar — hidden on mobile via CSS */}
+      <div className="settings-sidebar w-[220px] shrink-0 border-r border-border-subtle flex flex-col">
         <div className="flex items-center gap-3 h-12 px-4 shrink-0">
-          <button
-            onClick={() => dispatch({ type: 'HIDE_SETTINGS' })}
-            className="text-muted hover:text-primary p-1.5 rounded-lg hover:bg-elevated transition-colors cursor-pointer"
-          >
-            <svg className="w-4 h-4 stroke-current fill-none stroke-2" viewBox="0 0 24 24" strokeLinecap="round">
-              <path d="M19 12H5M12 19l-7-7 7-7" />
-            </svg>
-          </button>
-          <h1 className="text-primary text-lg font-semibold">Settings</h1>
+          <IconButton onClick={() => dispatch({ type: 'HIDE_SETTINGS' })} aria-label="Back">
+            <BackIcon />
+          </IconButton>
+          <h1 className="text-primary text-sm font-semibold">Settings</h1>
         </div>
 
         <nav className="flex-1 overflow-y-auto px-3 py-2">
           {tabGroups.map((group, gi) => (
             <div key={group.label} className={gi > 0 ? 'mt-4' : ''}>
-              <div className="settings-nav-group-label">{group.label}</div>
-              {group.tabs.map(t => (
-                <button
-                  key={t.id}
-                  onClick={() => dispatch({ type: 'SET_SETTINGS_TAB', payload: t.id })}
-                  className={`settings-nav-item ${settingsActiveTab === t.id ? 'active' : ''}`}
-                >
-                  {t.label}
-                </button>
-              ))}
+              <div className="px-2 pb-1.5 text-[11px] font-semibold text-dim tracking-wider uppercase">
+                {group.label}
+              </div>
+              <div className="flex flex-col gap-0.5">
+                {group.tabs.map(t => (
+                  <button
+                    key={t.id}
+                    onClick={() => dispatch({ type: 'SET_SETTINGS_TAB', payload: t.id })}
+                    className={`px-2.5 py-1.5 rounded-md text-[13px] text-left cursor-pointer transition-colors ${
+                      settingsActiveTab === t.id
+                        ? 'text-accent bg-accent-muted font-medium'
+                        : 'text-secondary hover:text-primary hover:bg-elevated'
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
             </div>
           ))}
         </nav>
       </div>
 
-      {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-[740px] mx-auto px-5 py-6">
-          <h2 className="text-primary text-lg font-semibold mb-4">{activeTabLabel}</h2>
-          <TabContent tab={settingsActiveTab} />
+      {/* Main content area */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Mobile header — visible only on mobile via CSS */}
+        <div className="settings-mobile-nav hidden shrink-0 border-b border-border-subtle">
+          <div className="flex items-center gap-3 h-12 px-4">
+            <IconButton onClick={() => dispatch({ type: 'HIDE_SETTINGS' })} aria-label="Back">
+              <BackIcon />
+            </IconButton>
+            <h1 className="text-primary text-sm font-semibold">Settings</h1>
+            <div className="ml-auto">
+              <select
+                value={settingsActiveTab}
+                onChange={e => dispatch({ type: 'SET_SETTINGS_TAB', payload: e.target.value })}
+                className="bg-elevated text-secondary text-xs rounded-md px-2 py-1.5 border border-border-main cursor-pointer"
+              >
+                {tabGroups.map(group => (
+                  <optgroup key={group.label} label={group.label}>
+                    {group.tabs.map(t => (
+                      <option key={t.id} value={t.id}>{t.label}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* Scrollable content */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="max-w-[740px] mx-auto px-6 py-6">
+            <TabContent tab={settingsActiveTab} />
+          </div>
         </div>
       </div>
     </div>

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import { apiHeaders } from '../lib/api'
+import Logo from './ui/Logo'
 
 const API_KEY_STORAGE = 'starpod_api_key'
 
@@ -94,18 +95,18 @@ export default function AuthGate({ children }) {
         setUser(data.user || null)
         setStatus('authenticated')
       } else {
-        setError('Invalid API key')
+        setError('Invalid key. Check STARPOD_API_KEY in your .env file.')
       }
     } catch {
       setLoading(false)
-      setError('Invalid API key')
+      setError('Invalid key. Check STARPOD_API_KEY in your .env file.')
     }
   }
 
   if (status === 'checking') {
     return (
       <div className="flex items-center justify-center h-screen bg-bg">
-        <div className="text-dim font-mono text-sm">connecting...</div>
+        <div className="text-dim font-mono text-sm">Checking authentication...</div>
       </div>
     )
   }
@@ -123,10 +124,8 @@ export default function AuthGate({ children }) {
     <div className="flex items-center justify-center h-screen bg-bg">
       <div className="w-full max-w-sm px-6">
         <div className="text-center mb-8">
-          <div className="font-mono text-3xl font-extrabold tracking-tighter mb-2 bg-gradient-to-b from-primary to-muted bg-clip-text text-transparent select-none">
-            starpod
-          </div>
-          <p className="text-sm text-dim font-mono">enter your API key</p>
+          <div className="mb-2"><Logo /></div>
+          <p className="text-sm text-dim font-mono">Sign in with your API key</p>
         </div>
 
         <form onSubmit={handleSubmit}>
@@ -146,7 +145,7 @@ export default function AuthGate({ children }) {
             disabled={loading || !key.trim()}
             className="mt-4 w-full py-2.5 rounded-lg bg-accent text-white font-mono text-sm font-medium hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
           >
-            {loading ? 'verifying...' : 'authenticate'}
+            {loading ? 'Signing in...' : 'Sign in'}
           </button>
         </form>
       </div>

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { apiHeaders } from '../../lib/api'
 import { Card, Row, Input, Select, Toggle, SaveBar } from './fields'
 import StepGuide from './StepGuide'
+import { Loading } from '../ui/EmptyState'
 
 export default function ChannelsTab() {
   const [config, setConfig] = useState(null)
@@ -15,7 +16,7 @@ export default function ChannelsTab() {
       .catch(() => setStatus({ type: 'error', text: 'Failed to load' }))
   }, [])
 
-  if (!config) return <div className="text-dim text-sm py-8 text-center">Loading...</div>
+  if (!config) return <Loading />
 
   const tg = config.telegram || { enabled: false, gap_minutes: 360, stream_mode: 'final_only', bot_token: '' }
   const setTg = (key, val) => setConfig(prev => ({

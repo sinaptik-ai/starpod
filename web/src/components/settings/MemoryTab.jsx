@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { apiHeaders } from '../../lib/api'
 import { Card, Row, Input, Toggle, SaveBar } from './fields'
+import { Loading } from '../ui/EmptyState'
 
 export default function MemoryTab() {
   const [config, setConfig] = useState(null)
@@ -14,7 +15,7 @@ export default function MemoryTab() {
       .catch(() => setStatus({ type: 'error', text: 'Failed to load' }))
   }, [])
 
-  if (!config) return <div className="text-dim text-sm py-8 text-center">Loading...</div>
+  if (!config) return <Loading />
 
   const set = (key, val) => setConfig(prev => ({ ...prev, [key]: val }))
   const mmr = config.mmr_lambda ?? 0.7

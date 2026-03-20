@@ -1,5 +1,4 @@
 import React, { useState, useCallback, useEffect, useImperativeHandle, forwardRef } from 'react'
-import { escapeHtml } from '../lib/utils'
 
 let toastIdCounter = 0
 
@@ -51,20 +50,12 @@ const ToastContainer = forwardRef(function ToastContainer({ onNavigateToSession 
     showToast,
   }), [showToast])
 
-  // Also expose globally for WS handler
-  useEffect(() => {
-    window._showToast = showToast
-    return () => { delete window._showToast }
-  }, [showToast])
-
   function handleNavigate(sessionId) {
     if (onNavigateToSession) onNavigateToSession(sessionId)
   }
 
-  if (toasts.length === 0) return null
-
   return (
-    <div id="toast-container">
+    <div id="toast-container" role="status" aria-live="polite">
       {toasts.map(t => (
         <Toast
           key={t.id}

@@ -1,5 +1,9 @@
 import { useState, useEffect } from 'react'
 import { apiHeaders } from '../../lib/api'
+import SectionLabel from '../ui/SectionLabel'
+import Badge from '../ui/Badge'
+import { Loading, Empty } from '../ui/EmptyState'
+import { ChevronDownIcon } from '../ui/Icons'
 
 export default function UsersTab() {
   const [users, setUsers] = useState([])
@@ -215,7 +219,7 @@ export default function UsersTab() {
     } catch (e) { setTelegramError(e.message) }
   }
 
-  if (loading) return <div className="text-dim text-sm py-8 text-center">Loading...</div>
+  if (loading) return <Loading />
 
   return (
     <>
@@ -271,7 +275,7 @@ export default function UsersTab() {
 
       {/* User list */}
       {users.length === 0 ? (
-        <div className="text-dim text-sm text-center py-8">No users yet. Create one to get started.</div>
+        <Empty text="No users yet. Create one to get started." />
       ) : (
         <div className="flex flex-col gap-1.5">
           {users.map(u => (
@@ -284,24 +288,12 @@ export default function UsersTab() {
                   <span className="text-sm text-primary">
                     {u.display_name || u.email || u.id.slice(0, 8)}
                   </span>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium uppercase tracking-wider ${
-                    u.role === 'admin'
-                      ? 'bg-accent/10 text-accent'
-                      : 'bg-elevated text-muted'
-                  }`}>
-                    {u.role}
-                  </span>
-                  {!u.is_active && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-err/10 text-err font-medium uppercase tracking-wider">
-                      inactive
-                    </span>
-                  )}
+                  <Badge variant={u.role === 'admin' ? 'accent' : 'muted'}>{u.role}</Badge>
+                  {!u.is_active && <Badge variant="err">inactive</Badge>}
                 </div>
                 <div className="flex items-center gap-2">
                   {u.email && <span className="text-dim text-xs hidden sm:inline">{u.email}</span>}
-                  <svg className={`w-3 h-3 text-muted transition-transform ${expandedId === u.id ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
-                  </svg>
+                  <ChevronDownIcon className={`w-3 h-3 text-muted transition-transform ${expandedId === u.id ? 'rotate-180' : ''}`} />
                 </div>
               </div>
 
@@ -310,7 +302,7 @@ export default function UsersTab() {
                 <div className="mt-3 pt-3 border-t border-border-subtle">
                   {/* Edit fields */}
                   <div className="flex flex-col gap-2 mb-4">
-                    <div className="font-mono text-[10px] text-dim uppercase tracking-wider">Profile</div>
+                    <SectionLabel>Profile</SectionLabel>
                     <input
                       type="text"
                       className="s-input text-xs"
@@ -357,7 +349,7 @@ export default function UsersTab() {
 
                   {/* API Keys */}
                   <div className="pt-3 border-t border-border-subtle">
-                    <div className="font-mono text-[10px] text-dim uppercase tracking-wider mb-2">API Keys</div>
+                    <SectionLabel className="mb-2">API Keys</SectionLabel>
 
                     {/* Created key banner */}
                     {createdKey && (
@@ -407,7 +399,7 @@ export default function UsersTab() {
                               <code className="text-xs font-mono text-muted">{k.prefix}...</code>
                               {k.label && <span className="text-xs text-secondary truncate">{k.label}</span>}
                               {k.revoked_at && (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-err/10 text-err font-medium">revoked</span>
+                                <Badge variant="err">revoked</Badge>
                               )}
                               {k.last_used_at && !k.revoked_at && (
                                 <span className="text-[10px] text-dim">
@@ -432,7 +424,7 @@ export default function UsersTab() {
                   {/* Telegram Link */}
                   {telegramEnabled && (
                     <div className="pt-3 border-t border-border-subtle">
-                      <div className="font-mono text-[10px] text-dim uppercase tracking-wider mb-2">Telegram</div>
+                      <SectionLabel className="mb-2">Telegram</SectionLabel>
 
                       {telegramError && <div className="text-err text-xs mb-2">{telegramError}</div>}
 

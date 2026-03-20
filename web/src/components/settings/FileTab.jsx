@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { apiHeaders } from '../../lib/api'
 import { Textarea, SaveBar } from './fields'
+import { Loading } from '../ui/EmptyState'
 
 export default function FileTab({ fileName, description, rows = 20 }) {
   const [content, setContent] = useState('')
@@ -29,7 +30,7 @@ export default function FileTab({ fileName, description, rows = 20 }) {
     setSaving(false)
   }
 
-  if (loading) return <div className="text-dim text-sm py-8 text-center">Loading...</div>
+  if (loading) return <Loading />
 
   return (
     <div>

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { escapeHtml } from '../lib/utils'
+import { PaperclipIcon, SendIcon } from './ui/Icons'
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024
 
@@ -25,11 +25,11 @@ function InputBar({ onSend, disabled }) {
     el.style.height = Math.min(el.scrollHeight, 160) + 'px'
   }
 
-  async function addFiles(files) {
+  const addFiles = useCallback(async (files) => {
     const newAttachments = []
     for (const file of files) {
       if (file.size > MAX_FILE_SIZE) {
-        alert(`File "${file.name}" exceeds 20 MB limit (${(file.size / 1048576).toFixed(1)} MB)`)
+        alert(`"${file.name}" is too large (${(file.size / 1048576).toFixed(1)} MB). Maximum file size is 20 MB.`)
         continue
       }
       const base64 = await readFileAsBase64(file)
@@ -42,7 +42,7 @@ function InputBar({ onSend, disabled }) {
     if (newAttachments.length > 0) {
       setPendingAttachments(prev => [...prev, ...newAttachments])
     }
-  }
+  }, [])
 
   function removeAttachment(index) {
     setPendingAttachments(prev => prev.filter((_, i) => i !== index))
@@ -114,10 +114,10 @@ function InputBar({ onSend, disabled }) {
       app.removeEventListener('dragleave', handleDragLeave)
       app.removeEventListener('drop', handleDrop)
     }
-  }, [])
+  }, [addFiles])
 
   return (
-    <div className="shrink-0 pt-2 pb-4 w-full">
+    <div className="shrink-0 pt-2 pb-4 w-full input-bar-safe">
       <div className="max-w-[740px] mx-auto px-5">
         {/* Attachment preview */}
         {pendingAttachments.length > 0 && (
@@ -144,6 +144,7 @@ function InputBar({ onSend, disabled }) {
                   <button
                     className="bg-transparent border-none text-dim cursor-pointer text-sm leading-none px-0.5 shrink-0 hover:text-err transition-colors"
                     onClick={() => removeAttachment(i)}
+                    aria-label="Remove attachment"
                   >
                     &times;
                   </button>
@@ -174,10 +175,9 @@ function InputBar({ onSend, disabled }) {
             className="text-dim hover:text-secondary transition-colors shrink-0 cursor-pointer p-1"
             onClick={() => fileInputRef.current && fileInputRef.current.click()}
             title="Attach file"
+            aria-label="Attach file"
           >
-            <svg className="w-4 h-4 stroke-current fill-none stroke-2" viewBox="0 0 24 24" strokeLinecap="round">
-              <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
-            </svg>
+            <PaperclipIcon />
           </button>
           <textarea
             ref={textareaRef}
@@ -187,15 +187,15 @@ function InputBar({ onSend, disabled }) {
             onInput={autoResize}
             onKeyDown={handleKeyDown}
             disabled={disabled}
+            aria-label="Message"
           />
           <button
             type="submit"
-            className="text-accent hover:text-blue-400 transition-colors shrink-0 cursor-pointer p-1.5 disabled:opacity-30 disabled:cursor-default"
+            className="text-accent hover:text-accent-soft transition-colors shrink-0 cursor-pointer p-1.5 disabled:opacity-30 disabled:cursor-default"
             disabled={disabled}
+            aria-label="Send message"
           >
-            <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
-              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-            </svg>
+            <SendIcon />
           </button>
         </form>
       </div>

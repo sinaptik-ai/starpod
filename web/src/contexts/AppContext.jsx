@@ -1,7 +1,7 @@
 import { createContext, useContext, useReducer } from 'react'
 import { generateUUID } from '../lib/utils'
 
-function initialSettingsFromHash() {
+function parseHash() {
   const hash = window.location.hash
   if (hash.startsWith('#/settings')) {
     const tab = hash.split('/')[2]
@@ -17,15 +17,15 @@ function initialSettingsFromHash() {
   return { settings: { visible: false, tab: 'general' }, cronVisible: false, sessionId: null }
 }
 
-const initSettings = initialSettingsFromHash()
+const initHash = parseHash()
 
 const initialState = {
   wsStatus: 'connecting',
   sidebarOpen: window.innerWidth > 768,
-  settingsVisible: initSettings.settings.visible,
-  settingsActiveTab: initSettings.settings.tab,
-  cronVisible: initSettings.cronVisible,
-  currentSessionId: initSettings.sessionId,
+  settingsVisible: initHash.settings.visible,
+  settingsActiveTab: initHash.settings.tab,
+  cronVisible: initHash.cronVisible,
+  currentSessionId: initHash.sessionId,
   currentSessionKey: generateUUID(),
   sessions: [],
   previewUrl: null,
@@ -49,9 +49,11 @@ function appReducer(state, action) {
       window.history.pushState(null, '', '#/settings/' + state.settingsActiveTab)
       return { ...state, settingsVisible: true, cronVisible: false }
 
-    case 'HIDE_SETTINGS':
-      window.history.pushState(null, '', '#/')
+    case 'HIDE_SETTINGS': {
+      const chatHash = state.currentSessionId ? '#/chat/' + state.currentSessionId : '#/'
+      window.history.pushState(null, '', chatHash)
       return { ...state, settingsVisible: false }
+    }
 
     case 'SHOW_CRON':
       window.history.pushState(null, '', '#/cron')
@@ -68,6 +70,9 @@ function appReducer(state, action) {
       return { ...state, settingsActiveTab: action.payload }
 
     case 'SET_SESSION':
+      if (!action.payload._fromPopState) {
+        window.history.pushState(null, '', '#/chat/' + action.payload.id)
+      }
       return {
         ...state,
         currentSessionId: action.payload.id,
@@ -75,6 +80,9 @@ function appReducer(state, action) {
       }
 
     case 'NEW_CHAT':
+      if (!action._fromPopState) {
+        window.history.pushState(null, '', '#/')
+      }
       return {
         ...state,
         currentSessionId: null,

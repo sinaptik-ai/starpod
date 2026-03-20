@@ -2,8 +2,10 @@ import React from 'react'
 import { useApp, isMobile } from '../contexts/AppContext'
 import { formatSessionDate } from '../lib/utils'
 import { markSessionRead } from '../lib/api'
+import IconButton from './ui/IconButton'
+import { ComposeIcon, CloseIcon, GearIcon } from './ui/Icons'
 
-function Sidebar({ onSelectSession }) {
+function Sidebar({ onSelectSession, onNewChat }) {
   const { state, dispatch } = useApp()
   const { sidebarOpen, currentSessionId, sessions, readSessions, settingsVisible, cronVisible } = state
 
@@ -12,8 +14,11 @@ function Sidebar({ onSelectSession }) {
   }
 
   function newChat() {
-    dispatch({ type: 'NEW_CHAT' })
-    if (isMobile()) closeSidebar()
+    if (onNewChat) onNewChat()
+    else {
+      dispatch({ type: 'NEW_CHAT' })
+      if (isMobile()) closeSidebar()
+    }
   }
 
   function handleSessionClick(session) {
@@ -95,20 +100,28 @@ function Sidebar({ onSelectSession }) {
       {/* Session list */}
       <div className="flex-1 overflow-y-auto px-3 py-2" id="session-list">
         {sorted.length === 0 ? (
-          <div className="text-center text-dim text-xs py-8">No conversations yet</div>
+          <div className="text-center text-dim text-xs py-8">
+            <p>No conversations yet</p>
+            <button
+              onClick={newChat}
+              className="mt-2 text-accent hover:text-accent-soft transition-colors cursor-pointer"
+            >
+              Start a new chat
+            </button>
+          </div>
         ) : (
           sorted.map(s => {
             const active = s.id === currentSessionId
             const unread = !s.is_read && !active
-            const summary = s.title || s.summary || 'Untitled conversation'
+            const summary = s.title || s.summary || 'New conversation'
             const date = formatSessionDate(s.last_message_at || s.created_at)
             const msgs = s.message_count || 0
-            const closed = s.is_closed ? ' \u00b7 ended' : ''
+            const closed = s.is_closed ? ' \u00b7 closed' : ''
 
             return (
-              <div
+              <button
                 key={s.id}
-                className={`session-item px-3.5 py-3 rounded-lg cursor-pointer mb-1${active ? ' active' : ''}`}
+                className={`session-item px-3.5 py-3 rounded-lg cursor-pointer mb-1 w-full text-left${active ? ' active' : ''}`}
                 data-sid={s.id}
                 onClick={() => handleSessionClick(s)}
               >
@@ -118,13 +131,13 @@ function Sidebar({ onSelectSession }) {
                     <div className={`text-[13px] leading-snug line-clamp-2 break-words${active ? ' text-primary font-medium' : ' text-secondary'}`}>
                       {summary}
                     </div>
-                    <div className="font-mono text-[11px] text-dim mt-1 flex gap-2">
+                    <div className="text-[11px] text-dim mt-1 flex gap-2">
                       <span>{date}</span>
-                      <span>{msgs} msg{msgs !== 1 ? 's' : ''}{closed}</span>
+                      <span>{msgs} message{msgs !== 1 ? 's' : ''}{closed}</span>
                     </div>
                   </div>
                 </div>
-              </div>
+              </button>
             )
           })
         )}
@@ -135,11 +148,9 @@ function Sidebar({ onSelectSession }) {
         <button
           className={`sidebar-settings-btn${settingsVisible ? ' active' : ''}`}
           onClick={handleSettingsClick}
+          aria-label="Settings"
         >
-          <svg className="w-4 h-4 stroke-current fill-none stroke-[1.5]" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z" />
-          </svg>
+          <GearIcon className="w-4 h-4 stroke-current fill-none stroke-[1.5]" />
           <span>Settings</span>
         </button>
       </div>

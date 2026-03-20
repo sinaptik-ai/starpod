@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { apiHeaders, fetchModels } from '../../lib/api'
 import { Card, Row, Field, Input, Select, ModelSelect, Toggle, SaveBar } from './fields'
+import { Loading } from '../ui/EmptyState'
 
 export default function GeneralTab() {
   const [config, setConfig] = useState(null)
@@ -16,7 +17,7 @@ export default function GeneralTab() {
     fetchModels().then(m => setModels(m || {}))
   }, [])
 
-  if (!config) return <div className="text-dim text-sm py-8 text-center">Loading...</div>
+  if (!config) return <Loading />
 
   const providers = Object.keys(models)
   const currentProvider = config.provider || providers[0] || ''

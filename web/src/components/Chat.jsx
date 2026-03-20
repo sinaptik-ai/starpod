@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef, useCallback } from 'react'
 import { useApp } from '../contexts/AppContext'
-import { escapeHtml, toolIconClass, toolIconSymbol, getToolPreview } from '../lib/utils'
 import { formatText, formatUserText } from '../lib/markdown'
 import { authHeaders, markSessionRead } from '../lib/api'
 import ToolCard from './ToolCard'
 import Welcome from './Welcome'
+import Logo from './ui/Logo'
 
 const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
   const { state, dispatch } = useApp()
@@ -231,7 +231,7 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
         setMessages(parsed)
       })
       .catch(() => {
-        setMessages([{ role: 'error', content: 'Failed to load messages.' }])
+        setMessages([{ role: 'error', content: 'Couldn\u2019t load this conversation. Try selecting it again.' }])
       })
   }
 
@@ -282,7 +282,7 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
             return (
               <div key={idx} className="flex items-center justify-center text-center" style={{ minHeight: 'calc(100dvh - 120px)' }}>
                 <div>
-                  <div className="font-mono text-3xl font-extrabold tracking-tighter mb-2 bg-gradient-to-b from-primary to-muted bg-clip-text text-transparent">starpod</div>
+                  <div className="mb-2"><Logo /></div>
                   <p className="text-sm text-muted">{msg.content}</p>
                 </div>
               </div>
@@ -336,77 +336,21 @@ function UserMessage({ msg }) {
   )
 }
 
-function AssistantMessage({ msg }) {
-  const { bubbles, tools, stats, errors } = msg
-
-  // Interleave bubbles and tools in order
-  // Layout: bubble[0], tool[0], bubble[1], tool[1], ...
-  const elements = []
-  const maxLen = Math.max(bubbles.length, tools.length)
-
-  for (let i = 0; i < maxLen; i++) {
-    if (i < bubbles.length && bubbles[i].text.trim()) {
-      elements.push(
-        <div
-          key={`bubble-${i}`}
-          className="py-1 leading-[1.75] text-sm break-words text-secondary markdown-body"
-          dangerouslySetInnerHTML={{ __html: formatText(bubbles[i].text) }}
-        />
-      )
-    }
-    if (i < tools.length) {
-      elements.push(
-        <ToolCard
-          key={`tool-${tools[i].id}`}
-          id={'tool-' + tools[i].id}
-          name={tools[i].name}
-          input={tools[i].input}
-          status={tools[i].status}
-          result={tools[i].result}
-        />
-      )
-    }
-  }
-
-  if (errors && errors.length > 0) {
-    elements.push(
-      <div key="errors" className="py-1 leading-[1.75] text-sm break-words text-secondary markdown-body">
-        <span className="text-err">{errors.join('\n')}</span>
-      </div>
-    )
-  }
-
-  return (
-    <div className="max-w-full mt-2" style={{ animation: 'msg-in 0.25s cubic-bezier(0.16, 1, 0.3, 1)' }}>
-      {elements}
-      {stats && (
-        <div className="font-mono text-[11px] text-dim mt-2 pt-2 border-t border-border-subtle flex gap-3 flex-wrap">
-          <span>{stats.numTurns} turn{stats.numTurns > 1 ? 's' : ''}</span>
-          <span>${stats.costUsd.toFixed(4)}</span>
-          <span>{stats.tokensIn} in {'\u00b7'} {stats.tokensOut} out</span>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function StreamingMessage({ msg }) {
-  const { bubbles, tools } = msg
-
+function renderBubblesAndTools(bubbles, tools, streaming) {
   const elements = []
   const maxLen = Math.max(bubbles.length, tools.length)
 
   for (let i = 0; i < maxLen; i++) {
     if (i < bubbles.length) {
       const bubble = bubbles[i]
-      const isActive = !bubble.done
+      const isActive = streaming && !bubble.done
       const hasText = bubble.text.trim()
 
       if (hasText || isActive) {
         elements.push(
           <div
             key={`bubble-${i}`}
-            className={`py-1 leading-[1.75] text-sm break-words text-secondary markdown-body${isActive ? ' streaming-cursor' : ''}`}
+            className={`py-1 leading-[1.7] text-[0.9375rem] break-words text-primary markdown-body${isActive ? ' streaming-cursor' : ''}`}
             dangerouslySetInnerHTML={{ __html: bubble.text ? formatText(bubble.text) : '' }}
           />
         )
@@ -426,9 +370,39 @@ function StreamingMessage({ msg }) {
     }
   }
 
+  return elements
+}
+
+function AssistantMessage({ msg }) {
+  const { bubbles, tools, stats, errors } = msg
+  const elements = renderBubblesAndTools(bubbles, tools, false)
+
+  if (errors && errors.length > 0) {
+    elements.push(
+      <div key="errors" className="py-1 leading-[1.7] text-[0.9375rem] break-words text-primary markdown-body">
+        <span className="text-err">{errors.join('\n')}</span>
+      </div>
+    )
+  }
+
   return (
     <div className="max-w-full mt-2" style={{ animation: 'msg-in 0.25s cubic-bezier(0.16, 1, 0.3, 1)' }}>
       {elements}
+      {stats && (
+        <div className="font-mono text-xs text-dim mt-2 pt-2 border-t border-border-subtle flex gap-3 flex-wrap tabular-nums">
+          <span>{stats.numTurns} turn{stats.numTurns > 1 ? 's' : ''}</span>
+          <span>${stats.costUsd.toFixed(4)}</span>
+          <span>{stats.tokensIn} in / {stats.tokensOut} out</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function StreamingMessage({ msg }) {
+  return (
+    <div className="max-w-full mt-2" style={{ animation: 'msg-in 0.25s cubic-bezier(0.16, 1, 0.3, 1)' }}>
+      {renderBubblesAndTools(msg.bubbles, msg.tools, true)}
     </div>
   )
 }

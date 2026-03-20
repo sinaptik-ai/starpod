@@ -85,6 +85,14 @@ function AppInner() {
 
   useEffect(() => { connect() }, [connect])
 
+  // ── Load session from URL on mount ──
+  useEffect(() => {
+    if (currentSessionId && chatRef.current) {
+      chatRef.current.loadSession(currentSessionId)
+      dispatch({ type: 'MARK_READ', payload: currentSessionId })
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Session fetching ──
   const fetchSessionList = useCallback(() => {
     const token = localStorage.getItem('starpod_api_key')
@@ -138,7 +146,7 @@ function AppInner() {
     }
   }, [state.sessions, handleSelectSession, fetchSessionList])
 
-  // ── Hash-based routing for /settings ──
+  // ── Hash-based routing ──
   useEffect(() => {
     const onPopState = () => {
       const hash = window.location.hash
@@ -174,7 +182,6 @@ function AppInner() {
   // ── Keyboard shortcuts ──
   useEffect(() => {
     const handler = (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault() }
       if (e.key === 'Escape') {
         if (previewUrl) { dispatch({ type: 'CLOSE_PREVIEW' }); return }
         if (settingsVisible) { dispatch({ type: 'HIDE_SETTINGS' }); return }
@@ -226,7 +233,7 @@ function AppInner() {
         </aside>
 
         {/* Main app */}
-        <div id="app" className="flex flex-col min-w-0 flex-1">
+        <div id="app" role="main" className="flex flex-col min-w-0 flex-1">
           <Header onNewChat={handleNewChat} onToggleSidebar={() => { if (!state.sidebarOpen) fetchSessionList() }} />
           {cronVisible ? (
             <CronJobsView />
