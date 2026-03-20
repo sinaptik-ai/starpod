@@ -9,12 +9,18 @@ use tracing::debug;
 
 use starpod_cron::store::epoch_to_rfc3339;
 use starpod_cron::{CronStore, RunStatus};
-use starpod_memory::MemoryStore;
+use starpod_memory::{MemoryStore, UserMemoryView};
 use starpod_skills::SkillStore;
 
 /// Shared context for custom tool handlers.
+///
+/// When `user_view` is `Some`, memory tools (MemorySearch, MemoryWrite,
+/// MemoryAppendDaily) route per-user files (USER.md, MEMORY.md, memory/*)
+/// to the user's directory while agent-level files (SOUL.md, etc.) go to
+/// the shared store. When `None`, all writes go to the agent-level store.
 pub struct ToolContext {
     pub memory: Arc<MemoryStore>,
+    pub user_view: Option<UserMemoryView>,
     pub skills: Arc<SkillStore>,
     pub cron: Arc<CronStore>,
     pub user_tz: Option<String>,
@@ -474,7 +480,12 @@ pub async fn handle_custom_tool(
 
             debug!(query = %query, limit = limit, "MemorySearch");
 
-            match ctx.memory.search(query, limit).await {
+            let search_result = if let Some(ref uv) = ctx.user_view {
+                uv.search(query, limit).await
+            } else {
+                ctx.memory.search(query, limit).await
+            };
+            match search_result {
                 Ok(results) => {
                     let formatted: Vec<serde_json::Value> = results
                         .iter()
@@ -507,7 +518,12 @@ pub async fn handle_custom_tool(
 
             debug!(file = %file, "MemoryWrite");
 
-            match ctx.memory.write_file(file, content).await {
+            let write_result = if let Some(ref uv) = ctx.user_view {
+                uv.write_file(file, content).await
+            } else {
+                ctx.memory.write_file(file, content).await
+            };
+            match write_result {
                 Ok(()) => Some(ToolResult {
                     content: format!("Successfully wrote {}", file),
                     is_error: false,
@@ -526,7 +542,12 @@ pub async fn handle_custom_tool(
 
             debug!("MemoryAppendDaily");
 
-            match ctx.memory.append_daily(text).await {
+            let append_result = if let Some(ref uv) = ctx.user_view {
+                uv.append_daily(text).await
+            } else {
+                ctx.memory.append_daily(text).await
+            };
+            match append_result {
                 Ok(()) => Some(ToolResult {
                     content: "Appended to daily log.".into(),
                     is_error: false,
@@ -1332,6 +1353,7 @@ mod tests {
 
         let ctx = ToolContext {
             memory,
+            user_view: None,
             skills,
             cron,
             user_tz: None,
@@ -1361,6 +1383,7 @@ mod tests {
 
         let ctx = ToolContext {
             memory,
+            user_view: None,
             skills,
             cron,
             user_tz: None,
@@ -1388,6 +1411,7 @@ mod tests {
 
         let ctx = ToolContext {
             memory,
+            user_view: None,
             skills,
             cron,
             user_tz: None,
@@ -1432,6 +1456,7 @@ mod tests {
 
         let ctx = ToolContext {
             memory,
+            user_view: None,
             skills,
             cron,
             user_tz: None,
@@ -1470,6 +1495,7 @@ mod tests {
 
         let ctx = ToolContext {
             memory,
+            user_view: None,
             skills,
             cron,
             user_tz: None,
@@ -1500,6 +1526,7 @@ mod tests {
 
         let ctx = ToolContext {
             memory,
+            user_view: None,
             skills,
             cron,
             user_tz: None,
@@ -1530,6 +1557,7 @@ mod tests {
 
         let ctx = ToolContext {
             memory,
+            user_view: None,
             skills,
             cron,
             user_tz: None,
@@ -1557,6 +1585,7 @@ mod tests {
 
         let ctx = ToolContext {
             memory,
+            user_view: None,
             skills,
             cron,
             user_tz: None,
@@ -1570,5 +1599,121 @@ mod tests {
             &serde_json::json!({"path": "../escape.txt", "content": "evil"}),
         ).await.unwrap();
         assert!(result.is_error, "FileWrite should reject .. traversal");
+    }
+
+    // ── Per-user memory routing via UserMemoryView ─────────────────
+
+    /// Helper: build a ToolContext with a UserMemoryView attached.
+    async fn ctx_with_user_view(tmp: &TempDir) -> ToolContext {
+        let agent_home = tmp.path().join("agent");
+        let config_dir = agent_home.join("config");
+        let db_dir = tmp.path().join("db");
+        let user_dir = tmp.path().join("users").join("alice");
+
+        let memory = Arc::new(
+            starpod_memory::MemoryStore::new(&agent_home, &config_dir, &db_dir)
+                .await
+                .unwrap(),
+        );
+        let user_view = starpod_memory::UserMemoryView::new(Arc::clone(&memory), user_dir)
+            .unwrap();
+        let skills = Arc::new(
+            starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap(),
+        );
+        let cron = Arc::new(
+            starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap(),
+        );
+
+        ToolContext {
+            memory,
+            user_view: Some(user_view),
+            skills,
+            cron,
+            user_tz: None,
+            home_dir: tmp.path().to_path_buf(),
+            user_id: Some("alice".into()),
+        }
+    }
+
+    #[tokio::test]
+    async fn memory_write_routes_user_md_to_user_dir() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_with_user_view(&tmp).await;
+
+        let result = handle_custom_tool(
+            &ctx,
+            "MemoryWrite",
+            &serde_json::json!({"file": "USER.md", "content": "# User\n\nAlice likes Rust."}),
+        ).await.unwrap();
+        assert!(!result.is_error, "MemoryWrite should succeed: {}", result.content);
+
+        // USER.md should be in the per-user directory, not agent home
+        let user_file = tmp.path().join("users/alice/USER.md");
+        let content = std::fs::read_to_string(&user_file).unwrap();
+        assert!(content.contains("Alice likes Rust"), "USER.md should be in user dir");
+    }
+
+    #[tokio::test]
+    async fn memory_write_routes_daily_to_user_dir() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_with_user_view(&tmp).await;
+
+        let result = handle_custom_tool(
+            &ctx,
+            "MemoryAppendDaily",
+            &serde_json::json!({"text": "Learned about lifetimes today."}),
+        ).await.unwrap();
+        assert!(!result.is_error, "MemoryAppendDaily should succeed: {}", result.content);
+
+        // Daily log should be in user's memory/ directory
+        let memory_dir = tmp.path().join("users/alice/memory");
+        assert!(memory_dir.is_dir(), "user memory dir should exist");
+        let entries: Vec<_> = std::fs::read_dir(&memory_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert!(!entries.is_empty(), "daily log should be written");
+        let content = std::fs::read_to_string(entries[0].path()).unwrap();
+        assert!(content.contains("lifetimes"), "daily log should contain appended text");
+    }
+
+    #[tokio::test]
+    async fn memory_search_uses_user_view_when_present() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_with_user_view(&tmp).await;
+
+        // Write something searchable first
+        handle_custom_tool(
+            &ctx,
+            "MemoryWrite",
+            &serde_json::json!({"file": "USER.md", "content": "# User\n\nAlice is a quantum physicist."}),
+        ).await.unwrap();
+
+        let result = handle_custom_tool(
+            &ctx,
+            "MemorySearch",
+            &serde_json::json!({"query": "quantum physicist"}),
+        ).await.unwrap();
+        assert!(!result.is_error, "MemorySearch should succeed: {}", result.content);
+    }
+
+    #[tokio::test]
+    async fn memory_write_agent_file_goes_to_agent_store() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_with_user_view(&tmp).await;
+
+        // SOUL.md is an agent-level file, should NOT go to user dir
+        let result = handle_custom_tool(
+            &ctx,
+            "MemoryWrite",
+            &serde_json::json!({"file": "SOUL.md", "content": "# Soul\n\nI am helpful."}),
+        ).await.unwrap();
+        assert!(!result.is_error, "MemoryWrite for SOUL.md should succeed");
+
+        // SOUL.md should be in agent config dir, not user dir
+        let agent_soul = tmp.path().join("agent/config/SOUL.md");
+        assert!(agent_soul.is_file(), "SOUL.md should be in agent config dir");
+        let user_soul = tmp.path().join("users/alice/SOUL.md");
+        assert!(!user_soul.exists(), "SOUL.md should NOT be in user dir");
     }
 }

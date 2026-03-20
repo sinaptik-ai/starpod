@@ -18,7 +18,7 @@ use starpod_core::{
     AgentConfig, ResolvedPaths,
 };
 use starpod_cron::CronStore;
-use starpod_memory::MemoryStore;
+use starpod_memory::{MemoryStore, UserMemoryView};
 use starpod_session::{Channel, SessionDecision, SessionManager, UsageRecord};
 use starpod_skills::SkillStore;
 
@@ -132,8 +132,7 @@ impl StarpodAgent {
             StarpodError::Config(format!("Failed to create db dir {}: {}", paths.db_dir.display(), e))
         })?;
         let session_db = paths.db_dir.join("session.db");
-        let sessions_dir = paths.agent_home.join("sessions");
-        let session_mgr = SessionManager::new(&session_db, &sessions_dir).await?;
+        let session_mgr = SessionManager::new(&session_db).await?;
 
         // Skills from resolved skills_dir, with optional filter
         let skills = SkillStore::new(&paths.skills_dir)?
@@ -310,9 +309,15 @@ impl StarpodAgent {
     }
 
     /// Build the system prompt from bootstrap context + skill catalog.
-    fn build_system_prompt(&self, session_id: &str, config: &StarpodConfig) -> Result<String> {
+    fn build_system_prompt(&self, session_id: &str, config: &StarpodConfig, user_id: Option<&str>) -> Result<String> {
         let agent_name = &config.agent_name;
-        let bootstrap = self.memory.bootstrap_context()?;
+        let bootstrap = if let Some(uid) = user_id {
+            let user_dir = self.paths.users_dir.join(uid);
+            let uv = UserMemoryView::new(Arc::clone(&self.memory), user_dir)?;
+            uv.bootstrap_context(config.memory.bootstrap_file_cap)?
+        } else {
+            self.memory.bootstrap_context()?
+        };
         let skill_catalog = self.skills.skill_catalog()?;
         let date_str = Local::now().format("%A, %B %d, %Y at %H:%M").to_string();
         let tz_str = config.resolved_timezone().unwrap_or_else(|| "UTC".to_string());
@@ -482,8 +487,16 @@ impl StarpodAgent {
 
     /// Build the external tool handler closure.
     fn build_tool_handler(&self, config: &StarpodConfig, user_id: Option<&str>) -> ExternalToolHandlerFn {
+        let user_view = user_id.and_then(|uid| {
+            let user_dir = self.paths.users_dir.join(uid);
+            UserMemoryView::new(Arc::clone(&self.memory), user_dir)
+                .map_err(|e| warn!(error = %e, user_id = uid, "Failed to create UserMemoryView"))
+                .ok()
+        });
+
         let ctx = Arc::new(ToolContext {
             memory: Arc::clone(&self.memory),
+            user_view,
             skills: Arc::clone(&self.skills),
             cron: Arc::clone(&self.cron),
             user_tz: config.resolved_timezone(),
@@ -543,7 +556,7 @@ impl StarpodAgent {
         };
 
         // Step 3: Build system prompt
-        let mut system_prompt = self.build_system_prompt(&session_id, &config)?;
+        let mut system_prompt = self.build_system_prompt(&session_id, &config, message.user_id.as_deref())?;
 
         append_execution_context(&mut system_prompt, message.channel_id.as_deref(), message.user_id.as_deref());
 
@@ -737,7 +750,7 @@ impl StarpodAgent {
             format!("{}{}", message.text, extra_text)
         };
 
-        let system_prompt = self.build_system_prompt(&session_id, &config)?;
+        let system_prompt = self.build_system_prompt(&session_id, &config, message.user_id.as_deref())?;
         let provider = Self::build_provider(&config)?;
 
         // Create the followup channel — sender goes to caller, receiver to the agent loop
@@ -868,7 +881,7 @@ impl StarpodAgent {
             .trim_matches('-')
             .to_string();
         let id_prefix = &session_id[..8.min(session_id.len())];
-        let filename = format!("knowledge/sessions/{slug}-{id_prefix}.md");
+        let filename = format!("memory/sessions/{slug}-{id_prefix}.md");
 
         // Format the transcript
         let mut transcript = format!(
@@ -893,7 +906,18 @@ impl StarpodAgent {
             transcript.push_str(&format!("**{}**: {}\n\n", role_label, msg.content));
         }
 
-        if let Err(e) = self.memory.write_file(&filename, &transcript).await {
+        // Route per-user when user_id is present (non-empty and not synthetic)
+        let write_result = if !meta.user_id.is_empty() && meta.user_id != "heartbeat" && meta.user_id != "cron" {
+            let user_dir = self.paths.users_dir.join(&meta.user_id);
+            match UserMemoryView::new(Arc::clone(&self.memory), user_dir) {
+                Ok(uv) => uv.write_file(&filename, &transcript).await,
+                Err(e) => Err(e),
+            }
+        } else {
+            self.memory.write_file(&filename, &transcript).await
+        };
+
+        if let Err(e) = write_result {
             warn!(error = %e, session_id, "Failed to export session transcript to memory");
         } else {
             debug!(session_id, filename, "Exported session transcript to memory");
@@ -1361,6 +1385,7 @@ mod tests {
 
         let ctx = ToolContext {
             memory: Arc::clone(agent.memory()),
+            user_view: None,
             skills: Arc::clone(agent.skills()),
             cron: Arc::clone(agent.cron()),
             user_tz: None,

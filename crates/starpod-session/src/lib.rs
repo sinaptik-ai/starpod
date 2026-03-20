@@ -1,6 +1,6 @@
 mod schema;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::str::FromStr;
 
 use chrono::{DateTime, Duration, Utc};
@@ -87,17 +87,14 @@ pub struct UsageRecord {
 /// Manages session lifecycle — creation, channel-aware resolution, closure, and usage tracking.
 pub struct SessionManager {
     pool: SqlitePool,
-    #[allow(dead_code)] // used in future phases for JSONL transcript storage
-    sessions_dir: PathBuf,
 }
 
 impl SessionManager {
     /// Create a new SessionManager.
-    pub async fn new(db_path: &Path, sessions_dir: &Path) -> Result<Self> {
+    pub async fn new(db_path: &Path) -> Result<Self> {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::create_dir_all(sessions_dir)?;
 
         let opts = SqliteConnectOptions::from_str(
             &format!("sqlite://{}?mode=rwc", db_path.display()),
@@ -112,21 +109,14 @@ impl SessionManager {
 
         schema::run_migrations(&pool).await?;
 
-        Ok(Self {
-            pool,
-            sessions_dir: sessions_dir.to_path_buf(),
-        })
+        Ok(Self { pool })
     }
 
     /// Create a SessionManager from an existing pool (for testing).
     #[cfg(test)]
-    async fn from_pool(pool: SqlitePool, sessions_dir: &Path) -> Result<Self> {
-        std::fs::create_dir_all(sessions_dir)?;
+    async fn from_pool(pool: SqlitePool) -> Result<Self> {
         schema::run_migrations(&pool).await?;
-        Ok(Self {
-            pool,
-            sessions_dir: sessions_dir.to_path_buf(),
-        })
+        Ok(Self { pool })
     }
 
     /// Resolve session for a given channel and key.
@@ -500,7 +490,7 @@ mod tests {
     async fn setup() -> (TempDir, SessionManager) {
         let tmp = TempDir::new().unwrap();
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        let mgr = SessionManager::from_pool(pool, &tmp.path().join("sessions"))
+        let mgr = SessionManager::from_pool(pool)
             .await
             .unwrap();
         (tmp, mgr)
