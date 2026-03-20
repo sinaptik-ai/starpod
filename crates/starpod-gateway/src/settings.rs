@@ -325,9 +325,9 @@ async fn put_general(
 fn well_known_models() -> std::collections::HashMap<String, Vec<String>> {
     let mut m = std::collections::HashMap::new();
     m.insert("anthropic".into(), vec![
-        "claude-opus-4-6".into(),
-        "claude-sonnet-4-6".into(),
         "claude-haiku-4-5".into(),
+        "claude-sonnet-4-6".into(),
+        "claude-opus-4-6".into(),
     ]);
     m.insert("openai".into(), vec![
         "gpt-4o".into(),
@@ -349,6 +349,7 @@ fn well_known_models() -> std::collections::HashMap<String, Vec<String>> {
         "deepseek-reasoner".into(),
     ]);
     m.insert("openrouter".into(), vec![
+        "anthropic/claude-haiku-4-5".into(),
         "anthropic/claude-sonnet-4-6".into(),
         "openai/gpt-4o".into(),
         "google/gemini-2.5-pro".into(),
