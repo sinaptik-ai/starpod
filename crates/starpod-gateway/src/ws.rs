@@ -33,14 +33,38 @@ async fn ws_handler(
     State(state): State<Arc<AppState>>,
     Query(params): Query<WsQuery>,
 ) -> impl IntoResponse {
-    // Check API key if configured
-    if let Some(expected) = &state.api_key {
-        match &params.token {
-            Some(token) if token == expected => {}
-            _ => {
+    // Authenticate via token query param
+    let has_users = state.auth.has_users().await.unwrap_or(false);
+    if has_users {
+        let token = match &params.token {
+            Some(t) => t.as_str(),
+            None => {
                 return axum::http::Response::builder()
                     .status(401)
-                    .body(axum::body::Body::from("Unauthorized"))
+                    .body(axum::body::Body::from("Missing token parameter"))
+                    .unwrap()
+                    .into_response();
+            }
+        };
+        match state.auth.authenticate_api_key(token).await {
+            Ok(Some(user)) => {
+                let user = Some(user);
+                return ws.max_frame_size(1024 * 1024)
+                    .max_message_size(1024 * 1024)
+                    .on_upgrade(move |socket| handle_socket(socket, state, user))
+                    .into_response();
+            }
+            Ok(None) => {
+                return axum::http::Response::builder()
+                    .status(401)
+                    .body(axum::body::Body::from("Invalid token"))
+                    .unwrap()
+                    .into_response();
+            }
+            Err(_) => {
+                return axum::http::Response::builder()
+                    .status(500)
+                    .body(axum::body::Body::from("Auth error"))
                     .unwrap()
                     .into_response();
             }
@@ -49,7 +73,7 @@ async fn ws_handler(
 
     ws.max_frame_size(1024 * 1024) // 1 MB
         .max_message_size(1024 * 1024) // 1 MB
-        .on_upgrade(move |socket| handle_socket(socket, state))
+        .on_upgrade(move |socket| handle_socket(socket, state, None))
         .into_response()
 }
 
@@ -156,7 +180,7 @@ async fn send_msg(
 ///   followup channel and integrated into the next agent loop iteration.
 /// - **Queue**: Messages are buffered and dispatched as new agent loops after
 ///   the current stream finishes.
-async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
+async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_user: Option<starpod_auth::User>) {
     let (mut sender, mut receiver) = socket.split();
     let followup_mode = state.config.read().unwrap().followup_mode;
     let mut events_rx = state.events_tx.subscribe();
@@ -283,9 +307,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                 }
 
                 // Build ChatMessage for channel-aware session routing
+                // Use authenticated user_id — client-provided user_id is ignored
+                let effective_user_id = auth_user.as_ref().map(|u| u.id.clone()).or(user_id);
                 let chat_msg = starpod_core::ChatMessage {
                     text: text.clone(),
-                    user_id,
+                    user_id: effective_user_id,
                     channel_id: channel_id.or(Some("main".into())),
                     channel_session_key,
                     attachments: chat_attachments,
@@ -339,6 +365,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     &text,
                     followup_mode,
                     active_followup_tx.as_ref().unwrap(),
+                    &auth_user,
                     &mut queued_messages,
                 ).await;
 
@@ -365,6 +392,7 @@ async fn process_stream_with_followups(
     user_text: &str,
     followup_mode: FollowupMode,
     followup_tx: &mpsc::UnboundedSender<String>,
+    auth_user: &Option<starpod_auth::User>,
     queued_messages: &mut Vec<starpod_core::ChatMessage>,
 ) -> bool {
     let mut result_text = String::new();
@@ -438,9 +466,10 @@ async fn process_stream_with_followups(
                                 }
                                 FollowupMode::Queue => {
                                     debug!(text = %text, "Queuing message for after current stream");
+                                    let effective_user_id = auth_user.as_ref().map(|u| u.id.clone()).or(user_id);
                                     queued_messages.push(starpod_core::ChatMessage {
                                         text,
-                                        user_id,
+                                        user_id: effective_user_id,
                                         channel_id: channel_id.or(Some("main".into())),
                                         channel_session_key,
                                         attachments: Vec::new(),

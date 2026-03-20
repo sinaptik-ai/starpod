@@ -39,6 +39,10 @@ pub enum StarpodError {
     #[error("Instance error: {0}")]
     Instance(String),
 
+    /// Authentication / authorization errors.
+    #[error("Auth error: {0}")]
+    Auth(String),
+
     /// Channel / communication errors.
     #[error("Channel error: {0}")]
     Channel(String),

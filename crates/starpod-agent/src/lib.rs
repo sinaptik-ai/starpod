@@ -76,6 +76,7 @@ impl StarpodAgent {
             cron: config.cron.clone(),
             compaction: config.compaction.clone(),
             attachments: config.attachments.clone(),
+            auth: config.auth.clone(),
         };
 
         let starpod_dir = config.db_dir.parent().unwrap_or(&config.db_dir).to_path_buf();
@@ -358,27 +359,27 @@ impl StarpodAgent {
 /// Append execution-context block to the system prompt when the message
 /// originates from a scheduled job (cron or heartbeat) so the LLM knows
 /// to act directly rather than re-scheduling.
-fn append_execution_context(prompt: &mut String, user_id: Option<&str>) {
-    match user_id {
-        Some("cron") => {
-            prompt.push_str(
-                "\n\n--- EXECUTION CONTEXT ---\n\
-                 You are executing a SCHEDULED CRON JOB right now. The message below is the \
-                 cron job's prompt — carry out the instruction directly. Do NOT schedule \
-                 another reminder or cron job unless the prompt explicitly asks you to. \
-                 If the task is to remind or notify the user, deliver the reminder content \
-                 directly in your response.",
-            );
-        }
-        Some("heartbeat") => {
-            prompt.push_str(
-                "\n\n--- EXECUTION CONTEXT ---\n\
-                 You are executing a HEARTBEAT (periodic background check). The message below \
-                 comes from HEARTBEAT.md. Carry out the instructions directly. Do NOT schedule \
-                 new cron jobs unless the heartbeat instructions explicitly ask you to.",
-            );
-        }
-        _ => {}
+///
+/// Detection is based on `channel_id` ("scheduler") and `user_id` ("heartbeat")
+/// since cron jobs now use the actual user_id from `JobContext`, while heartbeat
+/// still uses a synthetic user_id.
+fn append_execution_context(prompt: &mut String, channel_id: Option<&str>, user_id: Option<&str>) {
+    if user_id == Some("heartbeat") {
+        prompt.push_str(
+            "\n\n--- EXECUTION CONTEXT ---\n\
+             You are executing a HEARTBEAT (periodic background check). The message below \
+             comes from HEARTBEAT.md. Carry out the instructions directly. Do NOT schedule \
+             new cron jobs unless the heartbeat instructions explicitly ask you to.",
+        );
+    } else if channel_id == Some("scheduler") || user_id == Some("cron") {
+        prompt.push_str(
+            "\n\n--- EXECUTION CONTEXT ---\n\
+             You are executing a SCHEDULED CRON JOB right now. The message below is the \
+             cron job's prompt — carry out the instruction directly. Do NOT schedule \
+             another reminder or cron job unless the prompt explicitly asks you to. \
+             If the task is to remind or notify the user, deliver the reminder content \
+             directly in your response.",
+        );
     }
 }
 
@@ -541,7 +542,7 @@ impl StarpodAgent {
         // Step 3: Build system prompt
         let mut system_prompt = self.build_system_prompt(&session_id, &config)?;
 
-        append_execution_context(&mut system_prompt, message.user_id.as_deref());
+        append_execution_context(&mut system_prompt, message.channel_id.as_deref(), message.user_id.as_deref());
 
         // Step 4: Build provider and options, then run query
         let provider = Self::build_provider(&config)?;
@@ -976,7 +977,7 @@ impl StarpodAgent {
 
                 let msg = ChatMessage {
                     text: ctx.prompt,
-                    user_id: Some("cron".into()),
+                    user_id: ctx.user_id.or(Some("cron".into())),
                     channel_id: Some(channel_id),
                     channel_session_key: session_key,
                     attachments: Vec::new(),
@@ -1775,16 +1776,24 @@ mod tests {
     #[test]
     fn test_append_execution_context_cron() {
         let mut prompt = "Base prompt.".to_string();
-        append_execution_context(&mut prompt, Some("cron"));
+        append_execution_context(&mut prompt, None, Some("cron"));
         assert!(prompt.contains("--- EXECUTION CONTEXT ---"));
         assert!(prompt.contains("SCHEDULED CRON JOB"));
         assert!(prompt.contains("Do NOT schedule"));
     }
 
     #[test]
+    fn test_append_execution_context_cron_via_channel() {
+        let mut prompt = "Base prompt.".to_string();
+        append_execution_context(&mut prompt, Some("scheduler"), Some("user123"));
+        assert!(prompt.contains("--- EXECUTION CONTEXT ---"));
+        assert!(prompt.contains("SCHEDULED CRON JOB"));
+    }
+
+    #[test]
     fn test_append_execution_context_heartbeat() {
         let mut prompt = "Base prompt.".to_string();
-        append_execution_context(&mut prompt, Some("heartbeat"));
+        append_execution_context(&mut prompt, None, Some("heartbeat"));
         assert!(prompt.contains("--- EXECUTION CONTEXT ---"));
         assert!(prompt.contains("HEARTBEAT"));
         assert!(prompt.contains("HEARTBEAT.md"));
@@ -1793,14 +1802,14 @@ mod tests {
     #[test]
     fn test_append_execution_context_regular_user() {
         let mut prompt = "Base prompt.".to_string();
-        append_execution_context(&mut prompt, Some("admin"));
+        append_execution_context(&mut prompt, Some("main"), Some("admin"));
         assert_eq!(prompt, "Base prompt.");
     }
 
     #[test]
     fn test_append_execution_context_none() {
         let mut prompt = "Base prompt.".to_string();
-        append_execution_context(&mut prompt, None);
+        append_execution_context(&mut prompt, None, None);
         assert_eq!(prompt, "Base prompt.");
     }
 }

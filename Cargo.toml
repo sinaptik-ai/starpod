@@ -12,5 +12,6 @@ members = [
     "crates/starpod-gateway",
     "crates/starpod-telegram",
     "crates/starpod-instances",
+    "crates/starpod-auth",
     "crates/starpod",
 ]

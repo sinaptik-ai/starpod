@@ -17,6 +17,7 @@ starpod-telegram = { path = "../starpod-telegram" }
 starpod-skills = { path = "../starpod-skills" }
 starpod-cron = { path = "../starpod-cron" }
 starpod-instances = { path = "../starpod-instances" }
+starpod-auth = { path = "../starpod-auth" }
 futures = "0.3"
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }

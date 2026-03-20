@@ -5,7 +5,7 @@ pub mod types;
 pub mod workspace;
 
 pub use config::{
-    AttachmentsConfig, ChannelsConfig, CompactionConfig, CronConfig, FollowupMode,
+    AttachmentsConfig, AuthConfig, ChannelsConfig, CompactionConfig, CronConfig, FollowupMode,
     FrontendConfig, MemoryConfig, StarpodConfig,
     ProviderConfig, ProvidersConfig, ReasoningEffort, TelegramChannelConfig,
 };

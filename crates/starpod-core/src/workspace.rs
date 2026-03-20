@@ -74,7 +74,7 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::config::{
-    AttachmentsConfig, ChannelsConfig, CompactionConfig, CronConfig, FollowupMode,
+    AttachmentsConfig, AuthConfig, ChannelsConfig, CompactionConfig, CronConfig, FollowupMode,
     MemoryConfig, ProvidersConfig, ReasoningEffort, StarpodConfig,
 };
 use crate::error::StarpodError;
@@ -632,6 +632,10 @@ pub struct AgentConfig {
     /// Attachment settings.
     #[serde(default)]
     pub attachments: AttachmentsConfig,
+
+    /// Authentication settings.
+    #[serde(default)]
+    pub auth: AuthConfig,
 }
 
 fn default_agent_name() -> String {
@@ -675,6 +679,7 @@ impl Default for AgentConfig {
             cron: CronConfig::default(),
             compaction: CompactionConfig::default(),
             attachments: AttachmentsConfig::default(),
+            auth: AuthConfig::default(),
         }
     }
 }
@@ -702,6 +707,7 @@ impl AgentConfig {
             cron: self.cron,
             compaction: self.compaction,
             attachments: self.attachments,
+            auth: self.auth,
             project_root: paths.project_root.clone(),
         }
     }

@@ -1,0 +1,20 @@
+[package]
+name = "starpod-auth"
+version = "0.1.0"
+edition = "2021"
+description = "Database-backed user authentication for Starpod"
+
+[dependencies]
+starpod-core = { path = "../starpod-core" }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+argon2 = "0.5"
+uuid = { version = "1", features = ["v4"] }
+rand = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tokio = { version = "1", features = ["full"] }
+
+[dev-dependencies]
+tempfile = "3"

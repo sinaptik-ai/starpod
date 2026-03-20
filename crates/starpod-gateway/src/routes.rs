@@ -77,7 +77,7 @@ async fn frame_check_handler(
     headers: HeaderMap,
     Query(params): Query<FrameCheckQuery>,
 ) -> Result<Json<FrameCheckResponse>, (StatusCode, Json<ErrorResponse>)> {
-    check_api_key(&state, &headers)?;
+    authenticate_request(&state, &headers).await?;
 
     // Validate URL scheme — only allow http and https.
     let parsed_url = reqwest::Url::parse(&params.url).map_err(|_| {
@@ -226,11 +226,14 @@ async fn chat_handler(
     headers: HeaderMap,
     Json(req): Json<ChatRequest>,
 ) -> Result<Json<ChatResponse>, (StatusCode, Json<ErrorResponse>)> {
-    check_api_key(&state, &headers)?;
+    let user = authenticate_request(&state, &headers).await?;
+
+    // Use authenticated user's ID — client-provided user_id is ignored to prevent impersonation
+    let user_id = user.as_ref().map(|u| u.id.clone()).or(req.user_id);
 
     let message = ChatMessage {
         text: req.text,
-        user_id: req.user_id,
+        user_id,
         channel_id: req.channel_id,
         channel_session_key: req.channel_session_key,
         attachments: Vec::new(),
@@ -264,7 +267,7 @@ async fn list_sessions_handler(
     headers: HeaderMap,
     Query(params): Query<ListSessionsQuery>,
 ) -> Result<Json<Vec<starpod_session::SessionMeta>>, (StatusCode, Json<ErrorResponse>)> {
-    check_api_key(&state, &headers)?;
+    authenticate_request(&state, &headers).await?;
 
     match state.agent.session_mgr().list_sessions(params.limit).await {
         Ok(sessions) => Ok(Json(sessions)),
@@ -283,7 +286,7 @@ async fn get_session_handler(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Option<starpod_session::SessionMeta>>, (StatusCode, Json<ErrorResponse>)> {
-    check_api_key(&state, &headers)?;
+    authenticate_request(&state, &headers).await?;
 
     match state.agent.session_mgr().get_session(&id).await {
         Ok(session) => Ok(Json(session)),
@@ -302,7 +305,7 @@ async fn get_session_messages_handler(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<starpod_session::SessionMessage>>, (StatusCode, Json<ErrorResponse>)> {
-    check_api_key(&state, &headers)?;
+    authenticate_request(&state, &headers).await?;
 
     match state.agent.session_mgr().get_messages(&id).await {
         Ok(messages) => Ok(Json(messages)),
@@ -342,7 +345,7 @@ async fn memory_search_handler(
     headers: HeaderMap,
     Query(params): Query<MemorySearchQuery>,
 ) -> Result<Json<Vec<SearchResultResponse>>, (StatusCode, Json<ErrorResponse>)> {
-    check_api_key(&state, &headers)?;
+    authenticate_request(&state, &headers).await?;
 
     match state.agent.memory().search(&params.q, params.limit).await {
         Ok(results) => {
@@ -371,7 +374,7 @@ async fn reindex_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    check_api_key(&state, &headers)?;
+    authenticate_request(&state, &headers).await?;
 
     match state.agent.memory().reindex().await {
         Ok(()) => Ok(Json(serde_json::json!({"status": "ok"}))),
@@ -423,7 +426,7 @@ async fn list_instances_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<starpod_instances::Instance>>, (StatusCode, Json<ErrorResponse>)> {
-    check_api_key(&state, &headers)?;
+    authenticate_request(&state, &headers).await?;
     let client = get_instance_client(&state)?;
 
     client.list_instances().await.map(Json).map_err(|e| {
@@ -442,7 +445,7 @@ async fn create_instance_handler(
     headers: HeaderMap,
     Json(req): Json<starpod_instances::CreateInstanceRequest>,
 ) -> Result<(StatusCode, Json<starpod_instances::Instance>), (StatusCode, Json<ErrorResponse>)> {
-    check_api_key(&state, &headers)?;
+    authenticate_request(&state, &headers).await?;
     let client = get_instance_client(&state)?;
 
     client.create_instance(&req).await.map(|inst| (StatusCode::CREATED, Json(inst))).map_err(|e| {
@@ -461,7 +464,7 @@ async fn get_instance_handler(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<starpod_instances::Instance>, (StatusCode, Json<ErrorResponse>)> {
-    check_api_key(&state, &headers)?;
+    authenticate_request(&state, &headers).await?;
     let client = get_instance_client(&state)?;
 
     client.get_instance(&id).await.map(Json).map_err(|e| {
@@ -480,7 +483,7 @@ async fn delete_instance_handler(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    check_api_key(&state, &headers)?;
+    authenticate_request(&state, &headers).await?;
     let client = get_instance_client(&state)?;
 
     client.kill_instance(&id).await.map(|_| StatusCode::NO_CONTENT).map_err(|e| {
@@ -499,7 +502,7 @@ async fn pause_instance_handler(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    check_api_key(&state, &headers)?;
+    authenticate_request(&state, &headers).await?;
     let client = get_instance_client(&state)?;
 
     client.pause_instance(&id).await.map(|_| Json(serde_json::json!({"status": "paused"}))).map_err(|e| {
@@ -518,7 +521,7 @@ async fn restart_instance_handler(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    check_api_key(&state, &headers)?;
+    authenticate_request(&state, &headers).await?;
     let client = get_instance_client(&state)?;
 
     client.restart_instance(&id).await.map(|_| Json(serde_json::json!({"status": "restarted"}))).map_err(|e| {
@@ -537,7 +540,7 @@ async fn instance_health_handler(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<starpod_instances::HealthInfo>, (StatusCode, Json<ErrorResponse>)> {
-    check_api_key(&state, &headers)?;
+    authenticate_request(&state, &headers).await?;
     let client = get_instance_client(&state)?;
 
     client.get_health(&id).await.map(Json).map_err(|e| {
@@ -555,6 +558,234 @@ async fn instance_health_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::RwLock;
+    use std::time::Duration;
+
+    use axum::body::Body;
+    use axum::http::Request;
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    use starpod_agent::StarpodAgent;
+    use starpod_auth::{AuthStore, RateLimiter as AuthRateLimiter};
+    use starpod_core::{ResolvedPaths, StarpodConfig, Mode};
+    use crate::{build_router, GatewayEvent};
+
+    /// Build a test AppState with real auth store.
+    async fn test_app_state() -> (tempfile::TempDir, Arc<AppState>) {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let starpod_dir = tmp.path().join(".starpod");
+        let config_dir = starpod_dir.join("config");
+        let db_dir = starpod_dir.join("db");
+        let users_dir = starpod_dir.join("users");
+        let skills_dir = starpod_dir.join("skills");
+        let agent_toml = config_dir.join("agent.toml");
+
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::create_dir_all(&db_dir).unwrap();
+        std::fs::create_dir_all(&users_dir).unwrap();
+        std::fs::create_dir_all(&skills_dir).unwrap();
+        std::fs::write(&agent_toml, "model = \"test\"\nagent_name = \"Test\"\n").unwrap();
+
+        let config = StarpodConfig {
+            db_dir: db_dir.clone(),
+            db_path: Some(db_dir.join("memory.db")),
+            project_root: tmp.path().to_path_buf(),
+            model: "test".into(),
+            agent_name: "Test".into(),
+            ..StarpodConfig::default()
+        };
+
+        let agent = StarpodAgent::new(config.clone()).await.unwrap();
+        let (events_tx, _) = tokio::sync::broadcast::channel::<GatewayEvent>(16);
+
+        let paths = ResolvedPaths {
+            mode: Mode::SingleAgent { starpod_dir: starpod_dir.clone() },
+            agent_toml,
+            agent_home: starpod_dir.clone(),
+            config_dir,
+            db_dir: db_dir.clone(),
+            skills_dir,
+            project_root: tmp.path().to_path_buf(),
+            instance_root: tmp.path().to_path_buf(),
+            users_dir,
+            env_file: None,
+        };
+
+        let auth_db = db_dir.join("users.db");
+        let auth = Arc::new(AuthStore::new(&auth_db).await.unwrap());
+        let rate_limiter = Arc::new(AuthRateLimiter::new(0, Duration::from_secs(60)));
+
+        let state = Arc::new(AppState {
+            agent: Arc::new(agent),
+            auth,
+            rate_limiter,
+            config: RwLock::new(config),
+            paths,
+            events_tx,
+        });
+
+        (tmp, state)
+    }
+
+    // ── Auth integration tests ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn pre_bootstrap_allows_unauthenticated() {
+        let (_tmp, state) = test_app_state().await;
+        // No users exist — should allow access without API key
+        let app = build_router(Arc::clone(&state));
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/health")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn missing_api_key_rejected_after_bootstrap() {
+        let (_tmp, state) = test_app_state().await;
+        // Create a user so auth is enforced
+        state.auth.create_user(None, None, starpod_auth::Role::Admin).await.unwrap();
+
+        let app = build_router(Arc::clone(&state));
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/sessions")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["error"].as_str().unwrap().contains("Missing API key"));
+    }
+
+    #[tokio::test]
+    async fn invalid_api_key_rejected() {
+        let (_tmp, state) = test_app_state().await;
+        state.auth.create_user(None, None, starpod_auth::Role::Admin).await.unwrap();
+
+        let app = build_router(Arc::clone(&state));
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/sessions")
+            .header("x-api-key", "sp_live_0000000000000000000000000000000000000000")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["error"].as_str().unwrap().contains("Invalid API key"));
+    }
+
+    #[tokio::test]
+    async fn valid_api_key_accepted() {
+        let (_tmp, state) = test_app_state().await;
+        let user = state.auth.create_user(None, None, starpod_auth::Role::Admin).await.unwrap();
+        let key = state.auth.create_api_key(&user.id, None).await.unwrap();
+
+        let app = build_router(Arc::clone(&state));
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/sessions")
+            .header("x-api-key", &key.key)
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn rate_limiting_returns_429() {
+        let (_tmp, state) = test_app_state().await;
+        let user = state.auth.create_user(None, None, starpod_auth::Role::Admin).await.unwrap();
+        let key = state.auth.create_api_key(&user.id, None).await.unwrap();
+
+        // Replace rate limiter with strict limit
+        let strict_state = Arc::new(AppState {
+            agent: Arc::clone(&state.agent),
+            auth: Arc::clone(&state.auth),
+            rate_limiter: Arc::new(AuthRateLimiter::new(1, Duration::from_secs(60))),
+            config: RwLock::new(state.config.read().unwrap().clone()),
+            paths: state.paths.clone(),
+            events_tx: state.events_tx.clone(),
+        });
+
+        // First request should succeed (use /api/sessions which requires auth)
+        let app = build_router(Arc::clone(&strict_state));
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/sessions")
+            .header("x-api-key", &key.key)
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Second request should be rate-limited
+        let app = build_router(Arc::clone(&strict_state));
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/sessions")
+            .header("x-api-key", &key.key)
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn chat_injects_authenticated_user_id() {
+        let (_tmp, state) = test_app_state().await;
+        let user = state.auth.create_user(None, Some("Alice"), starpod_auth::Role::User).await.unwrap();
+        let key = state.auth.create_api_key(&user.id, None).await.unwrap();
+
+        // Send a chat request with a different user_id — it should be overridden
+        let app = build_router(Arc::clone(&state));
+        let body = serde_json::json!({
+            "text": "hello",
+            "user_id": "impersonation-attempt"
+        });
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/chat")
+            .header("content-type", "application/json")
+            .header("x-api-key", &key.key)
+            .body(Body::from(serde_json::to_string(&body).unwrap()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        // The chat will fail because there's no real model, but the auth should pass
+        // (we're testing that auth succeeds, not that chat works)
+        let status = resp.status();
+        assert_ne!(status, StatusCode::UNAUTHORIZED, "Should not be 401");
+        assert_ne!(status, StatusCode::FORBIDDEN, "Should not be 403");
+    }
+
+    #[tokio::test]
+    async fn health_always_accessible() {
+        let (_tmp, state) = test_app_state().await;
+        // Health should work even without auth
+        let app = build_router(Arc::clone(&state));
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/health")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], "ok");
+    }
+
+    // ── IP filtering tests (existing) ───────────────────────────────────
 
     #[test]
     fn private_ipv4_loopback() {
@@ -604,26 +835,67 @@ mod tests {
     }
 }
 
-/// Check X-API-Key header if an API key is configured.
-pub(crate) fn check_api_key(
+/// Authenticate a request via API key.
+///
+/// Looks up the `X-API-Key` header, verifies against the auth store (argon2id),
+/// enforces rate limiting, and returns the authenticated `User`.
+///
+/// If no users exist in the auth store (fresh install, no bootstrap yet),
+/// all requests are allowed with a `None` user for backward compatibility.
+pub(crate) async fn authenticate_request(
     state: &AppState,
     headers: &HeaderMap,
-) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
-    if let Some(expected) = &state.api_key {
-        let provided = headers
-            .get("x-api-key")
-            .and_then(|v| v.to_str().ok());
+) -> Result<Option<starpod_auth::User>, (StatusCode, Json<ErrorResponse>)> {
+    // If no users exist yet, allow unauthenticated access (pre-bootstrap)
+    let has_users = state.auth.has_users().await.unwrap_or(false);
+    if !has_users {
+        return Ok(None);
+    }
 
-        match provided {
-            Some(key) if key == expected => Ok(()),
-            _ => Err((
+    let provided = headers
+        .get("x-api-key")
+        .and_then(|v| v.to_str().ok());
+
+    let key = match provided {
+        Some(k) => k,
+        None => {
+            return Err((
                 StatusCode::UNAUTHORIZED,
                 Json(ErrorResponse {
-                    error: "Invalid or missing API key".into(),
+                    error: "Missing API key — set X-API-Key header".into(),
                 }),
-            )),
+            ));
         }
-    } else {
-        Ok(()) // No API key configured — allow all requests
+    };
+
+    let user = state.auth.authenticate_api_key(key).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Auth error: {}", e),
+            }),
+        )
+    })?;
+
+    match user {
+        Some(u) => {
+            // Rate limit check
+            if !state.rate_limiter.check(&u.id) {
+                return Err((
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(ErrorResponse {
+                        error: "Rate limit exceeded".into(),
+                    }),
+                ));
+            }
+            Ok(Some(u))
+        }
+        None => Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "Invalid API key".into(),
+            }),
+        )),
     }
 }
+

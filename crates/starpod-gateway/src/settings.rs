@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 
 use starpod_core::{FrontendConfig, FollowupMode, ReasoningEffort};
 
-use crate::routes::{check_api_key, ErrorResponse};
+use crate::routes::{authenticate_request, ErrorResponse};
 use crate::AppState;
 
 // ── Response helpers ────────────────────────────────────────────────────
@@ -151,7 +151,13 @@ async fn get_general(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> ApiResult<GeneralSettings> {
-    check_api_key(&state, &headers)?;
+    let auth_user = authenticate_request(&state, &headers).await?;
+    // Settings routes require admin role when auth is active
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin access required"));
+        }
+    }
     let cfg = state.config.read().unwrap();
     Ok(Json(GeneralSettings {
         provider: cfg.provider.clone(),
@@ -173,7 +179,13 @@ async fn put_general(
     headers: HeaderMap,
     Json(settings): Json<GeneralSettings>,
 ) -> ApiResult<serde_json::Value> {
-    check_api_key(&state, &headers)?;
+    let auth_user = authenticate_request(&state, &headers).await?;
+    // Settings routes require admin role when auth is active
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin access required"));
+        }
+    }
 
     if settings.model.is_empty() {
         return Err(bad_request("model cannot be empty"));
@@ -264,7 +276,13 @@ async fn get_models(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> ApiResult<ModelsResponse> {
-    check_api_key(&state, &headers)?;
+    let auth_user = authenticate_request(&state, &headers).await?;
+    // Settings routes require admin role when auth is active
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin access required"));
+        }
+    }
     Ok(Json(ModelsResponse { models: well_known_models() }))
 }
 
@@ -274,7 +292,13 @@ async fn get_memory(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> ApiResult<MemorySettings> {
-    check_api_key(&state, &headers)?;
+    let auth_user = authenticate_request(&state, &headers).await?;
+    // Settings routes require admin role when auth is active
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin access required"));
+        }
+    }
     let cfg = state.config.read().unwrap();
     Ok(Json(MemorySettings {
         half_life_days: cfg.memory.half_life_days,
@@ -291,7 +315,13 @@ async fn put_memory(
     headers: HeaderMap,
     Json(settings): Json<MemorySettings>,
 ) -> ApiResult<serde_json::Value> {
-    check_api_key(&state, &headers)?;
+    let auth_user = authenticate_request(&state, &headers).await?;
+    // Settings routes require admin role when auth is active
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin access required"));
+        }
+    }
 
     let mut doc = read_agent_toml(&state)?;
     let table = doc.as_table_mut().ok_or_else(|| internal("agent.toml is not a table"))?;
@@ -319,7 +349,13 @@ async fn get_cron(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> ApiResult<CronSettings> {
-    check_api_key(&state, &headers)?;
+    let auth_user = authenticate_request(&state, &headers).await?;
+    // Settings routes require admin role when auth is active
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin access required"));
+        }
+    }
     let cfg = state.config.read().unwrap();
     Ok(Json(CronSettings {
         default_max_retries: cfg.cron.default_max_retries,
@@ -333,7 +369,13 @@ async fn put_cron(
     headers: HeaderMap,
     Json(settings): Json<CronSettings>,
 ) -> ApiResult<serde_json::Value> {
-    check_api_key(&state, &headers)?;
+    let auth_user = authenticate_request(&state, &headers).await?;
+    // Settings routes require admin role when auth is active
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin access required"));
+        }
+    }
 
     let mut doc = read_agent_toml(&state)?;
     let table = doc.as_table_mut().ok_or_else(|| internal("agent.toml is not a table"))?;
@@ -358,7 +400,13 @@ async fn get_frontend(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> ApiResult<FrontendSettings> {
-    check_api_key(&state, &headers)?;
+    let auth_user = authenticate_request(&state, &headers).await?;
+    // Settings routes require admin role when auth is active
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin access required"));
+        }
+    }
     let cfg = FrontendConfig::load(&state.paths.config_dir);
     Ok(Json(FrontendSettings {
         greeting: cfg.greeting,
@@ -371,7 +419,13 @@ async fn put_frontend(
     headers: HeaderMap,
     Json(settings): Json<FrontendSettings>,
 ) -> ApiResult<serde_json::Value> {
-    check_api_key(&state, &headers)?;
+    let auth_user = authenticate_request(&state, &headers).await?;
+    // Settings routes require admin role when auth is active
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin access required"));
+        }
+    }
 
     let cfg = FrontendConfig {
         greeting: settings.greeting,
@@ -395,7 +449,13 @@ async fn get_file(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> ApiResult<FileContent> {
-    check_api_key(&state, &headers)?;
+    let auth_user = authenticate_request(&state, &headers).await?;
+    // Settings routes require admin role when auth is active
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin access required"));
+        }
+    }
 
     if !ALLOWED_FILES.contains(&name.as_str()) {
         return Err(bad_request(format!("File '{}' is not editable", name)));
@@ -411,7 +471,13 @@ async fn put_file(
     Path(name): Path<String>,
     Json(body): Json<FileContent>,
 ) -> ApiResult<serde_json::Value> {
-    check_api_key(&state, &headers)?;
+    let auth_user = authenticate_request(&state, &headers).await?;
+    // Settings routes require admin role when auth is active
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin access required"));
+        }
+    }
 
     if !ALLOWED_FILES.contains(&name.as_str()) {
         return Err(bad_request(format!("File '{}' is not editable", name)));
@@ -467,7 +533,13 @@ async fn list_users(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> ApiResult<Vec<UserInfo>> {
-    check_api_key(&state, &headers)?;
+    let auth_user = authenticate_request(&state, &headers).await?;
+    // Settings routes require admin role when auth is active
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin access required"));
+        }
+    }
 
     let users_dir = &state.paths.users_dir;
     let mut users = Vec::new();
@@ -499,7 +571,13 @@ async fn create_user(
     headers: HeaderMap,
     Json(req): Json<CreateUserRequest>,
 ) -> Result<(StatusCode, Json<UserInfo>), (StatusCode, Json<ErrorResponse>)> {
-    check_api_key(&state, &headers)?;
+    let auth_user = authenticate_request(&state, &headers).await?;
+    // Settings routes require admin role when auth is active
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin access required"));
+        }
+    }
     validate_user_id(&req.id)?;
 
     let user_dir = state.paths.users_dir.join(&req.id);
@@ -534,7 +612,13 @@ async fn get_user(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> ApiResult<UserDetail> {
-    check_api_key(&state, &headers)?;
+    let auth_user = authenticate_request(&state, &headers).await?;
+    // Settings routes require admin role when auth is active
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin access required"));
+        }
+    }
     validate_user_id(&id)?;
 
     let user_dir = state.paths.users_dir.join(&id);
@@ -559,7 +643,13 @@ async fn update_user(
     Path(id): Path<String>,
     Json(body): Json<FileContent>,
 ) -> ApiResult<serde_json::Value> {
-    check_api_key(&state, &headers)?;
+    let auth_user = authenticate_request(&state, &headers).await?;
+    // Settings routes require admin role when auth is active
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin access required"));
+        }
+    }
     validate_user_id(&id)?;
 
     let user_dir = state.paths.users_dir.join(&id);
@@ -577,7 +667,13 @@ async fn delete_user(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    check_api_key(&state, &headers)?;
+    let auth_user = authenticate_request(&state, &headers).await?;
+    // Settings routes require admin role when auth is active
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin access required"));
+        }
+    }
     validate_user_id(&id)?;
 
     let user_dir = state.paths.users_dir.join(&id);
@@ -623,8 +719,8 @@ fn set_or_remove_string(table: &mut toml::map::Map<String, toml::Value>, key: &s
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
     use std::sync::RwLock;
+    use std::time::Duration;
 
     use axum::body::Body;
     use axum::http::Request;
@@ -632,6 +728,7 @@ mod tests {
     use tower::ServiceExt;
 
     use starpod_agent::StarpodAgent;
+    use starpod_auth::{AuthStore, RateLimiter};
     use starpod_core::{ResolvedPaths, StarpodConfig, Mode};
     use crate::{build_router, GatewayEvent};
 
@@ -680,9 +777,14 @@ mod tests {
             env_file: None,
         };
 
+        let auth_db_path = paths.db_dir.join("users.db");
+        let auth = Arc::new(AuthStore::new(&auth_db_path).await.unwrap());
+        let rate_limiter = Arc::new(RateLimiter::new(0, Duration::from_secs(60)));
+
         let state = Arc::new(AppState {
             agent: Arc::new(agent),
-            api_key: None, // no auth for tests
+            auth,
+            rate_limiter,
             config: RwLock::new(config),
             paths,
             events_tx,
@@ -1343,31 +1445,46 @@ mod tests {
     // ── API key auth test ───────────────────────────────────────────────
 
     #[tokio::test]
-    async fn settings_require_api_key_when_configured() {
+    async fn settings_require_api_key_when_users_exist() {
         let (_tmp, state) = test_app_state().await;
 
-        // Set an API key on the state
-        let state_with_key = Arc::new(AppState {
-            agent: Arc::clone(&state.agent),
-            api_key: Some("secret-key".into()),
-            config: RwLock::new(state.config.read().unwrap().clone()),
-            paths: state.paths.clone(),
-            events_tx: state.events_tx.clone(),
-        });
+        // Create an admin user and API key
+        let admin = state.auth.create_user(None, Some("Admin"), starpod_auth::Role::Admin).await.unwrap();
+        let created = state.auth.create_api_key(&admin.id, Some("test key")).await.unwrap();
 
         // Request without key → 401
-        let (status, _) = get_json(Arc::clone(&state_with_key), "/api/settings/general").await;
+        let (status, _) = get_json(Arc::clone(&state), "/api/settings/general").await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
 
         // Request with correct key → 200
-        let app = build_router(Arc::clone(&state_with_key));
+        let app = build_router(Arc::clone(&state));
         let req = Request::builder()
             .method("GET")
             .uri("/api/settings/general")
-            .header("x-api-key", "secret-key")
+            .header("x-api-key", &created.key)
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn settings_reject_non_admin_users() {
+        let (_tmp, state) = test_app_state().await;
+
+        // Create a regular user and API key
+        let user = state.auth.create_user(None, Some("User"), starpod_auth::Role::User).await.unwrap();
+        let created = state.auth.create_api_key(&user.id, None).await.unwrap();
+
+        // Request with non-admin key → 403
+        let app = build_router(Arc::clone(&state));
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/settings/general")
+            .header("x-api-key", &created.key)
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 }

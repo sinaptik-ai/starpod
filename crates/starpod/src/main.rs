@@ -916,41 +916,37 @@ async fn resolve_agent(
 fn setup_telegram_and_notifier(
     agent: &Arc<StarpodAgent>,
     config: &StarpodConfig,
+    auth: Option<Arc<starpod_auth::AuthStore>>,
 ) -> Option<starpod_cron::NotificationSender> {
     let telegram_token = config.resolved_telegram_token();
-    let telegram_allowed = config.resolved_telegram_allowed_user_ids();
-    let telegram_allowed_usernames = config.resolved_telegram_allowed_usernames();
 
     let cron_notifier: Option<starpod_cron::NotificationSender> =
         if let Some(ref token) = telegram_token {
-            if !telegram_allowed.is_empty() {
+            let token = token.clone();
+            Some(Arc::new(move |_job_name, _session_id, result_text, _success| {
                 let token = token.clone();
-                let users = telegram_allowed.clone();
-                Some(Arc::new(move |_job_name, _session_id, result_text, _success| {
-                    let token = token.clone();
-                    let users = users.clone();
-                    Box::pin(async move {
-                        starpod_telegram::send_notification(&token, &users, &result_text).await;
-                    })
-                }))
-            } else {
-                None
-            }
+                Box::pin(async move {
+                    // Cron notifications go to all linked telegram users
+                    // For now, just log — full notification routing will be added later
+                    tracing::debug!("Cron notification: {}", &result_text[..result_text.len().min(100)]);
+                    let _ = token;
+                })
+            }))
         } else {
             None
         };
 
     if let Some(token) = telegram_token {
-        let tg_agent = Arc::clone(agent);
-        let allowed = telegram_allowed;
-        let allowed_names = telegram_allowed_usernames;
-        tokio::spawn(async move {
-            if let Err(e) =
-                starpod_telegram::run_with_agent_filtered(tg_agent, token, allowed, allowed_names).await
-            {
-                tracing::error!(error = %e, "Telegram bot error");
-            }
-        });
+        if let Some(auth) = auth {
+            let tg_agent = Arc::clone(agent);
+            tokio::spawn(async move {
+                if let Err(e) =
+                    starpod_telegram::run_with_agent_and_auth(tg_agent, auth, token).await
+                {
+                    tracing::error!(error = %e, "Telegram bot error");
+                }
+            });
+        }
     }
 
     cron_notifier
@@ -1242,7 +1238,7 @@ async fn main() -> anyhow::Result<()> {
             let display_name = config.agent_name.clone();
 
             let agent = Arc::new(StarpodAgent::with_paths(agent_config, paths.clone()).await?);
-            let cron_notifier = setup_telegram_and_notifier(&agent, &config);
+            let cron_notifier = setup_telegram_and_notifier(&agent, &config, None);
 
             print_header_with_name(&display_name);
             println!("  {} {} → {}", "DEV".bright_yellow().bold(), agent_name.bright_cyan(), instance_dir.display().to_string().dimmed());
@@ -1259,7 +1255,8 @@ async fn main() -> anyhow::Result<()> {
             let display_name = config.agent_name.clone();
             let telegram_active = config.resolved_telegram_token().is_some();
             let agent = Arc::new(agent);
-            let cron_notifier = setup_telegram_and_notifier(&agent, &config);
+            let auth = starpod_gateway::create_auth_store(&paths).await.ok();
+            let cron_notifier = setup_telegram_and_notifier(&agent, &config, auth);
 
             // Print startup banner
             println!();

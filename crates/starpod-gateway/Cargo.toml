@@ -11,6 +11,7 @@ starpod-cron = { path = "../starpod-cron" }
 starpod-session = { path = "../starpod-session" }
 agent-sdk = { path = "../agent-sdk" }
 starpod-instances = { path = "../starpod-instances" }
+starpod-auth = { path = "../starpod-auth" }
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }

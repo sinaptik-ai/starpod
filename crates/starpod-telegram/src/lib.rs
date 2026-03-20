@@ -1,24 +1,17 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use teloxide::prelude::*;
 use teloxide::types::ParseMode;
 use tokio_stream::StreamExt;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 
 use agent_sdk::{ContentBlock, Message};
 use starpod_agent::StarpodAgent;
-use starpod_core::{Attachment, ChatMessage, StarpodConfig};
+use starpod_auth::AuthStore;
+use starpod_core::{Attachment, ChatMessage};
 
 /// Maximum Telegram message length.
 const MAX_MSG_LEN: usize = 4096;
-
-/// Allowed user IDs and usernames (both empty = no one can chat, only /start works).
-#[derive(Clone)]
-struct AllowedUsers {
-    ids: Arc<HashSet<u64>>,
-    usernames: Arc<HashSet<String>>,
-}
 
 /// Message delivery config passed through teloxide DI.
 #[derive(Clone)]
@@ -30,45 +23,16 @@ struct StreamConfig {
 #[derive(Clone)]
 struct AgentName(String);
 
-/// Run the Telegram bot.
+/// Run the Telegram bot with a pre-built agent and auth store.
 ///
-/// This takes ownership of the agent so it can be shared with the gateway
-/// if both are running. Pass `Arc<StarpodAgent>` directly via `run_with_agent`.
-pub async fn run(config: StarpodConfig, token: String) -> starpod_core::Result<()> {
-    let allowed_ids = config.resolved_telegram_allowed_user_ids();
-    let allowed_names = config.resolved_telegram_allowed_usernames();
-    let agent = Arc::new(StarpodAgent::new(config).await?);
-    run_with_agent_filtered(agent, token, allowed_ids, allowed_names).await
-}
-
-/// Run the Telegram bot with a pre-built agent (for sharing with the gateway).
-pub async fn run_with_agent(agent: Arc<StarpodAgent>, token: String) -> starpod_core::Result<()> {
-    run_with_agent_filtered(agent, token, Vec::new(), Vec::new()).await
-}
-
-/// Run the Telegram bot with a pre-built agent and an allow-list.
-pub async fn run_with_agent_filtered(
+/// Telegram users must be linked to a database user via `AuthStore::link_telegram`.
+/// Unlinked users get a "not linked" message. `/start` always works and shows
+/// the user's Telegram ID for linking.
+pub async fn run_with_agent_and_auth(
     agent: Arc<StarpodAgent>,
+    auth: Arc<AuthStore>,
     token: String,
-    allowed_users: Vec<u64>,
-    allowed_usernames: Vec<String>,
 ) -> starpod_core::Result<()> {
-    if allowed_users.is_empty() && allowed_usernames.is_empty() {
-        warn!("Telegram bot has no allowed_users or allowed_usernames configured — no one can chat. Send /start to the bot to get your user ID/username, then add it to [channels.telegram] in config.toml");
-    } else {
-        info!(
-            allowed_users = ?allowed_users,
-            allowed_usernames = ?allowed_usernames,
-            "Telegram bot restricted to {} user ID(s) + {} username(s)",
-            allowed_users.len(),
-            allowed_usernames.len()
-        );
-    }
-
-    let allowed = AllowedUsers {
-        ids: Arc::new(allowed_users.into_iter().collect()),
-        usernames: Arc::new(allowed_usernames.into_iter().map(|u| u.to_lowercase()).collect()),
-    };
     let stream_cfg = StreamConfig {
         stream_mode: agent.config().channels.telegram.as_ref()
             .map(|t| t.stream_mode.clone())
@@ -81,7 +45,7 @@ pub async fn run_with_agent_filtered(
     let handler = Update::filter_message().endpoint(handle_message);
 
     Dispatcher::builder(bot, handler)
-        .dependencies(dptree::deps![agent, allowed, stream_cfg, agent_name])
+        .dependencies(dptree::deps![agent, auth, stream_cfg, agent_name])
         .default_handler(|_| async {})
         .error_handler(LoggingErrorHandler::with_custom_text(
             "Error in telegram handler",
@@ -140,7 +104,7 @@ async fn handle_message(
     bot: Bot,
     msg: TeloxideMessage,
     agent: Arc<StarpodAgent>,
-    allowed: AllowedUsers,
+    auth: Arc<AuthStore>,
     stream_cfg: StreamConfig,
     agent_name: AgentName,
 ) -> Result<(), teloxide::RequestError> {
@@ -214,30 +178,29 @@ async fn handle_message(
     }
 
     let from_user = msg.from.as_ref();
-    let user_id = from_user.map(|u| u.id.0);
+    let telegram_id = from_user.map(|u| u.id.0 as i64);
     let username = from_user.and_then(|u| u.username.clone());
     let chat_id = msg.chat.id;
-    let user_id_str = user_id.map(|id| id.to_string());
 
-    // /start always works — it shows the user their ID/username for config setup
+    // /start always works — it shows the user their Telegram ID for linking
     if text == "/start" {
         let name = &agent_name.0;
         let mut greeting = format!("Hello\\! I'm {}, your personal AI assistant\\.", escape_md(name));
-        if let Some(id) = user_id {
-            greeting.push_str(&format!("\n\nYour user ID: `{}`", id));
+        if let Some(id) = telegram_id {
+            greeting.push_str(&format!("\n\nYour Telegram ID: `{}`", id));
         }
         if let Some(ref uname) = username {
             greeting.push_str(&format!("\nYour username: `{}`", escape_md(uname)));
         }
-        greeting.push_str("\nAdd your ID to `\\[channels\\.telegram\\] allowed_users` or your username to `allowed_usernames` in config to start chatting\\.");
+        greeting.push_str("\nAsk your admin to link your Telegram account to start chatting\\.");
         bot.send_message(chat_id, &greeting)
             .parse_mode(ParseMode::MarkdownV2)
             .await
             .or_else(|_| {
                 let fallback = format!(
-                    "Hello! I'm {}, your personal AI assistant.\n\nYour user ID: {}\nYour username: {}\nAdd your ID to [channels.telegram] allowed_users or username to allowed_usernames in config to start chatting.",
+                    "Hello! I'm {}, your personal AI assistant.\n\nYour Telegram ID: {}\nYour username: {}\nAsk your admin to link your Telegram account to start chatting.",
                     name,
-                    user_id.map(|id| id.to_string()).unwrap_or_default(),
+                    telegram_id.map(|id| id.to_string()).unwrap_or_default(),
                     username.as_deref().unwrap_or("(not set)")
                 );
                 tokio::task::block_in_place(|| {
@@ -250,28 +213,40 @@ async fn handle_message(
         return Ok(());
     }
 
-    // Check allow-list: match by user ID or username
-    let id_allowed = user_id
-        .map(|id| allowed.ids.contains(&id))
-        .unwrap_or(false);
-    let name_allowed = username.as_ref()
-        .map(|u| allowed.usernames.contains(&u.to_lowercase()))
-        .unwrap_or(false);
-    let is_allowed = id_allowed || name_allowed;
-    if !is_allowed {
-        debug!(
-            user_id = ?user_id,
-            chat_id = %chat_id,
-            "Rejected message from unauthorized user"
-        );
-        bot.send_message(
-            chat_id,
-            "Sorry, you're not authorized to use this bot. Ask the bot owner to add your user ID to the allow-list.",
-        )
-        .await
-        .ok();
+    // Authenticate via Telegram link in the auth DB
+    let Some(tg_id) = telegram_id else {
+        bot.send_message(chat_id, "Could not determine your Telegram ID.")
+            .await
+            .ok();
         return Ok(());
-    }
+    };
+
+    let auth_user = match auth.authenticate_telegram(tg_id).await {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            debug!(
+                telegram_id = tg_id,
+                chat_id = %chat_id,
+                "Rejected message from unlinked Telegram user"
+            );
+            bot.send_message(
+                chat_id,
+                "Your Telegram account is not linked. Ask your admin to link it, or send /start to see your Telegram ID.",
+            )
+            .await
+            .ok();
+            return Ok(());
+        }
+        Err(e) => {
+            error!(error = %e, "Telegram auth error");
+            bot.send_message(chat_id, "Authentication error. Please try again later.")
+                .await
+                .ok();
+            return Ok(());
+        }
+    };
+
+    let user_id_str = Some(auth_user.id);
 
     debug!(
         user_id = ?user_id_str,

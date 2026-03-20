@@ -7,6 +7,7 @@ description = "Telegram bot interface for Starpod"
 [dependencies]
 starpod-core = { path = "../starpod-core" }
 starpod-agent = { path = "../starpod-agent" }
+starpod-auth = { path = "../starpod-auth" }
 agent-sdk = { path = "../agent-sdk" }
 teloxide = { version = "0.13", features = ["macros"] }
 tokio = { version = "1", features = ["full"] }

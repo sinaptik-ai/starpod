@@ -117,18 +117,14 @@ pub struct ProvidersConfig {
     pub ollama: Option<ProviderConfig>,
 }
 
-/// A single entry in the Telegram allow-list: either a numeric user ID or a username string.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum AllowedUser {
-    Id(u64),
-    Username(String),
-}
-
 /// Telegram channel configuration (lives under `[channels.telegram]`).
 ///
 /// **The bot token belongs in `.env` as `TELEGRAM_BOT_TOKEN`, not here.**
 /// Any `bot_token` found in a config file is ignored and triggers a warning.
+///
+/// Telegram user access is now controlled via the `starpod-auth` crate
+/// (database-backed user management with Telegram account linking),
+/// not via config-file allow-lists.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TelegramChannelConfig {
@@ -138,11 +134,6 @@ pub struct TelegramChannelConfig {
     /// Inactivity gap (in minutes) before auto-closing a Telegram session (default: 360 = 6h).
     #[serde(default = "default_gap_minutes")]
     pub gap_minutes: Option<i64>,
-    /// Users allowed to interact with the bot — can be numeric IDs or
-    /// usernames (without @). Example: `[123456789, "alice"]`.
-    /// If empty, no one can chat (only /start works to show user ID/username).
-    #[serde(default)]
-    pub allowed_users: Vec<AllowedUser>,
     /// Message mode: "final_only" (default) sends only the last assistant
     /// message; "all_messages" sends each assistant message as a standalone
     /// Telegram message (tool-use messages are excluded).
@@ -157,33 +148,27 @@ impl Default for TelegramChannelConfig {
         Self {
             enabled: true,
             gap_minutes: default_gap_minutes(),
-            allowed_users: Vec::new(),
             stream_mode: default_stream_mode(),
         }
     }
 }
 
-impl TelegramChannelConfig {
-    /// Extract the numeric user IDs from the allow-list.
-    pub fn allowed_user_ids(&self) -> Vec<u64> {
-        self.allowed_users
-            .iter()
-            .filter_map(|u| match u {
-                AllowedUser::Id(id) => Some(*id),
-                _ => None,
-            })
-            .collect()
-    }
+/// Authentication and rate-limiting configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AuthConfig {
+    /// Maximum requests per user per window (0 = disabled).
+    pub rate_limit_requests: u32,
+    /// Rate-limit window in seconds.
+    pub rate_limit_window_secs: u64,
+}
 
-    /// Extract the usernames (lowercased) from the allow-list.
-    pub fn allowed_usernames(&self) -> Vec<String> {
-        self.allowed_users
-            .iter()
-            .filter_map(|u| match u {
-                AllowedUser::Username(name) => Some(name.to_lowercase()),
-                _ => None,
-            })
-            .collect()
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            rate_limit_requests: 0, // disabled by default
+            rate_limit_window_secs: 60,
+        }
     }
 }
 
@@ -456,6 +441,10 @@ pub struct StarpodConfig {
     #[serde(default)]
     pub attachments: AttachmentsConfig,
 
+    /// Authentication settings.
+    #[serde(default)]
+    pub auth: AuthConfig,
+
     /// The project root directory (not serialized — set at load time).
     #[serde(skip)]
     pub project_root: PathBuf,
@@ -549,6 +538,7 @@ impl Default for StarpodConfig {
             providers: ProvidersConfig::default(),
             channels: ChannelsConfig::default(),
             attachments: AttachmentsConfig::default(),
+            auth: AuthConfig::default(),
             project_root: PathBuf::new(),
         }
     }
@@ -570,24 +560,6 @@ impl StarpodConfig {
     /// Resolved Telegram bot token from the `TELEGRAM_BOT_TOKEN` env var.
     pub fn resolved_telegram_token(&self) -> Option<String> {
         std::env::var("TELEGRAM_BOT_TOKEN").ok()
-    }
-
-    /// Resolved Telegram allowed user IDs from [channels.telegram] section.
-    pub fn resolved_telegram_allowed_user_ids(&self) -> Vec<u64> {
-        self.channels
-            .telegram
-            .as_ref()
-            .map(|t| t.allowed_user_ids())
-            .unwrap_or_default()
-    }
-
-    /// Resolved Telegram allowed usernames (lowercased) from [channels.telegram] section.
-    pub fn resolved_telegram_allowed_usernames(&self) -> Vec<String> {
-        self.channels
-            .telegram
-            .as_ref()
-            .map(|t| t.allowed_usernames())
-            .unwrap_or_default()
     }
 
     /// Get the inactivity gap (in minutes) for a channel by name.
@@ -662,55 +634,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_allowed_users_ids_only() {
-        let toml = r#"
-            [channels.telegram]
-            allowed_users = [111, 222]
-        "#;
-        let config: StarpodConfig = toml::from_str(toml).unwrap();
-        let tg = config.channels.telegram.as_ref().unwrap();
-        assert_eq!(tg.allowed_user_ids(), vec![111, 222]);
-        assert!(tg.allowed_usernames().is_empty());
-    }
-
-    #[test]
-    fn test_allowed_users_usernames_only() {
-        let toml = r#"
-            [channels.telegram]
-            allowed_users = ["alice", "Bob"]
-        "#;
-        let config: StarpodConfig = toml::from_str(toml).unwrap();
-        let tg = config.channels.telegram.as_ref().unwrap();
-        assert!(tg.allowed_user_ids().is_empty());
-        assert_eq!(tg.allowed_usernames(), vec!["alice", "bob"]);
-    }
-
-    #[test]
-    fn test_allowed_users_mixed() {
-        let toml = r#"
-            [channels.telegram]
-            allowed_users = [123456789, "alice", 987654321, "Bob"]
-        "#;
-        let config: StarpodConfig = toml::from_str(toml).unwrap();
-        let tg = config.channels.telegram.as_ref().unwrap();
-        assert_eq!(tg.allowed_user_ids(), vec![123456789, 987654321]);
-        assert_eq!(tg.allowed_usernames(), vec!["alice", "bob"]);
-    }
-
-    #[test]
-    fn test_allowed_users_empty() {
-        let toml = r#"
-            [channels.telegram]
-            allowed_users = []
-        "#;
-        let config: StarpodConfig = toml::from_str(toml).unwrap();
-        let tg = config.channels.telegram.as_ref().unwrap();
-        assert!(tg.allowed_user_ids().is_empty());
-        assert!(tg.allowed_usernames().is_empty());
-    }
-
-    #[test]
-    fn test_allowed_users_default() {
+    fn test_telegram_default() {
         let toml = "";
         let config: StarpodConfig = toml::from_str(toml).unwrap();
         assert!(config.channels.telegram.is_none());

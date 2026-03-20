@@ -19,6 +19,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{info, warn, debug};
 
 use starpod_agent::StarpodAgent;
+use starpod_auth::{AuthStore, RateLimiter};
 use starpod_core::{StarpodConfig, ResolvedPaths, reload_agent_config};
 
 /// Event broadcast to connected WebSocket clients via a `tokio::sync::broadcast` channel.
@@ -50,7 +51,8 @@ pub enum GatewayEvent {
 /// Config is wrapped in `RwLock` for hot reload support.
 pub struct AppState {
     pub agent: Arc<StarpodAgent>,
-    pub api_key: Option<String>,
+    pub auth: Arc<AuthStore>,
+    pub rate_limiter: Arc<RateLimiter>,
     pub config: RwLock<StarpodConfig>,
     pub paths: ResolvedPaths,
     /// Broadcast channel for pushing events to connected WebSocket clients.
@@ -176,6 +178,33 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 /// The `paths` parameter determines which config files are watched for hot reload:
 /// - **Workspace**: watches both `starpod.toml` and `agents/<name>/agent.toml`
 /// - **SingleAgent**: watches `.starpod/agent.toml`
+/// Create and bootstrap an `AuthStore` for the given paths.
+///
+/// This is the canonical way to create an auth store. Both the gateway and the
+/// CLI should use this to ensure the same DB path and bootstrap logic.
+pub async fn create_auth_store(paths: &ResolvedPaths) -> starpod_core::Result<Arc<AuthStore>> {
+    let auth_db_path = paths.db_dir.join("users.db");
+    let auth = Arc::new(AuthStore::new(&auth_db_path).await
+        .map_err(|e| starpod_core::StarpodError::Auth(format!("Failed to init auth store: {}", e)))?);
+
+    // Bootstrap admin user
+    let existing_api_key = std::env::var("STARPOD_API_KEY").ok();
+    if let Some((admin, key)) = auth.bootstrap_admin(existing_api_key.as_deref()).await? {
+        info!(user_id = %admin.id, "Admin user bootstrapped");
+        if existing_api_key.is_none() {
+            info!(api_key = %key, "New admin API key generated — save this!");
+        }
+    }
+
+    // Migrate file-based users
+    let migrated = auth.migrate_file_users(&paths.users_dir).await?;
+    if migrated > 0 {
+        info!(count = migrated, "Migrated file-based users to auth DB");
+    }
+
+    Ok(auth)
+}
+
 pub async fn serve_with_agent(
     agent: Arc<StarpodAgent>,
     config: StarpodConfig,
@@ -215,11 +244,19 @@ pub async fn serve_with_agent(
     let _lifecycle_handle = agent.run_lifecycle();
     info!("Lifecycle prompts dispatched");
 
-    let api_key = std::env::var("STARPOD_API_KEY").ok();
+    // Initialize auth store
+    let auth = create_auth_store(&paths).await?;
+
+    // Create rate limiter from config
+    let rate_limiter = Arc::new(RateLimiter::new(
+        config.auth.rate_limit_requests,
+        std::time::Duration::from_secs(config.auth.rate_limit_window_secs),
+    ));
 
     let state = Arc::new(AppState {
         agent,
-        api_key,
+        auth,
+        rate_limiter,
         config: RwLock::new(config.clone()),
         paths,
         events_tx,
