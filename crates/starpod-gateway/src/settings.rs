@@ -738,7 +738,13 @@ async fn list_skills(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> ApiResult<Vec<SkillInfo>> {
-    check_api_key(&state, &headers)?;
+    let auth_user = authenticate_request(&state, &headers).await?;
+    // Settings routes require admin role when auth is active
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin role required"));
+        }
+    }
     let store = skill_store(&state)?;
     let skills = store.list().map_err(|e| internal(e))?;
     Ok(Json(
@@ -759,7 +765,12 @@ async fn create_skill(
     headers: HeaderMap,
     Json(req): Json<CreateSkillRequest>,
 ) -> Result<(StatusCode, Json<SkillDetail>), (StatusCode, Json<ErrorResponse>)> {
-    check_api_key(&state, &headers)?;
+    let auth_user = authenticate_request(&state, &headers).await?;
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin role required"));
+        }
+    }
     let store = skill_store(&state)?;
     store
         .create(&req.name, &req.description, None, &req.body)
@@ -786,7 +797,12 @@ async fn get_skill(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> ApiResult<SkillDetail> {
-    check_api_key(&state, &headers)?;
+    let auth_user = authenticate_request(&state, &headers).await?;
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin role required"));
+        }
+    }
     let store = skill_store(&state)?;
     let skill = store
         .get(&name)
@@ -808,7 +824,12 @@ async fn update_skill(
     Path(name): Path<String>,
     Json(req): Json<UpdateSkillRequest>,
 ) -> ApiResult<serde_json::Value> {
-    check_api_key(&state, &headers)?;
+    let auth_user = authenticate_request(&state, &headers).await?;
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin role required"));
+        }
+    }
     let store = skill_store(&state)?;
     store
         .update(&name, &req.description, None, &req.body)
@@ -821,7 +842,12 @@ async fn delete_skill(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    check_api_key(&state, &headers)?;
+    let auth_user = authenticate_request(&state, &headers).await?;
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin role required"));
+        }
+    }
     let store = skill_store(&state)?;
     store.delete(&name).map_err(|e| bad_request(e.to_string()))?;
     Ok(StatusCode::NO_CONTENT)
