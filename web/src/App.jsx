@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useCallback } from 'react'
 import './style.css'
 import { AppProvider, useApp, isMobile } from './contexts/AppContext'
 import { generateUUID } from './lib/utils'
+import { markSessionRead } from './lib/api'
 import AuthGate from './components/AuthGate'
 import Header from './components/Header'
 import Sidebar from './components/Sidebar'
@@ -54,8 +55,9 @@ function AppInner() {
         if (toastsRef.current) {
           toastsRef.current.showToast(data.job_name, data.result_preview, data.success, data.session_id)
         }
-        if (data.session_id && data.session_id !== currentSessionIdRef.current) {
-          dispatch({ type: 'MARK_UNREAD', payload: data.session_id })
+        // If the notification is for the currently active session, mark it read
+        if (data.session_id && data.session_id === currentSessionIdRef.current) {
+          markSessionRead(data.session_id)
         }
         fetchSessionList()
         return
@@ -64,11 +66,11 @@ function AppInner() {
       if (data.type === 'stream_start' && data.session_id) {
         currentSessionIdRef.current = data.session_id
         dispatch({ type: 'SET_SESSION', payload: { id: data.session_id, key: null } })
-        dispatch({ type: 'MARK_READ', payload: data.session_id })
+        markSessionRead(data.session_id)
       }
 
       if (data.type === 'stream_end') {
-        if (currentSessionIdRef.current) dispatch({ type: 'MARK_READ', payload: currentSessionIdRef.current })
+        if (currentSessionIdRef.current) markSessionRead(currentSessionIdRef.current)
         fetchSessionList()
       }
 
@@ -106,7 +108,7 @@ function AppInner() {
   const handleSelectSession = useCallback((session) => {
     if (settingsVisible) dispatch({ type: 'HIDE_SETTINGS' })
     dispatch({ type: 'SET_SESSION', payload: { id: session.id, key: session.channel_session_key || generateUUID() } })
-    dispatch({ type: 'MARK_READ', payload: session.id })
+    if (!session.is_read) markSessionRead(session.id)
     if (chatRef.current) chatRef.current.loadSession(session.id)
     if (isMobile()) dispatch({ type: 'CLOSE_SIDEBAR' })
   }, [dispatch, settingsVisible])

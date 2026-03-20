@@ -23,6 +23,7 @@ let router = starpod_gateway::build_router(state);
 | `GET` | `/api/sessions` | List sessions |
 | `GET` | `/api/sessions/:id` | Get session metadata |
 | `GET` | `/api/sessions/:id/messages` | Get session messages |
+| `POST` | `/api/sessions/:id/read` | Mark session read/unread |
 | `GET` | `/api/memory/search` | Full-text search |
 | `POST` | `/api/memory/reindex` | Rebuild FTS index |
 | `GET` | `/api/instances` | List remote instances |

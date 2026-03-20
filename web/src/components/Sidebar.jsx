@@ -1,10 +1,11 @@
 import React from 'react'
 import { useApp, isMobile } from '../contexts/AppContext'
 import { formatSessionDate } from '../lib/utils'
+import { markSessionRead } from '../lib/api'
 
 function Sidebar({ onSelectSession }) {
   const { state, dispatch } = useApp()
-  const { sidebarOpen, currentSessionId, sessions, readSessions, settingsVisible } = state
+  const { sidebarOpen, currentSessionId, sessions, settingsVisible } = state
 
   function closeSidebar() {
     dispatch({ type: 'CLOSE_SIDEBAR' })
@@ -17,7 +18,7 @@ function Sidebar({ onSelectSession }) {
 
   function handleSessionClick(session) {
     dispatch({ type: 'SET_SESSION', payload: { id: session.id, key: session.channel_session_key } })
-    dispatch({ type: 'MARK_READ', payload: session.id })
+    if (!session.is_read) markSessionRead(session.id)
     if (isMobile()) closeSidebar()
     if (onSelectSession) onSelectSession(session)
   }
@@ -33,8 +34,8 @@ function Sidebar({ onSelectSession }) {
 
   // Sort: unread first, then by date
   const sorted = [...(sessions || [])].sort((a, b) => {
-    const aUnread = readSessions.has(a.id) ? 0 : 1
-    const bUnread = readSessions.has(b.id) ? 0 : 1
+    const aUnread = a.is_read ? 0 : 1
+    const bUnread = b.is_read ? 0 : 1
     if (aUnread !== bUnread) return bUnread - aUnread
     return new Date(b.last_message_at || b.created_at) - new Date(a.last_message_at || a.created_at)
   })
@@ -75,7 +76,7 @@ function Sidebar({ onSelectSession }) {
         ) : (
           sorted.map(s => {
             const active = s.id === currentSessionId
-            const unread = !readSessions.has(s.id) && !active
+            const unread = !s.is_read && !active
             const summary = s.title || s.summary || 'Untitled conversation'
             const date = formatSessionDate(s.last_message_at || s.created_at)
             const msgs = s.message_count || 0

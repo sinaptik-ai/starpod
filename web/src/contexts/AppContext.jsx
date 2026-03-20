@@ -1,20 +1,6 @@
 import { createContext, useContext, useReducer } from 'react'
 import { generateUUID } from '../lib/utils'
 
-const UNREAD_KEY = 'starpod_read_sessions'
-
-function loadReadSessions() {
-  try {
-    return new Set(JSON.parse(localStorage.getItem(UNREAD_KEY) || '[]'))
-  } catch {
-    return new Set()
-  }
-}
-
-function persistReadSessions(readSessions) {
-  localStorage.setItem(UNREAD_KEY, JSON.stringify([...readSessions]))
-}
-
 function initialSettingsFromHash() {
   const hash = window.location.hash
   if (hash.startsWith('#/settings')) {
@@ -34,7 +20,6 @@ const initialState = {
   currentSessionId: null,
   currentSessionKey: generateUUID(),
   sessions: [],
-  readSessions: loadReadSessions(),
   previewUrl: null,
 }
 
@@ -78,28 +63,8 @@ function appReducer(state, action) {
         currentSessionKey: generateUUID(),
       }
 
-    case 'SET_SESSIONS': {
-      const sessions = action.payload || []
-      // Prune stale readSessions entries
-      const ids = new Set(sessions.map(s => s.id))
-      const pruned = new Set([...state.readSessions].filter(id => ids.has(id)))
-      persistReadSessions(pruned)
-      return { ...state, sessions, readSessions: pruned }
-    }
-
-    case 'MARK_READ': {
-      const next = new Set(state.readSessions)
-      next.add(action.payload)
-      persistReadSessions(next)
-      return { ...state, readSessions: next }
-    }
-
-    case 'MARK_UNREAD': {
-      const next = new Set(state.readSessions)
-      next.delete(action.payload)
-      persistReadSessions(next)
-      return { ...state, readSessions: next }
-    }
+    case 'SET_SESSIONS':
+      return { ...state, sessions: action.payload || [] }
 
     case 'OPEN_PREVIEW':
       return { ...state, previewUrl: action.payload }

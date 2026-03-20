@@ -221,11 +221,17 @@ pub async fn serve_with_agent(
 
     // Compose notifier: broadcast to WS clients + forward to original (Telegram) notifier
     let ws_tx = events_tx.clone();
+    let notify_agent = agent.clone();
     let composed_notifier: Option<starpod_cron::NotificationSender> = {
         Some(Arc::new(move |job_name: String, session_id: String, result_text: String, success: bool| {
             let notifier = notifier.clone();
             let ws_tx = ws_tx.clone();
+            let agent = notify_agent.clone();
             Box::pin(async move {
+                // Mark the cron session as unread
+                if !session_id.is_empty() {
+                    let _ = agent.session_mgr().mark_read(&session_id, false).await;
+                }
                 // Broadcast to connected WS clients
                 let _ = ws_tx.send(GatewayEvent::CronComplete {
                     job_name: job_name.clone(),

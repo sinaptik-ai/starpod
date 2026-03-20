@@ -43,6 +43,7 @@ pub fn api_routes() -> Router<Arc<AppState>> {
         .route("/api/sessions", get(list_sessions_handler))
         .route("/api/sessions/{id}", get(get_session_handler))
         .route("/api/sessions/{id}/messages", get(get_session_messages_handler))
+        .route("/api/sessions/{id}/read", post(mark_session_read_handler))
         .route("/api/memory/search", get(memory_search_handler))
         .route("/api/memory/reindex", post(reindex_handler))
         .route("/api/instances", get(list_instances_handler))
@@ -366,6 +367,36 @@ async fn get_session_messages_handler(
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
                 error: format!("Get messages error: {}", e),
+            }),
+        )),
+    }
+}
+
+/// Mark session read/unread — POST /api/sessions/:id/read
+#[derive(Debug, Deserialize)]
+struct MarkReadRequest {
+    #[serde(default = "default_is_read")]
+    is_read: bool,
+}
+
+fn default_is_read() -> bool {
+    true
+}
+
+async fn mark_session_read_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<MarkReadRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    authenticate_request(&state, &headers).await?;
+
+    match state.agent.session_mgr().mark_read(&id, body.is_read).await {
+        Ok(()) => Ok(Json(serde_json::json!({ "ok": true }))),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("Mark read error: {}", e),
             }),
         )),
     }
@@ -972,6 +1003,88 @@ mod tests {
     #[test]
     fn public_ipv6_allowed() {
         assert!(!is_private_ip(IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888))));
+    }
+
+    // ── Mark-read endpoint tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn mark_session_read_pre_bootstrap() {
+        let (_tmp, state) = test_app_state().await;
+
+        // Create a session via the session manager
+        let session_mgr = state.agent.session_mgr();
+        let sid = session_mgr
+            .create_session(&starpod_session::Channel::Main, "k1")
+            .await
+            .unwrap();
+
+        // Mark unread
+        let app = build_router(Arc::clone(&state));
+        let body = serde_json::json!({ "is_read": false });
+        let req = Request::builder()
+            .method("POST")
+            .uri(format!("/api/sessions/{sid}/read"))
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&body).unwrap()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Verify via list endpoint
+        let app = build_router(Arc::clone(&state));
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/sessions?limit=10")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let sessions = json.as_array().unwrap();
+        let session = sessions.iter().find(|s| s["id"] == sid).unwrap();
+        assert_eq!(session["is_read"], false);
+
+        // Mark read again
+        let app = build_router(Arc::clone(&state));
+        let body = serde_json::json!({ "is_read": true });
+        let req = Request::builder()
+            .method("POST")
+            .uri(format!("/api/sessions/{sid}/read"))
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&body).unwrap()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Verify read again
+        let app = build_router(Arc::clone(&state));
+        let req = Request::builder()
+            .method("GET")
+            .uri(format!("/api/sessions/{sid}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["is_read"], true);
+    }
+
+    #[tokio::test]
+    async fn mark_session_read_requires_auth() {
+        let (_tmp, state) = test_app_state().await;
+        // Create a user so auth is enforced
+        state.auth.create_user(None, None, starpod_auth::Role::Admin).await.unwrap();
+
+        let app = build_router(Arc::clone(&state));
+        let body = serde_json::json!({ "is_read": true });
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/sessions/some-id/read")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&body).unwrap()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 }
 

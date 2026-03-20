@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef, us
 import { useApp } from '../contexts/AppContext'
 import { escapeHtml, toolIconClass, toolIconSymbol, getToolPreview } from '../lib/utils'
 import { formatText, formatUserText } from '../lib/markdown'
-import { authHeaders } from '../lib/api'
+import { authHeaders, markSessionRead } from '../lib/api'
 import ToolCard from './ToolCard'
 import Welcome from './Welcome'
 
@@ -127,7 +127,7 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
         })
 
         if (data.session_id || currentSessionId) {
-          dispatch({ type: 'MARK_READ', payload: data.session_id || currentSessionId })
+          markSessionRead(data.session_id || currentSessionId)
         }
         break
       }

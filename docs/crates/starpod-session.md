@@ -33,6 +33,10 @@ let summary = mgr.session_usage(&id).await?;
 // Compaction logging
 mgr.record_compaction(&id, "auto", 150_000, "Summary text", 12).await?;
 
+// Read state
+mgr.mark_read(&id, false).await?;             // Mark unread
+mgr.mark_read(&id, true).await?;              // Mark read
+
 // Listing
 let sessions = mgr.list_sessions(20).await?;
 let session = mgr.get_session(&id).await?;
@@ -72,6 +76,7 @@ pub struct SessionMeta {
     pub channel: String,
     pub channel_session_key: Option<String>,
     pub user_id: String,
+    pub is_read: bool,
 }
 
 pub struct UsageRecord {
@@ -95,4 +100,4 @@ pub struct UsageSummary {
 
 ## Tests
 
-15+ unit tests covering channel resolution, time-gap auto-close, session isolation, usage tracking, compaction logging, and closed session ID propagation.
+20+ unit tests covering channel resolution, time-gap auto-close, session isolation, usage tracking, compaction logging, closed session ID propagation, and read/unread state management.
