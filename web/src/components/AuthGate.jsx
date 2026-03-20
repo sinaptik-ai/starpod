@@ -22,12 +22,31 @@ export default function AuthGate({ children }) {
     }
   }, [])
 
-  // Check on mount
+  // Check on mount — try URL token first, then localStorage
   useEffect(() => {
-    const stored = localStorage.getItem(API_KEY_STORAGE)
-    verify(stored).then(ok => {
+    const params = new URLSearchParams(window.location.search)
+    const urlToken = params.get('token')
+
+    const tryAuth = async () => {
+      // URL token takes priority (used by dev mode auto-login)
+      if (urlToken) {
+        const ok = await verify(urlToken)
+        if (ok) {
+          localStorage.setItem(API_KEY_STORAGE, urlToken)
+          // Clean token from URL without reload
+          params.delete('token')
+          const clean = params.toString()
+          window.history.replaceState({}, '', window.location.pathname + (clean ? '?' + clean : '') + window.location.hash)
+          setStatus('authenticated')
+          return
+        }
+      }
+      // Fall back to stored key
+      const stored = localStorage.getItem(API_KEY_STORAGE)
+      const ok = await verify(stored)
       setStatus(ok ? 'authenticated' : 'login')
-    })
+    }
+    tryAuth()
   }, [verify])
 
   const handleSubmit = async (e) => {

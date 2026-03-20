@@ -21,58 +21,6 @@ use tracing::{debug, info};
 use crate::error::StarpodError;
 
 /// Default USER.md content seeded for new users.
-const DEFAULT_USER: &str = "\
-# User Profile
-
-<!-- The agent reads this file at the start of every conversation to personalize responses. -->
-<!-- Fill in what's relevant — leave sections blank or remove them if not needed. -->
-
-## Name
-<!-- Your name or how you'd like to be addressed. -->
-
-## Role
-<!-- e.g. software engineer, student, researcher, founder -->
-
-## Expertise
-<!-- What you're good at — helps the agent calibrate explanations. -->
-<!-- e.g. \"senior Rust developer\", \"new to programming\", \"data scientist\" -->
-
-## Preferences
-<!-- Communication style, formatting, language, or workflow preferences. -->
-<!-- e.g. \"be concise\", \"prefer code examples over explanations\", \"reply in Italian\" -->
-
-## Context
-<!-- Anything else the agent should know: current projects, goals, constraints. -->
-";
-
-/// Default user IDs seeded at build time.
-const DEFAULT_USERS: &[&str] = &["admin", "user"];
-
-/// Create a user directory with default USER.md and MEMORY.md if it doesn't exist.
-fn ensure_user_dir(users_dir: &Path, user_id: &str) -> crate::Result<()> {
-    let user_dir = users_dir.join(user_id);
-    if !user_dir.exists() {
-        std::fs::create_dir_all(&user_dir)
-            .map_err(StarpodError::Io)?;
-        std::fs::create_dir_all(user_dir.join("memory"))
-            .map_err(StarpodError::Io)?;
-
-        if !user_dir.join("USER.md").exists() {
-            std::fs::write(
-                user_dir.join("USER.md"),
-                DEFAULT_USER,
-            ).map_err(StarpodError::Io)?;
-        }
-        if !user_dir.join("MEMORY.md").exists() {
-            std::fs::write(
-                user_dir.join("MEMORY.md"),
-                "# Memory Index\n\nImportant facts and links to memory files.\n",
-            ).map_err(StarpodError::Io)?;
-        }
-        info!("Created default {user_id} user directory");
-    }
-    Ok(())
-}
 
 /// Which `.env` file to copy from the workspace root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -209,12 +157,6 @@ pub fn apply_blueprint(
         debug!("Synced workspace skills to instance");
     }
 
-    // 6. Create default users if not exist
-    let users_dir = starpod_dir.join("users");
-    for user_id in DEFAULT_USERS {
-        ensure_user_dir(&users_dir, user_id)?;
-    }
-
     info!(
         blueprint = %blueprint_dir.display(),
         instance = %instance_dir.display(),
@@ -331,12 +273,6 @@ pub fn build_standalone(
             sync_skills(skills_src, &instance_skills)?;
             debug!("Synced skills to instance");
         }
-    }
-
-    // 6. Create default users if not exist
-    let users_dir = starpod_dir.join("users");
-    for user_id in DEFAULT_USERS {
-        ensure_user_dir(&users_dir, user_id)?;
     }
 
     info!(
@@ -471,13 +407,6 @@ mod tests {
         assert!(cfg.join("HEARTBEAT.md").exists());
         assert!(cfg.join("BOOT.md").exists());
         assert!(cfg.join("BOOTSTRAP.md").exists());
-        assert!(sp.join("users").is_dir());
-        for uid in &["admin", "user"] {
-            assert!(sp.join("users").join(uid).is_dir());
-            assert!(sp.join("users").join(uid).join("USER.md").is_file());
-            assert!(sp.join("users").join(uid).join("MEMORY.md").is_file());
-            assert!(sp.join("users").join(uid).join("memory").is_dir());
-        }
     }
 
     #[test]
@@ -516,25 +445,6 @@ mod tests {
         assert!(instance.join("templates").join("report.md").is_file());
     }
 
-    #[test]
-    fn apply_blueprint_preserves_existing_user_data() {
-        let tmp = TempDir::new().unwrap();
-        let blueprint = setup_blueprint(&tmp);
-        let instance = tmp.path().join(".instances").join("test-bot");
-
-        // First apply
-        apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Dev).unwrap();
-
-        // Modify admin USER.md
-        let admin_user = instance.join(".starpod").join("users").join("admin").join("USER.md");
-        std::fs::write(&admin_user, "# User\nCustom content\n").unwrap();
-
-        // Second apply — should NOT overwrite
-        apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Dev).unwrap();
-
-        let content = std::fs::read_to_string(&admin_user).unwrap();
-        assert!(content.contains("Custom content"), "User data should be preserved");
-    }
 
     #[test]
     fn apply_blueprint_refreshes_agent_toml() {
@@ -730,12 +640,6 @@ mod tests {
         assert!(cfg.join("HEARTBEAT.md").exists());
         assert!(cfg.join("BOOT.md").exists());
         assert!(cfg.join("BOOTSTRAP.md").exists());
-        for uid in &["admin", "user"] {
-            assert!(sp.join("users").join(uid).is_dir());
-            assert!(sp.join("users").join(uid).join("USER.md").is_file());
-            assert!(sp.join("users").join(uid).join("MEMORY.md").is_file());
-            assert!(sp.join("users").join(uid).join("memory").is_dir());
-        }
     }
 
     #[test]
@@ -873,29 +777,6 @@ mod tests {
         assert!(content.contains("Run migrations on startup"));
     }
 
-    #[test]
-    fn build_standalone_preserves_existing_user_data() {
-        let tmp = TempDir::new().unwrap();
-        let blueprint = tmp.path().join("my-agent");
-        std::fs::create_dir_all(&blueprint).unwrap();
-        std::fs::write(blueprint.join("agent.toml"), "").unwrap();
-
-        let output = tmp.path().join("deploy");
-        std::fs::create_dir_all(&output).unwrap();
-
-        // First build
-        build_standalone(&blueprint, &output, None, None, false).unwrap();
-
-        // Modify admin USER.md
-        let admin_user = output.join(".starpod").join("users").join("admin").join("USER.md");
-        std::fs::write(&admin_user, "# Custom user data\n").unwrap();
-
-        // Second build with --force — should NOT overwrite user data
-        build_standalone(&blueprint, &output, None, None, true).unwrap();
-
-        let content = std::fs::read_to_string(&admin_user).unwrap();
-        assert!(content.contains("Custom user data"), "User data should be preserved on re-build");
-    }
 
     #[test]
     fn build_standalone_no_env_when_not_provided() {
@@ -978,8 +859,6 @@ mod tests {
 
         // Simulate runtime data
         std::fs::write(sp.join(".env"), "RUNTIME_SECRET=val\n").unwrap();
-        let admin_user = sp.join("users").join("admin").join("USER.md");
-        std::fs::write(&admin_user, "# Custom user\n").unwrap();
 
         // Update blueprint
         std::fs::write(blueprint.join("agent.toml"), "model = \"v2\"\n").unwrap();
@@ -997,8 +876,6 @@ mod tests {
         // Runtime should be preserved
         let env = std::fs::read_to_string(sp.join(".env")).unwrap();
         assert!(env.contains("RUNTIME_SECRET"), ".env should be preserved");
-        let user = std::fs::read_to_string(&admin_user).unwrap();
-        assert!(user.contains("Custom user"), "User data should be preserved");
     }
 
     #[test]

@@ -182,27 +182,31 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 ///
 /// This is the canonical way to create an auth store. Both the gateway and the
 /// CLI should use this to ensure the same DB path and bootstrap logic.
-pub async fn create_auth_store(paths: &ResolvedPaths) -> starpod_core::Result<Arc<AuthStore>> {
+/// Bootstrap result returned by [`create_auth_store`].
+pub struct AuthBootstrap {
+    pub store: Arc<AuthStore>,
+    /// The admin API key plaintext, if a new admin was just bootstrapped.
+    pub admin_key: Option<String>,
+}
+
+pub async fn create_auth_store(paths: &ResolvedPaths) -> starpod_core::Result<AuthBootstrap> {
     let auth_db_path = paths.db_dir.join("users.db");
     let auth = Arc::new(AuthStore::new(&auth_db_path).await
         .map_err(|e| starpod_core::StarpodError::Auth(format!("Failed to init auth store: {}", e)))?);
 
     // Bootstrap admin user
     let existing_api_key = std::env::var("STARPOD_API_KEY").ok();
-    if let Some((admin, key)) = auth.bootstrap_admin(existing_api_key.as_deref()).await? {
+    let admin_key = if let Some((admin, key)) = auth.bootstrap_admin(existing_api_key.as_deref()).await? {
         info!(user_id = %admin.id, "Admin user bootstrapped");
         if existing_api_key.is_none() {
             info!(api_key = %key, "New admin API key generated — save this!");
         }
-    }
+        Some(key)
+    } else {
+        None
+    };
 
-    // Migrate file-based users
-    let migrated = auth.migrate_file_users(&paths.users_dir).await?;
-    if migrated > 0 {
-        info!(count = migrated, "Migrated file-based users to auth DB");
-    }
-
-    Ok(auth)
+    Ok(AuthBootstrap { store: auth, admin_key })
 }
 
 pub async fn serve_with_agent(
@@ -210,6 +214,7 @@ pub async fn serve_with_agent(
     config: StarpodConfig,
     notifier: Option<starpod_cron::NotificationSender>,
     paths: ResolvedPaths,
+    existing_auth: Option<Arc<AuthStore>>,
 ) -> starpod_core::Result<()> {
     // Create broadcast channel for WS event push
     let (events_tx, _) = tokio::sync::broadcast::channel::<GatewayEvent>(64);
@@ -244,8 +249,11 @@ pub async fn serve_with_agent(
     let _lifecycle_handle = agent.run_lifecycle();
     info!("Lifecycle prompts dispatched");
 
-    // Initialize auth store
-    let auth = create_auth_store(&paths).await?;
+    // Use pre-created auth store or create a new one
+    let auth = match existing_auth {
+        Some(a) => a,
+        None => create_auth_store(&paths).await?.store,
+    };
 
     // Create rate limiter from config
     let rate_limiter = Arc::new(RateLimiter::new(

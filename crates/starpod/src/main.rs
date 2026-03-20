@@ -1240,14 +1240,23 @@ async fn main() -> anyhow::Result<()> {
             let agent = Arc::new(StarpodAgent::with_paths(agent_config, paths.clone()).await?);
             let cron_notifier = setup_telegram_and_notifier(&agent, &config, None);
 
+            // Bootstrap auth store early so we can auto-login in the browser
+            let auth_bootstrap = starpod_gateway::create_auth_store(&paths).await?;
+            let auth_store = auth_bootstrap.store.clone();
+
             print_header_with_name(&display_name);
             println!("  {} {} → {}", "DEV".bright_yellow().bold(), agent_name.bright_cyan(), instance_dir.display().to_string().dimmed());
             println!("  {} {}", "Server".dimmed(), addr.bright_green());
             print_separator();
 
-            let _ = open::that(format!("http://{}", addr));
+            // Open browser with auto-login token if we have one
+            if let Some(ref key) = auth_bootstrap.admin_key {
+                let _ = open::that(format!("http://{}?token={}", addr, key));
+            } else {
+                let _ = open::that(format!("http://{}", addr));
+            }
 
-            starpod_gateway::serve_with_agent(agent, config, cron_notifier, paths).await?;
+            starpod_gateway::serve_with_agent(agent, config, cron_notifier, paths, Some(auth_store)).await?;
         }
 
         // ── Serve ─────────────────────────────────────────────────────
@@ -1257,8 +1266,8 @@ async fn main() -> anyhow::Result<()> {
             let display_name = config.agent_name.clone();
             let telegram_active = config.resolved_telegram_token().is_some();
             let agent = Arc::new(agent);
-            let auth = starpod_gateway::create_auth_store(&paths).await.ok();
-            let cron_notifier = setup_telegram_and_notifier(&agent, &config, auth);
+            let auth = starpod_gateway::create_auth_store(&paths).await.ok().map(|b| b.store);
+            let cron_notifier = setup_telegram_and_notifier(&agent, &config, auth.clone());
 
             // Print startup banner
             println!();
@@ -1324,9 +1333,7 @@ async fn main() -> anyhow::Result<()> {
             );
             println!();
 
-            let _ = open::that(format!("http://{}", addr));
-
-            starpod_gateway::serve_with_agent(agent, config, cron_notifier, paths).await?;
+            starpod_gateway::serve_with_agent(agent, config, cron_notifier, paths, auth).await?;
         }
 
         // ── Chat ──────────────────────────────────────────────────────
