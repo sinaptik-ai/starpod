@@ -96,9 +96,9 @@ max_turns = 30
 
 ```toml
 agent_name = "Aster"
-model = "claude-opus-4-6"
+model = "claude-haiku-4-6"
 # reasoning_effort = "medium"
-# timezone = "America/New_York"
+# timezone = "Europe/Rome"
 
 [providers.anthropic]
 # base_url = "https://custom.example.com"  # Optional override

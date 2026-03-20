@@ -1280,7 +1280,7 @@ mod tests {
         let schedule = Schedule::OneShot {
             at: "2020-01-01T00:00:00".to_string(),
         };
-        let next = compute_next_run(&schedule, None, Some("America/New_York")).unwrap();
+        let next = compute_next_run(&schedule, None, Some("Europe/Rome")).unwrap();
         assert!(next.is_none(), "Past naive timestamp should return None");
     }
 
