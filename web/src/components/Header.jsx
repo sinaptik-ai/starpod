@@ -1,12 +1,13 @@
 import React from 'react'
 import { useApp } from '../contexts/AppContext'
 
-function Header() {
+function Header({ onToggleSidebar }) {
   const { state, dispatch } = useApp()
   const { wsStatus } = state
 
   function toggleSidebar() {
     dispatch({ type: 'TOGGLE_SIDEBAR' })
+    if (onToggleSidebar) onToggleSidebar()
   }
 
   function newChat() {

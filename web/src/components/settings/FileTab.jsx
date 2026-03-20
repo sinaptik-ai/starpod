@@ -9,11 +9,13 @@ export default function FileTab({ fileName, description, rows = 20 }) {
   const [status, setStatus] = useState(null)
 
   useEffect(() => {
+    let ignore = false
     setLoading(true); setStatus(null)
     fetch(`/api/settings/files/${encodeURIComponent(fileName)}`, { headers: apiHeaders() })
       .then(r => r.json())
-      .then(d => { setContent(d.content || ''); setLoading(false) })
-      .catch(() => { setStatus({ type: 'error', text: 'Failed to load' }); setLoading(false) })
+      .then(d => { if (!ignore) { setContent(d.content || ''); setLoading(false) } })
+      .catch(() => { if (!ignore) { setStatus({ type: 'error', text: 'Failed to load' }); setLoading(false) } })
+    return () => { ignore = true }
   }, [fileName])
 
   const save = async () => {

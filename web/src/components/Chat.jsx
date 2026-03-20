@@ -14,12 +14,6 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
   const [streamingMessage, setStreamingMessage] = useState(null)
 
   const scrollRef = useRef(null)
-  const streamRef = useRef(null)
-
-  // Keep streamRef in sync
-  useEffect(() => {
-    streamRef.current = streamingMessage
-  }, [streamingMessage])
 
   const scrollToBottom = useCallback(() => {
     const el = scrollRef.current

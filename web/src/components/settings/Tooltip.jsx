@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef } from 'react'
 import { createPortal } from 'react-dom'
 
 export default function Tooltip({ text }) {
@@ -6,7 +6,8 @@ export default function Tooltip({ text }) {
   const [pos, setPos] = useState(null)
   const triggerRef = useRef(null)
 
-  const calculate = useCallback(() => {
+  function handleMouseEnter() {
+    setOpen(true)
     if (!triggerRef.current) return
     const rect = triggerRef.current.getBoundingClientRect()
     const above = rect.top > 140
@@ -15,14 +16,10 @@ export default function Tooltip({ text }) {
       top: above ? rect.top - 8 : rect.bottom + 8,
       left: rect.left + rect.width / 2,
     })
-  }, [])
-
-  useEffect(() => {
-    if (open) calculate()
-  }, [open, calculate])
+  }
 
   return (
-    <span className="s-tip-wrap" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+    <span className="s-tip-wrap" onMouseEnter={handleMouseEnter} onMouseLeave={() => setOpen(false)}>
       <span ref={triggerRef} className="s-tip-trigger">?</span>
       {open && pos && createPortal(
         <span
