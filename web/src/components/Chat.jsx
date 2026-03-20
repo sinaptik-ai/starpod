@@ -12,6 +12,7 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
 
   const [messages, setMessages] = useState([])
   const [streamingMessage, setStreamingMessage] = useState(null)
+  const [loading, setLoading] = useState(false)
 
   const scrollRef = useRef(null)
 
@@ -167,6 +168,7 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
   function loadSession(sessionId) {
     setMessages([])
     setStreamingMessage(null)
+    setLoading(true)
 
     fetch('/api/sessions/' + encodeURIComponent(sessionId) + '/messages', { headers: authHeaders() })
       .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
@@ -233,11 +235,13 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
       .catch(() => {
         setMessages([{ role: 'error', content: 'Couldn\u2019t load this conversation. Try selecting it again.' }])
       })
+      .finally(() => setLoading(false))
   }
 
   function showWelcome() {
     setMessages([])
     setStreamingMessage(null)
+    setLoading(false)
   }
 
   function addUserMessage(text, attachments) {
@@ -258,7 +262,7 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
   // Don't render when settings visible
   if (settingsVisible) return null
 
-  const hasContent = messages.length > 0 || streamingMessage
+  const hasContent = loading || messages.length > 0 || streamingMessage
 
   return (
     <div
