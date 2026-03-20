@@ -68,7 +68,7 @@ function appReducer(state, action) {
       return {
         ...state,
         currentSessionId: action.payload.id,
-        currentSessionKey: action.payload.key,
+        currentSessionKey: action.payload.key ?? state.currentSessionKey,
       }
 
     case 'NEW_CHAT':

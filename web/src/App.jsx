@@ -99,7 +99,7 @@ function AppInner() {
     const payload = { type: 'message', text, channel_id: 'web', channel_session_key: currentSessionKey }
     if (attachments && attachments.length > 0) payload.attachments = attachments
     wsRef.current.send(JSON.stringify(payload))
-    if (chatRef.current) chatRef.current.addUserMsg(text, attachments)
+    if (chatRef.current) chatRef.current.addUserMessage(text, attachments)
   }, [currentSessionKey])
 
   // ── Session selection ──

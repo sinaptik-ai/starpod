@@ -6,7 +6,7 @@ import { authHeaders } from '../lib/api'
 import ToolCard from './ToolCard'
 import Welcome from './Welcome'
 
-const Chat = forwardRef(function Chat({ wsRef }, ref) {
+const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
   const { state, dispatch } = useApp()
   const { settingsVisible, currentSessionId } = state
 
@@ -35,10 +35,6 @@ const Chat = forwardRef(function Chat({ wsRef }, ref) {
   function handleStreamEvent(data) {
     switch (data.type) {
       case 'stream_start': {
-        if (data.session_id) {
-          dispatch({ type: 'SET_SESSION', payload: { id: data.session_id, key: null } })
-          dispatch({ type: 'MARK_READ', payload: data.session_id })
-        }
         setStreamingMessage({ bubbles: [{ text: '', done: false }], tools: [], stats: null })
         break
       }
@@ -262,9 +258,7 @@ const Chat = forwardRef(function Chat({ wsRef }, ref) {
   }))
 
   function handleSendPrompt(text) {
-    if (!wsRef || !wsRef.current) return
-    addUserMessage(text, [])
-    wsRef.current(text, [])
+    if (onSendPrompt) onSendPrompt(text)
   }
 
   // Don't render when settings visible
@@ -380,19 +374,6 @@ function AssistantMessage({ msg }) {
     }
   }
 
-  // Remaining bubbles after tools
-  for (let i = tools.length; i < bubbles.length; i++) {
-    if (bubbles[i].text.trim()) {
-      elements.push(
-        <div
-          key={`bubble-${i}`}
-          className="py-1 leading-[1.75] text-sm break-words text-secondary markdown-body"
-          dangerouslySetInnerHTML={{ __html: formatText(bubbles[i].text) }}
-        />
-      )
-    }
-  }
-
   if (errors && errors.length > 0) {
     elements.push(
       <div key="errors" className="py-1 leading-[1.75] text-sm break-words text-secondary markdown-body">
@@ -446,23 +427,6 @@ function StreamingMessage({ msg }) {
           input={tools[i].input}
           status={tools[i].status}
           result={tools[i].result}
-        />
-      )
-    }
-  }
-
-  // Remaining bubbles after tools
-  for (let i = tools.length; i < bubbles.length; i++) {
-    const bubble = bubbles[i]
-    const isActive = !bubble.done
-    const hasText = bubble.text.trim()
-
-    if (hasText || isActive) {
-      elements.push(
-        <div
-          key={`bubble-${i}`}
-          className={`py-1 leading-[1.75] text-sm break-words text-secondary markdown-body${isActive ? ' streaming-cursor' : ''}`}
-          dangerouslySetInnerHTML={{ __html: bubble.text ? formatText(bubble.text) : '' }}
         />
       )
     }
