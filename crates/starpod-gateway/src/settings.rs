@@ -1,4 +1,4 @@
-//! Settings API — read and write agent configuration, markdown files, and user data.
+//! Settings API — read and write agent configuration, markdown files, user data, and skills.
 //!
 //! All endpoints live under `/api/settings/*` and are protected by the same
 //! `X-API-Key` header check used by the rest of the gateway.
@@ -17,6 +17,12 @@
 //! contains `USER.md`, `MEMORY.md`, and a `memory/` subdirectory for daily logs.
 //! User IDs are validated to be alphanumeric with hyphens/underscores, max 32
 //! characters, with no path traversal.
+//!
+//! ## Skill CRUD
+//!
+//! Skills are managed via [`starpod_skills::SkillStore`], which reads/writes
+//! `SKILL.md` files in `.starpod/skills/<name>/`. The store is instantiated
+//! per-request (cheap — just a `create_dir_all` + struct init).
 
 use std::sync::Arc;
 
@@ -127,6 +133,37 @@ struct CreateUserRequest {
     id: String,
 }
 
+#[derive(Debug, Serialize)]
+struct SkillInfo {
+    name: String,
+    description: String,
+    version: Option<String>,
+    created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SkillDetail {
+    name: String,
+    description: String,
+    version: Option<String>,
+    body: String,
+    raw_content: String,
+    created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateSkillRequest {
+    name: String,
+    description: String,
+    body: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateSkillRequest {
+    description: String,
+    body: String,
+}
+
 // ── Routes ──────────────────────────────────────────────────────────────
 
 /// Build the settings sub-router with all `/api/settings/*` routes.
@@ -142,6 +179,11 @@ pub fn settings_routes() -> Router<Arc<AppState>> {
         .route(
             "/api/settings/users/{id}",
             get(get_user).put(update_user).delete(delete_user),
+        )
+        .route("/api/settings/skills", get(list_skills).post(create_skill))
+        .route(
+            "/api/settings/skills/{name}",
+            get(get_skill).put(update_skill).delete(delete_skill),
         )
 }
 
@@ -587,6 +629,105 @@ async fn delete_user(
 
     std::fs::remove_dir_all(&user_dir).map_err(|e| internal(e))?;
 
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ── Skills ──────────────────────────────────────────────────────────────
+
+fn skill_store(state: &AppState) -> Result<starpod_skills::SkillStore, (StatusCode, Json<ErrorResponse>)> {
+    starpod_skills::SkillStore::new(&state.paths.skills_dir).map_err(|e| internal(e))
+}
+
+async fn list_skills(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> ApiResult<Vec<SkillInfo>> {
+    check_api_key(&state, &headers)?;
+    let store = skill_store(&state)?;
+    let skills = store.list().map_err(|e| internal(e))?;
+    Ok(Json(
+        skills
+            .into_iter()
+            .map(|s| SkillInfo {
+                name: s.name,
+                description: s.description,
+                version: s.version,
+                created_at: s.created_at,
+            })
+            .collect(),
+    ))
+}
+
+async fn create_skill(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<CreateSkillRequest>,
+) -> Result<(StatusCode, Json<SkillDetail>), (StatusCode, Json<ErrorResponse>)> {
+    check_api_key(&state, &headers)?;
+    let store = skill_store(&state)?;
+    store
+        .create(&req.name, &req.description, None, &req.body)
+        .map_err(|e| bad_request(e.to_string()))?;
+    let skill = store
+        .get(&req.name)
+        .map_err(|e| internal(e))?
+        .ok_or_else(|| internal("Skill created but not found"))?;
+    Ok((
+        StatusCode::CREATED,
+        Json(SkillDetail {
+            name: skill.name,
+            description: skill.description,
+            version: skill.version,
+            body: skill.body,
+            raw_content: skill.raw_content,
+            created_at: skill.created_at,
+        }),
+    ))
+}
+
+async fn get_skill(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(name): Path<String>,
+) -> ApiResult<SkillDetail> {
+    check_api_key(&state, &headers)?;
+    let store = skill_store(&state)?;
+    let skill = store
+        .get(&name)
+        .map_err(|e| internal(e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, format!("Skill '{}' not found", name)))?;
+    Ok(Json(SkillDetail {
+        name: skill.name,
+        description: skill.description,
+        version: skill.version,
+        body: skill.body,
+        raw_content: skill.raw_content,
+        created_at: skill.created_at,
+    }))
+}
+
+async fn update_skill(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(name): Path<String>,
+    Json(req): Json<UpdateSkillRequest>,
+) -> ApiResult<serde_json::Value> {
+    check_api_key(&state, &headers)?;
+    let store = skill_store(&state)?;
+    store
+        .update(&name, &req.description, None, &req.body)
+        .map_err(|e| bad_request(e.to_string()))?;
+    Ok(ok_json())
+}
+
+async fn delete_skill(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(name): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    check_api_key(&state, &headers)?;
+    let store = skill_store(&state)?;
+    store.delete(&name).map_err(|e| bad_request(e.to_string()))?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1309,6 +1450,149 @@ mod tests {
         let (_tmp, state) = test_app_state().await;
         let status = delete_req(state, "/api/settings/users/nonexistent").await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    // ── Skill CRUD integration tests ────────────────────────────────────
+
+    #[tokio::test]
+    async fn skill_crud_lifecycle() {
+        let (_tmp, state) = test_app_state().await;
+
+        // List: initially empty
+        let (status, json) = get_json(Arc::clone(&state), "/api/settings/skills").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json.as_array().unwrap().len(), 0);
+
+        // Create
+        let (status, json) = post_json(
+            Arc::clone(&state),
+            "/api/settings/skills",
+            serde_json::json!({ "name": "greet", "description": "A greeting skill", "body": "Say hello!" }),
+        ).await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(json["name"], "greet");
+        assert_eq!(json["description"], "A greeting skill");
+        assert!(json["body"].as_str().unwrap().contains("Say hello!"));
+
+        // List again
+        let (_, json) = get_json(Arc::clone(&state), "/api/settings/skills").await;
+        assert_eq!(json.as_array().unwrap().len(), 1);
+        assert_eq!(json[0]["name"], "greet");
+        assert_eq!(json[0]["description"], "A greeting skill");
+
+        // Get detail
+        let (status, json) = get_json(Arc::clone(&state), "/api/settings/skills/greet").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["name"], "greet");
+        assert!(json["body"].as_str().unwrap().contains("Say hello!"));
+        assert!(json["raw_content"].as_str().unwrap().contains("Say hello!"));
+
+        // Update
+        let (status, json) = put_json(
+            Arc::clone(&state),
+            "/api/settings/skills/greet",
+            serde_json::json!({ "description": "Updated desc", "body": "Say hi!" }),
+        ).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["status"], "ok");
+
+        // Verify update
+        let (_, json) = get_json(Arc::clone(&state), "/api/settings/skills/greet").await;
+        assert_eq!(json["description"], "Updated desc");
+        assert!(json["body"].as_str().unwrap().contains("Say hi!"));
+
+        // Delete
+        let status = delete_req(Arc::clone(&state), "/api/settings/skills/greet").await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        // Verify deleted
+        let (_, json) = get_json(state, "/api/settings/skills").await;
+        assert_eq!(json.as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn create_skill_duplicate_rejected() {
+        let (_tmp, state) = test_app_state().await;
+
+        let _ = post_json(
+            Arc::clone(&state),
+            "/api/settings/skills",
+            serde_json::json!({ "name": "dup", "description": "", "body": "" }),
+        ).await;
+
+        let (status, json) = post_json(
+            state,
+            "/api/settings/skills",
+            serde_json::json!({ "name": "dup", "description": "", "body": "" }),
+        ).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(json["error"].as_str().unwrap().contains("already exists"));
+    }
+
+    #[tokio::test]
+    async fn get_skill_not_found() {
+        let (_tmp, state) = test_app_state().await;
+        let (status, _) = get_json(state, "/api/settings/skills/nonexistent").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn delete_skill_not_found() {
+        let (_tmp, state) = test_app_state().await;
+        let status = delete_req(state, "/api/settings/skills/nonexistent").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn update_skill_not_found() {
+        let (_tmp, state) = test_app_state().await;
+        let (status, json) = put_json(
+            state,
+            "/api/settings/skills/nonexistent",
+            serde_json::json!({ "description": "x", "body": "y" }),
+        ).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(json["error"].as_str().unwrap().contains("does not exist"));
+    }
+
+    #[tokio::test]
+    async fn create_skill_invalid_name_rejected() {
+        let (_tmp, state) = test_app_state().await;
+        let (status, json) = post_json(
+            state,
+            "/api/settings/skills",
+            serde_json::json!({ "name": "../evil", "description": "", "body": "" }),
+        ).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(json["error"].as_str().unwrap().to_lowercase().contains("invalid"));
+    }
+
+    #[test]
+    fn skill_info_serializes() {
+        let info = SkillInfo {
+            name: "test-skill".into(),
+            description: "A test".into(),
+            version: Some("0.1.0".into()),
+            created_at: "2026-03-20T00:00:00Z".into(),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"name\":\"test-skill\""));
+        assert!(json.contains("\"version\":\"0.1.0\""));
+    }
+
+    #[test]
+    fn skill_detail_serializes() {
+        let detail = SkillDetail {
+            name: "test".into(),
+            description: "desc".into(),
+            version: None,
+            body: "body content".into(),
+            raw_content: "---\nname: test\n---\nbody content".into(),
+            created_at: "2026-03-20T00:00:00Z".into(),
+        };
+        let json = serde_json::to_string(&detail).unwrap();
+        assert!(json.contains("\"body\":\"body content\""));
+        assert!(json.contains("\"version\":null"));
     }
 
     // ── TOML preservation tests ─────────────────────────────────────────

@@ -4,26 +4,50 @@ import FileTab from './FileTab'
 import FrontendTab from './FrontendTab'
 import MemoryTab from './MemoryTab'
 import CronTab from './CronTab'
+import SkillsTab from './SkillsTab'
 import UsersTab from './UsersTab'
 
-const tabs = [
-  { id: 'general', label: 'General' },
-  { id: 'soul', label: 'Soul' },
-  { id: 'heartbeat', label: 'Heartbeat' },
-  { id: 'frontend', label: 'Frontend' },
-  { id: 'memory', label: 'Memory' },
-  { id: 'cron', label: 'Cron' },
-  { id: 'users', label: 'Users' },
+const tabGroups = [
+  {
+    label: 'Agent',
+    tabs: [
+      { id: 'general', label: 'General' },
+      { id: 'soul', label: 'Soul' },
+      { id: 'heartbeat', label: 'Heartbeat' },
+      { id: 'boot', label: 'Boot' },
+      { id: 'bootstrap', label: 'Bootstrap' },
+    ],
+  },
+  {
+    label: 'Interface',
+    tabs: [
+      { id: 'frontend', label: 'Frontend' },
+    ],
+  },
+  {
+    label: 'System',
+    tabs: [
+      { id: 'memory', label: 'Memory' },
+      { id: 'cron', label: 'Cron' },
+      { id: 'skills', label: 'Skills' },
+      { id: 'users', label: 'Users' },
+    ],
+  },
 ]
+
+const allTabs = tabGroups.flatMap(g => g.tabs)
 
 function TabContent({ tab }) {
   switch (tab) {
     case 'general': return <GeneralTab />
     case 'soul': return <FileTab fileName="SOUL.md" description="Defines the agent's personality, tone, and behavior." rows={24} />
     case 'heartbeat': return <FileTab fileName="HEARTBEAT.md" description="Instructions the agent follows on a recurring heartbeat schedule." rows={20} />
+    case 'boot': return <FileTab fileName="BOOT.md" description="Instructions executed once on agent startup." rows={20} />
+    case 'bootstrap': return <FileTab fileName="BOOTSTRAP.md" description="Instructions for initial instance setup." rows={20} />
     case 'frontend': return <FrontendTab />
     case 'memory': return <MemoryTab />
     case 'cron': return <CronTab />
+    case 'skills': return <SkillsTab />
     case 'users': return <UsersTab />
     default: return null
   }
@@ -50,18 +74,23 @@ export default function SettingsView() {
             <h1 className="text-primary text-lg font-semibold">Settings</h1>
           </div>
 
-          {/* Tab bar */}
-          <div className="flex gap-1 overflow-x-auto pb-0">
-            {tabs.map(t => (
-              <button
-                key={t.id}
-                onClick={() => dispatch({ type: 'SET_SETTINGS_TAB', payload: t.id })}
-                className={`settings-tab px-3 py-2 text-xs font-medium cursor-pointer whitespace-nowrap transition-colors ${
-                  settingsActiveTab === t.id ? 'active text-accent' : 'text-muted hover:text-secondary'
-                }`}
-              >
-                {t.label}
-              </button>
+          {/* Tab bar with groups */}
+          <div className="flex gap-0 overflow-x-auto pb-0">
+            {tabGroups.map((group, gi) => (
+              <div key={group.label} className="flex items-center">
+                {gi > 0 && <div className="tab-group-sep" />}
+                {group.tabs.map(t => (
+                  <button
+                    key={t.id}
+                    onClick={() => dispatch({ type: 'SET_SETTINGS_TAB', payload: t.id })}
+                    className={`settings-tab px-3 py-2 text-xs font-medium cursor-pointer whitespace-nowrap transition-colors ${
+                      settingsActiveTab === t.id ? 'active text-accent' : 'text-muted hover:text-secondary'
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
             ))}
           </div>
         </div>

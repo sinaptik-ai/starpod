@@ -800,8 +800,8 @@ html, body {
   margin-left: 4px;
 }
 
-/* User card */
-.user-card {
+/* User card / Skill card */
+.user-card, .skill-card {
   border: 1px solid var(--color-border-subtle);
   border-radius: 8px;
   padding: 12px 14px;
@@ -809,7 +809,17 @@ html, body {
   transition: border-color 0.15s ease;
 }
 
-.user-card:hover { border-color: var(--color-border-main); }
+.user-card:hover, .skill-card:hover { border-color: var(--color-border-main); }
+
+/* Tab group separator */
+.tab-group-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--color-border-main);
+  margin: 0 6px;
+  flex-shrink: 0;
+  opacity: 0.5;
+}
 
 /* Prompt chip editor */
 .prompt-item {

@@ -4123,6 +4123,7 @@ dependencies = [
  "starpod-instances",
  "starpod-memory",
  "starpod-session",
+ "starpod-skills",
  "tempfile",
  "tokio",
  "toml",
