@@ -68,6 +68,16 @@ starpod skill new code-review \
 
 The generated skill follows [AgentSkills best practices](https://agentskills.io/skill-creation/best-practices): clear trigger conditions, step-by-step procedures, gotchas sections, and validation loops.
 
+### Via the Web UI
+
+In **Settings → Skills**, click **+ New Skill** to open the creation wizard:
+
+1. **Name** — enter a lowercase, hyphen-separated skill name
+2. **Description** (optional) — describe what the skill does
+3. **Extra context** (optional) — provide additional instructions or context for the AI
+
+Then choose **Generate with AI** to have the body auto-generated, or **create blank** to start with an empty skill and fill it in manually. The generated skill can be edited afterwards from the same settings page.
+
 ### Via the Agent
 
 Ask during a conversation:

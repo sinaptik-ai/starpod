@@ -166,6 +166,21 @@ struct UpdateSkillRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct GenerateSkillRequest {
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    prompt: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct GenerateSkillResponse {
+    description: String,
+    body: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct CreateAuthUserRequest {
     #[serde(default)]
     email: Option<String>,
@@ -212,6 +227,7 @@ pub fn settings_routes() -> Router<Arc<AppState>> {
             get(get_user).put(update_user).delete(delete_user),
         )
         .route("/api/settings/skills", get(list_skills).post(create_skill))
+        .route("/api/settings/skills/generate", axum::routing::post(generate_skill))
         .route(
             "/api/settings/skills/{name}",
             get(get_skill).put(update_skill).delete(delete_skill),
@@ -896,6 +912,131 @@ async fn delete_skill(
     let store = skill_store(&state)?;
     store.delete(&name).map_err(|e| bad_request(e.to_string()))?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+const SKILL_GEN_SYSTEM_PROMPT: &str = r#"You are a skill author for the AgentSkills open format (agentskills.io).
+
+Given a natural language request, generate a skill definition with two fields:
+- **description**: 1-2 sentences explaining what the skill does AND when to use it. Use imperative phrasing ("Use this skill when..."). Be "pushy" — explicitly list contexts where the skill applies, including indirect mentions. Max 1024 chars.
+- **body**: Markdown instructions the agent follows when the skill is activated. Under 500 lines.
+
+## Best practices for the body
+
+- **Add what the agent lacks, omit what it knows.** Focus on project-specific conventions, domain procedures, non-obvious edge cases. Don't explain general knowledge.
+- **Favor procedures over declarations.** Teach how to approach a class of problems, not what to produce for a specific instance.
+- **Provide defaults, not menus.** Pick one recommended approach; mention alternatives briefly.
+- **Match specificity to fragility.** Be prescriptive when operations are fragile or sequence matters; give freedom when multiple approaches are valid.
+- **Use effective patterns:**
+  - Gotchas sections for environment-specific facts that defy assumptions
+  - Templates for output format (concrete structure, not prose)
+  - Checklists for multi-step workflows with explicit step tracking
+  - Validation loops: do work → run validator → fix issues → repeat
+  - Plan-validate-execute: create plan → validate → execute
+- **Design coherent units.** Not too narrow (needing multiple skills for one task), not too broad (hard to activate precisely).
+- **Keep it actionable.** Concise stepwise guidance with working examples outperforms exhaustive documentation.
+
+## Output
+
+Return a JSON object with exactly: `description`, `body`.
+"#;
+
+/// Strip optional markdown code fences from an AI response.
+fn strip_json_fence(raw: &str) -> &str {
+    let s = raw.trim();
+    let s = s
+        .strip_prefix("```json")
+        .or_else(|| s.strip_prefix("```"))
+        .unwrap_or(s);
+    s.strip_suffix("```").unwrap_or(s).trim()
+}
+
+async fn generate_skill(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<GenerateSkillRequest>,
+) -> ApiResult<GenerateSkillResponse> {
+    let auth_user = authenticate_request(&state, &headers).await?;
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin role required"));
+        }
+    }
+
+    // Build user prompt
+    let mut user_prompt = format!("Create a skill named \"{}\".", req.name);
+    if let Some(ref d) = req.description {
+        if !d.is_empty() {
+            user_prompt.push_str(&format!("\n\nThe skill description MUST be: {}", d));
+        }
+    }
+    if let Some(ref p) = req.prompt {
+        if !p.is_empty() {
+            user_prompt.push_str(&format!("\n\nAdditional context:\n{}", p));
+        }
+    }
+
+    let output_schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "description": {
+                "type": "string",
+                "description": "1-2 sentence description of what the skill does and when to use it."
+            },
+            "body": {
+                "type": "string",
+                "description": "Markdown instructions for the agent to follow when the skill is activated."
+            }
+        },
+        "required": ["description", "body"],
+        "additionalProperties": false
+    });
+
+    let options = agent_sdk::Options::builder()
+        .system_prompt(agent_sdk::options::SystemPrompt::Custom(
+            SKILL_GEN_SYSTEM_PROMPT.to_string(),
+        ))
+        .output_format(output_schema)
+        .max_turns(1)
+        .persist_session(false)
+        .permission_mode(agent_sdk::PermissionMode::Plan)
+        .build();
+
+    let mut stream = agent_sdk::query(&user_prompt, options);
+
+    use futures::StreamExt;
+    let mut result_msg = None;
+    while let Some(msg_result) = stream.next().await {
+        let msg = msg_result.map_err(|e| internal(e))?;
+        if let agent_sdk::Message::Result(result) = msg {
+            result_msg = Some(result);
+        }
+    }
+
+    let result = result_msg
+        .ok_or_else(|| internal("No result from AI"))?;
+
+    if result.is_error {
+        return Err(internal(result.errors.join("; ")));
+    }
+
+    let result_text = result.result.ok_or_else(|| {
+        internal("No text returned from AI")
+    })?;
+
+    #[derive(serde::Deserialize)]
+    struct SkillGen {
+        description: String,
+        body: String,
+    }
+
+    let json_str = strip_json_fence(&result_text);
+    let gen: SkillGen = serde_json::from_str(json_str)
+        .map_err(|e| internal(format!("Failed to parse AI response: {e}")))?;
+
+    Ok(Json(GenerateSkillResponse {
+        description: gen.description,
+        body: gen.body,
+    }))
 }
 
 // ── Auth user management ─────────────────────────────────────────────────
@@ -1960,6 +2101,50 @@ mod tests {
         let json = serde_json::to_string(&detail).unwrap();
         assert!(json.contains("\"body\":\"body content\""));
         assert!(json.contains("\"version\":null"));
+    }
+
+    #[test]
+    fn generate_skill_request_deserializes() {
+        // All fields
+        let req: GenerateSkillRequest = serde_json::from_value(serde_json::json!({
+            "name": "my-skill",
+            "description": "Do stuff",
+            "prompt": "Extra context"
+        })).unwrap();
+        assert_eq!(req.name, "my-skill");
+        assert_eq!(req.description.as_deref(), Some("Do stuff"));
+        assert_eq!(req.prompt.as_deref(), Some("Extra context"));
+
+        // Only required field
+        let req: GenerateSkillRequest = serde_json::from_value(serde_json::json!({
+            "name": "minimal"
+        })).unwrap();
+        assert_eq!(req.name, "minimal");
+        assert!(req.description.is_none());
+        assert!(req.prompt.is_none());
+    }
+
+    #[test]
+    fn generate_skill_response_serializes() {
+        let resp = GenerateSkillResponse {
+            description: "A skill description".into(),
+            body: "# Instructions\nDo things.".into(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"description\":\"A skill description\""));
+        assert!(json.contains("\"body\":\"# Instructions\\nDo things.\""));
+    }
+
+    #[test]
+    fn strip_json_fence_works() {
+        // Plain JSON
+        assert_eq!(strip_json_fence(r#"{"a": 1}"#), r#"{"a": 1}"#);
+        // With ```json fence
+        assert_eq!(strip_json_fence("```json\n{\"a\": 1}\n```"), "{\"a\": 1}");
+        // With bare ``` fence
+        assert_eq!(strip_json_fence("```\n{\"a\": 1}\n```"), "{\"a\": 1}");
+        // With whitespace
+        assert_eq!(strip_json_fence("  ```json\n{\"a\": 1}\n```  "), "{\"a\": 1}");
     }
 
     // ── TOML preservation tests ─────────────────────────────────────────

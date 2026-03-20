@@ -2,11 +2,15 @@ import { useState, useEffect } from 'react'
 import { apiHeaders } from '../../lib/api'
 import { Textarea, SaveBar } from './fields'
 
+// Steps: name → description → context → generating/review
+const STEP_NAME = 'name'
+const STEP_DESC = 'description'
+const STEP_CONTEXT = 'context'
+const STEP_GENERATING = 'generating'
+
 export default function SkillsTab() {
   const [skills, setSkills] = useState([])
   const [loading, setLoading] = useState(true)
-  const [newName, setNewName] = useState('')
-  const [creating, setCreating] = useState(false)
   const [editName, setEditName] = useState(null)
   const [editDesc, setEditDesc] = useState('')
   const [editBody, setEditBody] = useState('')
@@ -14,6 +18,14 @@ export default function SkillsTab() {
   const [editStatus, setEditStatus] = useState(null)
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [error, setError] = useState(null)
+
+  // Wizard state
+  const [wizardOpen, setWizardOpen] = useState(false)
+  const [wizardStep, setWizardStep] = useState(STEP_NAME)
+  const [wizName, setWizName] = useState('')
+  const [wizDesc, setWizDesc] = useState('')
+  const [wizContext, setWizContext] = useState('')
+  const [wizError, setWizError] = useState(null)
 
   const load = async () => {
     try {
@@ -25,18 +37,65 @@ export default function SkillsTab() {
 
   useEffect(() => { load() }, [])
 
-  const create = async () => {
-    if (!newName.trim()) return
-    setCreating(true); setError(null)
+  // Reset wizard
+  const openWizard = () => {
+    setWizardOpen(true)
+    setWizardStep(STEP_NAME)
+    setWizName('')
+    setWizDesc('')
+    setWizContext('')
+    setWizError(null)
+  }
+
+  const closeWizard = () => {
+    setWizardOpen(false)
+    setWizError(null)
+  }
+
+  // Create skill (blank or with generated content)
+  const createSkill = async (name, description, body) => {
+    setError(null)
     try {
       const r = await fetch('/api/settings/skills', {
         method: 'POST', headers: apiHeaders(),
-        body: JSON.stringify({ name: newName.trim(), description: '', body: '' }),
+        body: JSON.stringify({ name, description, body }),
       })
-      if (r.ok) { setNewName(''); await load() }
-      else { const d = await r.json().catch(() => ({})); setError(d.error || 'Failed') }
-    } catch (e) { setError(e.message) }
-    setCreating(false)
+      if (r.ok) { closeWizard(); await load() }
+      else { const d = await r.json().catch(() => ({})); setWizError(d.error || 'Failed to create') }
+    } catch (e) { setWizError(e.message) }
+  }
+
+  // Generate with AI then create
+  const generateAndCreate = async () => {
+    setWizardStep(STEP_GENERATING)
+    setWizError(null)
+    try {
+      const r = await fetch('/api/settings/skills/generate', {
+        method: 'POST', headers: apiHeaders(),
+        body: JSON.stringify({
+          name: wizName.trim(),
+          description: wizDesc.trim() || null,
+          prompt: wizContext.trim() || null,
+        }),
+      })
+      if (r.ok) {
+        const gen = await r.json()
+        const desc = wizDesc.trim() || gen.description
+        await createSkill(wizName.trim(), desc, gen.body)
+      } else {
+        const d = await r.json().catch(() => ({}))
+        setWizError(d.error || 'AI generation failed')
+        setWizardStep(STEP_CONTEXT) // go back so user can retry
+      }
+    } catch (e) {
+      setWizError(e.message)
+      setWizardStep(STEP_CONTEXT)
+    }
+  }
+
+  // Create blank (skip AI)
+  const createBlank = async () => {
+    await createSkill(wizName.trim(), wizDesc.trim(), '')
   }
 
   const startEdit = async (name) => {
@@ -82,24 +141,126 @@ export default function SkillsTab() {
 
   return (
     <>
-      {/* Create */}
-      <div className="flex gap-2 mb-4">
-        <input
-          type="text"
-          className="s-input font-mono text-xs flex-1"
-          value={newName}
-          onChange={e => setNewName(e.target.value)}
-          placeholder="skill-name"
-          onKeyDown={e => e.key === 'Enter' && create()}
-        />
-        <button onClick={create} disabled={creating || !newName.trim()} className="s-save-btn whitespace-nowrap">
-          Create
-        </button>
-      </div>
+      {/* Wizard / Create */}
+      {!wizardOpen ? (
+        <div className="mb-4">
+          <button onClick={openWizard} className="s-save-btn">
+            + New Skill
+          </button>
+        </div>
+      ) : (
+        <div className="mb-4 p-4 rounded-lg border border-border-subtle bg-elevated/50">
+          <div className="flex items-center justify-between mb-3">
+            <span className="font-mono text-xs text-dim uppercase tracking-wider">
+              New Skill
+            </span>
+            <button onClick={closeWizard} className="text-xs text-muted hover:text-primary cursor-pointer transition-colors">
+              cancel
+            </button>
+          </div>
+
+          {/* Step 1: Name */}
+          <div className="mb-3">
+            <div className="font-mono text-[10px] text-dim mb-1.5 uppercase tracking-wider">Name</div>
+            <input
+              type="text"
+              className="s-input font-mono text-xs w-full"
+              value={wizName}
+              onChange={e => setWizName(e.target.value)}
+              placeholder="my-skill-name"
+              disabled={wizardStep === STEP_GENERATING}
+              autoFocus
+              onKeyDown={e => {
+                if (e.key === 'Enter' && wizName.trim() && wizardStep === STEP_NAME) {
+                  setWizardStep(STEP_DESC)
+                }
+              }}
+            />
+          </div>
+
+          {/* Step 2: Description */}
+          {wizardStep !== STEP_NAME && (
+            <div className="mb-3">
+              <div className="font-mono text-[10px] text-dim mb-1.5 uppercase tracking-wider">
+                Description <span className="text-dim/50">(optional)</span>
+              </div>
+              <input
+                type="text"
+                className="s-input text-xs w-full"
+                value={wizDesc}
+                onChange={e => setWizDesc(e.target.value)}
+                placeholder="What does this skill do?"
+                disabled={wizardStep === STEP_GENERATING}
+                autoFocus
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    setWizardStep(STEP_CONTEXT)
+                  }
+                }}
+              />
+            </div>
+          )}
+
+          {/* Step 3: Extra context */}
+          {(wizardStep === STEP_CONTEXT || wizardStep === STEP_GENERATING) && (
+            <div className="mb-3">
+              <div className="font-mono text-[10px] text-dim mb-1.5 uppercase tracking-wider">
+                Extra instructions / context <span className="text-dim/50">(optional)</span>
+              </div>
+              <Textarea
+                value={wizContext}
+                onChange={setWizContext}
+                rows={4}
+                placeholder="Any additional context or instructions for generating the skill body..."
+                disabled={wizardStep === STEP_GENERATING}
+              />
+            </div>
+          )}
+
+          {wizError && <div className="text-err text-xs mb-3">{wizError}</div>}
+
+          {/* Action buttons */}
+          <div className="flex gap-2 items-center">
+            {wizardStep === STEP_NAME && (
+              <button
+                onClick={() => setWizardStep(STEP_DESC)}
+                disabled={!wizName.trim()}
+                className="s-save-btn whitespace-nowrap"
+              >
+                Next
+              </button>
+            )}
+            {wizardStep === STEP_DESC && (
+              <button
+                onClick={() => setWizardStep(STEP_CONTEXT)}
+                className="s-save-btn whitespace-nowrap"
+              >
+                Next
+              </button>
+            )}
+            {wizardStep === STEP_CONTEXT && (
+              <>
+                <button onClick={generateAndCreate} className="s-save-btn whitespace-nowrap">
+                  Generate with AI
+                </button>
+                <button onClick={createBlank} className="text-xs text-muted hover:text-primary cursor-pointer transition-colors">
+                  or create blank
+                </button>
+              </>
+            )}
+            {wizardStep === STEP_GENERATING && (
+              <div className="flex items-center gap-2 text-xs text-dim">
+                <span className="inline-block w-3 h-3 border-2 border-dim/30 border-t-primary rounded-full animate-spin" />
+                Generating skill...
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {error && <div className="text-err text-xs mb-3">{error}</div>}
 
-      {skills.length === 0 ? (
+      {skills.length === 0 && !wizardOpen ? (
         <div className="text-dim text-sm text-center py-8">No skills</div>
       ) : (
         <div className="flex flex-col gap-1.5">
