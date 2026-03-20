@@ -519,7 +519,8 @@ impl StarpodAgent {
         // Step 1: Resolve session via channel routing
         let (channel, key) = resolve_channel(&message);
         let gap = config.channel_gap_minutes(channel.as_str());
-        let (session_id, is_resuming) = match self.session_mgr.resolve_session(&channel, &key, gap).await? {
+        let user_id = message.user_id.as_deref().unwrap_or("admin");
+        let (session_id, is_resuming) = match self.session_mgr.resolve_session_for_user(&channel, &key, gap, user_id).await? {
             SessionDecision::Continue(id) => {
                 debug!(session_id = %id, channel = %channel.as_str(), "Continuing existing session");
                 (id, true)
@@ -722,7 +723,8 @@ impl StarpodAgent {
 
         let (channel, key) = resolve_channel(message);
         let gap = config.channel_gap_minutes(channel.as_str());
-        let (session_id, is_resuming) = match self.session_mgr.resolve_session(&channel, &key, gap).await? {
+        let user_id = message.user_id.as_deref().unwrap_or("admin");
+        let (session_id, is_resuming) = match self.session_mgr.resolve_session_for_user(&channel, &key, gap, user_id).await? {
             SessionDecision::Continue(id) => {
                 debug!(session_id = %id, channel = %channel.as_str(), "Continuing existing session");
                 (id, true)
