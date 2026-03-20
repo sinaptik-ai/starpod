@@ -18,18 +18,6 @@ function PreviewPanel() {
     dispatch({ type: 'CLOSE_PREVIEW' })
   }, [dispatch])
 
-  // Escape key closes preview
-  useEffect(() => {
-    function handleKey(e) {
-      if (e.key === 'Escape' && isOpen) {
-        e.preventDefault()
-        closePreview()
-      }
-    }
-    document.addEventListener('keydown', handleKey)
-    return () => document.removeEventListener('keydown', handleKey)
-  }, [isOpen, closePreview])
-
   // Frame check when URL changes
   useEffect(() => {
     if (!previewUrl) {
@@ -108,6 +96,7 @@ function PreviewPanel() {
               rel="noopener noreferrer"
               className="text-dim hover:text-secondary transition-colors shrink-0 p-1"
               title="Open in new tab"
+              aria-label="Open in new tab"
             >
               <svg className="w-3.5 h-3.5 stroke-current fill-none stroke-2" viewBox="0 0 24 24" strokeLinecap="round">
                 <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
@@ -117,6 +106,7 @@ function PreviewPanel() {
           <button
             onClick={closePreview}
             className="text-dim hover:text-secondary transition-colors shrink-0 p-1 cursor-pointer"
+            aria-label="Close preview"
           >
             <svg className="w-3.5 h-3.5 stroke-current fill-none stroke-2" viewBox="0 0 24 24" strokeLinecap="round">
               <path d="M18 6L6 18M6 6l12 12" />
@@ -133,7 +123,7 @@ function PreviewPanel() {
               className={`w-full h-full border-none bg-white ${frameable === false ? 'hidden' : ''}`}
               onLoad={handleIframeLoad}
               onError={handleIframeError}
-              sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+              sandbox="allow-scripts allow-forms allow-popups"
             />
           )}
 

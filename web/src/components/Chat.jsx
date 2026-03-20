@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef, useCallback } from 'react'
 import { useApp } from '../contexts/AppContext'
-import { escapeHtml, toolIconClass, toolIconSymbol, getToolPreview } from '../lib/utils'
 import { formatText, formatUserText } from '../lib/markdown'
-import { authHeaders } from '../lib/api'
+import { authHeaders, markSessionRead } from '../lib/api'
 import ToolCard from './ToolCard'
 import Welcome from './Welcome'
+import Logo from './ui/Logo'
 
 const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
   const { state, dispatch } = useApp()
@@ -12,6 +12,7 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
 
   const [messages, setMessages] = useState([])
   const [streamingMessage, setStreamingMessage] = useState(null)
+  const [loading, setLoading] = useState(false)
 
   const scrollRef = useRef(null)
 
@@ -127,7 +128,7 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
         })
 
         if (data.session_id || currentSessionId) {
-          dispatch({ type: 'MARK_READ', payload: data.session_id || currentSessionId })
+          markSessionRead(data.session_id || currentSessionId)
         }
         break
       }
@@ -167,6 +168,7 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
   function loadSession(sessionId) {
     setMessages([])
     setStreamingMessage(null)
+    setLoading(true)
 
     fetch('/api/sessions/' + encodeURIComponent(sessionId) + '/messages', { headers: authHeaders() })
       .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
@@ -177,67 +179,84 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
         }
 
         const parsed = []
-        let pendingToolUses = []
+
+        // Reconstruct the bubble/tool interleaving that streaming produces.
+        // DB order: assistant → tool_use* → tool_result* → assistant → …
+        // Streaming structure: bubble, tool, bubble, tool, … (one bubble per
+        // tool boundary plus initial text).
+        let bubbles = []
+        let tools = []
+
+        function flushAssistant() {
+          if (bubbles.length > 0 || tools.length > 0) {
+            parsed.push({
+              role: 'assistant_stream',
+              bubbles: bubbles.map(b => ({ ...b, done: true })),
+              tools,
+              stats: null,
+              errors: null,
+            })
+            bubbles = []
+            tools = []
+          }
+        }
 
         msgs.forEach(m => {
           if (m.role === 'user') {
+            flushAssistant()
             parsed.push({ role: 'user', content: m.content, attachments: m.attachments })
           } else if (m.role === 'assistant') {
-            // Flush any pending tools into a group with this text
-            if (pendingToolUses.length > 0 || m.content) {
-              parsed.push({
-                role: 'assistant_stream',
-                bubbles: m.content ? [{ text: m.content, done: true }] : [],
-                tools: pendingToolUses,
-                stats: null,
-                errors: null,
-              })
-              pendingToolUses = []
+            if (m.content) {
+              // If the last bubble is empty (placeholder after a tool),
+              // fill it with this text — just like streaming does.
+              const last = bubbles[bubbles.length - 1]
+              if (last && !last.text.trim()) {
+                last.text = m.content
+              } else {
+                bubbles.push({ text: m.content })
+              }
             }
           } else if (m.role === 'tool_use') {
             try {
               const data = JSON.parse(m.content)
-              pendingToolUses.push({
+              tools.push({
                 id: data.id || ('hist-' + Math.random().toString(36).slice(2)),
                 name: data.name,
                 input: data.input || {},
                 status: 'done',
                 result: null,
               })
+              // Create a placeholder bubble after each tool (mirrors streaming)
+              bubbles.push({ text: '' })
             } catch {}
           } else if (m.role === 'tool_result') {
             try {
               const data = JSON.parse(m.content)
-              if (pendingToolUses.length > 0) {
-                const last = pendingToolUses[pendingToolUses.length - 1]
-                if (data.is_error) last.status = 'error'
-                if (data.content) last.result = data.content
+              // Match by tool_use_id (not position) since concurrent tool
+              // execution can cause results to arrive out of order.
+              const target = tools.find(t => t.id === data.tool_use_id)
+              if (target) {
+                if (data.is_error) target.status = 'error'
+                if (data.content) target.result = data.content
               }
             } catch {}
           }
         })
 
-        // Flush remaining tools
-        if (pendingToolUses.length > 0) {
-          parsed.push({
-            role: 'assistant_stream',
-            bubbles: [],
-            tools: pendingToolUses,
-            stats: null,
-            errors: null,
-          })
-        }
+        flushAssistant()
 
         setMessages(parsed)
       })
       .catch(() => {
-        setMessages([{ role: 'error', content: 'Failed to load messages.' }])
+        setMessages([{ role: 'error', content: 'Couldn\u2019t load this conversation. Try selecting it again.' }])
       })
+      .finally(() => setLoading(false))
   }
 
   function showWelcome() {
     setMessages([])
     setStreamingMessage(null)
+    setLoading(false)
   }
 
   function addUserMessage(text, attachments) {
@@ -258,7 +277,7 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
   // Don't render when settings visible
   if (settingsVisible) return null
 
-  const hasContent = messages.length > 0 || streamingMessage
+  const hasContent = loading || messages.length > 0 || streamingMessage
 
   return (
     <div
@@ -282,7 +301,7 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
             return (
               <div key={idx} className="flex items-center justify-center text-center" style={{ minHeight: 'calc(100dvh - 120px)' }}>
                 <div>
-                  <div className="font-mono text-3xl font-extrabold tracking-tighter mb-2 bg-gradient-to-b from-primary to-muted bg-clip-text text-transparent">starpod</div>
+                  <div className="mb-2"><Logo /></div>
                   <p className="text-sm text-muted">{msg.content}</p>
                 </div>
               </div>
@@ -336,77 +355,21 @@ function UserMessage({ msg }) {
   )
 }
 
-function AssistantMessage({ msg }) {
-  const { bubbles, tools, stats, errors } = msg
-
-  // Interleave bubbles and tools in order
-  // Layout: bubble[0], tool[0], bubble[1], tool[1], ...
-  const elements = []
-  const maxLen = Math.max(bubbles.length, tools.length)
-
-  for (let i = 0; i < maxLen; i++) {
-    if (i < bubbles.length && bubbles[i].text.trim()) {
-      elements.push(
-        <div
-          key={`bubble-${i}`}
-          className="py-1 leading-[1.75] text-sm break-words text-secondary markdown-body"
-          dangerouslySetInnerHTML={{ __html: formatText(bubbles[i].text) }}
-        />
-      )
-    }
-    if (i < tools.length) {
-      elements.push(
-        <ToolCard
-          key={`tool-${tools[i].id}`}
-          id={'tool-' + tools[i].id}
-          name={tools[i].name}
-          input={tools[i].input}
-          status={tools[i].status}
-          result={tools[i].result}
-        />
-      )
-    }
-  }
-
-  if (errors && errors.length > 0) {
-    elements.push(
-      <div key="errors" className="py-1 leading-[1.75] text-sm break-words text-secondary markdown-body">
-        <span className="text-err">{errors.join('\n')}</span>
-      </div>
-    )
-  }
-
-  return (
-    <div className="max-w-full mt-2" style={{ animation: 'msg-in 0.25s cubic-bezier(0.16, 1, 0.3, 1)' }}>
-      {elements}
-      {stats && (
-        <div className="font-mono text-[11px] text-dim mt-2 pt-2 border-t border-border-subtle flex gap-3 flex-wrap">
-          <span>{stats.numTurns} turn{stats.numTurns > 1 ? 's' : ''}</span>
-          <span>${stats.costUsd.toFixed(4)}</span>
-          <span>{stats.tokensIn} in {'\u00b7'} {stats.tokensOut} out</span>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function StreamingMessage({ msg }) {
-  const { bubbles, tools } = msg
-
+function renderBubblesAndTools(bubbles, tools, streaming) {
   const elements = []
   const maxLen = Math.max(bubbles.length, tools.length)
 
   for (let i = 0; i < maxLen; i++) {
     if (i < bubbles.length) {
       const bubble = bubbles[i]
-      const isActive = !bubble.done
+      const isActive = streaming && !bubble.done
       const hasText = bubble.text.trim()
 
       if (hasText || isActive) {
         elements.push(
           <div
             key={`bubble-${i}`}
-            className={`py-1 leading-[1.75] text-sm break-words text-secondary markdown-body${isActive ? ' streaming-cursor' : ''}`}
+            className={`py-1 leading-[1.7] text-[0.9375rem] break-words text-primary markdown-body${isActive ? ' streaming-cursor' : ''}`}
             dangerouslySetInnerHTML={{ __html: bubble.text ? formatText(bubble.text) : '' }}
           />
         )
@@ -426,9 +389,39 @@ function StreamingMessage({ msg }) {
     }
   }
 
+  return elements
+}
+
+function AssistantMessage({ msg }) {
+  const { bubbles, tools, stats, errors } = msg
+  const elements = renderBubblesAndTools(bubbles, tools, false)
+
+  if (errors && errors.length > 0) {
+    elements.push(
+      <div key="errors" className="py-1 leading-[1.7] text-[0.9375rem] break-words text-primary markdown-body">
+        <span className="text-err">{errors.join('\n')}</span>
+      </div>
+    )
+  }
+
   return (
     <div className="max-w-full mt-2" style={{ animation: 'msg-in 0.25s cubic-bezier(0.16, 1, 0.3, 1)' }}>
       {elements}
+      {stats && (
+        <div className="font-mono text-xs text-dim mt-2 pt-2 border-t border-border-subtle flex gap-3 flex-wrap tabular-nums">
+          <span>{stats.numTurns} turn{stats.numTurns > 1 ? 's' : ''}</span>
+          <span>${stats.costUsd.toFixed(4)}</span>
+          <span>{stats.tokensIn} in / {stats.tokensOut} out</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function StreamingMessage({ msg }) {
+  return (
+    <div className="max-w-full mt-2" style={{ animation: 'msg-in 0.25s cubic-bezier(0.16, 1, 0.3, 1)' }}>
+      {renderBubblesAndTools(msg.bubbles, msg.tools, true)}
     </div>
   )
 }

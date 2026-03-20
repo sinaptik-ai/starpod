@@ -13,14 +13,14 @@ let id = store.add_job(
     "Summarize overnight alerts",
     &Schedule::Cron { expr: "0 0 9 * * *".into() },
     false,                    // delete_after_run
-    Some("America/New_York"), // user timezone
+    Some("Europe/Rome"), // user timezone
 ).await?;
 
 // Create with full options (retry, timeout, session mode, user)
 let id = store.add_job_full(
     "morning-check", "Summarize overnight alerts",
     &Schedule::Cron { expr: "0 0 9 * * *".into() },
-    false, Some("America/New_York"),
+    false, Some("Europe/Rome"),
     3,                               // max_retries
     7200,                            // timeout_secs
     SessionMode::Isolated,
@@ -55,7 +55,7 @@ let scheduler = CronScheduler::new(
     store,              // Arc<CronStore>
     executor,           // Fn(JobContext) -> Future<Result<JobResult, String>>
     30,                 // tick interval (seconds)
-    Some("America/New_York".into()),
+    Some("Europe/Rome".into()),
 )
 .with_notifier(notifier);  // Optional Fn(job_name, session_id, result, success) -> Future
 

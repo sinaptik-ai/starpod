@@ -416,12 +416,7 @@ async fn process_stream_with_followups(
                     }
                     Some(Err(e)) => {
                         error!(error = %e, "Stream error");
-                        // Save any accumulated assistant text before reporting the error
-                        if !result_text.is_empty() {
-                            let _ = state.agent.session_mgr().save_message(
-                                session_id, "assistant", &result_text,
-                            ).await;
-                        }
+                        // Assistant text is already saved per-turn.
                         let _ = send_msg(sender, &ServerMessage::StreamEnd {
                             session_id: session_id.to_string(),
                             num_turns: 0,
@@ -434,14 +429,9 @@ async fn process_stream_with_followups(
                         return true;
                     }
                     None => {
-                        // Stream ended without a Result message — save any
-                        // accumulated text and notify the client so the UI
-                        // cursor stops blinking.
-                        if !result_text.is_empty() {
-                            let _ = state.agent.session_mgr().save_message(
-                                session_id, "assistant", &result_text,
-                            ).await;
-                        }
+                        // Stream ended without a Result message — notify the
+                        // client so the UI cursor stops blinking.
+                        // Assistant text is already saved per-turn.
                         let _ = send_msg(sender, &ServerMessage::StreamEnd {
                             session_id: session_id.to_string(),
                             num_turns: 0,
@@ -532,43 +522,60 @@ async fn handle_stream_message(
 ) -> StreamAction {
     match msg {
         Message::Assistant(assistant) => {
+            // Collect this turn's text so we can save it to the DB BEFORE
+            // tool_uses, preserving correct interleaving on session replay:
+            // assistant → tool_use → tool_result → assistant → …
+            let mut turn_text = String::new();
             for block in &assistant.content {
-                match block {
-                    ContentBlock::Text { text } => {
-                        if !text.is_empty() {
-                            if !result_text.is_empty() {
-                                result_text.push('\n');
-                            }
-                            result_text.push_str(text);
-
-                            if !send_msg(sender, &ServerMessage::TextDelta {
-                                text: text.clone(),
-                            }).await {
-                                return StreamAction::Disconnected;
-                            }
+                if let ContentBlock::Text { text } = block {
+                    if !text.is_empty() {
+                        if !turn_text.is_empty() {
+                            turn_text.push('\n');
                         }
+                        turn_text.push_str(text);
                     }
-                    ContentBlock::ToolUse { id, name, input } => {
-                        let tool_json = serde_json::json!({
-                            "type": "tool_use",
-                            "id": id,
-                            "name": name,
-                            "input": input,
-                        });
-                        let _ = state.agent.session_mgr().save_message(
-                            session_id, "tool_use",
-                            &serde_json::to_string(&tool_json).unwrap_or_default(),
-                        ).await;
+                }
+            }
 
-                        if !send_msg(sender, &ServerMessage::ToolUse {
-                            id: id.clone(),
-                            name: name.clone(),
-                            input: input.clone(),
-                        }).await {
-                            return StreamAction::Disconnected;
-                        }
+            // Save and stream assistant text for this turn BEFORE tool_uses
+            if !turn_text.is_empty() {
+                let _ = state.agent.session_mgr().save_message(
+                    session_id, "assistant", &turn_text,
+                ).await;
+
+                if !result_text.is_empty() {
+                    result_text.push('\n');
+                }
+                result_text.push_str(&turn_text);
+
+                if !send_msg(sender, &ServerMessage::TextDelta {
+                    text: turn_text,
+                }).await {
+                    return StreamAction::Disconnected;
+                }
+            }
+
+            // Now stream tool_uses (text already sent above)
+            for block in &assistant.content {
+                if let ContentBlock::ToolUse { id, name, input } = block {
+                    let tool_json = serde_json::json!({
+                        "type": "tool_use",
+                        "id": id,
+                        "name": name,
+                        "input": input,
+                    });
+                    let _ = state.agent.session_mgr().save_message(
+                        session_id, "tool_use",
+                        &serde_json::to_string(&tool_json).unwrap_or_default(),
+                    ).await;
+
+                    if !send_msg(sender, &ServerMessage::ToolUse {
+                        id: id.clone(),
+                        name: name.clone(),
+                        input: input.clone(),
+                    }).await {
+                        return StreamAction::Disconnected;
                     }
-                    _ => {}
                 }
             }
         }
@@ -610,7 +617,10 @@ async fn handle_stream_message(
             }
         }
         Message::Result(result) => {
-            if result_text.is_empty() {
+            // Track whether result_text was populated solely from the Result
+            // message (meaning it wasn't saved per-turn yet).
+            let result_text_from_result = result_text.is_empty();
+            if result_text_from_result {
                 if let Some(text) = &result.result {
                     *result_text = text.clone();
                 }
@@ -628,14 +638,17 @@ async fn handle_stream_message(
             }).await;
 
             // Finalize in background so we don't block the client.
+            // Assistant text is already saved per-turn in the Assistant handler,
+            // so only save here if it came solely from the Result message.
             let agent = Arc::clone(&state.agent);
             let sid = session_id.to_string();
             let ut = user_text.to_string();
             let rt = result_text.clone();
             let uid = user_id.map(|s| s.to_string());
+            let save_final_text = result_text_from_result;
             tokio::spawn(async move {
                 agent.finalize_chat(&sid, &ut, &rt, &result, uid.as_deref()).await;
-                if !rt.is_empty() {
+                if save_final_text && !rt.is_empty() {
                     let _ = agent.session_mgr().save_message(&sid, "assistant", &rt).await;
                 }
             });
@@ -670,11 +683,7 @@ async fn process_stream(
             }
             Err(e) => {
                 error!(error = %e, "Stream error");
-                if !result_text.is_empty() {
-                    let _ = state.agent.session_mgr().save_message(
-                        session_id, "assistant", &result_text,
-                    ).await;
-                }
+                // Assistant text is already saved per-turn.
                 let _ = send_msg(sender, &ServerMessage::StreamEnd {
                     session_id: session_id.to_string(),
                     num_turns: 0,
@@ -688,13 +697,8 @@ async fn process_stream(
             }
         }
     }
-    // Stream ended without a Result message — send stream_end so the UI
-    // cursor stops and any accumulated text is persisted.
-    if !result_text.is_empty() {
-        let _ = state.agent.session_mgr().save_message(
-            session_id, "assistant", &result_text,
-        ).await;
-    }
+    // Stream ended without a Result message — notify client so the UI
+    // cursor stops. Assistant text is already saved per-turn.
     let _ = send_msg(sender, &ServerMessage::StreamEnd {
         session_id: session_id.to_string(),
         num_turns: 0,

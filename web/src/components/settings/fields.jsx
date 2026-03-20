@@ -71,9 +71,9 @@ export function Select({ value, onChange, options }) {
 export function Toggle({ checked, onChange, label, helpTip }) {
   return (
     <div className="s-toggle-row">
-      <span className="s-row-label">
-        {label}{helpTip && <Tooltip text={helpTip} />}
-      </span>
+      <div className="s-row-label">
+        <span>{label}{helpTip && <Tooltip text={helpTip} />}</span>
+      </div>
       <label className="s-toggle">
         <input type="checkbox" checked={checked ?? false} onChange={e => onChange(e.target.checked)} />
         <div className="s-toggle-track" />

@@ -1,40 +1,33 @@
 import { createContext, useContext, useReducer } from 'react'
 import { generateUUID } from '../lib/utils'
 
-const UNREAD_KEY = 'starpod_read_sessions'
-
-function loadReadSessions() {
-  try {
-    return new Set(JSON.parse(localStorage.getItem(UNREAD_KEY) || '[]'))
-  } catch {
-    return new Set()
-  }
-}
-
-function persistReadSessions(readSessions) {
-  localStorage.setItem(UNREAD_KEY, JSON.stringify([...readSessions]))
-}
-
-function initialSettingsFromHash() {
+function parseHash() {
   const hash = window.location.hash
   if (hash.startsWith('#/settings')) {
     const tab = hash.split('/')[2]
-    return { visible: true, tab: tab || 'general' }
+    return { settings: { visible: true, tab: tab || 'general' }, cronVisible: false, sessionId: null }
   }
-  return { visible: false, tab: 'general' }
+  if (hash === '#/cron') {
+    return { settings: { visible: false, tab: 'general' }, cronVisible: true, sessionId: null }
+  }
+  if (hash.startsWith('#/chat/')) {
+    const id = hash.slice('#/chat/'.length)
+    if (id) return { settings: { visible: false, tab: 'general' }, cronVisible: false, sessionId: id }
+  }
+  return { settings: { visible: false, tab: 'general' }, cronVisible: false, sessionId: null }
 }
 
-const initSettings = initialSettingsFromHash()
+const initHash = parseHash()
 
 const initialState = {
   wsStatus: 'connecting',
   sidebarOpen: window.innerWidth > 768,
-  settingsVisible: initSettings.visible,
-  settingsActiveTab: initSettings.tab,
-  currentSessionId: null,
+  settingsVisible: initHash.settings.visible,
+  settingsActiveTab: initHash.settings.tab,
+  cronVisible: initHash.cronVisible,
+  currentSessionId: initHash.sessionId,
   currentSessionKey: generateUUID(),
   sessions: [],
-  readSessions: loadReadSessions(),
   previewUrl: null,
 }
 
@@ -54,17 +47,32 @@ function appReducer(state, action) {
 
     case 'SHOW_SETTINGS':
       window.history.pushState(null, '', '#/settings/' + state.settingsActiveTab)
-      return { ...state, settingsVisible: true }
+      return { ...state, settingsVisible: true, cronVisible: false }
 
-    case 'HIDE_SETTINGS':
-      window.history.pushState(null, '', '#/')
+    case 'HIDE_SETTINGS': {
+      const chatHash = state.currentSessionId ? '#/chat/' + state.currentSessionId : '#/'
+      window.history.pushState(null, '', chatHash)
       return { ...state, settingsVisible: false }
+    }
+
+    case 'SHOW_CRON':
+      window.history.pushState(null, '', '#/cron')
+      return { ...state, cronVisible: true, settingsVisible: false }
+
+    case 'HIDE_CRON': {
+      const chatHash2 = state.currentSessionId ? '#/chat/' + state.currentSessionId : '#/'
+      window.history.pushState(null, '', chatHash2)
+      return { ...state, cronVisible: false }
+    }
 
     case 'SET_SETTINGS_TAB':
       if (state.settingsVisible) window.history.replaceState(null, '', '#/settings/' + action.payload)
       return { ...state, settingsActiveTab: action.payload }
 
     case 'SET_SESSION':
+      if (!action.payload._fromPopState) {
+        window.history.pushState(null, '', '#/chat/' + action.payload.id)
+      }
       return {
         ...state,
         currentSessionId: action.payload.id,
@@ -72,34 +80,17 @@ function appReducer(state, action) {
       }
 
     case 'NEW_CHAT':
+      if (!action._fromPopState) {
+        window.history.pushState(null, '', '#/')
+      }
       return {
         ...state,
         currentSessionId: null,
         currentSessionKey: generateUUID(),
       }
 
-    case 'SET_SESSIONS': {
-      const sessions = action.payload || []
-      // Prune stale readSessions entries
-      const ids = new Set(sessions.map(s => s.id))
-      const pruned = new Set([...state.readSessions].filter(id => ids.has(id)))
-      persistReadSessions(pruned)
-      return { ...state, sessions, readSessions: pruned }
-    }
-
-    case 'MARK_READ': {
-      const next = new Set(state.readSessions)
-      next.add(action.payload)
-      persistReadSessions(next)
-      return { ...state, readSessions: next }
-    }
-
-    case 'MARK_UNREAD': {
-      const next = new Set(state.readSessions)
-      next.delete(action.payload)
-      persistReadSessions(next)
-      return { ...state, readSessions: next }
-    }
+    case 'SET_SESSIONS':
+      return { ...state, sessions: action.payload || [] }
 
     case 'OPEN_PREVIEW':
       return { ...state, previewUrl: action.payload }

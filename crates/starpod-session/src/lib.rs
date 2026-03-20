@@ -61,6 +61,7 @@ pub struct SessionMeta {
     pub channel: String,
     pub channel_session_key: Option<String>,
     pub user_id: String,
+    pub is_read: bool,
 }
 
 /// A stored message in a session.
@@ -252,6 +253,17 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Mark a session as read or unread.
+    pub async fn mark_read(&self, id: &str, is_read: bool) -> Result<()> {
+        sqlx::query("UPDATE session_metadata SET is_read = ?2 WHERE id = ?1")
+            .bind(id)
+            .bind(is_read as i64)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StarpodError::Database(format!("Mark read failed: {}", e)))?;
+        Ok(())
+    }
+
     /// Update the last_message_at timestamp and increment message_count.
     pub async fn touch_session(&self, id: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
@@ -315,7 +327,7 @@ impl SessionManager {
     /// List sessions, most recent first.
     pub async fn list_sessions(&self, limit: usize) -> Result<Vec<SessionMeta>> {
         let rows = sqlx::query(
-            "SELECT id, created_at, last_message_at, is_closed, summary, title, message_count, channel, channel_session_key, user_id
+            "SELECT id, created_at, last_message_at, is_closed, summary, title, message_count, channel, channel_session_key, user_id, is_read
              FROM session_metadata
              ORDER BY last_message_at DESC
              LIMIT ?1",
@@ -336,7 +348,7 @@ impl SessionManager {
     /// Get a specific session by ID.
     pub async fn get_session(&self, id: &str) -> Result<Option<SessionMeta>> {
         let row = sqlx::query(
-            "SELECT id, created_at, last_message_at, is_closed, summary, title, message_count, channel, channel_session_key, user_id
+            "SELECT id, created_at, last_message_at, is_closed, summary, title, message_count, channel, channel_session_key, user_id, is_read
              FROM session_metadata WHERE id = ?1",
         )
         .bind(id)
@@ -561,6 +573,7 @@ fn session_meta_from_row(row: &sqlx::sqlite::SqliteRow) -> SessionMeta {
         channel: row.get("channel"),
         channel_session_key: row.get("channel_session_key"),
         user_id: row.try_get("user_id").unwrap_or_else(|_| "admin".to_string()),
+        is_read: row.try_get::<i64, _>("is_read").unwrap_or(1) != 0,
     }
 }
 
@@ -1162,5 +1175,63 @@ mod tests {
         assert_eq!(overview.by_user[0].user_id, "user-42");
         assert_eq!(overview.by_user[0].total_input_tokens, 100);
         assert_eq!(overview.by_user[0].total_output_tokens, 50);
+    }
+
+    // ── Read/unread state tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_new_session_is_read_by_default() {
+        let (_tmp, mgr) = setup().await;
+        let id = mgr.create_session(&Channel::Main, "key").await.unwrap();
+
+        let session = mgr.get_session(&id).await.unwrap().unwrap();
+        assert!(session.is_read, "New sessions should default to is_read=true");
+    }
+
+    #[tokio::test]
+    async fn test_mark_read_false() {
+        let (_tmp, mgr) = setup().await;
+        let id = mgr.create_session(&Channel::Main, "key").await.unwrap();
+
+        mgr.mark_read(&id, false).await.unwrap();
+
+        let session = mgr.get_session(&id).await.unwrap().unwrap();
+        assert!(!session.is_read, "Session should be unread after mark_read(false)");
+    }
+
+    #[tokio::test]
+    async fn test_mark_read_true() {
+        let (_tmp, mgr) = setup().await;
+        let id = mgr.create_session(&Channel::Main, "key").await.unwrap();
+
+        // Mark unread, then mark read again
+        mgr.mark_read(&id, false).await.unwrap();
+        mgr.mark_read(&id, true).await.unwrap();
+
+        let session = mgr.get_session(&id).await.unwrap().unwrap();
+        assert!(session.is_read, "Session should be read after mark_read(true)");
+    }
+
+    #[tokio::test]
+    async fn test_list_sessions_includes_is_read() {
+        let (_tmp, mgr) = setup().await;
+        let id1 = mgr.create_session(&Channel::Main, "key1").await.unwrap();
+        let id2 = mgr.create_session(&Channel::Main, "key2").await.unwrap();
+
+        mgr.mark_read(&id1, false).await.unwrap();
+
+        let sessions = mgr.list_sessions(10).await.unwrap();
+        let s1 = sessions.iter().find(|s| s.id == id1).unwrap();
+        let s2 = sessions.iter().find(|s| s.id == id2).unwrap();
+
+        assert!(!s1.is_read, "Session 1 should be unread");
+        assert!(s2.is_read, "Session 2 should still be read");
+    }
+
+    #[tokio::test]
+    async fn test_mark_read_nonexistent_session_succeeds() {
+        let (_tmp, mgr) = setup().await;
+        // Should not error — just a no-op UPDATE matching zero rows
+        mgr.mark_read("nonexistent-id", true).await.unwrap();
     }
 }

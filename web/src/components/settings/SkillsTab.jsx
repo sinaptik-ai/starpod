@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { apiHeaders } from '../../lib/api'
 import { Textarea, SaveBar } from './fields'
+import SectionLabel from '../ui/SectionLabel'
+import { Loading, Empty } from '../ui/EmptyState'
 
 // Steps: name → description → context → generating/review
 const STEP_NAME = 'name'
@@ -137,23 +139,25 @@ export default function SkillsTab() {
     } catch (e) { setError(e.message) }
   }
 
-  if (loading) return <div className="text-dim text-sm py-8 text-center">Loading...</div>
+  if (loading) return <Loading />
 
   return (
     <>
-      {/* Wizard / Create */}
-      {!wizardOpen ? (
-        <div className="mb-4">
-          <button onClick={openWizard} className="s-save-btn">
-            + New Skill
+      {/* Header + new skill button */}
+      {!wizardOpen && (
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-dim text-xs">{skills.length} skill{skills.length !== 1 ? 's' : ''}</div>
+          <button onClick={openWizard} className="s-save-btn text-xs">
+            New skill
           </button>
         </div>
-      ) : (
+      )}
+
+      {/* Wizard / Create */}
+      {wizardOpen && (
         <div className="mb-4 p-4 rounded-lg border border-border-subtle bg-elevated/50">
           <div className="flex items-center justify-between mb-3">
-            <span className="font-mono text-xs text-dim uppercase tracking-wider">
-              New Skill
-            </span>
+            <SectionLabel>New Skill</SectionLabel>
             <button onClick={closeWizard} className="text-xs text-muted hover:text-primary cursor-pointer transition-colors">
               cancel
             </button>
@@ -161,7 +165,7 @@ export default function SkillsTab() {
 
           {/* Step 1: Name */}
           <div className="mb-3">
-            <div className="font-mono text-[10px] text-dim mb-1.5 uppercase tracking-wider">Name</div>
+            <SectionLabel className="mb-1.5">Name</SectionLabel>
             <input
               type="text"
               className="s-input font-mono text-xs w-full"
@@ -181,9 +185,9 @@ export default function SkillsTab() {
           {/* Step 2: Description */}
           {wizardStep !== STEP_NAME && (
             <div className="mb-3">
-              <div className="font-mono text-[10px] text-dim mb-1.5 uppercase tracking-wider">
+              <SectionLabel className="mb-1.5">
                 Description <span className="text-dim/50">(optional)</span>
-              </div>
+              </SectionLabel>
               <input
                 type="text"
                 className="s-input text-xs w-full"
@@ -204,9 +208,9 @@ export default function SkillsTab() {
           {/* Step 3: Extra context */}
           {(wizardStep === STEP_CONTEXT || wizardStep === STEP_GENERATING) && (
             <div className="mb-3">
-              <div className="font-mono text-[10px] text-dim mb-1.5 uppercase tracking-wider">
+              <SectionLabel className="mb-1.5">
                 Extra instructions / context <span className="text-dim/50">(optional)</span>
-              </div>
+              </SectionLabel>
               <Textarea
                 value={wizContext}
                 onChange={setWizContext}
@@ -261,7 +265,7 @@ export default function SkillsTab() {
       {error && <div className="text-err text-xs mb-3">{error}</div>}
 
       {skills.length === 0 && !wizardOpen ? (
-        <div className="text-dim text-sm text-center py-8">No skills</div>
+        <Empty text="No skills" />
       ) : (
         <div className="flex flex-col gap-1.5">
           {skills.map(s => (
@@ -285,7 +289,7 @@ export default function SkillsTab() {
               {editName === s.name && (
                 <div className="mt-3 pt-3 border-t border-border-subtle">
                   <div className="mb-3">
-                    <div className="font-mono text-[10px] text-dim mb-1.5 uppercase tracking-wider">Description</div>
+                    <SectionLabel className="mb-1.5">Description</SectionLabel>
                     <input
                       type="text"
                       className="s-input text-xs w-full"
@@ -294,7 +298,7 @@ export default function SkillsTab() {
                       placeholder="Short description of what this skill does"
                     />
                   </div>
-                  <div className="font-mono text-[10px] text-dim mb-1.5 uppercase tracking-wider">Body</div>
+                  <SectionLabel className="mb-1.5">Body</SectionLabel>
                   <Textarea value={editBody} onChange={setEditBody} rows={15} />
                   <SaveBar onSave={saveEdit} saving={editSaving} status={editStatus} />
                 </div>

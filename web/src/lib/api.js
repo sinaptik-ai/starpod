@@ -12,6 +12,14 @@ export function authHeaders() {
   return h
 }
 
+export function markSessionRead(sessionId, isRead = true) {
+  fetch(`/api/sessions/${sessionId}/read`, {
+    method: 'POST',
+    headers: apiHeaders(),
+    body: JSON.stringify({ is_read: isRead }),
+  }).catch(() => {})
+}
+
 let cachedModels = null
 export async function fetchModels() {
   if (cachedModels) return cachedModels

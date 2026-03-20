@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { apiHeaders } from '../../lib/api'
 import { Card, Row, Input, SaveBar } from './fields'
+import { Loading } from '../ui/EmptyState'
 
 function fmtTimeout(s) {
   const n = Number(s)
@@ -21,7 +22,7 @@ export default function CronTab() {
       .catch(() => setStatus({ type: 'error', text: 'Failed to load' }))
   }, [])
 
-  if (!config) return <div className="text-dim text-sm py-8 text-center">Loading...</div>
+  if (!config) return <Loading />
 
   const set = (key, val) => setConfig(prev => ({ ...prev, [key]: val }))
   const hint = fmtTimeout(config.default_timeout_secs)

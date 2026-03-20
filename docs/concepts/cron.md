@@ -106,7 +106,7 @@ See [Lifecycle Prompts](/concepts/heartbeat) for full details.
 Cron expressions use the timezone from the top-level `timezone` field in `agent.toml`:
 
 ```toml
-timezone = "America/New_York"
+timezone = "Europe/Rome"
 ```
 
 ::: warning

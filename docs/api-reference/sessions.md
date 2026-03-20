@@ -28,6 +28,7 @@ curl http://localhost:3000/api/sessions?limit=20 \
     "created_at": "2026-03-14T10:00:00Z",
     "last_message_at": "2026-03-14T10:05:00Z",
     "is_closed": false,
+    "is_read": true,
     "summary": null,
     "user_id": "user123"
   }
@@ -76,6 +77,40 @@ curl http://localhost:3000/api/sessions/abc123/messages \
   }
 ]
 ```
+
+## Mark Session Read/Unread {#mark-read}
+
+### POST /api/sessions/:id/read
+
+Mark a session as read or unread. Sessions created by cron jobs are automatically marked unread by the server.
+
+```bash
+# Mark as read (default)
+curl -X POST http://localhost:3000/api/sessions/abc123/read \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"is_read": true}'
+
+# Mark as unread
+curl -X POST http://localhost:3000/api/sessions/abc123/read \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"is_read": false}'
+```
+
+#### Request Body
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `is_read` | boolean | `true` | Whether the session is read |
+
+#### Response
+
+```json
+{ "ok": true }
+```
+
+---
 
 #### Message Roles
 

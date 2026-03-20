@@ -128,8 +128,7 @@ pub struct ProvidersConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TelegramChannelConfig {
-    /// Whether this channel is enabled (default: true).
-    #[serde(default = "default_true")]
+    /// Whether this channel is enabled (default: false).
     pub enabled: bool,
     /// Inactivity gap (in minutes) before auto-closing a Telegram session (default: 360 = 6h).
     #[serde(default = "default_gap_minutes")]
@@ -146,7 +145,7 @@ fn default_gap_minutes() -> Option<i64> { Some(360) }
 impl Default for TelegramChannelConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             gap_minutes: default_gap_minutes(),
             stream_mode: default_stream_mode(),
         }
@@ -241,11 +240,16 @@ pub struct CronConfig {
     /// Maximum concurrent job runs (default: 1).
     #[serde(default = "default_cron_max_concurrent")]
     pub max_concurrent_runs: usize,
+    /// Heartbeat interval in minutes (default: 30).
+    /// Controls how often the HEARTBEAT.md prompt is executed.
+    #[serde(default = "default_heartbeat_interval_minutes")]
+    pub heartbeat_interval_minutes: u32,
 }
 
 fn default_cron_max_retries() -> u32 { 3 }
 fn default_cron_timeout_secs() -> u64 { 7200 }
 fn default_cron_max_concurrent() -> usize { 1 }
+fn default_heartbeat_interval_minutes() -> u32 { 30 }
 
 impl Default for CronConfig {
     fn default() -> Self {
@@ -253,6 +257,7 @@ impl Default for CronConfig {
             default_max_retries: default_cron_max_retries(),
             default_timeout_secs: default_cron_timeout_secs(),
             max_concurrent_runs: default_cron_max_concurrent(),
+            heartbeat_interval_minutes: default_heartbeat_interval_minutes(),
         }
     }
 }
@@ -1081,6 +1086,7 @@ mod tests {
         assert_eq!(cfg.default_max_retries, 3);
         assert_eq!(cfg.default_timeout_secs, 7200);
         assert_eq!(cfg.max_concurrent_runs, 1);
+        assert_eq!(cfg.heartbeat_interval_minutes, 30);
     }
 
     #[test]
@@ -1090,6 +1096,7 @@ mod tests {
         assert_eq!(config.cron.default_max_retries, 3);
         assert_eq!(config.cron.default_timeout_secs, 7200);
         assert_eq!(config.cron.max_concurrent_runs, 1);
+        assert_eq!(config.cron.heartbeat_interval_minutes, 30);
     }
 
     #[test]
@@ -1099,11 +1106,13 @@ mod tests {
             default_max_retries = 5
             default_timeout_secs = 3600
             max_concurrent_runs = 4
+            heartbeat_interval_minutes = 15
         "#;
         let config: StarpodConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.cron.default_max_retries, 5);
         assert_eq!(config.cron.default_timeout_secs, 3600);
         assert_eq!(config.cron.max_concurrent_runs, 4);
+        assert_eq!(config.cron.heartbeat_interval_minutes, 15);
     }
 
     #[test]
@@ -1117,6 +1126,7 @@ mod tests {
         assert_eq!(config.cron.default_max_retries, 10);
         assert_eq!(config.cron.default_timeout_secs, 7200); // default
         assert_eq!(config.cron.max_concurrent_runs, 1); // default
+        assert_eq!(config.cron.heartbeat_interval_minutes, 30); // default
     }
 
     // ── Instances config tests ─────────────────────────────────────────

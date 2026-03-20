@@ -1,5 +1,5 @@
 import React from 'react'
-import { escapeHtml } from '../lib/utils'
+import Logo from './ui/Logo'
 
 function Welcome({ onSendPrompt }) {
   const cfg = window.__STARPOD__ || {}
@@ -13,9 +13,7 @@ function Welcome({ onSendPrompt }) {
       style={{ minHeight: 'calc(100dvh - 120px)' }}
     >
       <div>
-        <div className="font-mono text-3xl font-extrabold tracking-tighter mb-3 bg-gradient-to-b from-primary to-muted bg-clip-text text-transparent select-none">
-          starpod
-        </div>
+        <div className="mb-3"><Logo large /></div>
         <p className="text-sm text-dim font-mono">{greeting}</p>
         {prompts.length > 0 && (
           <div className="mt-6 flex flex-col items-start gap-1.5">

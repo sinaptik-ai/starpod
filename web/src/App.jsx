@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useCallback } from 'react'
 import './style.css'
 import { AppProvider, useApp, isMobile } from './contexts/AppContext'
 import { generateUUID } from './lib/utils'
+import { markSessionRead } from './lib/api'
 import AuthGate from './components/AuthGate'
 import Header from './components/Header'
 import Sidebar from './components/Sidebar'
@@ -10,10 +11,11 @@ import InputBar from './components/InputBar'
 import PreviewPanel from './components/PreviewPanel'
 import ToastContainer from './components/Toasts'
 import SettingsView from './components/settings/SettingsView'
+import CronJobsView from './components/CronJobsView'
 
 function AppInner() {
   const { state, dispatch } = useApp()
-  const { wsStatus, settingsVisible, currentSessionId, currentSessionKey, previewUrl } = state
+  const { wsStatus, settingsVisible, cronVisible, currentSessionId, currentSessionKey, previewUrl } = state
   const wsRef = useRef(null)
   const chatRef = useRef(null)
   const toastsRef = useRef(null)
@@ -54,8 +56,9 @@ function AppInner() {
         if (toastsRef.current) {
           toastsRef.current.showToast(data.job_name, data.result_preview, data.success, data.session_id)
         }
-        if (data.session_id && data.session_id !== currentSessionIdRef.current) {
-          dispatch({ type: 'MARK_UNREAD', payload: data.session_id })
+        // If the notification is for the currently active session, mark it read
+        if (data.session_id && data.session_id === currentSessionIdRef.current) {
+          markSessionRead(data.session_id)
         }
         fetchSessionList()
         return
@@ -64,11 +67,11 @@ function AppInner() {
       if (data.type === 'stream_start' && data.session_id) {
         currentSessionIdRef.current = data.session_id
         dispatch({ type: 'SET_SESSION', payload: { id: data.session_id, key: null } })
-        dispatch({ type: 'MARK_READ', payload: data.session_id })
+        markSessionRead(data.session_id)
       }
 
       if (data.type === 'stream_end') {
-        if (currentSessionIdRef.current) dispatch({ type: 'MARK_READ', payload: currentSessionIdRef.current })
+        if (currentSessionIdRef.current) markSessionRead(currentSessionIdRef.current)
         fetchSessionList()
       }
 
@@ -80,18 +83,29 @@ function AppInner() {
   const currentSessionIdRef = useRef(currentSessionId)
   useEffect(() => { currentSessionIdRef.current = currentSessionId }, [currentSessionId])
 
-  useEffect(() => { connect() }, [connect])
-
   // ── Session fetching ──
   const fetchSessionList = useCallback(() => {
     const token = localStorage.getItem('starpod_api_key')
     const headers = {}
     if (token) headers['X-API-Key'] = token
-    fetch('/api/sessions?limit=50', { headers })
+    return fetch('/api/sessions?limit=50', { headers })
       .then(r => r.ok ? r.json() : Promise.reject())
-      .then(sessions => dispatch({ type: 'SET_SESSIONS', payload: sessions || [] }))
-      .catch(() => {})
+      .then(sessions => {
+        dispatch({ type: 'SET_SESSIONS', payload: sessions || [] })
+        return sessions || []
+      })
+      .catch(() => [])
   }, [dispatch])
+
+  useEffect(() => { connect(); fetchSessionList() }, [connect, fetchSessionList])
+
+  // ── Load session from URL on mount ──
+  useEffect(() => {
+    if (currentSessionId && chatRef.current) {
+      chatRef.current.loadSession(currentSessionId)
+      dispatch({ type: 'MARK_READ', payload: currentSessionId })
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Send message ──
   const handleSend = useCallback((text, attachments) => {
@@ -105,57 +119,74 @@ function AppInner() {
   // ── Session selection ──
   const handleSelectSession = useCallback((session) => {
     if (settingsVisible) dispatch({ type: 'HIDE_SETTINGS' })
+    if (cronVisible) dispatch({ type: 'HIDE_CRON' })
     dispatch({ type: 'SET_SESSION', payload: { id: session.id, key: session.channel_session_key || generateUUID() } })
-    dispatch({ type: 'MARK_READ', payload: session.id })
+    if (!session.is_read) markSessionRead(session.id)
     if (chatRef.current) chatRef.current.loadSession(session.id)
     if (isMobile()) dispatch({ type: 'CLOSE_SIDEBAR' })
-  }, [dispatch, settingsVisible])
+  }, [dispatch, settingsVisible, cronVisible])
 
   // ── New chat ──
   const handleNewChat = useCallback(() => {
     if (settingsVisible) dispatch({ type: 'HIDE_SETTINGS' })
+    if (cronVisible) dispatch({ type: 'HIDE_CRON' })
     dispatch({ type: 'NEW_CHAT' })
     if (chatRef.current) chatRef.current.showWelcome()
     if (isMobile()) dispatch({ type: 'CLOSE_SIDEBAR' })
-  }, [dispatch, settingsVisible])
+  }, [dispatch, settingsVisible, cronVisible])
 
   // ── Toast navigation ──
   const handleToastNavigate = useCallback((sessionId) => {
     const session = state.sessions.find(s => s.id === sessionId)
     if (session) handleSelectSession(session)
     else {
-      fetchSessionList()
-      // Try again after fetch
-      setTimeout(() => {
-        const s = state.sessions.find(s => s.id === sessionId)
+      fetchSessionList().then(sessions => {
+        const s = sessions.find(s => s.id === sessionId)
         if (s) handleSelectSession(s)
-      }, 500)
+      })
     }
   }, [state.sessions, handleSelectSession, fetchSessionList])
 
-  // ── Hash-based routing for /settings ──
+  // ── Hash-based routing ──
   useEffect(() => {
     const onPopState = () => {
       const hash = window.location.hash
       if (hash.startsWith('#/settings')) {
         const tab = hash.split('/')[2]
+        if (cronVisible) dispatch({ type: 'HIDE_CRON' })
         if (!settingsVisible) dispatch({ type: 'SHOW_SETTINGS' })
         if (tab) dispatch({ type: 'SET_SETTINGS_TAB', payload: tab })
+      } else if (hash === '#/cron') {
+        if (settingsVisible) dispatch({ type: 'HIDE_SETTINGS' })
+        if (!cronVisible) dispatch({ type: 'SHOW_CRON' })
+      } else if (hash.startsWith('#/chat/')) {
+        const id = hash.slice('#/chat/'.length)
+        if (settingsVisible) dispatch({ type: 'HIDE_SETTINGS' })
+        if (cronVisible) dispatch({ type: 'HIDE_CRON' })
+        if (id && id !== currentSessionId) {
+          dispatch({ type: 'SET_SESSION', payload: { id, _fromPopState: true } })
+          if (chatRef.current) chatRef.current.loadSession(id)
+        }
       } else {
         if (settingsVisible) dispatch({ type: 'HIDE_SETTINGS' })
+        if (cronVisible) dispatch({ type: 'HIDE_CRON' })
+        if (currentSessionId) {
+          dispatch({ type: 'NEW_CHAT', _fromPopState: true })
+          if (chatRef.current) chatRef.current.showWelcome()
+        }
       }
     }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
-  }, [dispatch, settingsVisible])
+  }, [dispatch, settingsVisible, cronVisible, currentSessionId])
 
   // ── Keyboard shortcuts ──
   useEffect(() => {
     const handler = (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault() }
       if (e.key === 'Escape') {
         if (previewUrl) { dispatch({ type: 'CLOSE_PREVIEW' }); return }
         if (settingsVisible) { dispatch({ type: 'HIDE_SETTINGS' }); return }
+        if (cronVisible) { dispatch({ type: 'HIDE_CRON' }); return }
         if (state.sidebarOpen && isMobile()) dispatch({ type: 'CLOSE_SIDEBAR' })
       }
       if ((e.metaKey || e.ctrlKey) && e.key === ',') {
@@ -203,13 +234,19 @@ function AppInner() {
         </aside>
 
         {/* Main app */}
-        <div id="app" className="flex flex-col min-w-0 flex-1">
+        <div id="app" role="main" className="flex flex-col min-w-0 flex-1">
           <Header onNewChat={handleNewChat} onToggleSidebar={() => { if (!state.sidebarOpen) fetchSessionList() }} />
-          <Chat ref={chatRef} wsRef={wsRef} onSendPrompt={(text) => handleSend(text, [])} />
-          <InputBar
-            onSend={handleSend}
-            disabled={wsStatus !== 'connected'}
-          />
+          {cronVisible ? (
+            <CronJobsView />
+          ) : (
+            <>
+              <Chat ref={chatRef} wsRef={wsRef} onSendPrompt={(text) => handleSend(text, [])} />
+              <InputBar
+                onSend={handleSend}
+                disabled={wsStatus !== 'connected'}
+              />
+            </>
+          )}
         </div>
 
         {/* Preview panel */}
