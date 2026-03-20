@@ -33,7 +33,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use starpod_auth::Role;
-use starpod_core::{FrontendConfig, FollowupMode, ReasoningEffort};
+use starpod_core::{FrontendConfig, FollowupMode, ReasoningEffort, reload_agent_config};
 
 use starpod_core::ResolvedPaths;
 
@@ -1420,8 +1420,18 @@ fn write_agent_toml(
 ) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
     let toml_str = toml::to_string_pretty(doc)
         .map_err(|e| internal(format!("Failed to serialize TOML: {}", e)))?;
-    std::fs::write(&state.paths.agent_toml, toml_str)
-        .map_err(|e| internal(format!("Failed to write {}: {}", state.paths.agent_toml.display(), e)))
+    std::fs::write(&state.paths.agent_toml, &toml_str)
+        .map_err(|e| internal(format!("Failed to write {}: {}", state.paths.agent_toml.display(), e)))?;
+
+    // Update in-memory config immediately so subsequent reads don't return
+    // stale data (the file-watcher has a 2-second debounce).
+    if let Ok(agent_cfg) = reload_agent_config(&state.paths) {
+        let new_config = agent_cfg.into_starpod_config(&state.paths);
+        state.agent.reload_config(new_config.clone());
+        *state.config.write().unwrap() = new_config;
+    }
+
+    Ok(())
 }
 
 /// Insert a string value into a TOML table, or remove the key if the value is `None` or empty.
