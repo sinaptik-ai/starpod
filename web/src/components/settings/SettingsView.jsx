@@ -61,10 +61,12 @@ export default function SettingsView() {
   const { state, dispatch } = useApp()
   const { settingsActiveTab } = state
 
+  const activeTabLabel = allTabs.find(t => t.id === settingsActiveTab)?.label || ''
+
   return (
     <div className="flex h-[100dvh] bg-bg">
       {/* Left sidebar navigation */}
-      <div className="shrink-0 w-48 border-r border-border-subtle flex flex-col">
+      <div className="shrink-0 w-52 border-r border-border-subtle flex flex-col">
         <div className="flex items-center gap-3 h-12 px-4 shrink-0">
           <button
             onClick={() => dispatch({ type: 'HIDE_SETTINGS' })}
@@ -98,6 +100,7 @@ export default function SettingsView() {
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-[740px] mx-auto px-5 py-6">
+          <h2 className="text-primary text-lg font-semibold mb-4">{activeTabLabel}</h2>
           <TabContent tab={settingsActiveTab} />
         </div>
       </div>
