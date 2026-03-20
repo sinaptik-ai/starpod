@@ -6,4 +6,4 @@ docs/.vitepress/cache/
 docs/.vitepress/.temp/
 web/node_modules/
 crates/starpod-gateway/static/dist/
-workspace/
+workspace/.fastembed_cache/
