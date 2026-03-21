@@ -400,6 +400,7 @@ async fn process_stream_with_followups(
     user_id: Option<&str>,
 ) -> bool {
     let mut result_text = String::new();
+    let mut streamed_text = false;
 
     loop {
         tokio::select! {
@@ -408,7 +409,7 @@ async fn process_stream_with_followups(
                 match stream_msg {
                     Some(Ok(msg)) => {
                         let action = handle_stream_message(
-                            msg, sender, state, session_id, user_text, &mut result_text, user_id,
+                            msg, sender, state, session_id, user_text, &mut result_text, user_id, &mut streamed_text,
                         ).await;
                         match action {
                             StreamAction::Continue => {}
@@ -514,6 +515,10 @@ enum StreamAction {
 }
 
 /// Handle a single message from the agent stream, forwarding to the WS client.
+///
+/// `streamed_text` tracks whether text deltas have already been sent for this
+/// turn via `Message::StreamEvent`. When true, the `Message::Assistant` handler
+/// skips sending the text again (it was already streamed token-by-token).
 async fn handle_stream_message(
     msg: Message,
     sender: &mut futures::stream::SplitSink<WebSocket, WsMessage>,
@@ -522,8 +527,26 @@ async fn handle_stream_message(
     user_text: &str,
     result_text: &mut String,
     user_id: Option<&str>,
+    streamed_text: &mut bool,
 ) -> StreamAction {
     match msg {
+        Message::StreamEvent(stream_event) => {
+            // Token-level streaming: extract text deltas and forward to WS client
+            if let Some(delta) = stream_event.event.get("delta") {
+                if let Some("text_delta") = delta.get("type").and_then(|t| t.as_str()) {
+                    if let Some(text) = delta.get("text").and_then(|t| t.as_str()) {
+                        if !text.is_empty() {
+                            *streamed_text = true;
+                            if !send_msg(sender, &ServerMessage::TextDelta {
+                                text: text.to_string(),
+                            }).await {
+                                return StreamAction::Disconnected;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         Message::Assistant(assistant) => {
             // Collect this turn's text so we can save it to the DB BEFORE
             // tool_uses, preserving correct interleaving on session replay:
@@ -540,7 +563,7 @@ async fn handle_stream_message(
                 }
             }
 
-            // Save and stream assistant text for this turn BEFORE tool_uses
+            // Save assistant text to DB and track result_text
             if !turn_text.is_empty() {
                 let _ = state.agent.session_mgr().save_message(
                     session_id, "assistant", &turn_text,
@@ -551,12 +574,18 @@ async fn handle_stream_message(
                 }
                 result_text.push_str(&turn_text);
 
-                if !send_msg(sender, &ServerMessage::TextDelta {
-                    text: turn_text,
-                }).await {
-                    return StreamAction::Disconnected;
+                // Only send as TextDelta if text wasn't already streamed token-by-token
+                if !*streamed_text {
+                    if !send_msg(sender, &ServerMessage::TextDelta {
+                        text: turn_text,
+                    }).await {
+                        return StreamAction::Disconnected;
+                    }
                 }
             }
+
+            // Reset for next turn
+            *streamed_text = false;
 
             // Now stream tool_uses (text already sent above)
             for block in &assistant.content {
@@ -673,11 +702,12 @@ async fn process_stream(
     user_id: Option<&str>,
 ) {
     let mut result_text = String::new();
+    let mut streamed_text = false;
     while let Some(msg_result) = StreamExt::next(stream).await {
         match msg_result {
             Ok(msg) => {
                 let action = handle_stream_message(
-                    msg, sender, state, session_id, user_text, &mut result_text, user_id,
+                    msg, sender, state, session_id, user_text, &mut result_text, user_id, &mut streamed_text,
                 ).await;
                 match action {
                     StreamAction::Continue => {}

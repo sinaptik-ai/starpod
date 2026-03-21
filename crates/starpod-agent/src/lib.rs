@@ -789,7 +789,8 @@ impl StarpodAgent {
             .additional_directories(vec![
                 config.db_dir.to_string_lossy().to_string(),
             ])
-            .hook_dirs(vec![config.db_dir.join("hooks")]);
+            .hook_dirs(vec![config.db_dir.join("hooks")])
+            .include_partial_messages(true);
 
         // Resume existing session to load conversation history, or set ID for new ones
         if is_resuming {
