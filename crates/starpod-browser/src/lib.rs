@@ -455,7 +455,15 @@ impl BrowserSession {
         let sel_json = serde_json::to_string(selector)
             .map_err(|e| BrowserError::EvalFailed(e.to_string()))?;
         let js = format!(
-            r#"(function(){{ var el = document.querySelector({sel}); if (!el) throw new Error('element not found'); el.click(); return true; }})()"#,
+            r#"(function(){{
+  var el = document.querySelector({sel});
+  if (!el) throw new Error('element not found');
+  el.click();
+  if (el.type === 'submit' && el.form) {{
+    el.form.dispatchEvent(new Event('submit', {{bubbles: true, cancelable: true}}));
+  }}
+  return true;
+}})()"#,
             sel = sel_json,
         );
         self.evaluate(&js).await.map_err(|e| {
@@ -470,7 +478,9 @@ impl BrowserSession {
 
     /// Type text into an element identified by CSS selector.
     ///
-    /// Focuses the element and sets its value, dispatching an input event.
+    /// Uses the native HTMLInputElement value setter to bypass React's
+    /// internal value tracker, then dispatches `input` and `change` events
+    /// so both React controlled inputs and plain HTML inputs update correctly.
     ///
     /// # Errors
     ///
@@ -481,7 +491,22 @@ impl BrowserSession {
         let val_json = serde_json::to_string(text)
             .map_err(|e| BrowserError::EvalFailed(e.to_string()))?;
         let js = format!(
-            r#"(function(){{ var el = document.querySelector({sel}); if (!el) throw new Error('element not found'); el.focus(); el.value = {val}; el.dispatchEvent(new Event('input', {{bubbles: true}})); return true; }})()"#,
+            r#"(function(){{
+  var el = document.querySelector({sel});
+  if (!el) throw new Error('element not found');
+  el.focus();
+  var nativeSetter = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype, 'value'
+  );
+  if (nativeSetter && nativeSetter.set) {{
+    nativeSetter.set.call(el, {val});
+  }} else {{
+    el.value = {val};
+  }}
+  el.dispatchEvent(new Event('input', {{bubbles: true}}));
+  el.dispatchEvent(new Event('change', {{bubbles: true}}));
+  return true;
+}})()"#,
             sel = sel_json,
             val = val_json,
         );
