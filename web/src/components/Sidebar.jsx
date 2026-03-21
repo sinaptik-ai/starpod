@@ -7,7 +7,7 @@ import { ComposeIcon, CloseIcon, GearIcon } from './ui/Icons'
 
 function Sidebar({ onSelectSession, onNewChat }) {
   const { state, dispatch } = useApp()
-  const { sidebarOpen, currentSessionId, sessions, readSessions, settingsVisible, cronVisible } = state
+  const { sidebarOpen, currentSessionId, sessions, settingsVisible, cronVisible } = state
 
   function closeSidebar() {
     dispatch({ type: 'CLOSE_SIDEBAR' })
@@ -23,7 +23,10 @@ function Sidebar({ onSelectSession, onNewChat }) {
 
   function handleSessionClick(session) {
     dispatch({ type: 'SET_SESSION', payload: { id: session.id, key: session.channel_session_key } })
-    if (!session.is_read) markSessionRead(session.id)
+    if (!session.is_read) {
+      dispatch({ type: 'MARK_SESSION_READ', payload: session.id })
+      markSessionRead(session.id)
+    }
     if (isMobile()) closeSidebar()
     if (onSelectSession) onSelectSession(session)
   }

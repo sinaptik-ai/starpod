@@ -121,7 +121,10 @@ function AppInner() {
     if (settingsVisible) dispatch({ type: 'HIDE_SETTINGS' })
     if (cronVisible) dispatch({ type: 'HIDE_CRON' })
     dispatch({ type: 'SET_SESSION', payload: { id: session.id, key: session.channel_session_key || generateUUID() } })
-    if (!session.is_read) markSessionRead(session.id)
+    if (!session.is_read) {
+      dispatch({ type: 'MARK_SESSION_READ', payload: session.id })
+      markSessionRead(session.id)
+    }
     if (chatRef.current) chatRef.current.loadSession(session.id)
     if (isMobile()) dispatch({ type: 'CLOSE_SIDEBAR' })
   }, [dispatch, settingsVisible, cronVisible])

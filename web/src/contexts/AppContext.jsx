@@ -92,6 +92,14 @@ function appReducer(state, action) {
     case 'SET_SESSIONS':
       return { ...state, sessions: action.payload || [] }
 
+    case 'MARK_SESSION_READ':
+      return {
+        ...state,
+        sessions: state.sessions.map(s =>
+          s.id === action.payload ? { ...s, is_read: true } : s
+        ),
+      }
+
     case 'OPEN_PREVIEW':
       return { ...state, previewUrl: action.payload }
 
