@@ -22,8 +22,6 @@ pub const BUILT_IN_TOOLS: &[&str] = &[
     "Bash",
     "Glob",
     "Grep",
-    "WebSearch",
-    "WebFetch",
     "Agent",
     "AskUserQuestion",
     "TodoWrite",
@@ -64,7 +62,7 @@ pub fn tool_category(tool_name: &str) -> ToolCategory {
         "Read" | "Glob" | "Grep" | "ToolSearch" => ToolCategory::ReadOnly,
         "Write" | "Edit" | "NotebookEdit" => ToolCategory::FileModification,
         "Bash" | "TaskOutput" | "TaskStop" => ToolCategory::Execution,
-        "WebSearch" | "WebFetch" => ToolCategory::Web,
+        "WebSearch" | "WebFetch" => ToolCategory::Web, // custom tools, category still useful
         "Agent" | "Skill" => ToolCategory::Orchestration,
         "AskUserQuestion" => ToolCategory::UserInteraction,
         _ => ToolCategory::Other,
@@ -119,8 +117,6 @@ pub mod presets {
             "Bash".into(),
             "Glob".into(),
             "Grep".into(),
-            "WebSearch".into(),
-            "WebFetch".into(),
             "Agent".into(),
         ]
     }
