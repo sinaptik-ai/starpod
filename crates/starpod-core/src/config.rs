@@ -206,6 +206,10 @@ pub struct MemoryConfig {
     /// Export closed session transcripts to knowledge/sessions/ for long-term recall (default: true).
     #[serde(default = "default_true")]
     pub export_sessions: bool,
+    /// Automatically append a truncated summary of each turn to the daily log (default: false).
+    /// With memory flush enabled, this is redundant and off by default.
+    #[serde(default)]
+    pub auto_log: bool,
 }
 
 fn default_chunk_size() -> usize { 1600 }
@@ -222,6 +226,7 @@ impl Default for MemoryConfig {
             chunk_overlap: default_chunk_overlap(),
             bootstrap_file_cap: default_bootstrap_file_cap(),
             export_sessions: true,
+            auto_log: false,
         }
     }
 }
@@ -275,6 +280,13 @@ pub struct CompactionConfig {
     /// Minimum messages to keep at the end (never compact below this).
     #[serde(default = "default_min_keep_messages")]
     pub min_keep_messages: usize,
+    /// Run a silent agentic turn before compaction to persist important memories (default: true).
+    #[serde(default = "default_true")]
+    pub memory_flush: bool,
+    /// Model to use for the memory flush turn.
+    /// Falls back to `compaction_model` then the primary model if not set.
+    #[serde(default)]
+    pub flush_model: Option<String>,
 }
 
 fn default_context_budget() -> u64 { 160_000 }
@@ -287,6 +299,8 @@ impl Default for CompactionConfig {
             context_budget: default_context_budget(),
             summary_max_tokens: default_summary_max_tokens(),
             min_keep_messages: default_min_keep_messages(),
+            memory_flush: true,
+            flush_model: None,
         }
     }
 }
@@ -1040,6 +1054,8 @@ mod tests {
         assert_eq!(cfg.context_budget, 160_000);
         assert_eq!(cfg.summary_max_tokens, 4096);
         assert_eq!(cfg.min_keep_messages, 4);
+        assert!(cfg.memory_flush, "memory_flush should default to true");
+        assert!(cfg.flush_model.is_none(), "flush_model should default to None");
     }
 
     #[test]
@@ -1049,6 +1065,8 @@ mod tests {
         assert_eq!(config.compaction.context_budget, 160_000);
         assert_eq!(config.compaction.summary_max_tokens, 4096);
         assert_eq!(config.compaction.min_keep_messages, 4);
+        assert!(config.compaction.memory_flush);
+        assert!(config.compaction.flush_model.is_none());
     }
 
     #[test]
@@ -1076,6 +1094,35 @@ mod tests {
         assert_eq!(config.compaction.context_budget, 100_000);
         assert_eq!(config.compaction.summary_max_tokens, 4096); // default
         assert_eq!(config.compaction.min_keep_messages, 4); // default
+        assert!(config.compaction.memory_flush); // default true
+    }
+
+    #[test]
+    fn compaction_memory_flush_from_toml() {
+        let toml = r#"
+            [compaction]
+            memory_flush = false
+            flush_model = "claude-haiku-4-5-20251001"
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert!(!config.compaction.memory_flush);
+        assert_eq!(config.compaction.flush_model.as_deref(), Some("claude-haiku-4-5-20251001"));
+    }
+
+    #[test]
+    fn memory_auto_log_defaults_false() {
+        let config: StarpodConfig = toml::from_str("").unwrap();
+        assert!(!config.memory.auto_log, "auto_log should default to false");
+    }
+
+    #[test]
+    fn memory_auto_log_from_toml() {
+        let toml = r#"
+            [memory]
+            auto_log = true
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert!(config.memory.auto_log);
     }
 
     // ── Cron config tests ──────────────────────────────────────────────

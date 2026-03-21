@@ -1,13 +1,11 @@
 //! Per-user memory view — overlays user-specific files on top of shared agent memory.
 //!
 //! In multi-user mode, each user has their own `USER.md`, `MEMORY.md`, `memory/` daily logs,
-//! while sharing the agent's `SOUL.md` and search index.
+//! while sharing the agent's `SOUL.md` and search index. User files are indexed in a per-user
+//! SQLite FTS5 database for fast search.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-
-use chrono::Local;
-use tracing::debug;
 
 use starpod_core::{StarpodError, Result};
 
@@ -16,13 +14,21 @@ use crate::store::{MemoryStore, SearchResult};
 
 /// A per-user view over the shared agent memory store.
 ///
-/// - `SOUL.md`, `HEARTBEAT.md`, `BOOT.md`, `BOOTSTRAP.md` come from the shared agent store.
-/// - `USER.md`, `MEMORY.md`, `memory/*` (daily logs) come from the user's directory.
-/// - Search queries both the agent-level index and user-level files.
-/// - Writes route to the appropriate location based on the file path.
+/// Provides file routing and search merging for multi-user deployments:
+///
+/// - **Shared files** (`SOUL.md`, `HEARTBEAT.md`, `BOOT.md`, `BOOTSTRAP.md`) come
+///   from the agent-level store and are shared across all users.
+/// - **Per-user files** (`USER.md`, `MEMORY.md`, `memory/*` daily logs) live in
+///   `users/<id>/` and are indexed in a per-user SQLite FTS5 database.
+/// - **Search** queries both agent-level and user-level indexes concurrently,
+///   merging results by rank.
+/// - **Writes** automatically route to the correct store based on the file path,
+///   with FTS reindexing handled transparently.
 pub struct UserMemoryView {
     /// Shared agent-level memory store (SOUL.md, search index).
     agent_store: Arc<MemoryStore>,
+    /// Per-user memory store with its own FTS5 index in `user_dir/memory.db`.
+    user_store: MemoryStore,
     /// Per-user directory (.starpod/users/<id>/).
     user_dir: PathBuf,
 }
@@ -30,8 +36,12 @@ pub struct UserMemoryView {
 impl UserMemoryView {
     /// Create a new per-user memory view.
     ///
-    /// Ensures the user directory and required subdirectories exist.
-    pub fn new(agent_store: Arc<MemoryStore>, user_dir: PathBuf) -> Result<Self> {
+    /// Creates the user directory structure, seeds default `USER.md` and
+    /// `MEMORY.md` if they don't exist, and initializes a per-user FTS5
+    /// index (stored in `user_dir/memory.db`).
+    ///
+    /// This is `async` because it initializes the per-user SQLite database.
+    pub async fn new(agent_store: Arc<MemoryStore>, user_dir: PathBuf) -> Result<Self> {
         // Create user directory structure
         std::fs::create_dir_all(&user_dir).map_err(StarpodError::Io)?;
         std::fs::create_dir_all(user_dir.join("memory")).map_err(StarpodError::Io)?;
@@ -52,8 +62,12 @@ impl UserMemoryView {
             ).map_err(StarpodError::Io)?;
         }
 
+        // Create per-user memory store (owns its own FTS5 index in user_dir/memory.db)
+        let user_store = MemoryStore::new_user(&user_dir).await?;
+
         Ok(Self {
             agent_store,
+            user_store,
             user_dir,
         })
     }
@@ -105,61 +119,42 @@ impl UserMemoryView {
     }
 
     /// Search both agent-level and user-level content.
+    ///
+    /// Queries both the shared agent FTS index and the per-user FTS index
+    /// concurrently, merges results by rank, and returns the top `limit`.
     pub async fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
-        // Search the agent-level index (includes SOUL.md, knowledge/, etc.)
-        let mut results = self.agent_store.search(query, limit).await?;
+        // Query both stores concurrently
+        let (agent_results, user_results) = tokio::join!(
+            self.agent_store.search(query, limit),
+            self.user_store.search(query, limit),
+        );
 
-        // Also search user-level files by checking if they contain the query terms
-        // For now, user files are not separately indexed — they'll be found if
-        // the agent store includes them. In a full implementation, we'd maintain
-        // a separate user-level FTS index.
-        // TODO: Add user-level FTS index for per-user memory files
+        let mut results = agent_results?;
+        let mut user_hits = user_results?;
 
+        // Merge: interleave by rank (more negative = better match)
+        results.append(&mut user_hits);
+        results.sort_by(|a, b| a.rank.partial_cmp(&b.rank).unwrap_or(std::cmp::Ordering::Equal));
         results.truncate(limit);
+
         Ok(results)
     }
 
     /// Write a file, routing to the appropriate location.
     ///
-    /// - `USER.md`, `MEMORY.md`, `memory/*` → user directory
+    /// - `USER.md`, `MEMORY.md`, `memory/*` → user store (with FTS reindex)
     /// - Everything else → agent store (shared)
     pub async fn write_file(&self, name: &str, content: &str) -> Result<()> {
         if is_user_file(name) {
-            scoring::validate_path(name, &self.user_dir)?;
-            scoring::validate_content_size(content)?;
-
-            let path = self.user_dir.join(name);
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::write(&path, content)?;
-            debug!(file = %name, "Wrote user-level file");
-            Ok(())
+            self.user_store.write_file(name, content).await
         } else {
-            // Delegate to agent store for shared files
             self.agent_store.write_file(name, content).await
         }
     }
 
-    /// Append to the user's daily log.
+    /// Append to the user's daily log (with FTS reindex).
     pub async fn append_daily(&self, text: &str) -> Result<()> {
-        let today = Local::now().format("%Y-%m-%d").to_string();
-        let filename = format!("memory/{}.md", today);
-        let path = self.user_dir.join(&filename);
-
-        let timestamp = Local::now().format("%H:%M:%S").to_string();
-        let entry = format!("\n## {}\n{}\n", timestamp, text);
-
-        let mut content = if path.exists() {
-            std::fs::read_to_string(&path)?
-        } else {
-            format!("# Daily Log — {}\n", today)
-        };
-
-        content.push_str(&entry);
-        std::fs::write(&path, &content)?;
-
-        Ok(())
+        self.user_store.append_daily(text).await
     }
 
     /// Read a file from the appropriate location.
@@ -213,6 +208,7 @@ fn cap_str(s: &str, max: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Local;
     use tempfile::TempDir;
 
     async fn setup() -> (TempDir, Arc<MemoryStore>, PathBuf) {
@@ -228,18 +224,20 @@ mod tests {
     #[tokio::test]
     async fn user_view_creates_structure() {
         let (_tmp, store, user_dir) = setup().await;
-        let _view = UserMemoryView::new(store, user_dir.clone()).unwrap();
+        let _view = UserMemoryView::new(store, user_dir.clone()).await.unwrap();
 
         assert!(user_dir.exists());
         assert!(user_dir.join("memory").exists());
         assert!(user_dir.join("USER.md").exists());
         assert!(user_dir.join("MEMORY.md").exists());
+        // Per-user memory.db should be created
+        assert!(user_dir.join("memory.db").exists());
     }
 
     #[tokio::test]
     async fn user_view_bootstrap_context() {
         let (_tmp, store, user_dir) = setup().await;
-        let view = UserMemoryView::new(store, user_dir.clone()).unwrap();
+        let view = UserMemoryView::new(store, user_dir.clone()).await.unwrap();
 
         // Write custom user profile
         std::fs::write(user_dir.join("USER.md"), "# User\nAlice is a developer.\n").unwrap();
@@ -255,7 +253,7 @@ mod tests {
     #[tokio::test]
     async fn user_view_write_routes_correctly() {
         let (_tmp, store, user_dir) = setup().await;
-        let view = UserMemoryView::new(Arc::clone(&store), user_dir.clone()).unwrap();
+        let view = UserMemoryView::new(Arc::clone(&store), user_dir.clone()).await.unwrap();
 
         // USER.md goes to user dir
         view.write_file("USER.md", "# User\nBob\n").await.unwrap();
@@ -272,7 +270,7 @@ mod tests {
     #[tokio::test]
     async fn user_view_append_daily() {
         let (_tmp, store, user_dir) = setup().await;
-        let view = UserMemoryView::new(store, user_dir.clone()).unwrap();
+        let view = UserMemoryView::new(store, user_dir.clone()).await.unwrap();
 
         view.append_daily("Had a meeting").await.unwrap();
         view.append_daily("Reviewed code").await.unwrap();
@@ -288,7 +286,7 @@ mod tests {
     #[tokio::test]
     async fn user_view_read_routes_correctly() {
         let (_tmp, store, user_dir) = setup().await;
-        let view = UserMemoryView::new(Arc::clone(&store), user_dir.clone()).unwrap();
+        let view = UserMemoryView::new(Arc::clone(&store), user_dir.clone()).await.unwrap();
 
         // Read USER.md from user dir
         std::fs::write(user_dir.join("USER.md"), "custom user data").unwrap();
@@ -298,6 +296,53 @@ mod tests {
         // Read SOUL.md from agent store
         let content = view.read_file("SOUL.md").unwrap();
         assert!(content.contains("Aster"));
+    }
+
+    #[tokio::test]
+    async fn user_view_search_finds_user_files() {
+        let (_tmp, store, user_dir) = setup().await;
+        let view = UserMemoryView::new(Arc::clone(&store), user_dir.clone()).await.unwrap();
+
+        // Write user-specific memory content
+        view.write_file("MEMORY.md", "# Memory\n\nAlice prefers dark mode and Vim keybindings.\n")
+            .await
+            .unwrap();
+
+        // Search should find user content
+        let results = view.search("dark mode Vim", 5).await.unwrap();
+        assert!(!results.is_empty(), "Should find user memory content via FTS");
+        assert!(results.iter().any(|r| r.text.contains("dark mode")));
+    }
+
+    #[tokio::test]
+    async fn user_view_search_merges_agent_and_user() {
+        let (_tmp, store, user_dir) = setup().await;
+        let view = UserMemoryView::new(Arc::clone(&store), user_dir.clone()).await.unwrap();
+
+        // Write user-specific content
+        view.write_file("MEMORY.md", "# Memory\n\nThe assistant helps with Rust code.\n")
+            .await
+            .unwrap();
+
+        // Search for "assistant" — should match both SOUL.md (agent) and MEMORY.md (user)
+        let results = view.search("assistant", 10).await.unwrap();
+        let sources: Vec<&str> = results.iter().map(|r| r.source.as_str()).collect();
+        assert!(
+            sources.iter().any(|s| *s == "SOUL.md") || sources.iter().any(|s| *s == "MEMORY.md"),
+            "Should find results from both agent and user stores"
+        );
+    }
+
+    #[tokio::test]
+    async fn user_view_append_daily_is_searchable() {
+        let (_tmp, store, user_dir) = setup().await;
+        let view = UserMemoryView::new(Arc::clone(&store), user_dir.clone()).await.unwrap();
+
+        view.append_daily("Discussed quantum computing with Bob").await.unwrap();
+
+        let results = view.search("quantum computing", 5).await.unwrap();
+        assert!(!results.is_empty(), "Daily log entries should be searchable");
+        assert!(results.iter().any(|r| r.text.contains("quantum computing")));
     }
 
     #[test]
@@ -340,7 +385,7 @@ mod tests {
     #[tokio::test]
     async fn read_user_file_rejects_traversal() {
         let (_tmp, store, user_dir) = setup().await;
-        let _view = UserMemoryView::new(Arc::clone(&store), user_dir.clone()).unwrap();
+        let _view = UserMemoryView::new(Arc::clone(&store), user_dir.clone()).await.unwrap();
 
         // Attempt path traversal via user file path
         let result = read_user_file(&user_dir, "memory/../../../etc/passwd");

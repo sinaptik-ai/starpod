@@ -1,3 +1,4 @@
+pub mod flush;
 pub mod tools;
 
 use std::path::PathBuf;
@@ -309,11 +310,11 @@ impl StarpodAgent {
     }
 
     /// Build the system prompt from bootstrap context + skill catalog.
-    fn build_system_prompt(&self, session_id: &str, config: &StarpodConfig, user_id: Option<&str>) -> Result<String> {
+    async fn build_system_prompt(&self, session_id: &str, config: &StarpodConfig, user_id: Option<&str>) -> Result<String> {
         let agent_name = &config.agent_name;
         let bootstrap = if let Some(uid) = user_id {
             let user_dir = self.paths.users_dir.join(uid);
-            let uv = UserMemoryView::new(Arc::clone(&self.memory), user_dir)?;
+            let uv = UserMemoryView::new(Arc::clone(&self.memory), user_dir).await?;
             uv.bootstrap_context(config.memory.bootstrap_file_cap)?
         } else {
             self.memory.bootstrap_context()?
@@ -447,52 +448,129 @@ impl StarpodAgent {
     }
 
     /// Build the pre-compaction handler that saves key facts before context is discarded.
-    fn build_pre_compact_handler(&self) -> agent_sdk::PreCompactHandlerFn {
+    ///
+    /// When `memory_flush` is enabled, runs a silent agentic LLM turn to intelligently
+    /// persist important information. Otherwise falls back to a simple text dump.
+    async fn build_pre_compact_handler(
+        &self,
+        config: &StarpodConfig,
+        user_id: Option<&str>,
+    ) -> agent_sdk::PreCompactHandlerFn {
         let memory = Arc::clone(&self.memory);
 
-        Box::new(move |messages: Vec<agent_sdk::client::ApiMessage>| {
-            let memory = Arc::clone(&memory);
-            Box::pin(async move {
-                // Extract text content from messages being compacted
-                let mut text_parts: Vec<String> = Vec::new();
-                for msg in &messages {
-                    for block in &msg.content {
-                        if let agent_sdk::client::ApiContentBlock::Text { text, .. } = block {
-                            text_parts.push(text.clone());
+        if !config.compaction.memory_flush {
+            // Legacy fallback: dumb text dump
+            return Box::new(move |messages: Vec<agent_sdk::client::ApiMessage>| {
+                let memory = Arc::clone(&memory);
+                Box::pin(async move {
+                    let mut text_parts: Vec<String> = Vec::new();
+                    for msg in &messages {
+                        for block in &msg.content {
+                            if let agent_sdk::client::ApiContentBlock::Text { text, .. } = block {
+                                text_parts.push(text.clone());
+                            }
                         }
                     }
-                }
+                    if text_parts.is_empty() {
+                        return;
+                    }
+                    let combined = text_parts.join("\n");
+                    let truncated = if combined.len() > 2000 {
+                        let mut end = 2000;
+                        while end > 0 && !combined.is_char_boundary(end) { end -= 1; }
+                        format!("{}...", &combined[..end])
+                    } else {
+                        combined
+                    };
+                    let entry = format!("## Pre-compaction save\n{}", truncated);
+                    if let Err(e) = memory.append_daily(&entry).await {
+                        warn!("Failed to save pre-compaction context: {}", e);
+                    }
+                })
+            });
+        }
 
-                if text_parts.is_empty() {
-                    return;
-                }
+        // Agentic flush: build provider and user view for the closure
+        let flush_model = config.compaction.flush_model.clone()
+            .or_else(|| config.compaction_model.clone())
+            .unwrap_or_else(|| config.model.clone());
 
-                // Truncate to a reasonable size
-                let combined = text_parts.join("\n");
-                let truncated = if combined.len() > 2000 {
-                    let mut end = 2000;
-                    while end > 0 && !combined.is_char_boundary(end) { end -= 1; }
-                    format!("{}...", &combined[..end])
-                } else {
-                    combined
-                };
+        let provider: Arc<dyn LlmProvider> = match Self::build_provider(config) {
+            Ok(p) => Arc::from(p),
+            Err(e) => {
+                warn!(error = %e, "Failed to build provider for memory flush, falling back to dumb dump");
+                return Box::new(move |messages: Vec<agent_sdk::client::ApiMessage>| {
+                    let memory = Arc::clone(&memory);
+                    Box::pin(async move {
+                        let mut parts: Vec<String> = Vec::new();
+                        for msg in &messages {
+                            for block in &msg.content {
+                                if let agent_sdk::client::ApiContentBlock::Text { text, .. } = block {
+                                    parts.push(text.clone());
+                                }
+                            }
+                        }
+                        if !parts.is_empty() {
+                            let combined = parts.join("\n");
+                            let truncated = if combined.len() > 2000 {
+                                let mut end = 2000;
+                                while end > 0 && !combined.is_char_boundary(end) { end -= 1; }
+                                format!("{}...", &combined[..end])
+                            } else { combined };
+                            let _ = memory.append_daily(&format!("## Pre-compaction save\n{}", truncated)).await;
+                        }
+                    })
+                });
+            }
+        };
 
-                let entry = format!("## Pre-compaction save\n{}", truncated);
-                if let Err(e) = memory.append_daily(&entry).await {
-                    warn!("Failed to save pre-compaction context: {}", e);
+        // Build optional user view (async)
+        let user_view: Option<Arc<starpod_memory::UserMemoryView>> = match user_id {
+            Some(uid) => {
+                let user_dir = self.paths.users_dir.join(uid);
+                match starpod_memory::UserMemoryView::new(Arc::clone(&memory), user_dir).await {
+                    Ok(uv) => Some(Arc::new(uv)),
+                    Err(e) => {
+                        warn!(error = %e, "Failed to create UserMemoryView for flush");
+                        None
+                    }
                 }
+            }
+            None => None,
+        };
+
+        Box::new(move |messages: Vec<agent_sdk::client::ApiMessage>| {
+            let provider = Arc::clone(&provider);
+            let memory = Arc::clone(&memory);
+            let user_view = user_view.clone();
+            let flush_model = flush_model.clone();
+            Box::pin(async move {
+                flush::run_memory_flush(
+                    provider.as_ref(),
+                    &flush_model,
+                    &messages,
+                    &memory,
+                    user_view.as_deref(),
+                ).await;
             })
         })
     }
 
     /// Build the external tool handler closure.
-    fn build_tool_handler(&self, config: &StarpodConfig, user_id: Option<&str>) -> ExternalToolHandlerFn {
-        let user_view = user_id.and_then(|uid| {
-            let user_dir = self.paths.users_dir.join(uid);
-            UserMemoryView::new(Arc::clone(&self.memory), user_dir)
-                .map_err(|e| warn!(error = %e, user_id = uid, "Failed to create UserMemoryView"))
-                .ok()
-        });
+    async fn build_tool_handler(&self, config: &StarpodConfig, user_id: Option<&str>) -> ExternalToolHandlerFn {
+        let user_view = match user_id {
+            Some(uid) => {
+                let user_dir = self.paths.users_dir.join(uid);
+                match UserMemoryView::new(Arc::clone(&self.memory), user_dir).await {
+                    Ok(uv) => Some(uv),
+                    Err(e) => {
+                        warn!(error = %e, user_id = uid, "Failed to create UserMemoryView");
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
 
         let ctx = Arc::new(ToolContext {
             memory: Arc::clone(&self.memory),
@@ -562,7 +640,7 @@ impl StarpodAgent {
         };
 
         // Step 3: Build system prompt
-        let mut system_prompt = self.build_system_prompt(&session_id, &config, message.user_id.as_deref())?;
+        let mut system_prompt = self.build_system_prompt(&session_id, &config, message.user_id.as_deref()).await?;
 
         append_execution_context(&mut system_prompt, message.channel_id.as_deref(), message.user_id.as_deref());
 
@@ -579,8 +657,8 @@ impl StarpodAgent {
             .context_budget(config.compaction.context_budget)
             .summary_max_tokens(config.compaction.summary_max_tokens)
             .min_keep_messages(config.compaction.min_keep_messages)
-            .external_tool_handler(self.build_tool_handler(&config, message.user_id.as_deref()))
-            .pre_compact_handler(self.build_pre_compact_handler())
+            .external_tool_handler(self.build_tool_handler(&config, message.user_id.as_deref()).await)
+            .pre_compact_handler(self.build_pre_compact_handler(&config, message.user_id.as_deref()).await)
             .custom_tools(custom_tool_definitions())
             .attachments(query_atts)
             .provider(provider)
@@ -689,14 +767,16 @@ impl StarpodAgent {
             let _ = self.session_mgr.save_message(&session_id, "assistant", &result_text).await;
         }
 
-        // Step 6: Append summary to daily log
-        let summary = truncate(&result_text, 200);
-        let agent_name = &config.agent_name;
-        let _ = self.memory.append_daily(&format!(
-            "**User**: {}\n**{agent_name}**: {}",
-            truncate(&message.text, 200),
-            summary,
-        )).await;
+        // Step 6: Append summary to daily log (opt-in, off by default when memory flush is enabled)
+        if config.memory.auto_log {
+            let summary = truncate(&result_text, 200);
+            let agent_name = &config.agent_name;
+            let _ = self.memory.append_daily(&format!(
+                "**User**: {}\n**{agent_name}**: {}",
+                truncate(&message.text, 200),
+                summary,
+            )).await;
+        }
 
         Ok(ChatResponse {
             text: result_text,
@@ -763,7 +843,7 @@ impl StarpodAgent {
             format!("{}{}", message.text, extra_text)
         };
 
-        let system_prompt = self.build_system_prompt(&session_id, &config, message.user_id.as_deref())?;
+        let system_prompt = self.build_system_prompt(&session_id, &config, message.user_id.as_deref()).await?;
         let provider = Self::build_provider(&config)?;
 
         // Create the followup channel — sender goes to caller, receiver to the agent loop
@@ -779,8 +859,8 @@ impl StarpodAgent {
             .context_budget(config.compaction.context_budget)
             .summary_max_tokens(config.compaction.summary_max_tokens)
             .min_keep_messages(config.compaction.min_keep_messages)
-            .external_tool_handler(self.build_tool_handler(&config, message.user_id.as_deref()))
-            .pre_compact_handler(self.build_pre_compact_handler())
+            .external_tool_handler(self.build_tool_handler(&config, message.user_id.as_deref()).await)
+            .pre_compact_handler(self.build_pre_compact_handler(&config, message.user_id.as_deref()).await)
             .custom_tools(custom_tool_definitions())
             .followup_rx(followup_rx)
             .attachments(query_atts)
@@ -857,13 +937,15 @@ impl StarpodAgent {
             ).await;
         }
 
-        let summary = truncate(result_text, 200);
-        let agent_name = &config.agent_name;
-        let _ = self.memory.append_daily(&format!(
-            "**User**: {}\n**{agent_name}**: {}",
-            truncate(user_text, 200),
-            summary,
-        )).await;
+        if config.memory.auto_log {
+            let summary = truncate(result_text, 200);
+            let agent_name = &config.agent_name;
+            let _ = self.memory.append_daily(&format!(
+                "**User**: {}\n**{agent_name}**: {}",
+                truncate(user_text, 200),
+                summary,
+            )).await;
+        }
     }
 
     /// Export a closed session's transcript to `knowledge/sessions/` for long-term recall.
@@ -924,7 +1006,7 @@ impl StarpodAgent {
         // Route per-user when user_id is present (non-empty and not synthetic)
         let write_result = if !meta.user_id.is_empty() && meta.user_id != "heartbeat" && meta.user_id != "cron" {
             let user_dir = self.paths.users_dir.join(&meta.user_id);
-            match UserMemoryView::new(Arc::clone(&self.memory), user_dir) {
+            match UserMemoryView::new(Arc::clone(&self.memory), user_dir).await {
                 Ok(uv) => uv.write_file(&filename, &transcript).await,
                 Err(e) => Err(e),
             }
@@ -1393,7 +1475,8 @@ mod tests {
         assert!(names.contains(&"CronUpdate"));
         assert!(names.contains(&"HeartbeatWake"));
 
-        assert_eq!(defs.len(), 20);
+        assert!(names.contains(&"MemoryRead"));
+        assert_eq!(defs.len(), 21);
     }
 
     #[tokio::test]
