@@ -460,12 +460,12 @@ impl BrowserSession {
     /// - [`BrowserError::EvalFailed`] if text extraction fails
     pub async fn extract(&self, selector: Option<&str>) -> Result<String> {
         match selector {
-            None => self.evaluate("document.body.innerText").await,
+            None => self.evaluate("document.body.textContent").await,
             Some(sel) => {
                 let sel_json = serde_json::to_string(sel)
                     .map_err(|e| BrowserError::EvalFailed(e.to_string()))?;
                 let js = format!(
-                    r#"(function(){{ var el = document.querySelector({sel}); if (!el) return null; return el.innerText; }})()"#,
+                    r#"(function(){{ var el = document.querySelector({sel}); if (!el) return null; return el.textContent; }})()"#,
                     sel = sel_json,
                 );
                 let result = self.evaluate(&js).await?;
@@ -536,12 +536,29 @@ impl BrowserSession {
     ///
     /// - [`BrowserError::EvalFailed`] on syntax errors or runtime exceptions
     pub async fn evaluate(&self, js: &str) -> Result<String> {
+        // Wrap in an IIFE to isolate variable declarations between calls.
+        // Without this, consecutive evaluate() calls that declare `const` or
+        // `let` variables with the same name would fail with
+        // "Identifier has already been declared".
+        //
+        // Code that is already an IIFE `(function(){...})()` is left as-is.
+        // Simple expressions get `return` prepended so they return a value.
+        // Multi-statement code is wrapped as-is (caller must use `return`).
+        let trimmed = js.trim();
+        let wrapped = if trimmed.starts_with("(function") {
+            // Already an IIFE — don't double-wrap
+            trimmed.to_string()
+        } else if trimmed.contains(';') || trimmed.contains('\n') {
+            format!("(function(){{{trimmed}}})()")
+        } else {
+            format!("(function(){{ return {trimmed} }})()")
+        };
         let result = self
             .cdp
             .send(
                 "Runtime.evaluate",
                 serde_json::json!({
-                    "expression": js,
+                    "expression": wrapped,
                     "returnByValue": true,
                 }),
                 Some(&self.session_id),
