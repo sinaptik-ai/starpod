@@ -116,7 +116,7 @@ pub fn detect_mode(agent_name: Option<&str>) -> crate::Result<Mode> {
 /// Like `detect_mode` but starting from a given directory instead of CWD.
 pub fn detect_mode_from(agent_name: Option<&str>, start_dir: &Path) -> crate::Result<Mode> {
     // Check single-agent mode: walk up looking for .starpod/config/agent.toml (new)
-    // or .starpod/agent.toml (old layout, will be migrated on startup)
+    // or .starpod/agent.toml (old layout)
     {
         let mut dir = start_dir.to_path_buf();
         loop {
@@ -262,8 +262,6 @@ pub struct ResolvedPaths {
 
 impl ResolvedPaths {
     /// Resolve all paths from a detected mode.
-    ///
-    /// Automatically migrates old `data/` layout to `db/` + root-level lifecycle files.
     pub fn resolve(mode: &Mode) -> crate::Result<Self> {
         match mode {
             Mode::SingleAgent { starpod_dir } => {
@@ -382,127 +380,6 @@ impl ResolvedPaths {
                 )))
             }
         }
-    }
-
-    /// Migrate old `data/` layout to `db/` + root-level lifecycle files.
-    ///
-    /// If `agent_home/data/` exists and `agent_home/db/` does not, performs:
-    /// 1. Move `data/*.db` → `db/`
-    /// 2. Move `data/HEARTBEAT.md`, `data/BOOT.md`, `data/BOOTSTRAP.md` → `agent_home/`
-    /// 3. Move `data/USER.md`, `data/MEMORY.md`, `data/memory/` → `users/admin/` (if not already there)
-    /// 4. Remove `data/SOUL.md` (duplicate of `agent_home/SOUL.md`)
-    /// 5. Remove `data/knowledge/` (no longer used)
-    /// 6. Clean up empty `data/`
-    pub fn migrate_if_needed(&self) {
-        let data_dir = self.agent_home.join("data");
-        if !data_dir.is_dir() || self.db_dir.is_dir() {
-            return; // Nothing to migrate
-        }
-
-        tracing::info!("Migrating old data/ layout to db/ + root-level files");
-
-        // 1. Create db/ and move databases
-        if let Err(e) = std::fs::create_dir_all(&self.db_dir) {
-            tracing::error!(error = %e, "Migration: failed to create db/");
-            return;
-        }
-        for db_name in &["memory.db", "session.db", "cron.db", "vault.db"] {
-            let src = data_dir.join(db_name);
-            let dst = self.db_dir.join(db_name);
-            if src.is_file() && !dst.exists() {
-                if let Err(e) = std::fs::rename(&src, &dst) {
-                    tracing::warn!(file = %db_name, error = %e, "Migration: failed to move DB file");
-                }
-            }
-        }
-        // Also move WAL/SHM files for SQLite
-        for suffix in &["-wal", "-shm"] {
-            for db_name in &["memory.db", "session.db", "cron.db", "vault.db"] {
-                let name = format!("{}{}", db_name, suffix);
-                let src = data_dir.join(&name);
-                let dst = self.db_dir.join(&name);
-                if src.is_file() && !dst.exists() {
-                    let _ = std::fs::rename(&src, &dst);
-                }
-            }
-        }
-
-        // 2. Move lifecycle files to agent_home root
-        for name in &["HEARTBEAT.md", "BOOT.md", "BOOTSTRAP.md"] {
-            let src = data_dir.join(name);
-            let dst = self.agent_home.join(name);
-            if src.is_file() && !dst.exists() {
-                if let Err(e) = std::fs::rename(&src, &dst) {
-                    tracing::warn!(file = %name, error = %e, "Migration: failed to move lifecycle file");
-                }
-            }
-        }
-
-        // 3. Move user files to users/admin/ (if not already there)
-        let admin_dir = self.users_dir.join("admin");
-        let _ = std::fs::create_dir_all(&admin_dir);
-        for name in &["USER.md", "MEMORY.md"] {
-            let src = data_dir.join(name);
-            let dst = admin_dir.join(name);
-            if src.is_file() && !dst.exists() {
-                let _ = std::fs::rename(&src, &dst);
-            }
-        }
-        let src_memory = data_dir.join("memory");
-        let dst_memory = admin_dir.join("memory");
-        if src_memory.is_dir() && !dst_memory.exists() {
-            let _ = std::fs::rename(&src_memory, &dst_memory);
-        }
-
-        // 4. Remove data/SOUL.md (duplicate)
-        let _ = std::fs::remove_file(data_dir.join("SOUL.md"));
-
-        // 5. Remove data/knowledge/ (no longer used)
-        let _ = std::fs::remove_dir_all(data_dir.join("knowledge"));
-
-        // 6. Try to remove empty data/
-        let _ = std::fs::remove_dir(&data_dir);
-
-        tracing::info!("Migration complete: data/ → db/ + root-level files");
-    }
-
-    /// Migrate old flat layout to new `config/` subdirectory layout.
-    ///
-    /// If `config_dir` doesn't exist but `agent_home` has blueprint files at root level,
-    /// moves them into `config/`:
-    /// - `agent.toml`, `SOUL.md`, `BOOT.md`, `HEARTBEAT.md`, `BOOTSTRAP.md` → `config/`
-    /// - `.env` stays at `agent_home` root (environment-specific, not blueprint-managed)
-    /// - `skills/` stays at `agent_home` root (merged on build, not purely blueprint-managed)
-    pub fn migrate_config_dir_if_needed(&self) {
-        if self.config_dir.is_dir() {
-            return; // Already migrated or new layout
-        }
-
-        // Check if old layout exists (blueprint files at agent_home root)
-        let old_agent_toml = self.agent_home.join("agent.toml");
-        if !old_agent_toml.is_file() {
-            return; // Nothing to migrate
-        }
-
-        tracing::info!("Migrating .starpod/ layout: moving blueprint files to config/");
-
-        if let Err(e) = std::fs::create_dir_all(&self.config_dir) {
-            tracing::error!(error = %e, "Migration: failed to create config/");
-            return;
-        }
-
-        // Move blueprint-managed files to config/
-        for name in &["agent.toml", "SOUL.md", "BOOT.md", "HEARTBEAT.md", "BOOTSTRAP.md"] {
-            let src = self.agent_home.join(name);
-            let dst = self.config_dir.join(name);
-            if src.is_file() && !dst.exists() {
-                if let Err(e) = std::fs::rename(&src, &dst) {
-                    tracing::warn!(file = %name, error = %e, "Migration: failed to move file to config/");
-                }
-            }
-        }
-
-        tracing::info!("Migration complete: blueprint files → config/");
     }
 
     /// Build a `UserContext` for a specific user ID.
@@ -1058,7 +935,7 @@ mod tests {
         let instance_dir = root.join(".instances").join("bot");
         let starpod_dir = instance_dir.join(".starpod");
         std::fs::create_dir_all(&starpod_dir).unwrap();
-        // Old layout: agent.toml at starpod root (will be migrated)
+        // Old layout: agent.toml at starpod root
         std::fs::write(starpod_dir.join("agent.toml"), "").unwrap();
 
         let mode = Mode::Workspace {
@@ -1672,84 +1549,6 @@ model = "claude-haiku-4-5"
             "Instance .env should override workspace .env"
         );
         std::env::remove_var("STARPOD_INST_OVERRIDE_TEST");
-    }
-
-    // ── Config dir migration ──────────────────────────────────────
-
-    #[test]
-    fn migrate_config_dir_moves_blueprint_files() {
-        let tmp = TempDir::new().unwrap();
-        let starpod_dir = tmp.path().join(".starpod");
-        std::fs::create_dir_all(&starpod_dir).unwrap();
-
-        // Old layout: files at starpod root
-        std::fs::write(starpod_dir.join("agent.toml"), "model = \"test\"\n").unwrap();
-        std::fs::write(starpod_dir.join("SOUL.md"), "# Soul\nI am TestBot.\n").unwrap();
-        std::fs::write(starpod_dir.join("BOOT.md"), "Boot instructions.").unwrap();
-        std::fs::write(starpod_dir.join("HEARTBEAT.md"), "Heartbeat.").unwrap();
-        std::fs::write(starpod_dir.join("BOOTSTRAP.md"), "Bootstrap.").unwrap();
-        // .env should NOT be moved
-        std::fs::write(starpod_dir.join(".env"), "SECRET=val\n").unwrap();
-
-        let mode = Mode::SingleAgent { starpod_dir: starpod_dir.clone() };
-        let paths = ResolvedPaths::resolve(&mode).unwrap();
-        paths.migrate_config_dir_if_needed();
-
-        let config_dir = starpod_dir.join("config");
-        // Blueprint files should be in config/
-        assert!(config_dir.join("agent.toml").is_file());
-        assert!(config_dir.join("SOUL.md").is_file());
-        assert!(config_dir.join("BOOT.md").is_file());
-        assert!(config_dir.join("HEARTBEAT.md").is_file());
-        assert!(config_dir.join("BOOTSTRAP.md").is_file());
-
-        // Old locations should be gone
-        assert!(!starpod_dir.join("agent.toml").exists());
-        assert!(!starpod_dir.join("SOUL.md").exists());
-        assert!(!starpod_dir.join("BOOT.md").exists());
-
-        // .env should stay at root
-        assert!(starpod_dir.join(".env").is_file());
-        assert!(!config_dir.join(".env").exists());
-
-        // Content should be preserved
-        let soul = std::fs::read_to_string(config_dir.join("SOUL.md")).unwrap();
-        assert!(soul.contains("TestBot"));
-    }
-
-    #[test]
-    fn migrate_config_dir_is_idempotent() {
-        let tmp = TempDir::new().unwrap();
-        let starpod_dir = tmp.path().join(".starpod");
-        let config_dir = starpod_dir.join("config");
-        std::fs::create_dir_all(&config_dir).unwrap();
-
-        // New layout already in place
-        std::fs::write(config_dir.join("agent.toml"), "model = \"new\"\n").unwrap();
-
-        let mode = Mode::SingleAgent { starpod_dir: starpod_dir.clone() };
-        let paths = ResolvedPaths::resolve(&mode).unwrap();
-
-        // Should be a no-op (config/ exists)
-        paths.migrate_config_dir_if_needed();
-
-        let content = std::fs::read_to_string(config_dir.join("agent.toml")).unwrap();
-        assert!(content.contains("new"), "Existing config should not be modified");
-    }
-
-    #[test]
-    fn migrate_config_dir_skips_when_no_old_files() {
-        let tmp = TempDir::new().unwrap();
-        let starpod_dir = tmp.path().join(".starpod");
-        std::fs::create_dir_all(&starpod_dir).unwrap();
-        // No agent.toml at all — nothing to migrate
-
-        let mode = Mode::SingleAgent { starpod_dir: starpod_dir.clone() };
-        let paths = ResolvedPaths::resolve(&mode).unwrap();
-        paths.migrate_config_dir_if_needed();
-
-        // config/ should not be created
-        assert!(!starpod_dir.join("config").exists());
     }
 
     #[test]

@@ -107,10 +107,6 @@ impl StarpodAgent {
     /// This is the workspace-aware constructor that uses resolved paths for
     /// all file locations instead of deriving them from `db_dir`.
     pub async fn with_paths(agent_config: AgentConfig, paths: ResolvedPaths) -> Result<Self> {
-        // Migrate old layouts if needed (data/ → db/, then flat → config/)
-        paths.migrate_if_needed();
-        paths.migrate_config_dir_if_needed();
-
         // Convert AgentConfig → StarpodConfig for the config RwLock
         let config = agent_config.clone().into_starpod_config(&paths);
 
@@ -451,6 +447,9 @@ impl StarpodAgent {
     ///
     /// When `memory_flush` is enabled, runs a silent agentic LLM turn to intelligently
     /// persist important information. Otherwise falls back to a simple text dump.
+    ///
+    /// When a `user_id` is provided, daily logs are routed to the per-user directory
+    /// (`users/{id}/memory/`) via `UserMemoryView`, falling back to the agent-level store.
     async fn build_pre_compact_handler(
         &self,
         config: &StarpodConfig,
@@ -458,10 +457,26 @@ impl StarpodAgent {
     ) -> agent_sdk::PreCompactHandlerFn {
         let memory = Arc::clone(&self.memory);
 
+        // Build user view early so all fallback paths can use it
+        let user_view_for_fallback: Option<Arc<starpod_memory::UserMemoryView>> = match user_id {
+            Some(uid) => {
+                let user_dir = self.paths.users_dir.join(uid);
+                match starpod_memory::UserMemoryView::new(Arc::clone(&memory), user_dir).await {
+                    Ok(uv) => Some(Arc::new(uv)),
+                    Err(e) => {
+                        warn!(error = %e, "Failed to create UserMemoryView for pre-compact fallback");
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
+
         if !config.compaction.memory_flush {
             // Legacy fallback: dumb text dump
             return Box::new(move |messages: Vec<agent_sdk::client::ApiMessage>| {
                 let memory = Arc::clone(&memory);
+                let user_view = user_view_for_fallback.clone();
                 Box::pin(async move {
                     let mut text_parts: Vec<String> = Vec::new();
                     for msg in &messages {
@@ -483,7 +498,12 @@ impl StarpodAgent {
                         combined
                     };
                     let entry = format!("## Pre-compaction save\n{}", truncated);
-                    if let Err(e) = memory.append_daily(&entry).await {
+                    let result = if let Some(ref uv) = user_view {
+                        uv.append_daily(&entry).await
+                    } else {
+                        memory.append_daily(&entry).await
+                    };
+                    if let Err(e) = result {
                         warn!("Failed to save pre-compaction context: {}", e);
                     }
                 })
@@ -501,6 +521,7 @@ impl StarpodAgent {
                 warn!(error = %e, "Failed to build provider for memory flush, falling back to dumb dump");
                 return Box::new(move |messages: Vec<agent_sdk::client::ApiMessage>| {
                     let memory = Arc::clone(&memory);
+                    let user_view = user_view_for_fallback.clone();
                     Box::pin(async move {
                         let mut parts: Vec<String> = Vec::new();
                         for msg in &messages {
@@ -517,7 +538,14 @@ impl StarpodAgent {
                                 while end > 0 && !combined.is_char_boundary(end) { end -= 1; }
                                 format!("{}...", &combined[..end])
                             } else { combined };
-                            let _ = memory.append_daily(&format!("## Pre-compaction save\n{}", truncated)).await;
+                            let result = if let Some(ref uv) = user_view {
+                                uv.append_daily(&format!("## Pre-compaction save\n{}", truncated)).await
+                            } else {
+                                memory.append_daily(&format!("## Pre-compaction save\n{}", truncated)).await
+                            };
+                            if let Err(e) = result {
+                                warn!("Failed to save pre-compaction context: {}", e);
+                            }
                         }
                     })
                 });
@@ -771,11 +799,12 @@ impl StarpodAgent {
         if config.memory.auto_log {
             let summary = truncate(&result_text, 200);
             let agent_name = &config.agent_name;
-            let _ = self.memory.append_daily(&format!(
+            let entry = format!(
                 "**User**: {}\n**{agent_name}**: {}",
                 truncate(&message.text, 200),
                 summary,
-            )).await;
+            );
+            let _ = self.append_daily_for_user(message.user_id.as_deref(), &entry).await;
         }
 
         Ok(ChatResponse {
@@ -941,12 +970,24 @@ impl StarpodAgent {
         if config.memory.auto_log {
             let summary = truncate(result_text, 200);
             let agent_name = &config.agent_name;
-            let _ = self.memory.append_daily(&format!(
+            let entry = format!(
                 "**User**: {}\n**{agent_name}**: {}",
                 truncate(user_text, 200),
                 summary,
-            )).await;
+            );
+            let _ = self.append_daily_for_user(user_id, &entry).await;
         }
+    }
+
+    /// Append to daily log via user view when a user_id is present, falling back to agent-level store.
+    async fn append_daily_for_user(&self, user_id: Option<&str>, text: &str) -> starpod_core::Result<()> {
+        if let Some(uid) = user_id {
+            let user_dir = self.paths.users_dir.join(uid);
+            if let Ok(uv) = UserMemoryView::new(Arc::clone(&self.memory), user_dir).await {
+                return uv.append_daily(text).await;
+            }
+        }
+        self.memory.append_daily(text).await
     }
 
     /// Export a closed session's transcript to `knowledge/sessions/` for long-term recall.
@@ -1904,6 +1945,77 @@ mod tests {
         // Both image and non-image files now get save-path notes
         assert!(extra_text.contains("report.pdf"));
         assert!(extra_text.contains("photo.jpg"));
+    }
+
+    #[tokio::test]
+    async fn test_pre_compact_legacy_routes_to_user_dir() {
+        let tmp = TempDir::new().unwrap();
+        let mut cfg = test_config(&tmp);
+        cfg.memory.auto_log = false; // irrelevant here
+        cfg.compaction.memory_flush = false; // force legacy fallback path
+        let agent = StarpodAgent::new(cfg.clone()).await.unwrap();
+
+        // Build legacy pre-compact handler for user "bob"
+        let handler = agent.build_pre_compact_handler(&cfg, Some("bob")).await;
+
+        // Simulate a compaction with one text message
+        let messages = vec![agent_sdk::client::ApiMessage {
+            role: "assistant".to_string(),
+            content: vec![agent_sdk::client::ApiContentBlock::Text {
+                text: "Important context about Bob's preferences".to_string(),
+                cache_control: None,
+            }],
+        }];
+        handler(messages).await;
+
+        // Verify the daily log landed in users/bob/memory/
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let user_daily = tmp.path().join("users").join("bob").join("memory").join(format!("{}.md", today));
+        assert!(user_daily.exists(), "Pre-compact daily log should be in user dir");
+
+        let content = std::fs::read_to_string(&user_daily).unwrap();
+        assert!(content.contains("Pre-compaction save"));
+        assert!(content.contains("Important context"));
+
+        // Agent-level should NOT have it
+        let agent_daily = tmp.path().join("memory").join(format!("{}.md", today));
+        assert!(!agent_daily.exists(), "Pre-compact log should NOT be in agent-level dir");
+    }
+
+    #[tokio::test]
+    async fn test_append_daily_for_user_routes_to_user_dir() {
+        let tmp = TempDir::new().unwrap();
+        let agent = StarpodAgent::new(test_config(&tmp)).await.unwrap();
+
+        // Append with a user_id — should write to users/{id}/memory/
+        agent.append_daily_for_user(Some("alice"), "Hello from Alice").await.unwrap();
+
+        let user_memory_dir = tmp.path().join("users").join("alice").join("memory");
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let daily_file = user_memory_dir.join(format!("{}.md", today));
+        assert!(daily_file.exists(), "Daily log should be in user dir");
+
+        let content = std::fs::read_to_string(&daily_file).unwrap();
+        assert!(content.contains("Hello from Alice"));
+
+        // Agent-level memory dir should NOT have today's file
+        let agent_daily = tmp.path().join("memory").join(format!("{}.md", today));
+        assert!(!agent_daily.exists(), "Daily log should NOT be in agent-level dir");
+    }
+
+    #[tokio::test]
+    async fn test_append_daily_for_user_fallback_no_user() {
+        let tmp = TempDir::new().unwrap();
+        let agent = StarpodAgent::new(test_config(&tmp)).await.unwrap();
+
+        // Append with no user_id — should fall back to agent-level store
+        agent.append_daily_for_user(None, "Agent-level entry").await.unwrap();
+
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+
+        // Should be in agent-level memory (the MemoryStore root)
+        let content = agent.memory().read_file(&format!("memory/{}.md", today)).unwrap();
+        assert!(content.contains("Agent-level entry"));
     }
 
     #[test]

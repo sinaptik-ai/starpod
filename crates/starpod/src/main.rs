@@ -1223,9 +1223,6 @@ async fn main() -> anyhow::Result<()> {
             };
             let paths = starpod_core::ResolvedPaths::resolve(&instance_mode)?;
 
-            // Run migration if old data/ layout exists
-            paths.migrate_if_needed();
-
             let mut agent_config = starpod_core::load_agent_config(&paths)?;
 
             // Override port if specified

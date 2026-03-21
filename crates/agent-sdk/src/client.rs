@@ -3,43 +3,10 @@
 //! These types are the shared representation used by all providers.
 //! Each provider translates to/from these types internally.
 
-use std::env;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{AgentError, Result};
-
-// ---------------------------------------------------------------------------
-// Provider detection (legacy, kept for backward compat)
-// ---------------------------------------------------------------------------
-
-/// Which backend provider to use for the Messages API.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Provider {
-    Anthropic,
-    Bedrock,
-    Vertex,
-}
-
-impl Provider {
-    /// Detect the provider from environment variables.
-    pub fn from_env() -> Self {
-        if env::var("CLAUDE_CODE_USE_BEDROCK")
-            .map(|v| v == "1")
-            .unwrap_or(false)
-        {
-            Provider::Bedrock
-        } else if env::var("CLAUDE_CODE_USE_VERTEX")
-            .map(|v| v == "1")
-            .unwrap_or(false)
-        {
-            Provider::Vertex
-        } else {
-            Provider::Anthropic
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // API types – request
@@ -290,95 +257,9 @@ impl Default for RetryConfig {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Legacy ApiClient — thin wrapper over AnthropicProvider for backward compat
-// ---------------------------------------------------------------------------
-
-use std::pin::Pin;
-use futures::Stream;
-use crate::providers::AnthropicProvider;
-use crate::provider::LlmProvider;
-
-/// Anthropic Messages API client.
-///
-/// This is a backward-compatible wrapper over [`AnthropicProvider`].
-/// New code should use the `LlmProvider` trait directly.
-pub struct ApiClient {
-    inner: AnthropicProvider,
-}
-
-impl ApiClient {
-    /// Create a new client reading `ANTHROPIC_API_KEY` from the environment.
-    pub fn new() -> Result<Self> {
-        Ok(Self {
-            inner: AnthropicProvider::from_env()?,
-        })
-    }
-
-    /// Create a client with an explicit API key.
-    pub fn with_api_key(key: impl Into<String>) -> Self {
-        Self {
-            inner: AnthropicProvider::with_api_key(key),
-        }
-    }
-
-    /// Override the default retry configuration.
-    pub fn with_retry_config(mut self, config: RetryConfig) -> Self {
-        self.inner = self.inner.with_retry_config(config);
-        self
-    }
-
-    /// Return the detected provider.
-    pub fn provider(&self) -> Provider {
-        Provider::from_env()
-    }
-
-    /// Send a non-streaming request.
-    pub async fn create_message(&self, request: &CreateMessageRequest) -> Result<MessageResponse> {
-        self.inner.create_message(request).await
-    }
-
-    /// Send a streaming request.
-    pub async fn create_message_stream(
-        &self,
-        request: &CreateMessageRequest,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>> {
-        self.inner.create_message_stream(request).await
-    }
-
-    // Keep status_to_error as a static method for test backward compat
-    #[doc(hidden)]
-    pub fn status_to_error(status: reqwest::StatusCode, body: &str) -> AgentError {
-        let detail = serde_json::from_str::<ApiErrorResponse>(body)
-            .map(|e| e.error.message)
-            .unwrap_or_else(|_| body.to_string());
-
-        match status.as_u16() {
-            401 | 403 => AgentError::AuthenticationFailed(detail),
-            400 => AgentError::InvalidRequest(detail),
-            402 => AgentError::BillingError(detail),
-            429 => AgentError::RateLimited(detail),
-            529 => AgentError::ServerError(format!("overloaded: {detail}")),
-            500..=599 => AgentError::ServerError(detail),
-            _ => AgentError::Api(format!("HTTP {status}: {detail}")),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    /// Serialize tests that mutate environment variables.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    #[test]
-    fn provider_default_is_anthropic() {
-        env::remove_var("CLAUDE_CODE_USE_BEDROCK");
-        env::remove_var("CLAUDE_CODE_USE_VERTEX");
-        assert_eq!(Provider::from_env(), Provider::Anthropic);
-    }
 
     #[test]
     fn serialize_request_omits_none_fields() {
@@ -451,20 +332,6 @@ mod tests {
     }
 
     #[test]
-    fn status_to_error_maps_correctly() {
-        use reqwest::StatusCode;
-
-        let err = ApiClient::status_to_error(StatusCode::UNAUTHORIZED, r#"{"error":{"type":"auth","message":"bad key"}}"#);
-        assert!(matches!(err, AgentError::AuthenticationFailed(_)));
-
-        let err = ApiClient::status_to_error(StatusCode::TOO_MANY_REQUESTS, "rate limited");
-        assert!(matches!(err, AgentError::RateLimited(_)));
-
-        let err = ApiClient::status_to_error(StatusCode::BAD_REQUEST, "invalid");
-        assert!(matches!(err, AgentError::InvalidRequest(_)));
-    }
-
-    #[test]
     fn image_content_block_roundtrips() {
         let block = ApiContentBlock::Image {
             source: ImageSource {
@@ -514,66 +381,12 @@ mod tests {
 
     #[test]
     fn backoff_duration_increases() {
-        // Test via the AnthropicProvider directly
+        use crate::AnthropicProvider;
+        use crate::provider::LlmProvider;
         let provider = AnthropicProvider::with_api_key("test-key");
         let caps = provider.capabilities();
         assert!(caps.streaming);
         assert!(caps.tool_use);
     }
 
-    #[test]
-    fn with_api_key_stores_key() {
-        let client = ApiClient::with_api_key("sk-ant-test-123");
-        // The key is stored inside the inner AnthropicProvider;
-        // verify the client was constructed successfully.
-        assert_eq!(client.inner.name(), "anthropic");
-    }
-
-    #[test]
-    fn new_fails_when_env_var_missing() {
-        let _lock = ENV_LOCK.lock().unwrap();
-        let prev = env::var("ANTHROPIC_API_KEY").ok();
-        env::remove_var("ANTHROPIC_API_KEY");
-        let result = ApiClient::new();
-        if let Some(v) = prev { env::set_var("ANTHROPIC_API_KEY", v); }
-        match result {
-            Err(AgentError::AuthenticationFailed(msg)) => {
-                assert!(msg.contains("not set"), "expected 'not set' in: {msg}");
-            }
-            Err(other) => panic!("expected AuthenticationFailed, got: {other:?}"),
-            Ok(_) => panic!("expected error when ANTHROPIC_API_KEY is unset"),
-        }
-    }
-
-    #[test]
-    fn new_fails_when_env_var_empty() {
-        let _lock = ENV_LOCK.lock().unwrap();
-        let prev = env::var("ANTHROPIC_API_KEY").ok();
-        env::set_var("ANTHROPIC_API_KEY", "");
-        let result = ApiClient::new();
-        match prev {
-            Some(v) => env::set_var("ANTHROPIC_API_KEY", v),
-            None => env::remove_var("ANTHROPIC_API_KEY"),
-        }
-        match result {
-            Err(AgentError::AuthenticationFailed(msg)) => {
-                assert!(msg.contains("empty"), "expected 'empty' in: {msg}");
-            }
-            Err(other) => panic!("expected AuthenticationFailed, got: {other:?}"),
-            Ok(_) => panic!("expected error when ANTHROPIC_API_KEY is empty"),
-        }
-    }
-
-    #[test]
-    fn new_succeeds_when_env_var_set() {
-        let _lock = ENV_LOCK.lock().unwrap();
-        let prev = env::var("ANTHROPIC_API_KEY").ok();
-        env::set_var("ANTHROPIC_API_KEY", "sk-ant-test-env");
-        let result = ApiClient::new();
-        match prev {
-            Some(v) => env::set_var("ANTHROPIC_API_KEY", v),
-            None => env::remove_var("ANTHROPIC_API_KEY"),
-        }
-        assert!(result.is_ok());
-    }
 }

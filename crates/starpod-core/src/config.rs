@@ -379,7 +379,7 @@ impl AttachmentsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StarpodConfig {
     /// Database directory for SQLite DBs (default: `.starpod/db`)
-    #[serde(default, alias = "data_dir")]
+    #[serde(default)]
     pub db_dir: PathBuf,
 
     /// Path to the SQLite database (default: `<db_dir>/memory.db`)
@@ -765,35 +765,6 @@ mod tests {
     }
 
     // ── Credential-in-config rejection tests ─────────────────────────────
-
-    #[test]
-    fn api_key_in_provider_config_is_silently_ignored() {
-        // Old configs that still have api_key in [providers.*] must parse
-        // without error — the field is simply dropped by serde.
-        let toml = r#"
-            [providers.anthropic]
-            api_key = "sk-ant-should-be-ignored"
-            base_url = "https://custom.example.com"
-        "#;
-        let config: StarpodConfig = toml::from_str(toml).unwrap();
-        let p = config.providers.anthropic.as_ref().unwrap();
-        assert_eq!(p.base_url.as_deref(), Some("https://custom.example.com"));
-        // No api_key field on ProviderConfig — credential is dropped.
-    }
-
-    #[test]
-    fn bot_token_in_telegram_config_is_silently_ignored() {
-        // Old configs with bot_token in [channels.telegram] must still parse.
-        let toml = r#"
-            [channels.telegram]
-            bot_token = "123:ABC"
-            gap_minutes = 60
-        "#;
-        let config: StarpodConfig = toml::from_str(toml).unwrap();
-        let tg = config.channels.telegram.as_ref().unwrap();
-        assert_eq!(tg.gap_minutes, Some(60));
-        // No bot_token field on TelegramChannelConfig — credential is dropped.
-    }
 
     #[test]
     fn warn_credentials_in_toml_detects_api_key() {
@@ -1265,28 +1236,6 @@ mod tests {
     }
 
     // ── old identity/user sections are silently ignored ─────────────────
-
-    #[test]
-    fn old_identity_section_silently_ignored() {
-        let toml = r#"
-            [identity]
-            name = "OldName"
-        "#;
-        // serde(default) + no deny_unknown_fields → old sections are just ignored
-        let config: StarpodConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.agent_name, "Aster"); // default, not "OldName"
-    }
-
-    #[test]
-    fn old_user_section_silently_ignored() {
-        let toml = r#"
-            [user]
-            name = "OldUser"
-            timezone = "UTC"
-        "#;
-        let config: StarpodConfig = toml::from_str(toml).unwrap();
-        assert!(config.timezone.is_none()); // not read from [user]
-    }
 
     // ── deep_merge edge cases ───────────────────────────────────────
 

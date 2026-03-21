@@ -288,10 +288,9 @@ impl AuthStore {
         plaintext_key: &str,
         label: Option<&str>,
     ) -> Result<ApiKeyMeta> {
-        let prefix = api_key::extract_prefix(plaintext_key).unwrap_or_else(|| {
-            // For legacy keys that don't have `sp_live_` prefix, use first 8 chars
-            &plaintext_key[..plaintext_key.len().min(8)]
-        }).to_string();
+        let prefix = api_key::extract_prefix(plaintext_key)
+            .unwrap_or_else(|| &plaintext_key[..plaintext_key.len().min(8)])
+            .to_string();
 
         let hash = api_key::hash_key(plaintext_key)
             .map_err(|e| StarpodError::Auth(format!("Failed to hash key: {}", e)))?;
@@ -314,7 +313,7 @@ impl AuthStore {
         .await
         .map_err(|e| StarpodError::Auth(format!("Failed to import API key: {}", e)))?;
 
-        info!(user_id = %user_id, prefix = %prefix, "Legacy API key imported");
+        info!(user_id = %user_id, prefix = %prefix, "API key imported");
 
         Ok(ApiKeyMeta {
             id,
@@ -330,11 +329,11 @@ impl AuthStore {
 
     /// Authenticate a request by API key. Returns the user if valid.
     pub async fn authenticate_api_key(&self, key: &str) -> Result<Option<User>> {
-        // Try sp_live_ prefix extraction first
-        let prefix = api_key::extract_prefix(key);
+        // Extract prefix: sp_live_ keys use the standard prefix, others use first 8 chars
+        let prefix = api_key::extract_prefix(key)
+            .unwrap_or_else(|| &key[..key.len().min(8)]);
 
-        let candidates = if let Some(prefix) = prefix {
-            sqlx::query(
+        let candidates = sqlx::query(
                 "SELECT ak.id AS ak_id, ak.key_hash, u.id, u.email, u.display_name, u.role, u.is_active, \
                  u.created_at, u.updated_at \
                  FROM api_keys ak JOIN users u ON ak.user_id = u.id \
@@ -343,19 +342,7 @@ impl AuthStore {
             .bind(prefix)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| StarpodError::Auth(format!("Auth query failed: {}", e)))?
-        } else {
-            // Legacy key: try all non-revoked keys (slower but handles backward compat)
-            sqlx::query(
-                "SELECT ak.id AS ak_id, ak.key_hash, u.id, u.email, u.display_name, u.role, u.is_active, \
-                 u.created_at, u.updated_at \
-                 FROM api_keys ak JOIN users u ON ak.user_id = u.id \
-                 WHERE ak.revoked_at IS NULL AND u.is_active = 1"
-            )
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| StarpodError::Auth(format!("Auth query failed: {}", e)))?
-        };
+            .map_err(|e| StarpodError::Auth(format!("Auth query failed: {}", e)))?;
 
         for row in &candidates {
             let hash: String = row.get("key_hash");
@@ -612,70 +599,6 @@ impl AuthStore {
         Ok(Some((admin, key_str)))
     }
 
-    /// Migrate file-based users to the database.
-    ///
-    /// Scans `users_dir` for subdirectories and creates user records for any
-    /// that don't already have a matching DB entry (matched by folder name).
-    pub async fn migrate_file_users(&self, users_dir: &Path) -> Result<usize> {
-        if !users_dir.exists() {
-            return Ok(0);
-        }
-
-        let mut migrated = 0;
-        let entries = std::fs::read_dir(users_dir)?;
-
-        for entry in entries {
-            let entry = entry?;
-            if !entry.file_type()?.is_dir() {
-                continue;
-            }
-            let folder_name = entry.file_name().to_string_lossy().to_string();
-
-            // Check if a user already exists with this ID
-            if self.get_user(&folder_name).await?.is_some() {
-                continue;
-            }
-
-            // Read display name from USER.md if present
-            let user_md = entry.path().join("USER.md");
-            let display_name = if user_md.exists() {
-                std::fs::read_to_string(&user_md)
-                    .ok()
-                    .and_then(|content| {
-                        content.lines().next().map(|line| {
-                            line.trim_start_matches('#').trim().to_string()
-                        })
-                    })
-            } else {
-                None
-            };
-
-            // Create user with the folder name as ID
-            let now = Utc::now();
-            let now_str = now.to_rfc3339();
-            sqlx::query(
-                "INSERT INTO users (id, display_name, role, is_active, created_at, updated_at) \
-                 VALUES (?, ?, 'user', 1, ?, ?)"
-            )
-            .bind(&folder_name)
-            .bind(display_name.as_deref())
-            .bind(&now_str)
-            .bind(&now_str)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| StarpodError::Auth(format!("Failed to migrate user {}: {}", folder_name, e)))?;
-
-            info!(user_id = %folder_name, "Migrated file-based user to DB");
-            migrated += 1;
-        }
-
-        if migrated > 0 {
-            info!(count = migrated, "File-based user migration complete");
-        }
-
-        Ok(migrated)
-    }
-
     /// Check if any users exist in the database.
     ///
     /// Used by the gateway to decide whether to enforce authentication:
@@ -925,32 +848,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn migrate_file_users() {
-        let store = test_store().await;
-        let dir = tempfile::tempdir().unwrap();
-
-        // Create user directories
-        std::fs::create_dir(dir.path().join("alice")).unwrap();
-        std::fs::write(dir.path().join("alice/USER.md"), "# Alice\nSome info").unwrap();
-        std::fs::create_dir(dir.path().join("bob")).unwrap();
-        // bob has no USER.md
-
-        let count = store.migrate_file_users(dir.path()).await.unwrap();
-        assert_eq!(count, 2);
-
-        let alice = store.get_user("alice").await.unwrap().unwrap();
-        assert_eq!(alice.display_name.as_deref(), Some("Alice"));
-        assert_eq!(alice.role, Role::User);
-
-        let bob = store.get_user("bob").await.unwrap().unwrap();
-        assert!(bob.display_name.is_none());
-
-        // Idempotent: running again migrates 0
-        let count2 = store.migrate_file_users(dir.path()).await.unwrap();
-        assert_eq!(count2, 0);
-    }
-
-    #[tokio::test]
     async fn update_user_role() {
         let store = test_store().await;
         let user = store.create_user(None, None, Role::User).await.unwrap();
@@ -1101,23 +998,6 @@ mod tests {
         }
         let entries = store.recent_audit(3).await.unwrap();
         assert_eq!(entries.len(), 3);
-    }
-
-    #[tokio::test]
-    async fn migrate_nonexistent_dir() {
-        let store = test_store().await;
-        let result = store.migrate_file_users(std::path::Path::new("/nonexistent/path")).await.unwrap();
-        assert_eq!(result, 0);
-    }
-
-    #[tokio::test]
-    async fn migrate_skips_files_not_dirs() {
-        let store = test_store().await;
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("not-a-dir.txt"), "hello").unwrap();
-
-        let count = store.migrate_file_users(dir.path()).await.unwrap();
-        assert_eq!(count, 0);
     }
 
     #[tokio::test]
