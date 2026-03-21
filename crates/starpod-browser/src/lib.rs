@@ -456,6 +456,11 @@ impl BrowserSession {
 
     /// Click an element by CSS selector.
     ///
+    /// Dispatches a full `MouseEvent` (not just `el.click()`) so that
+    /// framework event listeners (React, Vue, etc.) see the event.
+    /// For submit buttons, also calls `form.requestSubmit()` to ensure
+    /// form submission fires correctly.
+    ///
     /// # Errors
     ///
     /// - [`BrowserError::ElementNotFound`] if the selector matches nothing
@@ -466,9 +471,9 @@ impl BrowserSession {
             r#"(function(){{
   var el = document.querySelector({sel});
   if (!el) throw new Error('element not found');
-  el.click();
-  if (el.type === 'submit' && el.form) {{
-    el.form.dispatchEvent(new Event('submit', {{bubbles: true, cancelable: true}}));
+  el.dispatchEvent(new MouseEvent('click', {{bubbles: true, cancelable: true, view: window}}));
+  if ((el.type === 'submit' || el.tagName === 'BUTTON') && el.form) {{
+    try {{ el.form.requestSubmit(el); }} catch(e) {{ el.form.submit(); }}
   }}
   return true;
 }})()"#,
