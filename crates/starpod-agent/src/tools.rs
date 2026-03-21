@@ -51,18 +51,44 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
             }),
         },
         CustomToolDefinition {
-            name: "MemoryWrite".into(),
-            description: "Write or update a file in the user's memory store (e.g. USER.md, MEMORY.md, knowledge/*.md).".into(),
+            name: "MemoryRead".into(),
+            description: "Read a file from memory. Use after MemorySearch to get full context around a result.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "file": {
                         "type": "string",
-                        "description": "Relative file path within the memory store (e.g. 'USER.md', 'knowledge/rust.md')"
+                        "description": "Relative file path (e.g. 'MEMORY.md', 'memory/2026-03-21.md')"
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "Start line (1-indexed, optional — omit to read entire file)"
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "End line (optional)"
+                    }
+                },
+                "required": ["file"]
+            }),
+        },
+        CustomToolDefinition {
+            name: "MemoryWrite".into(),
+            description: "Write or update a file in the user's memory store (e.g. USER.md, MEMORY.md, memory/*.md).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "file": {
+                        "type": "string",
+                        "description": "Relative file path within the memory store (e.g. 'USER.md', 'memory/notes.md')"
                     },
                     "content": {
                         "type": "string",
-                        "description": "The full content to write to the file"
+                        "description": "The content to write (or append) to the file"
+                    },
+                    "append": {
+                        "type": "boolean",
+                        "description": "If true, append to existing file instead of overwriting (default: false)"
                     }
                 },
                 "required": ["file", "content"]
@@ -494,6 +520,7 @@ pub async fn handle_custom_tool(
                                 "source": r.source,
                                 "text": r.text,
                                 "lines": format!("{}-{}", r.line_start, r.line_end),
+                                "citation": format!("{}#L{}-L{}", r.source, r.line_start, r.line_end),
                             })
                         })
                         .collect();
@@ -512,20 +539,91 @@ pub async fn handle_custom_tool(
             }
         }
 
+        "MemoryRead" => {
+            let file = input.get("file")?.as_str()?;
+            let start_line = input.get("start_line").and_then(|v| v.as_u64()).map(|v| v as usize);
+            let end_line = input.get("end_line").and_then(|v| v.as_u64()).map(|v| v as usize);
+
+            debug!(file = %file, "MemoryRead");
+
+            let read_result = if let Some(ref uv) = ctx.user_view {
+                uv.read_file(file)
+            } else {
+                ctx.memory.read_file(file)
+            };
+            match read_result {
+                Ok(content) => {
+                    let output = match (start_line, end_line) {
+                        (Some(start), Some(end)) => {
+                            let lines: Vec<&str> = content.lines().collect();
+                            let start = start.saturating_sub(1).min(lines.len());
+                            let end = end.min(lines.len());
+                            lines[start..end].join("\n")
+                        }
+                        (Some(start), None) => {
+                            let lines: Vec<&str> = content.lines().collect();
+                            let start = start.saturating_sub(1).min(lines.len());
+                            lines[start..].join("\n")
+                        }
+                        _ => content,
+                    };
+                    if output.is_empty() {
+                        Some(ToolResult {
+                            content: format!("File '{}' is empty or does not exist.", file),
+                            is_error: false,
+                            raw_content: None,
+                        })
+                    } else {
+                        Some(ToolResult {
+                            content: output,
+                            is_error: false,
+                            raw_content: None,
+                        })
+                    }
+                }
+                Err(e) => Some(ToolResult {
+                    content: format!("Memory read error: {}", e),
+                    is_error: true,
+                    raw_content: None,
+                }),
+            }
+        }
+
         "MemoryWrite" => {
             let file = input.get("file")?.as_str()?;
             let content = input.get("content")?.as_str()?;
+            let append = input.get("append").and_then(|v| v.as_bool()).unwrap_or(false);
 
-            debug!(file = %file, "MemoryWrite");
+            debug!(file = %file, append = append, "MemoryWrite");
+
+            let final_content = if append {
+                // Read existing content and append
+                let existing = if let Some(ref uv) = ctx.user_view {
+                    uv.read_file(file).unwrap_or_default()
+                } else {
+                    ctx.memory.read_file(file).unwrap_or_default()
+                };
+                if existing.is_empty() {
+                    content.to_string()
+                } else {
+                    format!("{}\n{}", existing, content)
+                }
+            } else {
+                content.to_string()
+            };
 
             let write_result = if let Some(ref uv) = ctx.user_view {
-                uv.write_file(file, content).await
+                uv.write_file(file, &final_content).await
             } else {
-                ctx.memory.write_file(file, content).await
+                ctx.memory.write_file(file, &final_content).await
             };
             match write_result {
                 Ok(()) => Some(ToolResult {
-                    content: format!("Successfully wrote {}", file),
+                    content: if append {
+                        format!("Appended to {}", file)
+                    } else {
+                        format!("Successfully wrote {}", file)
+                    },
                     is_error: false,
                     raw_content: None,
                 }),
@@ -1616,6 +1714,7 @@ mod tests {
                 .unwrap(),
         );
         let user_view = starpod_memory::UserMemoryView::new(Arc::clone(&memory), user_dir)
+            .await
             .unwrap();
         let skills = Arc::new(
             starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap(),
@@ -1715,5 +1814,224 @@ mod tests {
         assert!(agent_soul.is_file(), "SOUL.md should be in agent config dir");
         let user_soul = tmp.path().join("users/alice/SOUL.md");
         assert!(!user_soul.exists(), "SOUL.md should NOT be in user dir");
+    }
+
+    // ── MemoryRead tests ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn memory_read_returns_file_content() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_with_user_view(&tmp).await;
+
+        // Write a user file first
+        handle_custom_tool(
+            &ctx,
+            "MemoryWrite",
+            &serde_json::json!({"file": "USER.md", "content": "# User\nAlice is a developer.\nShe likes Rust."}),
+        ).await.unwrap();
+
+        // Read it back
+        let result = handle_custom_tool(
+            &ctx,
+            "MemoryRead",
+            &serde_json::json!({"file": "USER.md"}),
+        ).await.unwrap();
+        assert!(!result.is_error, "MemoryRead should succeed: {}", result.content);
+        assert!(result.content.contains("Alice is a developer"));
+        assert!(result.content.contains("She likes Rust"));
+    }
+
+    #[tokio::test]
+    async fn memory_read_with_line_range() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_with_user_view(&tmp).await;
+
+        // Write a multi-line file
+        handle_custom_tool(
+            &ctx,
+            "MemoryWrite",
+            &serde_json::json!({
+                "file": "USER.md",
+                "content": "Line 1\nLine 2\nLine 3\nLine 4\nLine 5"
+            }),
+        ).await.unwrap();
+
+        // Read lines 2-4
+        let result = handle_custom_tool(
+            &ctx,
+            "MemoryRead",
+            &serde_json::json!({"file": "USER.md", "start_line": 2, "end_line": 4}),
+        ).await.unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains("Line 2"));
+        assert!(result.content.contains("Line 4"));
+        assert!(!result.content.contains("Line 1"), "Should not contain lines before start_line");
+        assert!(!result.content.contains("Line 5"), "Should not contain lines after end_line");
+    }
+
+    #[tokio::test]
+    async fn memory_read_with_start_line_only() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_with_user_view(&tmp).await;
+
+        handle_custom_tool(
+            &ctx,
+            "MemoryWrite",
+            &serde_json::json!({"file": "USER.md", "content": "Line 1\nLine 2\nLine 3"}),
+        ).await.unwrap();
+
+        // Read from line 2 onward
+        let result = handle_custom_tool(
+            &ctx,
+            "MemoryRead",
+            &serde_json::json!({"file": "USER.md", "start_line": 2}),
+        ).await.unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains("Line 2"));
+        assert!(result.content.contains("Line 3"));
+        assert!(!result.content.contains("Line 1"));
+    }
+
+    #[tokio::test]
+    async fn memory_read_empty_file() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_with_user_view(&tmp).await;
+
+        // Read a file that doesn't exist — read_file returns empty string
+        let result = handle_custom_tool(
+            &ctx,
+            "MemoryRead",
+            &serde_json::json!({"file": "nonexistent.md"}),
+        ).await.unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains("empty") || result.content.contains("does not exist"));
+    }
+
+    #[tokio::test]
+    async fn memory_read_routes_soul_to_agent_store() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_with_user_view(&tmp).await;
+
+        // SOUL.md should come from agent store
+        let result = handle_custom_tool(
+            &ctx,
+            "MemoryRead",
+            &serde_json::json!({"file": "SOUL.md"}),
+        ).await.unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains("Aster"), "SOUL.md should come from agent store");
+    }
+
+    // ── MemoryWrite append mode tests ───────────────────────────────
+
+    #[tokio::test]
+    async fn memory_write_append_mode() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_with_user_view(&tmp).await;
+
+        // Write initial content
+        handle_custom_tool(
+            &ctx,
+            "MemoryWrite",
+            &serde_json::json!({"file": "MEMORY.md", "content": "# Memory\n\nFirst entry."}),
+        ).await.unwrap();
+
+        // Append more content
+        let result = handle_custom_tool(
+            &ctx,
+            "MemoryWrite",
+            &serde_json::json!({"file": "MEMORY.md", "content": "Second entry.", "append": true}),
+        ).await.unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains("Appended"), "Should report append");
+
+        // Verify both entries are present
+        let read = handle_custom_tool(
+            &ctx,
+            "MemoryRead",
+            &serde_json::json!({"file": "MEMORY.md"}),
+        ).await.unwrap();
+        assert!(read.content.contains("First entry"), "Original content preserved");
+        assert!(read.content.contains("Second entry"), "Appended content present");
+    }
+
+    #[tokio::test]
+    async fn memory_write_append_to_nonexistent_file() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_with_user_view(&tmp).await;
+
+        // Append to a file that doesn't exist yet
+        let result = handle_custom_tool(
+            &ctx,
+            "MemoryWrite",
+            &serde_json::json!({"file": "memory/notes.md", "content": "New note.", "append": true}),
+        ).await.unwrap();
+        assert!(!result.is_error);
+
+        // Verify content
+        let read = handle_custom_tool(
+            &ctx,
+            "MemoryRead",
+            &serde_json::json!({"file": "memory/notes.md"}),
+        ).await.unwrap();
+        assert!(read.content.contains("New note"));
+    }
+
+    #[tokio::test]
+    async fn memory_write_overwrite_is_default() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_with_user_view(&tmp).await;
+
+        // Write twice without append flag
+        handle_custom_tool(
+            &ctx,
+            "MemoryWrite",
+            &serde_json::json!({"file": "MEMORY.md", "content": "Version 1"}),
+        ).await.unwrap();
+        handle_custom_tool(
+            &ctx,
+            "MemoryWrite",
+            &serde_json::json!({"file": "MEMORY.md", "content": "Version 2"}),
+        ).await.unwrap();
+
+        let read = handle_custom_tool(
+            &ctx,
+            "MemoryRead",
+            &serde_json::json!({"file": "MEMORY.md"}),
+        ).await.unwrap();
+        assert!(!read.content.contains("Version 1"), "Old content should be overwritten");
+        assert!(read.content.contains("Version 2"), "New content should be present");
+    }
+
+    // ── MemorySearch citation tests ─────────────────────────────────
+
+    #[tokio::test]
+    async fn memory_search_results_include_citations() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_with_user_view(&tmp).await;
+
+        // Write searchable content
+        handle_custom_tool(
+            &ctx,
+            "MemoryWrite",
+            &serde_json::json!({"file": "MEMORY.md", "content": "# Memory\n\nAlice prefers dark mode."}),
+        ).await.unwrap();
+
+        // Search
+        let result = handle_custom_tool(
+            &ctx,
+            "MemorySearch",
+            &serde_json::json!({"query": "dark mode"}),
+        ).await.unwrap();
+        assert!(!result.is_error);
+
+        // Parse result and verify citation field
+        let results: Vec<serde_json::Value> = serde_json::from_str(&result.content).unwrap();
+        assert!(!results.is_empty(), "Should find results");
+        for r in &results {
+            assert!(r.get("citation").is_some(), "Each result should have a citation field");
+            let citation = r["citation"].as_str().unwrap();
+            assert!(citation.contains("#L"), "Citation should include line reference: {}", citation);
+        }
     }
 }

@@ -136,6 +136,52 @@ impl MemoryStore {
         Ok(store)
     }
 
+    /// Create a lightweight per-user memory store.
+    ///
+    /// Uses `user_dir` for both file storage and the SQLite database
+    /// (`user_dir/memory.db`). Skips seeding default lifecycle files
+    /// (SOUL.md, HEARTBEAT.md, etc.) since those belong to the agent-level store.
+    ///
+    /// The store has `max_connections(1)` to keep resource usage low when
+    /// many users each get their own store.
+    ///
+    /// Any existing `.md` files in `user_dir` are indexed on creation.
+    pub async fn new_user(user_dir: &Path) -> Result<Self> {
+        std::fs::create_dir_all(user_dir)
+            .map_err(StarpodError::Io)?;
+
+        let db_path = user_dir.join("memory.db");
+        let opts = SqliteConnectOptions::from_str(
+            &format!("sqlite://{}?mode=rwc", db_path.display()),
+        )
+        .map_err(|e| StarpodError::Database(format!("Invalid DB path: {}", e)))?;
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await
+            .map_err(|e| StarpodError::Database(format!("Failed to open user database: {}", e)))?;
+
+        schema::run_migrations(&pool).await?;
+
+        let store = Self {
+            agent_home: user_dir.to_path_buf(),
+            config_dir: user_dir.to_path_buf(),
+            pool,
+            half_life_days: DEFAULT_HALF_LIFE_DAYS,
+            mmr_lambda: 0.7,
+            embedder: None,
+            chunk_size: CHUNK_SIZE,
+            chunk_overlap: CHUNK_OVERLAP,
+            bootstrap_file_cap: BOOTSTRAP_FILE_CAP,
+        };
+
+        // Index existing user files (no default seeding)
+        store.reindex().await?;
+
+        Ok(store)
+    }
+
     /// Seed default lifecycle files on first run.
     ///
     /// Blueprint-managed files (SOUL.md, HEARTBEAT.md, BOOT.md, BOOTSTRAP.md)
@@ -1192,5 +1238,78 @@ mod tests {
         // Clear it
         store.clear_bootstrap().unwrap();
         assert!(!store.has_bootstrap(), "Cleared BOOTSTRAP.md should not be detected");
+    }
+
+    // ── new_user tests ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn new_user_creates_db_in_user_dir() {
+        let tmp = TempDir::new().unwrap();
+        let user_dir = tmp.path().join("users").join("alice");
+
+        let _store = MemoryStore::new_user(&user_dir).await.unwrap();
+
+        assert!(user_dir.join("memory.db").exists(), "memory.db should be in user_dir");
+    }
+
+    #[tokio::test]
+    async fn new_user_does_not_seed_defaults() {
+        let tmp = TempDir::new().unwrap();
+        let user_dir = tmp.path().join("users").join("bob");
+
+        let _store = MemoryStore::new_user(&user_dir).await.unwrap();
+
+        // new_user should NOT create SOUL.md, HEARTBEAT.md, etc.
+        assert!(!user_dir.join("SOUL.md").exists(), "new_user should not seed SOUL.md");
+        assert!(!user_dir.join("HEARTBEAT.md").exists(), "new_user should not seed HEARTBEAT.md");
+    }
+
+    #[tokio::test]
+    async fn new_user_indexes_existing_files() {
+        let tmp = TempDir::new().unwrap();
+        let user_dir = tmp.path().join("users").join("carol");
+        std::fs::create_dir_all(&user_dir).unwrap();
+
+        // Pre-create a file before store initialization
+        std::fs::write(
+            user_dir.join("MEMORY.md"),
+            "# Memory\n\nCarol likes functional programming.\n",
+        ).unwrap();
+
+        let store = MemoryStore::new_user(&user_dir).await.unwrap();
+
+        // The existing file should be indexed and searchable
+        let results = store.search("functional programming", 5).await.unwrap();
+        assert!(!results.is_empty(), "Pre-existing file should be indexed on startup");
+        assert!(results.iter().any(|r| r.text.contains("functional programming")));
+    }
+
+    #[tokio::test]
+    async fn new_user_write_and_search() {
+        let tmp = TempDir::new().unwrap();
+        let user_dir = tmp.path().join("users").join("dave");
+
+        let store = MemoryStore::new_user(&user_dir).await.unwrap();
+
+        store.write_file("MEMORY.md", "# Memory\n\nDave prefers dark theme.\n")
+            .await
+            .unwrap();
+
+        let results = store.search("dark theme", 5).await.unwrap();
+        assert!(!results.is_empty(), "Written file should be searchable");
+        assert!(results.iter().any(|r| r.text.contains("dark theme")));
+    }
+
+    #[tokio::test]
+    async fn new_user_append_daily_and_search() {
+        let tmp = TempDir::new().unwrap();
+        let user_dir = tmp.path().join("users").join("eve");
+
+        let store = MemoryStore::new_user(&user_dir).await.unwrap();
+
+        store.append_daily("Discussed API design patterns").await.unwrap();
+
+        let results = store.search("API design", 5).await.unwrap();
+        assert!(!results.is_empty(), "Daily log should be searchable");
     }
 }
