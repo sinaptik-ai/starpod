@@ -43,9 +43,6 @@
 //! let text = session.extract(None).await?;
 //! println!("Page text: {text}");
 //!
-//! // Take a screenshot (base64 PNG)
-//! let screenshot = session.screenshot().await?;
-//!
 //! // Clean up
 //! session.close().await?;
 //! # Ok(())
@@ -94,10 +91,6 @@ pub enum BrowserError {
     /// CSS selector matched no elements.
     #[error("element not found: {0}")]
     ElementNotFound(String),
-
-    /// Screenshot capture failed.
-    #[error("screenshot failed: {0}")]
-    ScreenshotFailed(String),
 
     /// JavaScript evaluation failed.
     #[error("JS evaluation failed: {0}")]
@@ -422,31 +415,6 @@ impl BrowserSession {
 
         // Get the page title
         self.evaluate("document.title").await
-    }
-
-    /// Take a full-page screenshot. Returns base64-encoded PNG.
-    ///
-    /// The returned string can be used directly in a `data:image/png;base64,...`
-    /// URI or passed to an LLM as a vision input.
-    ///
-    /// # Errors
-    ///
-    /// - [`BrowserError::ScreenshotFailed`] if the CDP command fails
-    pub async fn screenshot(&self) -> Result<String> {
-        let result = self
-            .cdp
-            .send(
-                "Page.captureScreenshot",
-                serde_json::json!({"format": "png"}),
-                Some(&self.session_id),
-            )
-            .await
-            .map_err(|e| BrowserError::ScreenshotFailed(e.to_string()))?;
-
-        result["data"]
-            .as_str()
-            .map(|s| s.to_string())
-            .ok_or_else(|| BrowserError::ScreenshotFailed("no data in response".into()))
     }
 
     /// Extract text content from the page or a specific element.
@@ -828,7 +796,6 @@ async fn wait_for_cdp(addr: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::Engine;
 
     // -- Unit tests (no browser required) --
 
@@ -923,9 +890,6 @@ mod tests {
         let err = BrowserError::NavigationFailed("404".into());
         assert_eq!(err.to_string(), "navigation failed: 404");
 
-        let err = BrowserError::ScreenshotFailed("no page".into());
-        assert_eq!(err.to_string(), "screenshot failed: no page");
-
         let err = BrowserError::EvalFailed("syntax error".into());
         assert_eq!(err.to_string(), "JS evaluation failed: syntax error");
     }
@@ -996,30 +960,6 @@ mod tests {
         assert!(
             !title.is_empty(),
             "title should not be empty after navigating to example.com"
-        );
-
-        session.close().await.unwrap();
-    }
-
-    #[tokio::test]
-    #[ignore = "requires running CDP browser (set BROWSER_CDP_URL)"]
-    async fn integration_screenshot_returns_valid_base64_png() {
-        let url = cdp_url().expect("BROWSER_CDP_URL not set");
-        let session = BrowserSession::connect(&url).await.unwrap();
-
-        session.navigate("https://example.com").await.unwrap();
-        let b64 = session.screenshot().await.unwrap();
-
-        // Verify it's valid base64
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(&b64)
-            .expect("screenshot should be valid base64");
-
-        // Verify PNG magic bytes
-        assert!(
-            bytes.starts_with(&[0x89, b'P', b'N', b'G']),
-            "screenshot should be a PNG (magic bytes: {:?})",
-            &bytes[..4.min(bytes.len())]
         );
 
         session.close().await.unwrap();

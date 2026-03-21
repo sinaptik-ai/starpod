@@ -524,14 +524,6 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
             }),
         },
         CustomToolDefinition {
-            name: "BrowserScreenshot".into(),
-            description: "Take a screenshot of the current browser page. Returns the image for visual inspection.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {}
-            }),
-        },
-        CustomToolDefinition {
             name: "BrowserClick".into(),
             description: "Click an element on the page by CSS selector.".into(),
             input_schema: json!({
@@ -588,6 +580,31 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
                     }
                 },
                 "required": ["javascript"]
+            }),
+        },
+        CustomToolDefinition {
+            name: "BrowserWaitFor".into(),
+            description: "Wait for a condition on the current page. Use after clicking a button or submitting a form to wait for navigation or DOM changes. Provide exactly one of: url_contains, selector, or javascript.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "url_contains": {
+                        "type": "string",
+                        "description": "Wait until the page URL contains this substring"
+                    },
+                    "selector": {
+                        "type": "string",
+                        "description": "Wait until an element matching this CSS selector exists on the page"
+                    },
+                    "javascript": {
+                        "type": "string",
+                        "description": "Wait until this JavaScript expression returns a truthy value"
+                    },
+                    "timeout_ms": {
+                        "type": "integer",
+                        "description": "Max wait time in milliseconds (default: 10000)"
+                    }
+                }
             }),
         },
         CustomToolDefinition {
@@ -1703,41 +1720,6 @@ pub async fn handle_custom_tool(
             }
         }
 
-        "BrowserScreenshot" => {
-            debug!("BrowserScreenshot");
-            let browser_guard = ctx.browser.lock().await;
-            let session = match browser_guard.as_ref() {
-                Some(s) => s,
-                None => {
-                    return Some(ToolResult {
-                        content: "No browser session. Use BrowserOpen first.".into(),
-                        is_error: true,
-                        raw_content: None,
-                    });
-                }
-            };
-
-            match session.screenshot().await {
-                Ok(b64) => Some(ToolResult {
-                    content: String::new(),
-                    is_error: false,
-                    raw_content: Some(json!([{
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/png",
-                            "data": b64
-                        }
-                    }])),
-                }),
-                Err(e) => Some(ToolResult {
-                    content: format!("Screenshot failed: {e}"),
-                    is_error: true,
-                    raw_content: None,
-                }),
-            }
-        }
-
         "BrowserClick" => {
             let selector = input.get("selector")?.as_str()?;
             debug!(selector = %selector, "BrowserClick");
@@ -1853,6 +1835,93 @@ pub async fn handle_custom_tool(
                 }),
                 Err(e) => Some(ToolResult {
                     content: format!("JS evaluation failed: {e}"),
+                    is_error: true,
+                    raw_content: None,
+                }),
+            }
+        }
+
+        "BrowserWaitFor" => {
+            debug!("BrowserWaitFor");
+            let browser_guard = ctx.browser.lock().await;
+            let session = match browser_guard.as_ref() {
+                Some(s) => s,
+                None => {
+                    return Some(ToolResult {
+                        content: "No browser session. Use BrowserOpen first.".into(),
+                        is_error: true,
+                        raw_content: None,
+                    });
+                }
+            };
+
+            let timeout_ms = input
+                .get("timeout_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(10_000);
+            let deadline = std::time::Instant::now()
+                + std::time::Duration::from_millis(timeout_ms);
+
+            let result: std::result::Result<String, String> =
+                if let Some(url_substr) = input.get("url_contains").and_then(|v| v.as_str()) {
+                    // Wait until URL contains substring
+                    loop {
+                        match session.url().await {
+                            Ok(url) if url.contains(url_substr) => {
+                                break Ok(format!("URL matched: {url}"));
+                            }
+                            _ if std::time::Instant::now() > deadline => {
+                                break Err(format!(
+                                    "Timeout: URL did not contain \"{url_substr}\" within {timeout_ms}ms"
+                                ));
+                            }
+                            _ => tokio::time::sleep(std::time::Duration::from_millis(200)).await,
+                        }
+                    }
+                } else if let Some(sel) = input.get("selector").and_then(|v| v.as_str()) {
+                    // Wait until element exists
+                    let sel_json = serde_json::to_string(sel).unwrap_or_default();
+                    let js = format!("!!document.querySelector({sel_json})");
+                    loop {
+                        match session.evaluate(&js).await {
+                            Ok(ref v) if v == "true" => {
+                                break Ok(format!("Element found: {sel}"));
+                            }
+                            _ if std::time::Instant::now() > deadline => {
+                                break Err(format!(
+                                    "Timeout: element \"{sel}\" not found within {timeout_ms}ms"
+                                ));
+                            }
+                            _ => tokio::time::sleep(std::time::Duration::from_millis(200)).await,
+                        }
+                    }
+                } else if let Some(js_expr) = input.get("javascript").and_then(|v| v.as_str()) {
+                    // Wait until JS expression is truthy
+                    loop {
+                        match session.evaluate(js_expr).await {
+                            Ok(ref v) if !v.is_empty() && v != "false" && v != "null" && v != "0" => {
+                                break Ok(format!("Condition met: {v}"));
+                            }
+                            _ if std::time::Instant::now() > deadline => {
+                                break Err(format!(
+                                    "Timeout: JS condition not met within {timeout_ms}ms"
+                                ));
+                            }
+                            _ => tokio::time::sleep(std::time::Duration::from_millis(200)).await,
+                        }
+                    }
+                } else {
+                    Err("Provide one of: url_contains, selector, or javascript".into())
+                };
+
+            match result {
+                Ok(msg) => Some(ToolResult {
+                    content: msg,
+                    is_error: false,
+                    raw_content: None,
+                }),
+                Err(msg) => Some(ToolResult {
+                    content: msg,
                     is_error: true,
                     raw_content: None,
                 }),
@@ -2964,16 +3033,6 @@ mod tests {
             internet: InternetConfig::default(),
             brave_api_key: None,
         }
-    }
-
-    #[tokio::test]
-    async fn browser_screenshot_without_session_returns_error() {
-        let tmp = TempDir::new().unwrap();
-        let ctx = browser_ctx(&tmp).await;
-        let result = handle_custom_tool(&ctx, "BrowserScreenshot", &serde_json::json!({}))
-            .await.unwrap();
-        assert!(result.is_error);
-        assert!(result.content.contains("No browser session"));
     }
 
     #[tokio::test]

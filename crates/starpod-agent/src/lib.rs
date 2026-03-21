@@ -34,8 +34,8 @@ const CUSTOM_TOOLS: &[&str] = &[
     "CronAdd", "CronList", "CronRemove", "CronRuns",
     "CronRun", "CronUpdate", "HeartbeatWake",
     "WebSearch", "WebFetch",
-    "BrowserOpen", "BrowserScreenshot", "BrowserClick", "BrowserType",
-    "BrowserExtract", "BrowserEval", "BrowserClose",
+    "BrowserOpen", "BrowserClick", "BrowserType",
+    "BrowserExtract", "BrowserEval", "BrowserWaitFor", "BrowserClose",
 ];
 
 /// The Starpod agent orchestrator.
@@ -333,10 +333,11 @@ impl StarpodAgent {
              environment tools (EnvGet), file tools (FileRead, FileWrite, FileList, FileDelete), \
              skill tools (SkillActivate, SkillCreate, SkillUpdate, SkillDelete, SkillList), \
              scheduling tools (CronAdd, CronList, CronRemove, CronRuns, CronRun, CronUpdate, HeartbeatWake), \
-             and browser tools (BrowserOpen, BrowserScreenshot, BrowserClick, BrowserType, BrowserExtract, BrowserEval, BrowserClose).\n\
+             and browser tools (BrowserOpen, BrowserClick, BrowserType, BrowserExtract, BrowserEval, BrowserWaitFor, BrowserClose).\n\
              Browser tools let you automate web tasks: BrowserOpen navigates to a URL (auto-launches a browser process), \
-             BrowserScreenshot captures the page, BrowserExtract gets text content, BrowserClick/BrowserType interact \
-             with elements by CSS selector, BrowserEval runs JavaScript, and BrowserClose ends the session.\n\
+             BrowserExtract gets text content, BrowserClick/BrowserType interact with elements by CSS selector, \
+             BrowserEval runs JavaScript, BrowserWaitFor waits for a condition (URL change, element, or JS expression), \
+             and BrowserClose ends the session.\n\
              You can read image files (png, jpg, gif, webp) with the Read tool — the image will be loaded \
              directly into the conversation so you can see and analyze it. For other file types like CSV or \
              PDF, use Python via the Bash tool.\n\n\
@@ -1530,7 +1531,7 @@ mod tests {
         assert!(names.contains(&"MemoryRead"));
         // Browser tools
         assert!(names.contains(&"BrowserOpen"));
-        assert!(names.contains(&"BrowserScreenshot"));
+        assert!(names.contains(&"BrowserWaitFor"));
         assert!(names.contains(&"BrowserClick"));
         assert!(names.contains(&"BrowserType"));
         assert!(names.contains(&"BrowserExtract"));

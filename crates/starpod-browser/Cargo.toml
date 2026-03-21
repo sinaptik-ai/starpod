@@ -8,7 +8,6 @@ description = "Lightweight browser automation for Starpod via CDP (Lightpanda/Ch
 async-tungstenite = { version = "0.28", features = ["tokio-runtime"] }
 futures-util = "0.3"
 tokio = { version = "1", features = ["process", "net", "time", "rt", "sync", "fs", "macros"] }
-base64 = "0.22"
 tracing = "0.1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
