@@ -985,17 +985,19 @@ async fn main() -> anyhow::Result<()> {
                 onboarding::run_wizard()
             };
 
-            let (provider, model, api_key, first_agent, agent_display) = match answers {
+            let (provider, model, api_key, brave_api_key, first_agent, agent_display) = match answers {
                 Some(a) => (
                     a.provider,
                     a.model,
                     a.api_key,
+                    a.brave_api_key,
                     a.first_agent_name,
                     a.agent_display_name,
                 ),
                 None => (
                     "anthropic".to_string(),
                     "claude-haiku-4-5".to_string(),
+                    None,
                     None,
                     None,
                     None,
@@ -1011,11 +1013,11 @@ async fn main() -> anyhow::Result<()> {
             tokio::fs::create_dir_all(cwd.join("skills")).await?;
             tokio::fs::write(
                 cwd.join(".env"),
-                onboarding::generate_env_content(&provider, api_key.as_deref()),
+                onboarding::generate_env_content_full(&provider, api_key.as_deref(), brave_api_key.as_deref()),
             ).await?;
             tokio::fs::write(
                 cwd.join(".env.dev"),
-                onboarding::generate_env_dev_content(&provider, api_key.as_deref()),
+                onboarding::generate_env_dev_content_full(&provider, api_key.as_deref(), brave_api_key.as_deref()),
             ).await?;
 
             // Add .env and .instances/ to .gitignore if not already there

@@ -7,6 +7,7 @@ import HeartbeatTab from './HeartbeatTab'
 import FrontendTab from './FrontendTab'
 import MemoryTab from './MemoryTab'
 import CronTab from './CronTab'
+import InternetTab from './InternetTab'
 import SkillsTab from './SkillsTab'
 import UsersTab from './UsersTab'
 import ChannelsTab from './ChannelsTab'
@@ -34,6 +35,7 @@ const tabGroups = [
     label: 'System',
     tabs: [
       { id: 'memory', label: 'Memory' },
+      { id: 'internet', label: 'Internet' },
       { id: 'cron', label: 'Cron' },
       { id: 'browser', label: 'Browser' },
       { id: 'channels', label: 'Channels' },
@@ -55,6 +57,7 @@ function TabContent({ tab }) {
     case 'bootstrap': return <FileTab fileName="BOOTSTRAP.md" description="Instructions for initial instance setup." rows={20} />
     case 'frontend': return <FrontendTab />
     case 'memory': return <MemoryTab />
+    case 'internet': return <InternetTab />
     case 'cron': return <CronTab />
     case 'browser': return <BrowserTab />
     case 'channels': return <ChannelsTab />

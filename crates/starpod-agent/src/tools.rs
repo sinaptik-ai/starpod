@@ -1,12 +1,28 @@
 //! Custom tool definitions and handler for Starpod-specific tools.
+//!
+//! This module implements all Starpod-specific tools that extend the agent-sdk's
+//! built-in tool set. Tools are grouped into categories:
+//!
+//! - **Memory** — search, read, write, and append to long-term memory
+//! - **Environment** — read environment variables (with sensitive-key blocking)
+//! - **File sandbox** — read/write/list/delete files within the instance home directory
+//! - **Skills** — CRUD for self-extension skills
+//! - **Cron** — schedule and manage recurring/one-shot jobs
+//! - **Web** — search the internet via Brave Search and fetch web pages
+//!
+//! Each tool is defined as a [`CustomToolDefinition`] (JSON schema sent to Claude)
+//! and handled by [`handle_custom_tool`], which dispatches on tool name.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use agent_sdk::{CustomToolDefinition, ToolResult};
+use reqwest::Client;
 use serde_json::json;
 use tracing::debug;
 
+use starpod_core::config::InternetConfig;
 use starpod_browser::BrowserSession;
 use starpod_cron::store::epoch_to_rfc3339;
 use starpod_cron::{CronStore, RunStatus};
@@ -33,6 +49,13 @@ pub struct ToolContext {
     /// that try to access internal config/data files.
     pub agent_home: PathBuf,
     pub user_id: Option<String>,
+    /// Shared HTTP client for web tools (WebSearch, WebFetch).
+    pub http_client: Client,
+    /// Internet access configuration (enabled flag, timeouts, size limits).
+    pub internet: InternetConfig,
+    /// Brave Search API key, read from the `BRAVE_API_KEY` environment variable.
+    /// When `None`, WebSearch returns an error prompting the user to set it.
+    pub brave_api_key: Option<String>,
 }
 
 /// Build the JSON schema definitions for all Starpod custom tools.
@@ -450,6 +473,39 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
                         "description": "Optional message to prepend to the heartbeat prompt"
                     }
                 }
+            }),
+        },
+        // --- Web tools ---
+        CustomToolDefinition {
+            name: "WebSearch".into(),
+            description: "Search the web using Brave Search and return results. Use this to find current information, answer questions about recent events, look up documentation, etc.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query"
+                    },
+                    "count": {
+                        "type": "integer",
+                        "description": "Number of results to return (default: 5, max: 20)"
+                    }
+                },
+                "required": ["query"]
+            }),
+        },
+        CustomToolDefinition {
+            name: "WebFetch".into(),
+            description: "Fetch a web page and extract its text content. Use this to read articles, documentation, or any web page. Returns the page content as markdown.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The URL to fetch"
+                    }
+                },
+                "required": ["url"]
             }),
         },
         // --- Browser tools ---
@@ -1507,6 +1563,95 @@ pub async fn handle_custom_tool(
             }
         }
 
+        // --- Web tools ---
+
+        "WebSearch" => {
+            if !ctx.internet.enabled {
+                return Some(ToolResult {
+                    content: "Internet access is disabled in config.".into(),
+                    is_error: true,
+                    raw_content: None,
+                });
+            }
+
+            let api_key = match &ctx.brave_api_key {
+                Some(k) => k.clone(),
+                None => {
+                    return Some(ToolResult {
+                        content: "BRAVE_API_KEY not set. Add it to .env to enable web search."
+                            .into(),
+                        is_error: true,
+                        raw_content: None,
+                    });
+                }
+            };
+
+            let query = input.get("query")?.as_str()?;
+            let count = input
+                .get("count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(5)
+                .min(20) as u32;
+
+            debug!(query = %query, count = count, "WebSearch");
+
+            match brave_search(&ctx.http_client, &api_key, query, count, ctx.internet.timeout_secs).await {
+                Ok(results) => Some(ToolResult {
+                    content: results,
+                    is_error: false,
+                    raw_content: None,
+                }),
+                Err(e) => Some(ToolResult {
+                    content: format!("Web search error: {}", e),
+                    is_error: true,
+                    raw_content: None,
+                }),
+            }
+        }
+
+        "WebFetch" => {
+            if !ctx.internet.enabled {
+                return Some(ToolResult {
+                    content: "Internet access is disabled in config.".into(),
+                    is_error: true,
+                    raw_content: None,
+                });
+            }
+
+            let url = input.get("url")?.as_str()?;
+
+            debug!(url = %url, "WebFetch");
+
+            // Block private/local URLs
+            if is_private_url(url) {
+                return Some(ToolResult {
+                    content: "Fetching private/local URLs is not allowed.".into(),
+                    is_error: true,
+                    raw_content: None,
+                });
+            }
+
+            match web_fetch(
+                &ctx.http_client,
+                url,
+                ctx.internet.max_fetch_bytes,
+                ctx.internet.timeout_secs,
+            )
+            .await
+            {
+                Ok(content) => Some(ToolResult {
+                    content,
+                    is_error: false,
+                    raw_content: None,
+                }),
+                Err(e) => Some(ToolResult {
+                    content: format!("Web fetch error: {}", e),
+                    is_error: true,
+                    raw_content: None,
+                }),
+            }
+        }
+
         // --- Browser tools ---
         "BrowserOpen" => {
             let url = input.get("url")?.as_str()?;
@@ -1744,6 +1889,194 @@ pub async fn handle_custom_tool(
     }
 }
 
+// ── Web tool helpers ─────────────────────────────────────────────────────────
+
+/// Call the Brave Search API and format results as numbered plain-text entries.
+///
+/// Each result is formatted as:
+/// ```text
+/// 1. Title
+///    https://example.com/page
+///    Description snippet from the search engine
+/// ```
+///
+/// Returns `"No results found."` when the response contains no web results.
+async fn brave_search(
+    client: &Client,
+    api_key: &str,
+    query: &str,
+    count: u32,
+    timeout_secs: u64,
+) -> Result<String, String> {
+    let resp = client
+        .get("https://api.search.brave.com/res/v1/web/search")
+        .header("X-Subscription-Token", api_key)
+        .header("Accept", "application/json")
+        .query(&[("q", query), ("count", &count.to_string())])
+        .timeout(Duration::from_secs(timeout_secs))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Brave API returned {}: {}", status, body));
+    }
+
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    Ok(format_brave_results(&body))
+}
+
+/// Format a Brave Search API JSON response into numbered plain-text results.
+///
+/// Expects the standard Brave response structure: `{ "web": { "results": [...] } }`.
+/// Each result should have `title`, `url`, and `description` fields.
+fn format_brave_results(body: &serde_json::Value) -> String {
+    let mut output = String::new();
+    if let Some(results) =
+        body.get("web").and_then(|w| w.get("results")).and_then(|r| r.as_array())
+    {
+        if results.is_empty() {
+            return "No results found.".into();
+        }
+        for (i, result) in results.iter().enumerate() {
+            let title = result
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("(no title)");
+            let url = result.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            let description = result
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("(no description)");
+
+            output.push_str(&format!(
+                "{}. {}\n   {}\n   {}\n\n",
+                i + 1,
+                title,
+                url,
+                description
+            ));
+        }
+    } else {
+        return "No results found.".into();
+    }
+
+    output.trim_end().to_string()
+}
+
+/// Fetch a web page and convert its content to a readable format.
+///
+/// For HTML pages (`text/html`, `application/xhtml`), the body is converted to
+/// markdown using `htmd`, with excessive blank lines collapsed. For other content
+/// types (JSON, plain text, etc.), the raw body is returned as-is.
+///
+/// The response body is truncated to `max_bytes` before processing to prevent
+/// excessively large pages from blowing up the agent's context window.
+async fn web_fetch(
+    client: &Client,
+    url: &str,
+    max_bytes: usize,
+    timeout_secs: u64,
+) -> Result<String, String> {
+    let resp = client
+        .get(url)
+        .header("User-Agent", "Starpod/1.0 (AI Assistant)")
+        .timeout(Duration::from_secs(timeout_secs))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let body_bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read body: {}", e))?;
+
+    let body_str = if body_bytes.len() > max_bytes {
+        String::from_utf8_lossy(&body_bytes[..max_bytes]).into_owned()
+    } else {
+        String::from_utf8_lossy(&body_bytes).into_owned()
+    };
+
+    if content_type.contains("text/html") || content_type.contains("application/xhtml") {
+        let md = htmd::convert(&body_str).map_err(|e| format!("HTML conversion failed: {}", e))?;
+        let trimmed: String = md
+            .lines()
+            .map(|l| l.trim_end())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut result = String::with_capacity(trimmed.len());
+        let mut blank_count = 0u32;
+        for line in trimmed.lines() {
+            if line.is_empty() {
+                blank_count += 1;
+                if blank_count <= 2 {
+                    result.push('\n');
+                }
+            } else {
+                blank_count = 0;
+                result.push_str(line);
+                result.push('\n');
+            }
+        }
+        Ok(result.trim().to_string())
+    } else {
+        Ok(body_str)
+    }
+}
+
+/// Check if a URL points to a private/local network address.
+///
+/// Blocks requests to localhost, loopback, RFC 1918 private ranges
+/// (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16), and `.local`/`.internal`
+/// TLD suffixes. This is a defence-in-depth measure to prevent SSRF when
+/// the agent fetches arbitrary URLs provided by the LLM.
+fn is_private_url(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    let host = lower
+        .strip_prefix("http://")
+        .or_else(|| lower.strip_prefix("https://"))
+        .unwrap_or(&lower);
+    let host = host.split('/').next().unwrap_or(host);
+    let host = if host.starts_with('[') {
+        host.split(']').next().unwrap_or(host).trim_start_matches('[')
+    } else {
+        host.split(':').next().unwrap_or(host)
+    };
+
+    host == "localhost"
+        || host == "127.0.0.1"
+        || host == "0.0.0.0"
+        || host == "::1"
+        || host.starts_with("10.")
+        || host.starts_with("192.168.")
+        || host.starts_with("172.16.")
+        || host.starts_with("172.17.")
+        || host.starts_with("172.18.")
+        || host.starts_with("172.19.")
+        || host.starts_with("172.2")
+        || host.starts_with("172.30.")
+        || host.starts_with("172.31.")
+        || host.ends_with(".local")
+        || host.ends_with(".internal")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1818,6 +2151,9 @@ mod tests {
             home_dir: tmp.path().to_path_buf(),
             agent_home: tmp.path().join(".starpod"),
             user_id: Some("admin".into()),
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
         };
 
         std::env::set_var("STARPOD_ENVGET_TEST_VAR", "test_value_42");
@@ -1852,6 +2188,9 @@ mod tests {
             home_dir: tmp.path().to_path_buf(),
             agent_home: tmp.path().join(".starpod"),
             user_id: Some("admin".into()),
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
         };
 
         let result = handle_custom_tool(
@@ -1884,6 +2223,9 @@ mod tests {
             home_dir: tmp.path().to_path_buf(),
             agent_home: tmp.path().join(".starpod"),
             user_id: Some("admin".into()),
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
         };
 
         // All of these should be blocked
@@ -1933,6 +2275,9 @@ mod tests {
             home_dir: home_dir.clone(),
             agent_home: home_dir.join(".starpod"),
             user_id: Some("admin".into()),
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
         };
 
         // Write a file
@@ -1976,6 +2321,9 @@ mod tests {
             home_dir: home_dir.clone(),
             agent_home: home_dir.join(".starpod"),
             user_id: Some("admin".into()),
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
         };
 
         let result = handle_custom_tool(
@@ -2011,6 +2359,9 @@ mod tests {
             home_dir: home_dir.clone(),
             agent_home: home_dir.join(".starpod"),
             user_id: Some("admin".into()),
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
         };
 
         let result = handle_custom_tool(
@@ -2046,6 +2397,9 @@ mod tests {
             home_dir: home_dir.clone(),
             agent_home: home_dir.join(".starpod"),
             user_id: Some("admin".into()),
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
         };
 
         let result = handle_custom_tool(
@@ -2078,6 +2432,9 @@ mod tests {
             home_dir: home_dir.clone(),
             agent_home: home_dir.join(".starpod"),
             user_id: Some("admin".into()),
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
         };
 
         let result = handle_custom_tool(
@@ -2124,6 +2481,9 @@ mod tests {
             home_dir: tmp.path().to_path_buf(),
             agent_home: tmp.path().join(".starpod"),
             user_id: Some("alice".into()),
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
         }
     }
 
@@ -2453,6 +2813,9 @@ mod tests {
             home_dir: tmp.path().join("home"),
             agent_home: tmp.path().join(".starpod"),
             user_id: Some("admin".into()),
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
         }
     }
 
@@ -2597,6 +2960,9 @@ mod tests {
             home_dir: tmp.path().to_path_buf(),
             agent_home: tmp.path().join(".starpod"),
             user_id: Some("admin".into()),
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
         }
     }
 
@@ -2674,5 +3040,193 @@ mod tests {
         let ctx = browser_ctx(&tmp).await;
         let result = handle_custom_tool(&ctx, "BrowserOpen", &serde_json::json!({})).await;
         assert!(result.is_none(), "missing required url should return None");
+    }
+
+    // ── is_private_url ────────────────────────────────────────────────
+
+    #[test]
+    fn private_url_blocks_localhost() {
+        assert!(is_private_url("http://localhost/foo"));
+        assert!(is_private_url("https://localhost:8080/bar"));
+        assert!(is_private_url("http://LOCALHOST/baz"));
+    }
+
+    #[test]
+    fn private_url_blocks_loopback() {
+        assert!(is_private_url("http://127.0.0.1/"));
+        assert!(is_private_url("http://127.0.0.1:3000/api"));
+        assert!(is_private_url("http://0.0.0.0/"));
+        assert!(is_private_url("http://[::1]/"));
+    }
+
+    #[test]
+    fn private_url_blocks_rfc1918_class_a() {
+        assert!(is_private_url("http://10.0.0.1/"));
+        assert!(is_private_url("http://10.255.255.255/page"));
+    }
+
+    #[test]
+    fn private_url_blocks_rfc1918_class_b() {
+        assert!(is_private_url("http://172.16.0.1/"));
+        assert!(is_private_url("http://172.20.10.5/"));
+        assert!(is_private_url("http://172.31.255.255/"));
+    }
+
+    #[test]
+    fn private_url_blocks_rfc1918_class_c() {
+        assert!(is_private_url("http://192.168.0.1/"));
+        assert!(is_private_url("http://192.168.1.100:8080/api"));
+    }
+
+    #[test]
+    fn private_url_blocks_local_tld() {
+        assert!(is_private_url("http://mydevbox.local/"));
+        assert!(is_private_url("https://service.internal/api"));
+    }
+
+    #[test]
+    fn private_url_allows_public_urls() {
+        assert!(!is_private_url("https://example.com/"));
+        assert!(!is_private_url("https://api.brave.com/search"));
+        assert!(!is_private_url("http://8.8.8.8/dns"));
+        assert!(!is_private_url("https://docs.rs/reqwest"));
+    }
+
+    #[test]
+    fn private_url_allows_non_private_172() {
+        assert!(!is_private_url("http://172.32.0.1/"));
+        assert!(!is_private_url("http://172.15.0.1/"));
+    }
+
+    // ── format_brave_results ──────────────────────────────────────────
+
+    #[test]
+    fn format_brave_results_with_results() {
+        let body = json!({
+            "web": {
+                "results": [
+                    {
+                        "title": "Rust Programming Language",
+                        "url": "https://www.rust-lang.org/",
+                        "description": "A language empowering everyone to build reliable software."
+                    },
+                    {
+                        "title": "Rust Documentation",
+                        "url": "https://doc.rust-lang.org/",
+                        "description": "Official Rust documentation and guides."
+                    }
+                ]
+            }
+        });
+
+        let output = format_brave_results(&body);
+        assert!(output.contains("1. Rust Programming Language"));
+        assert!(output.contains("https://www.rust-lang.org/"));
+        assert!(output.contains("2. Rust Documentation"));
+    }
+
+    #[test]
+    fn format_brave_results_empty_results() {
+        let body = json!({ "web": { "results": [] } });
+        assert_eq!(format_brave_results(&body), "No results found.");
+    }
+
+    #[test]
+    fn format_brave_results_missing_web_key() {
+        let body = json!({ "query": { "original": "test" } });
+        assert_eq!(format_brave_results(&body), "No results found.");
+    }
+
+    #[test]
+    fn format_brave_results_missing_fields_in_result() {
+        let body = json!({ "web": { "results": [{ "title": "Only Title" }] } });
+        let output = format_brave_results(&body);
+        assert!(output.contains("1. Only Title"));
+        assert!(output.contains("(no description)"));
+    }
+
+    // ── WebSearch handler ─────────────────────────────────────────────
+
+    async fn web_tool_context(tmp: &TempDir) -> ToolContext {
+        let memory = Arc::new(
+            MemoryStore::new(tmp.path(), &tmp.path().join("config"), &tmp.path().join("db"))
+                .await.unwrap(),
+        );
+        let skills = Arc::new(SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let cron = Arc::new(CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
+        ToolContext {
+            memory,
+            user_view: None,
+            skills,
+            cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: false,
+            browser_cdp_url: None,
+            user_tz: None,
+            home_dir: tmp.path().to_path_buf(),
+            agent_home: tmp.path().join(".starpod"),
+            user_id: Some("admin".into()),
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn web_search_errors_when_disabled() {
+        let tmp = TempDir::new().unwrap();
+        let mut ctx = web_tool_context(&tmp).await;
+        ctx.internet.enabled = false;
+        let result = handle_custom_tool(&ctx, "WebSearch", &json!({"query": "rust"})).await.unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("disabled"));
+    }
+
+    #[tokio::test]
+    async fn web_search_errors_when_no_api_key() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = web_tool_context(&tmp).await;
+        let result = handle_custom_tool(&ctx, "WebSearch", &json!({"query": "rust"})).await.unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("BRAVE_API_KEY"));
+    }
+
+    #[tokio::test]
+    async fn web_search_returns_none_for_missing_query() {
+        let tmp = TempDir::new().unwrap();
+        let mut ctx = web_tool_context(&tmp).await;
+        ctx.brave_api_key = Some("test-key".into());
+        let result = handle_custom_tool(&ctx, "WebSearch", &json!({})).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn web_fetch_errors_when_disabled() {
+        let tmp = TempDir::new().unwrap();
+        let mut ctx = web_tool_context(&tmp).await;
+        ctx.internet.enabled = false;
+        let result = handle_custom_tool(&ctx, "WebFetch", &json!({"url": "https://example.com"})).await.unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("disabled"));
+    }
+
+    #[tokio::test]
+    async fn web_fetch_blocks_private_urls() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = web_tool_context(&tmp).await;
+        for url in &["http://localhost/secret", "http://127.0.0.1:8080/api", "http://10.0.0.1/internal",
+                     "http://192.168.1.1/admin", "http://172.16.0.1/", "http://mybox.local/"] {
+            let result = handle_custom_tool(&ctx, "WebFetch", &json!({"url": url})).await.unwrap();
+            assert!(result.is_error, "Should block private URL: {}", url);
+            assert!(result.content.contains("private/local"), "for: {}", url);
+        }
+    }
+
+    #[tokio::test]
+    async fn web_fetch_returns_none_for_missing_url() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = web_tool_context(&tmp).await;
+        let result = handle_custom_tool(&ctx, "WebFetch", &json!({})).await;
+        assert!(result.is_none());
     }
 }

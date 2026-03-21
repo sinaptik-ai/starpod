@@ -47,6 +47,7 @@ pub struct InitAnswers {
     pub provider: String,
     pub model: String,
     pub api_key: Option<String>,
+    pub brave_api_key: Option<String>,
     pub first_agent_name: Option<String>,
     pub agent_display_name: Option<String>,
 }
@@ -103,7 +104,41 @@ pub fn run_wizard() -> Option<InitAnswers> {
         None
     };
 
-    // 4. Create first agent?
+    // 4. Brave Search API key (optional — enables web search)
+    let brave_api_key = if std::env::var("BRAVE_API_KEY").is_ok() {
+        println!(
+            "  {} {} is already set in your environment.",
+            "✓".green().bold(),
+            "BRAVE_API_KEY".bright_white()
+        );
+        None
+    } else {
+        let enable_web = Select::with_theme(&theme)
+            .with_prompt("Enable web search? (requires a free Brave Search API key)")
+            .items(&["Yes", "No, skip for now"])
+            .default(0)
+            .interact_opt()
+            .ok()
+            .flatten()?;
+
+        if enable_web == 0 {
+            println!(
+                "  {} Get a free API key at {}",
+                "→".bright_blue().bold(),
+                "https://brave.com/search/api/".bright_white()
+            );
+            let key: String = Password::with_theme(&theme)
+                .with_prompt("BRAVE_API_KEY (will be saved to .env)")
+                .allow_empty_password(true)
+                .interact()
+                .ok()?;
+            if key.is_empty() { None } else { Some(key) }
+        } else {
+            None
+        }
+    };
+
+    // 5. Create first agent?
     let create_agent = Select::with_theme(&theme)
         .with_prompt("Create your first agent now?")
         .items(&["Yes", "No, I'll do it later"])
@@ -132,6 +167,7 @@ pub fn run_wizard() -> Option<InitAnswers> {
         provider: provider.to_string(),
         model,
         api_key,
+        brave_api_key,
         first_agent_name,
         agent_display_name,
     })
@@ -182,6 +218,12 @@ server_addr = "127.0.0.1:3000"
 # enabled = true
 # allowed_extensions = []  # empty = all allowed, e.g. ["jpg", "png", "pdf"]
 # max_file_size = 20971520  # 20 MB
+
+# [internet]
+# enabled = true  # enable WebSearch and WebFetch tools
+# timeout_secs = 15  # request timeout for web operations
+# max_fetch_bytes = 524288  # max response body size (512 KiB)
+# BRAVE_API_KEY must be set in .env for web search to work
 "#
     )
 }
@@ -194,24 +236,64 @@ fn generate_workspace_config() -> String {
 
 /// Generate the `.env` content for the selected provider.
 pub fn generate_env_content(provider: &str, api_key: Option<&str>) -> String {
-    if let (Some(env_name), Some(key)) = (env_key_for_provider(provider), api_key) {
+    generate_env_content_full(provider, api_key, None)
+}
+
+/// Generate the `.env` content including the Brave Search API key.
+pub fn generate_env_content_full(
+    provider: &str,
+    api_key: Option<&str>,
+    brave_api_key: Option<&str>,
+) -> String {
+    let mut out = if let (Some(env_name), Some(key)) = (env_key_for_provider(provider), api_key) {
         format!("{}={}\n", env_name, key)
     } else if let Some(env_name) = env_key_for_provider(provider) {
         format!("# {}=your-key-here\n", env_name)
     } else {
         "# No API key needed for this provider.\n".to_string()
+    };
+
+    match brave_api_key {
+        Some(key) if !key.is_empty() => {
+            out.push_str(&format!("BRAVE_API_KEY={}\n", key));
+        }
+        _ => {
+            out.push_str("# BRAVE_API_KEY=your-brave-key-here\n");
+        }
     }
+
+    out
 }
 
 /// Generate the `.env.dev` content for the selected provider.
 pub fn generate_env_dev_content(provider: &str, api_key: Option<&str>) -> String {
-    if let (Some(env_name), Some(key)) = (env_key_for_provider(provider), api_key) {
+    generate_env_dev_content_full(provider, api_key, None)
+}
+
+/// Generate the `.env.dev` content including the Brave Search API key.
+pub fn generate_env_dev_content_full(
+    provider: &str,
+    api_key: Option<&str>,
+    brave_api_key: Option<&str>,
+) -> String {
+    let mut out = if let (Some(env_name), Some(key)) = (env_key_for_provider(provider), api_key) {
         format!("# Development overrides\n{}={}\n", env_name, key)
     } else if let Some(env_name) = env_key_for_provider(provider) {
         format!("# Development overrides\n# {}=your-key-here\n", env_name)
     } else {
         "# Development overrides\n".to_string()
+    };
+
+    match brave_api_key {
+        Some(key) if !key.is_empty() => {
+            out.push_str(&format!("BRAVE_API_KEY={}\n", key));
+        }
+        _ => {
+            out.push_str("# BRAVE_API_KEY=your-brave-key-here\n");
+        }
     }
+
+    out
 }
 
 #[cfg(test)]
@@ -270,7 +352,8 @@ mod tests {
     #[test]
     fn env_dev_content_with_key() {
         let env = generate_env_dev_content("anthropic", Some("sk-ant-test123"));
-        assert_eq!(env, "# Development overrides\nANTHROPIC_API_KEY=sk-ant-test123\n");
+        assert!(env.contains("# Development overrides"));
+        assert!(env.contains("ANTHROPIC_API_KEY=sk-ant-test123"));
     }
 
     #[test]
@@ -283,13 +366,13 @@ mod tests {
     #[test]
     fn env_dev_content_ollama() {
         let env = generate_env_dev_content("ollama", None);
-        assert_eq!(env, "# Development overrides\n");
+        assert!(env.contains("# Development overrides"));
     }
 
     #[test]
     fn env_content_with_key() {
         let env = generate_env_content("anthropic", Some("sk-ant-test123"));
-        assert_eq!(env, "ANTHROPIC_API_KEY=sk-ant-test123\n");
+        assert!(env.contains("ANTHROPIC_API_KEY=sk-ant-test123"));
     }
 
     #[test]
@@ -318,7 +401,7 @@ mod tests {
             let env_name = env_key_for_provider(provider).unwrap();
             // with key
             let env = generate_env_content(provider, Some("test-key"));
-            assert_eq!(env, format!("{}=test-key\n", env_name), "provider: {}", provider);
+            assert!(env.contains(&format!("{}=test-key", env_name)), "provider: {}", provider);
             // without key
             let env = generate_env_content(provider, None);
             assert!(env.starts_with(&format!("# {}=", env_name)), "provider: {}", provider);
@@ -359,6 +442,30 @@ mod tests {
         assert_eq!(env_key_for_provider("deepseek"), Some("DEEPSEEK_API_KEY"));
         assert_eq!(env_key_for_provider("openrouter"), Some("OPENROUTER_API_KEY"));
         assert_eq!(env_key_for_provider("ollama"), None);
+    }
+
+    // ── Full env generation ───────────────────────────────────────────
+
+    #[test]
+    fn env_content_full_with_brave_key() {
+        let env = generate_env_content_full("anthropic", Some("sk-ant-123"), Some("BSA-key-456"));
+        assert!(env.contains("ANTHROPIC_API_KEY=sk-ant-123"));
+        assert!(env.contains("BRAVE_API_KEY=BSA-key-456"));
+        assert!(!env.contains("# BRAVE_API_KEY="));
+    }
+
+    #[test]
+    fn env_content_full_without_brave_key() {
+        let env = generate_env_content_full("anthropic", Some("sk-ant-123"), None);
+        assert!(env.contains("ANTHROPIC_API_KEY=sk-ant-123"));
+        assert!(env.contains("# BRAVE_API_KEY=your-brave-key-here"));
+    }
+
+    #[test]
+    fn env_dev_content_full_with_brave_key() {
+        let env = generate_env_dev_content_full("openai", Some("sk-openai"), Some("BSA-brave"));
+        assert!(env.contains("OPENAI_API_KEY=sk-openai"));
+        assert!(env.contains("BRAVE_API_KEY=BSA-brave"));
     }
 
     // ── Provider list ────────────────────────────────────────────────

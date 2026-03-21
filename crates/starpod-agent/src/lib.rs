@@ -33,6 +33,7 @@ const CUSTOM_TOOLS: &[&str] = &[
     "SkillActivate", "SkillCreate", "SkillUpdate", "SkillDelete", "SkillList",
     "CronAdd", "CronList", "CronRemove", "CronRuns",
     "CronRun", "CronUpdate", "HeartbeatWake",
+    "WebSearch", "WebFetch",
     "BrowserOpen", "BrowserScreenshot", "BrowserClick", "BrowserType",
     "BrowserExtract", "BrowserEval", "BrowserClose",
 ];
@@ -81,6 +82,7 @@ impl StarpodAgent {
             browser: config.browser.clone(),
             attachments: config.attachments.clone(),
             auth: config.auth.clone(),
+            internet: config.internet.clone(),
         };
 
         let starpod_dir = config.db_dir.parent().unwrap_or(&config.db_dir).to_path_buf();
@@ -603,6 +605,8 @@ impl StarpodAgent {
             None => None,
         };
 
+        let brave_api_key = std::env::var("BRAVE_API_KEY").ok();
+
         let ctx = Arc::new(ToolContext {
             memory: Arc::clone(&self.memory),
             user_view,
@@ -615,6 +619,9 @@ impl StarpodAgent {
             home_dir: self.paths.home_dir.clone(),
             agent_home: self.paths.agent_home.clone(),
             user_id: user_id.map(|s| s.to_string()),
+            http_client: reqwest::Client::new(),
+            internet: config.internet.clone(),
+            brave_api_key,
         });
 
         Box::new(move |tool_name, input| {
@@ -1529,7 +1536,9 @@ mod tests {
         assert!(names.contains(&"BrowserExtract"));
         assert!(names.contains(&"BrowserEval"));
         assert!(names.contains(&"BrowserClose"));
-        assert_eq!(defs.len(), 28);
+        assert!(names.contains(&"WebSearch"));
+        assert!(names.contains(&"WebFetch"));
+        assert_eq!(defs.len(), 30);
     }
 
     #[tokio::test]
@@ -1550,6 +1559,9 @@ mod tests {
             home_dir: tmp.path().to_path_buf(),
             agent_home: tmp.path().join(".starpod"),
             user_id: Some("admin".into()),
+            http_client: reqwest::Client::new(),
+            internet: starpod_core::InternetConfig::default(),
+            brave_api_key: None,
         };
 
         // Test MemorySearch

@@ -126,6 +126,15 @@ struct BrowserSettings {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct InternetSettings {
+    enabled: bool,
+    timeout_secs: u64,
+    max_fetch_bytes: usize,
+    #[serde(default)]
+    brave_api_key: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct FileContent {
     content: String,
 }
@@ -288,6 +297,8 @@ pub fn settings_routes() -> Router<Arc<AppState>> {
             get(list_auth_api_keys).post(create_auth_api_key),
         )
         .route("/api/settings/auth/api-keys/{id}/revoke", axum::routing::post(revoke_auth_api_key))
+        // Internet
+        .route("/api/settings/internet", get(get_internet).put(put_internet))
         // Channels
         .route("/api/settings/channels", get(get_channels).put(put_channels))
         // Costs
@@ -1435,6 +1446,68 @@ async fn revoke_auth_api_key(
         .revoke_api_key(&key_id)
         .await
         .map_err(|e| internal(e))?;
+
+    Ok(ok_json())
+}
+
+// ── Internet ────────────────────────────────────────────────────────────
+
+async fn get_internet(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> ApiResult<InternetSettings> {
+    let auth_user = authenticate_request(&state, &headers).await?;
+    require_admin(&auth_user)?;
+
+    let cfg = state.config.read().unwrap();
+    let brave_api_key = read_env_var(&state.paths, "BRAVE_API_KEY");
+    Ok(Json(InternetSettings {
+        enabled: cfg.internet.enabled,
+        timeout_secs: cfg.internet.timeout_secs,
+        max_fetch_bytes: cfg.internet.max_fetch_bytes,
+        brave_api_key,
+    }))
+}
+
+async fn put_internet(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(settings): Json<InternetSettings>,
+) -> ApiResult<serde_json::Value> {
+    let auth_user = authenticate_request(&state, &headers).await?;
+    require_admin(&auth_user)?;
+
+    let mut doc = read_agent_toml(&state)?;
+    let table = doc
+        .as_table_mut()
+        .ok_or_else(|| internal("agent.toml is not a table"))?;
+
+    let internet = table
+        .entry("internet")
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| internal("[internet] is not a table"))?;
+
+    internet.insert("enabled".into(), toml::Value::Boolean(settings.enabled));
+    internet.insert(
+        "timeout_secs".into(),
+        toml::Value::Integer(settings.timeout_secs as i64),
+    );
+    internet.insert(
+        "max_fetch_bytes".into(),
+        toml::Value::Integer(settings.max_fetch_bytes as i64),
+    );
+
+    write_agent_toml(&state, &doc)?;
+
+    // Write Brave API key to .env
+    if let Some(ref key) = settings.brave_api_key {
+        write_env_var(
+            &state.paths,
+            "BRAVE_API_KEY",
+            if key.is_empty() { None } else { Some(key) },
+        )?;
+    }
 
     Ok(ok_json())
 }
@@ -2950,5 +3023,73 @@ mod tests {
         assert!(!parsed.telegram.enabled);
         assert_eq!(parsed.telegram.gap_minutes, None);
         assert_eq!(parsed.telegram.stream_mode, None);
+    }
+
+    // ── Internet ────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn get_internet_returns_defaults() {
+        let (_tmp, state) = test_app_state().await;
+        let (status, json) = get_json(state, "/api/settings/internet").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["enabled"], true);
+        assert_eq!(json["timeout_secs"], 15);
+        assert_eq!(json["max_fetch_bytes"], 512 * 1024);
+    }
+
+    #[tokio::test]
+    async fn put_internet_updates_toml() {
+        let (_tmp, state) = test_app_state().await;
+        let (status, _) = put_json(
+            Arc::clone(&state),
+            "/api/settings/internet",
+            serde_json::json!({
+                "enabled": false,
+                "timeout_secs": 30,
+                "max_fetch_bytes": 1048576,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (_, json) = get_json(state, "/api/settings/internet").await;
+        assert_eq!(json["enabled"], false);
+        assert_eq!(json["timeout_secs"], 30);
+        assert_eq!(json["max_fetch_bytes"], 1048576);
+    }
+
+    #[tokio::test]
+    async fn put_internet_preserves_other_sections() {
+        let (_tmp, state) = test_app_state().await;
+        let (_, before) = get_json(Arc::clone(&state), "/api/settings/general").await;
+        put_json(
+            Arc::clone(&state),
+            "/api/settings/internet",
+            serde_json::json!({
+                "enabled": false,
+                "timeout_secs": 20,
+                "max_fetch_bytes": 262144,
+            }),
+        )
+        .await;
+        let (_, after) = get_json(state, "/api/settings/general").await;
+        assert_eq!(before["model"], after["model"]);
+        assert_eq!(before["provider"], after["provider"]);
+    }
+
+    #[tokio::test]
+    async fn internet_settings_serde_roundtrip() {
+        let settings = InternetSettings {
+            enabled: true,
+            timeout_secs: 30,
+            max_fetch_bytes: 1_048_576,
+            brave_api_key: None,
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let parsed: InternetSettings = serde_json::from_str(&json).unwrap();
+        assert!(parsed.enabled);
+        assert_eq!(parsed.timeout_secs, 30);
+        assert_eq!(parsed.max_fetch_bytes, 1_048_576);
+        assert!(parsed.brave_api_key.is_none());
     }
 }
