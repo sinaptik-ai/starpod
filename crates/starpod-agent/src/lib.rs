@@ -322,15 +322,12 @@ impl StarpodAgent {
         let skill_catalog = self.skills.skill_catalog()?;
         let date_str = Local::now().format("%A, %B %d, %Y at %H:%M").to_string();
         let tz_str = config.resolved_timezone().unwrap_or_else(|| "UTC".to_string());
-        let project_root = config.project_root.display();
-
-        let agent_home_display = self.paths.agent_home.display().to_string();
 
         let mut prompt = format!(
             "You are {agent_name}, a personal AI assistant.\n\n{bootstrap}\n\n---\n\
              Current date/time: {date_str}\nTimezone: {tz_str}\nSession ID: {session_id}\n\
-             Project root: {project_root}\n\
-             Working directory: {project_root}\n\n\
+             Home directory: ~/\n\
+             Working directory: ~/\n\n\
              You have access to memory tools (MemorySearch, MemoryWrite, MemoryAppendDaily), \
              environment tools (EnvGet), file tools (FileRead, FileWrite, FileList, FileDelete), \
              skill tools (SkillActivate, SkillCreate, SkillUpdate, SkillDelete, SkillList), \
@@ -339,17 +336,16 @@ impl StarpodAgent {
              directly into the conversation so you can see and analyze it. For other file types like CSV or \
              PDF, use Python via the Bash tool.\n\n\
              IMPORTANT — two separate domains of information:\n\
-             • Your personal knowledge, memory, soul, and user profile live inside `{agent_home_display}` \
-             (SOUL.md, USER.md, MEMORY.md, memory/, knowledge/). Use MemorySearch to query this knowledge \
-             and MemoryWrite to persist new information there.\n\
-             • The user's project files (code, documents, data) live in the project root directory ({project_root}). \
-             Use Read, Glob, Grep, and Bash to explore and work with these files.\n\
-             • Files uploaded by the user (from any channel: Telegram, web, API) are saved to `{project_root}/downloads/`. \
-             When the user references a previously uploaded file, always check this directory first with Glob or Bash.\n\
-             Never confuse the two: your agent home is YOUR persistent brain; the project root is the USER's workspace.\n\
-             You may ONLY access files within the project root and the agent home directory. \
-             Do not read, write, or execute anything outside these boundaries.\n\
-             IMPORTANT: Always create files and run commands within the project root ({project_root}), never in /tmp or other external directories.",
+             • Your personal knowledge, memory, soul, and user profile are accessed ONLY through \
+             MemorySearch (to query) and MemoryWrite/MemoryAppendDaily (to persist). Never try to \
+             access internal system files directly — they are not visible to you.\n\
+             • Your workspace is ~/ (the home directory). Use FileRead, FileWrite, FileList, FileDelete, \
+             Read, Glob, Grep, and Bash to explore and work with files here.\n\
+             • Files uploaded by the user (from any channel: Telegram, web, API) are saved to ~/downloads/. \
+             When the user references a previously uploaded file, always check this directory first.\n\
+             You may ONLY access files within your home directory ~/. \
+             Do not read, write, or execute anything outside this boundary.\n\
+             IMPORTANT: Always create files and run commands within ~/, never in /tmp or other external directories.",
         );
 
         // Inject skill catalog (progressive disclosure — names + descriptions only)
@@ -579,6 +575,7 @@ impl StarpodAgent {
             cron: Arc::clone(&self.cron),
             user_tz: config.resolved_timezone(),
             home_dir: self.paths.home_dir.clone(),
+            agent_home: self.paths.agent_home.clone(),
             user_id: user_id.map(|s| s.to_string()),
         });
 
@@ -663,9 +660,7 @@ impl StarpodAgent {
             .attachments(query_atts)
             .provider(provider)
             .cwd(config.project_root.to_string_lossy().to_string())
-            .additional_directories(vec![
-                config.db_dir.to_string_lossy().to_string(),
-            ])
+            .additional_directories(vec![])
             .hook_dirs(vec![config.db_dir.join("hooks")]);
 
         // Resume existing session to load conversation history, or set ID for new ones
@@ -866,9 +861,7 @@ impl StarpodAgent {
             .attachments(query_atts)
             .provider(provider)
             .cwd(config.project_root.to_string_lossy().to_string())
-            .additional_directories(vec![
-                config.db_dir.to_string_lossy().to_string(),
-            ])
+            .additional_directories(vec![])
             .hook_dirs(vec![config.db_dir.join("hooks")])
             .include_partial_messages(true);
 
@@ -1493,6 +1486,7 @@ mod tests {
             cron: Arc::clone(agent.cron()),
             user_tz: None,
             home_dir: tmp.path().to_path_buf(),
+            agent_home: tmp.path().join(".starpod"),
             user_id: Some("admin".into()),
         };
 

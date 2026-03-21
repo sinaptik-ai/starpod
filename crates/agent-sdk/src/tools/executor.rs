@@ -475,6 +475,7 @@ impl ToolExecutor {
                 .arg("-c")
                 .arg(&input.command)
                 .current_dir(&self.cwd)
+                .env("HOME", &self.cwd)
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .spawn();
@@ -499,6 +500,7 @@ impl ToolExecutor {
             .arg("-c")
             .arg(&input.command)
             .current_dir(&self.cwd)
+            .env("HOME", &self.cwd)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn();
@@ -1312,5 +1314,39 @@ mod tests {
             .unwrap();
         assert!(result.is_error);
         assert!(result.content.contains("Access denied"));
+    }
+
+    #[tokio::test]
+    async fn bash_sets_home_to_cwd() {
+        let (tmp, executor) = setup();
+
+        let result = executor
+            .execute("Bash", json!({ "command": "echo $HOME" }))
+            .await
+            .unwrap();
+        assert!(!result.is_error, "Bash should succeed");
+
+        let expected = tmp.path().to_string_lossy().to_string();
+        assert!(
+            result.content.trim().contains(&expected),
+            "HOME should be set to cwd ({}), got: {}",
+            expected,
+            result.content.trim()
+        );
+    }
+
+    #[tokio::test]
+    async fn bash_tilde_resolves_to_cwd() {
+        let (tmp, executor) = setup();
+
+        // Create a file in the cwd
+        std::fs::write(tmp.path().join("marker.txt"), "found").unwrap();
+
+        let result = executor
+            .execute("Bash", json!({ "command": "cat ~/marker.txt" }))
+            .await
+            .unwrap();
+        assert!(!result.is_error, "Should read file via ~: {}", result.content);
+        assert!(result.content.contains("found"), "~ should resolve to cwd");
     }
 }

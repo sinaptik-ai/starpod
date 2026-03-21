@@ -25,6 +25,9 @@ pub struct ToolContext {
     pub cron: Arc<CronStore>,
     pub user_tz: Option<String>,
     pub home_dir: PathBuf,
+    /// The `.starpod/` directory path — used to detect and block Bash commands
+    /// that try to access internal config/data files.
+    pub agent_home: PathBuf,
     pub user_id: Option<String>,
 }
 
@@ -496,6 +499,33 @@ pub async fn handle_custom_tool(
     input: &serde_json::Value,
 ) -> Option<ToolResult> {
     match tool_name {
+        // --- Bash sandbox guard ---
+        // Intercept Bash calls to block access to .starpod/ internals.
+        // Returns Some(error) if blocked, None to fall through to the built-in executor.
+        "Bash" => {
+            if let Some(command) = input.get("command").and_then(|v| v.as_str()) {
+                // Canonicalize agent_home so we also catch absolute-path references
+                let agent_home_canon = ctx.agent_home.canonicalize()
+                    .unwrap_or_else(|_| ctx.agent_home.clone());
+                let agent_home_str = agent_home_canon.to_string_lossy();
+
+                if command.contains(".starpod") || command.contains(&*agent_home_str) {
+                    return Some(ToolResult {
+                        content: "Cannot access .starpod/ directory via Bash. Use the dedicated tools instead:\n\
+                                  • Memory: MemorySearch, MemoryWrite, MemoryAppendDaily\n\
+                                  • Files: FileRead, FileWrite, FileList, FileDelete\n\
+                                  • Skills: SkillCreate, SkillUpdate, SkillDelete, SkillList\n\
+                                  • Cron: CronAdd, CronList, CronRemove, CronUpdate\n\
+                                  • Vault: VaultGet, VaultSet".to_string(),
+                        is_error: true,
+                        raw_content: None,
+                    });
+                }
+            }
+            // Fall through to built-in Bash executor
+            None
+        }
+
         // --- Memory tools ---
         "MemorySearch" => {
             let query = input.get("query")?.as_str()?;
@@ -1456,6 +1486,7 @@ mod tests {
             cron,
             user_tz: None,
             home_dir: tmp.path().to_path_buf(),
+            agent_home: tmp.path().join(".starpod"),
             user_id: Some("admin".into()),
         };
 
@@ -1486,6 +1517,7 @@ mod tests {
             cron,
             user_tz: None,
             home_dir: tmp.path().to_path_buf(),
+            agent_home: tmp.path().join(".starpod"),
             user_id: Some("admin".into()),
         };
 
@@ -1514,6 +1546,7 @@ mod tests {
             cron,
             user_tz: None,
             home_dir: tmp.path().to_path_buf(),
+            agent_home: tmp.path().join(".starpod"),
             user_id: Some("admin".into()),
         };
 
@@ -1559,6 +1592,7 @@ mod tests {
             cron,
             user_tz: None,
             home_dir: home_dir.clone(),
+            agent_home: home_dir.join(".starpod"),
             user_id: Some("admin".into()),
         };
 
@@ -1598,6 +1632,7 @@ mod tests {
             cron,
             user_tz: None,
             home_dir: home_dir.clone(),
+            agent_home: home_dir.join(".starpod"),
             user_id: Some("admin".into()),
         };
 
@@ -1629,6 +1664,7 @@ mod tests {
             cron,
             user_tz: None,
             home_dir: home_dir.clone(),
+            agent_home: home_dir.join(".starpod"),
             user_id: Some("admin".into()),
         };
 
@@ -1660,6 +1696,7 @@ mod tests {
             cron,
             user_tz: None,
             home_dir: home_dir.clone(),
+            agent_home: home_dir.join(".starpod"),
             user_id: Some("admin".into()),
         };
 
@@ -1687,7 +1724,8 @@ mod tests {
             skills,
             cron,
             user_tz: None,
-            home_dir,
+            home_dir: home_dir.clone(),
+            agent_home: home_dir.join(".starpod"),
             user_id: Some("admin".into()),
         };
 
@@ -1730,6 +1768,7 @@ mod tests {
             cron,
             user_tz: None,
             home_dir: tmp.path().to_path_buf(),
+            agent_home: tmp.path().join(".starpod"),
             user_id: Some("alice".into()),
         }
     }
@@ -2033,5 +2072,146 @@ mod tests {
             let citation = r["citation"].as_str().unwrap();
             assert!(citation.contains("#L"), "Citation should include line reference: {}", citation);
         }
+    }
+
+    // ── Bash sandbox guard ─────────────────────────────────────────
+
+    async fn bash_ctx(tmp: &TempDir) -> ToolContext {
+        let memory = Arc::new(
+            starpod_memory::MemoryStore::new(
+                &tmp.path().join("agent"),
+                &tmp.path().join("agent").join("config"),
+                &tmp.path().join("db"),
+            ).await.unwrap(),
+        );
+        let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
+
+        ToolContext {
+            memory,
+            user_view: None,
+            skills,
+            cron,
+            user_tz: None,
+            home_dir: tmp.path().join("home"),
+            agent_home: tmp.path().join(".starpod"),
+            user_id: Some("admin".into()),
+        }
+    }
+
+    #[tokio::test]
+    async fn bash_blocks_starpod_dir_reference() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = bash_ctx(&tmp).await;
+
+        let result = handle_custom_tool(
+            &ctx,
+            "Bash",
+            &serde_json::json!({"command": "cat .starpod/config/agent.toml"}),
+        ).await;
+
+        let result = result.expect("Should return Some for blocked command");
+        assert!(result.is_error);
+        assert!(result.content.contains("Cannot access .starpod/"));
+    }
+
+    #[tokio::test]
+    async fn bash_blocks_starpod_in_piped_command() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = bash_ctx(&tmp).await;
+
+        let result = handle_custom_tool(
+            &ctx,
+            "Bash",
+            &serde_json::json!({"command": "ls -la | grep something && cat .starpod/db/memory.db"}),
+        ).await;
+
+        let result = result.expect("Should return Some for blocked command");
+        assert!(result.is_error);
+        assert!(result.content.contains("Cannot access .starpod/"));
+    }
+
+    #[tokio::test]
+    async fn bash_blocks_absolute_agent_home_path() {
+        let tmp = TempDir::new().unwrap();
+        // Create the .starpod dir so canonicalization works
+        std::fs::create_dir_all(tmp.path().join(".starpod")).unwrap();
+        let ctx = bash_ctx(&tmp).await;
+
+        let abs_path = tmp.path().join(".starpod").canonicalize().unwrap();
+        let command = format!("cat {}/config/agent.toml", abs_path.display());
+
+        let result = handle_custom_tool(
+            &ctx,
+            "Bash",
+            &serde_json::json!({"command": command}),
+        ).await;
+
+        let result = result.expect("Should return Some for blocked command");
+        assert!(result.is_error);
+        assert!(result.content.contains("Cannot access .starpod/"));
+    }
+
+    #[tokio::test]
+    async fn bash_allows_normal_commands() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = bash_ctx(&tmp).await;
+
+        // Normal commands should fall through (return None)
+        let result = handle_custom_tool(
+            &ctx,
+            "Bash",
+            &serde_json::json!({"command": "echo hello && ls -la"}),
+        ).await;
+
+        assert!(result.is_none(), "Normal commands should fall through to built-in executor");
+    }
+
+    #[tokio::test]
+    async fn bash_allows_commands_with_starpod_in_string_content() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = bash_ctx(&tmp).await;
+
+        // "starpod" without the dot prefix should be allowed
+        let result = handle_custom_tool(
+            &ctx,
+            "Bash",
+            &serde_json::json!({"command": "echo 'starpod is great'"}),
+        ).await;
+
+        assert!(result.is_none(), "Commands mentioning 'starpod' (without dot) should pass");
+    }
+
+    #[tokio::test]
+    async fn bash_blocks_starpod_with_find_command() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = bash_ctx(&tmp).await;
+
+        let result = handle_custom_tool(
+            &ctx,
+            "Bash",
+            &serde_json::json!({"command": "find .starpod -name '*.toml'"}),
+        ).await;
+
+        let result = result.expect("Should return Some for blocked command");
+        assert!(result.is_error);
+    }
+
+    #[tokio::test]
+    async fn bash_error_message_suggests_tools() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = bash_ctx(&tmp).await;
+
+        let result = handle_custom_tool(
+            &ctx,
+            "Bash",
+            &serde_json::json!({"command": "ls .starpod/"}),
+        ).await.unwrap();
+
+        assert!(result.is_error);
+        assert!(result.content.contains("MemorySearch"), "Should suggest MemorySearch");
+        assert!(result.content.contains("FileRead"), "Should suggest FileRead");
+        assert!(result.content.contains("SkillCreate"), "Should suggest SkillCreate");
+        assert!(result.content.contains("CronAdd"), "Should suggest CronAdd");
     }
 }
