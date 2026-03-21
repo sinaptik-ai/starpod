@@ -368,9 +368,13 @@ impl SessionManager {
     }
 
     /// Get total usage stats for a session.
+    ///
+    /// `total_input_tokens` includes uncached, cache-read, and cache-write
+    /// tokens so the caller gets the true context size. Cache breakdown is
+    /// available via `total_cache_read` / `total_cache_write`.
     pub async fn session_usage(&self, session_id: &str) -> Result<UsageSummary> {
         let row = sqlx::query(
-            "SELECT COALESCE(SUM(input_tokens), 0) as ti, COALESCE(SUM(output_tokens), 0) as to_,
+            "SELECT COALESCE(SUM(input_tokens + cache_read + cache_write), 0) as ti, COALESCE(SUM(output_tokens), 0) as to_,
                     COALESCE(SUM(cache_read), 0) as cr, COALESCE(SUM(cache_write), 0) as cw,
                     COALESCE(SUM(cost_usd), 0.0) as cost, COUNT(*) as turns
              FROM usage_stats WHERE session_id = ?1",
@@ -402,8 +406,10 @@ impl SessionManager {
         // Total
         let total_sql = format!(
             "SELECT COALESCE(SUM(cost_usd), 0.0) as cost,
-                    COALESCE(SUM(input_tokens), 0) as ti,
+                    COALESCE(SUM(input_tokens + cache_read + cache_write), 0) as ti,
                     COALESCE(SUM(output_tokens), 0) as to_,
+                    COALESCE(SUM(cache_read), 0) as cr,
+                    COALESCE(SUM(cache_write), 0) as cw,
                     COUNT(*) as turns
              FROM usage_stats {}",
             where_clause
@@ -419,8 +425,10 @@ impl SessionManager {
         let user_sql = format!(
             "SELECT user_id,
                     COALESCE(SUM(cost_usd), 0.0) as cost,
-                    COALESCE(SUM(input_tokens), 0) as ti,
+                    COALESCE(SUM(input_tokens + cache_read + cache_write), 0) as ti,
                     COALESCE(SUM(output_tokens), 0) as to_,
+                    COALESCE(SUM(cache_read), 0) as cr,
+                    COALESCE(SUM(cache_write), 0) as cw,
                     COUNT(*) as turns
              FROM usage_stats {} GROUP BY user_id ORDER BY cost DESC",
             where_clause
@@ -436,8 +444,10 @@ impl SessionManager {
         let model_sql = format!(
             "SELECT model,
                     COALESCE(SUM(cost_usd), 0.0) as cost,
-                    COALESCE(SUM(input_tokens), 0) as ti,
+                    COALESCE(SUM(input_tokens + cache_read + cache_write), 0) as ti,
                     COALESCE(SUM(output_tokens), 0) as to_,
+                    COALESCE(SUM(cache_read), 0) as cr,
+                    COALESCE(SUM(cache_write), 0) as cw,
                     COUNT(*) as turns
              FROM usage_stats {} GROUP BY model ORDER BY cost DESC",
             where_clause
@@ -449,16 +459,52 @@ impl SessionManager {
         let model_rows = q.fetch_all(&self.pool).await
             .map_err(|e| StarpodError::Database(format!("Cost by-model query failed: {}", e)))?;
 
+        // By day + model
+        let day_sql = format!(
+            "SELECT DATE(timestamp) as day, COALESCE(model, 'unknown') as model,
+                    COALESCE(SUM(cost_usd), 0.0) as cost
+             FROM usage_stats {} GROUP BY day, model ORDER BY day ASC",
+            where_clause
+        );
+        let mut q = sqlx::query(&day_sql);
+        if let Some(ts) = bind_val {
+            q = q.bind(ts);
+        }
+        let day_rows = q.fetch_all(&self.pool).await
+            .map_err(|e| StarpodError::Database(format!("Cost by-day query failed: {}", e)))?;
+
+        // Group day rows into DayCostSummary
+        let mut by_day: Vec<DayCostSummary> = Vec::new();
+        for row in &day_rows {
+            let date: String = row.get("day");
+            let model: String = row.get("model");
+            let cost: f64 = row.get::<f64, _>("cost");
+            if let Some(last) = by_day.last_mut().filter(|d| d.date == date) {
+                last.total_cost_usd += cost;
+                last.by_model.push(DayModelCost { model, cost_usd: cost });
+            } else {
+                by_day.push(DayCostSummary {
+                    date,
+                    total_cost_usd: cost,
+                    by_model: vec![DayModelCost { model, cost_usd: cost }],
+                });
+            }
+        }
+
         Ok(CostOverview {
             total_cost_usd: total_row.get::<f64, _>("cost"),
             total_input_tokens: total_row.get::<i64, _>("ti") as u64,
             total_output_tokens: total_row.get::<i64, _>("to_") as u64,
+            total_cache_read: total_row.get::<i64, _>("cr") as u64,
+            total_cache_write: total_row.get::<i64, _>("cw") as u64,
             total_turns: total_row.get::<i64, _>("turns") as u32,
             by_user: user_rows.iter().map(|r| UserCostSummary {
                 user_id: r.get("user_id"),
                 total_cost_usd: r.get::<f64, _>("cost"),
                 total_input_tokens: r.get::<i64, _>("ti") as u64,
                 total_output_tokens: r.get::<i64, _>("to_") as u64,
+                total_cache_read: r.get::<i64, _>("cr") as u64,
+                total_cache_write: r.get::<i64, _>("cw") as u64,
                 total_turns: r.get::<i64, _>("turns") as u32,
             }).collect(),
             by_model: model_rows.iter().map(|r| ModelCostSummary {
@@ -466,8 +512,11 @@ impl SessionManager {
                 total_cost_usd: r.get::<f64, _>("cost"),
                 total_input_tokens: r.get::<i64, _>("ti") as u64,
                 total_output_tokens: r.get::<i64, _>("to_") as u64,
+                total_cache_read: r.get::<i64, _>("cr") as u64,
+                total_cache_write: r.get::<i64, _>("cw") as u64,
                 total_turns: r.get::<i64, _>("turns") as u32,
             }).collect(),
+            by_day,
         })
     }
 
@@ -587,11 +636,23 @@ fn session_meta_from_row(row: &sqlx::sqlite::SqliteRow) -> SessionMeta {
 }
 
 /// Aggregated usage summary for a session.
+///
+/// ## Token accounting
+///
+/// `total_input_tokens` is the **total** input context size across all turns,
+/// i.e. `SUM(input_tokens + cache_read + cache_write)` from the per-turn
+/// records. This is what the UI displays as "X in".
+///
+/// `total_cache_read` and `total_cache_write` are the cached subsets of
+/// that total — useful for showing cache efficiency (e.g. "2.1k cached").
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UsageSummary {
+    /// Total input tokens (uncached + cache_read + cache_write).
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
+    /// Tokens served from prompt cache.
     pub total_cache_read: u64,
+    /// Tokens written to prompt cache.
     pub total_cache_write: u64,
     pub total_cost_usd: f64,
     pub total_turns: u32,
@@ -602,8 +663,11 @@ pub struct UsageSummary {
 pub struct UserCostSummary {
     pub user_id: String,
     pub total_cost_usd: f64,
+    /// Total input tokens (uncached + cache_read + cache_write).
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
+    pub total_cache_read: u64,
+    pub total_cache_write: u64,
     pub total_turns: u32,
 }
 
@@ -612,20 +676,48 @@ pub struct UserCostSummary {
 pub struct ModelCostSummary {
     pub model: String,
     pub total_cost_usd: f64,
+    /// Total input tokens (uncached + cache_read + cache_write).
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
+    pub total_cache_read: u64,
+    pub total_cache_write: u64,
     pub total_turns: u32,
 }
 
-/// Full cost overview with breakdowns.
+/// Cost summary for a single day, broken down by model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DayCostSummary {
+    /// Date string (YYYY-MM-DD).
+    pub date: String,
+    /// Cost per model on this day.
+    pub by_model: Vec<DayModelCost>,
+    /// Total cost for this day.
+    pub total_cost_usd: f64,
+}
+
+/// Cost for a single model on a single day.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DayModelCost {
+    pub model: String,
+    pub cost_usd: f64,
+}
+
+/// Full cost overview with breakdowns by user and model.
+///
+/// All `total_input_tokens` fields include cached tokens — see [`UsageSummary`]
+/// for the full accounting explanation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CostOverview {
     pub total_cost_usd: f64,
+    /// Total input tokens (uncached + cache_read + cache_write).
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
+    pub total_cache_read: u64,
+    pub total_cache_write: u64,
     pub total_turns: u32,
     pub by_user: Vec<UserCostSummary>,
     pub by_model: Vec<ModelCostSummary>,
+    pub by_day: Vec<DayCostSummary>,
 }
 
 #[cfg(test)]
@@ -763,10 +855,41 @@ mod tests {
         .unwrap();
 
         let summary = mgr.session_usage(&id).await.unwrap();
-        assert_eq!(summary.total_input_tokens, 1800);
+        // total_input_tokens includes input_tokens + cache_read + cache_write
+        // Turn 1: 1000 + 200 + 100 = 1300, Turn 2: 800 + 150 + 50 = 1000
+        assert_eq!(summary.total_input_tokens, 2300);
         assert_eq!(summary.total_output_tokens, 900);
         assert_eq!(summary.total_turns, 2);
         assert!((summary.total_cost_usd - 0.018).abs() < 0.001);
+    }
+
+    #[tokio::test]
+    async fn test_usage_cache_breakdown() {
+        let (_tmp, mgr) = setup().await;
+        let id = mgr.create_session(&Channel::Main, "cache-test").await.unwrap();
+
+        // Turn 1: cache miss — all tokens go to cache_write
+        mgr.record_usage(&id, &UsageRecord {
+            input_tokens: 500, output_tokens: 200, cache_read: 0, cache_write: 4000,
+            cost_usd: 0.05, model: "claude-sonnet".into(), user_id: "admin".into(),
+        }, 1).await.unwrap();
+
+        // Turn 2: cache hit — most tokens served from cache
+        mgr.record_usage(&id, &UsageRecord {
+            input_tokens: 100, output_tokens: 300, cache_read: 4000, cache_write: 0,
+            cost_usd: 0.01, model: "claude-sonnet".into(), user_id: "admin".into(),
+        }, 2).await.unwrap();
+
+        let summary = mgr.session_usage(&id).await.unwrap();
+
+        // total_input_tokens = (500 + 0 + 4000) + (100 + 4000 + 0) = 8600
+        assert_eq!(summary.total_input_tokens, 8600);
+        assert_eq!(summary.total_output_tokens, 500);
+        // Cache breakdown preserved separately
+        assert_eq!(summary.total_cache_read, 4000);
+        assert_eq!(summary.total_cache_write, 4000);
+        assert_eq!(summary.total_turns, 2);
+        assert!((summary.total_cost_usd - 0.06).abs() < 0.001);
     }
 
     // --- New channel-specific tests ---
@@ -1184,6 +1307,59 @@ mod tests {
         assert_eq!(overview.by_user[0].user_id, "user-42");
         assert_eq!(overview.by_user[0].total_input_tokens, 100);
         assert_eq!(overview.by_user[0].total_output_tokens, 50);
+    }
+
+    #[tokio::test]
+    async fn test_cost_overview_cache_breakdown() {
+        let (_tmp, mgr) = setup().await;
+        let sid = mgr.create_session(&Channel::Main, "cache-cost").await.unwrap();
+
+        // Alice: cache miss (writes to cache)
+        mgr.record_usage(&sid, &UsageRecord {
+            input_tokens: 200, output_tokens: 100, cache_read: 0, cache_write: 3000,
+            cost_usd: 0.04, model: "claude-sonnet".into(), user_id: "alice".into(),
+        }, 1).await.unwrap();
+
+        // Alice: cache hit (reads from cache)
+        mgr.record_usage(&sid, &UsageRecord {
+            input_tokens: 50, output_tokens: 150, cache_read: 3000, cache_write: 0,
+            cost_usd: 0.01, model: "claude-sonnet".into(), user_id: "alice".into(),
+        }, 2).await.unwrap();
+
+        // Bob: no caching
+        mgr.record_usage(&sid, &UsageRecord {
+            input_tokens: 800, output_tokens: 400, cache_read: 0, cache_write: 0,
+            cost_usd: 0.03, model: "claude-haiku".into(), user_id: "bob".into(),
+        }, 3).await.unwrap();
+
+        let overview = mgr.cost_overview(None).await.unwrap();
+
+        // Totals: input = (200+0+3000) + (50+3000+0) + (800+0+0) = 7050
+        assert_eq!(overview.total_input_tokens, 7050);
+        assert_eq!(overview.total_output_tokens, 650);
+        assert_eq!(overview.total_cache_read, 3000);
+        assert_eq!(overview.total_cache_write, 3000);
+
+        // By user: alice first (higher cost)
+        assert_eq!(overview.by_user.len(), 2);
+        let alice = overview.by_user.iter().find(|u| u.user_id == "alice").unwrap();
+        assert_eq!(alice.total_input_tokens, 6250); // (200+3000) + (50+3000)
+        assert_eq!(alice.total_cache_read, 3000);
+        assert_eq!(alice.total_cache_write, 3000);
+
+        let bob = overview.by_user.iter().find(|u| u.user_id == "bob").unwrap();
+        assert_eq!(bob.total_input_tokens, 800);
+        assert_eq!(bob.total_cache_read, 0);
+        assert_eq!(bob.total_cache_write, 0);
+
+        // By model
+        let sonnet = overview.by_model.iter().find(|m| m.model == "claude-sonnet").unwrap();
+        assert_eq!(sonnet.total_cache_read, 3000);
+        assert_eq!(sonnet.total_cache_write, 3000);
+
+        let haiku = overview.by_model.iter().find(|m| m.model == "claude-haiku").unwrap();
+        assert_eq!(haiku.total_cache_read, 0);
+        assert_eq!(haiku.total_cache_write, 0);
     }
 
     // ── Read/unread state tests ────────────────────────────────────────
