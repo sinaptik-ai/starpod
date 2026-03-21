@@ -119,6 +119,13 @@ struct FrontendSettings {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct BrowserSettings {
+    enabled: bool,
+    cdp_url: Option<String>,
+    startup_timeout_secs: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct FileContent {
     content: String,
 }
@@ -254,6 +261,7 @@ pub fn settings_routes() -> Router<Arc<AppState>> {
         .route("/api/settings/memory", get(get_memory).put(put_memory))
         .route("/api/settings/cron", get(get_cron).put(put_cron))
         .route("/api/settings/frontend", get(get_frontend).put(put_frontend))
+        .route("/api/settings/browser", get(get_browser).put(put_browser))
         .route("/api/settings/heartbeat", get(get_heartbeat).put(put_heartbeat))
         .route("/api/settings/files/{name}", get(get_file).put(put_file))
         .route("/api/settings/users", get(list_users).post(create_user))
@@ -538,6 +546,64 @@ async fn put_cron(
     cron.insert("default_timeout_secs".into(), toml::Value::Integer(settings.default_timeout_secs as i64));
     cron.insert("max_concurrent_runs".into(), toml::Value::Integer(settings.max_concurrent_runs as i64));
     cron.insert("heartbeat_interval_minutes".into(), toml::Value::Integer(settings.heartbeat_interval_minutes.max(1) as i64));
+
+    write_agent_toml(&state, &doc)?;
+    Ok(ok_json())
+}
+
+// ── Browser config ──────────────────────────────────────────────────────
+
+async fn get_browser(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> ApiResult<BrowserSettings> {
+    let auth_user = authenticate_request(&state, &headers).await?;
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin access required"));
+        }
+    }
+    let cfg = state.config.read().unwrap();
+    Ok(Json(BrowserSettings {
+        enabled: cfg.browser.enabled,
+        cdp_url: cfg.browser.cdp_url.clone(),
+        startup_timeout_secs: cfg.browser.startup_timeout_secs,
+    }))
+}
+
+async fn put_browser(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(settings): Json<BrowserSettings>,
+) -> ApiResult<serde_json::Value> {
+    let auth_user = authenticate_request(&state, &headers).await?;
+    if let Some(ref u) = auth_user {
+        if u.role != starpod_auth::Role::Admin {
+            return Err(err(StatusCode::FORBIDDEN, "Admin access required"));
+        }
+    }
+
+    let mut doc = read_agent_toml(&state)?;
+    let table = doc.as_table_mut().ok_or_else(|| internal("agent.toml is not a table"))?;
+
+    let browser = table
+        .entry("browser")
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| internal("[browser] is not a table"))?;
+
+    browser.insert("enabled".into(), toml::Value::Boolean(settings.enabled));
+    browser.insert("startup_timeout_secs".into(), toml::Value::Integer(settings.startup_timeout_secs.max(1) as i64));
+
+    // Handle optional cdp_url: remove the key if None, set if Some
+    match settings.cdp_url {
+        Some(url) if !url.trim().is_empty() => {
+            browser.insert("cdp_url".into(), toml::Value::String(url));
+        }
+        _ => {
+            browser.remove("cdp_url");
+        }
+    }
 
     write_agent_toml(&state, &doc)?;
     Ok(ok_json())

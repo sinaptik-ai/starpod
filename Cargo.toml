@@ -8,6 +8,7 @@ members = [
     "crates/starpod-session",
     "crates/starpod-skills",
     "crates/starpod-cron",
+    "crates/starpod-browser",
     "crates/starpod-agent",
     "crates/starpod-gateway",
     "crates/starpod-telegram",

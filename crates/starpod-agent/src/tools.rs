@@ -7,6 +7,7 @@ use agent_sdk::{CustomToolDefinition, ToolResult};
 use serde_json::json;
 use tracing::debug;
 
+use starpod_browser::BrowserSession;
 use starpod_cron::store::epoch_to_rfc3339;
 use starpod_cron::{CronStore, RunStatus};
 use starpod_memory::{MemoryStore, UserMemoryView};
@@ -23,6 +24,9 @@ pub struct ToolContext {
     pub user_view: Option<UserMemoryView>,
     pub skills: Arc<SkillStore>,
     pub cron: Arc<CronStore>,
+    pub browser: Arc<tokio::sync::Mutex<Option<BrowserSession>>>,
+    pub browser_enabled: bool,
+    pub browser_cdp_url: Option<String>,
     pub user_tz: Option<String>,
     pub home_dir: PathBuf,
     /// The `.starpod/` directory path — used to detect and block Bash commands
@@ -446,6 +450,96 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
                         "description": "Optional message to prepend to the heartbeat prompt"
                     }
                 }
+            }),
+        },
+        // --- Browser tools ---
+        CustomToolDefinition {
+            name: "BrowserOpen".into(),
+            description: "Open a browser and navigate to a URL. Auto-launches a lightweight browser process if not already running. Returns the page title.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The URL to navigate to"
+                    }
+                },
+                "required": ["url"]
+            }),
+        },
+        CustomToolDefinition {
+            name: "BrowserScreenshot".into(),
+            description: "Take a screenshot of the current browser page. Returns the image for visual inspection.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        CustomToolDefinition {
+            name: "BrowserClick".into(),
+            description: "Click an element on the page by CSS selector.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "selector": {
+                        "type": "string",
+                        "description": "CSS selector for the element to click (e.g. 'button.submit', '#login-btn')"
+                    }
+                },
+                "required": ["selector"]
+            }),
+        },
+        CustomToolDefinition {
+            name: "BrowserType".into(),
+            description: "Type text into an input element identified by CSS selector.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "selector": {
+                        "type": "string",
+                        "description": "CSS selector for the input element"
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Text to type into the element"
+                    }
+                },
+                "required": ["selector", "text"]
+            }),
+        },
+        CustomToolDefinition {
+            name: "BrowserExtract".into(),
+            description: "Extract text content from the current page or a specific element. Without a selector, returns the full page text.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "selector": {
+                        "type": "string",
+                        "description": "Optional CSS selector to extract text from a specific element"
+                    }
+                }
+            }),
+        },
+        CustomToolDefinition {
+            name: "BrowserEval".into(),
+            description: "Execute JavaScript on the current browser page and return the result.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "javascript": {
+                        "type": "string",
+                        "description": "JavaScript code to execute in the page context"
+                    }
+                },
+                "required": ["javascript"]
+            }),
+        },
+        CustomToolDefinition {
+            name: "BrowserClose".into(),
+            description: "Close the browser session and stop the browser process.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
             }),
         },
     ]
@@ -1413,6 +1507,239 @@ pub async fn handle_custom_tool(
             }
         }
 
+        // --- Browser tools ---
+        "BrowserOpen" => {
+            let url = input.get("url")?.as_str()?;
+            debug!(url = %url, "BrowserOpen");
+
+            if !ctx.browser_enabled {
+                return Some(ToolResult {
+                    content: "Browser tools are disabled. Enable them in Settings > Browser.".into(),
+                    is_error: true,
+                    raw_content: None,
+                });
+            }
+
+            let mut browser_guard = ctx.browser.lock().await;
+
+            // Launch or connect browser if not already running
+            if browser_guard.is_none() {
+                let result = if let Some(ref cdp_url) = ctx.browser_cdp_url {
+                    BrowserSession::connect(cdp_url).await
+                } else {
+                    BrowserSession::launch().await
+                };
+                match result {
+                    Ok(session) => {
+                        *browser_guard = Some(session);
+                    }
+                    Err(e) => {
+                        return Some(ToolResult {
+                            content: format!("Failed to launch browser: {}. Make sure 'lightpanda' is installed and on PATH.", e),
+                            is_error: true,
+                            raw_content: None,
+                        });
+                    }
+                }
+            }
+
+            let session = browser_guard.as_ref().unwrap();
+            match session.navigate(url).await {
+                Ok(title) => Some(ToolResult {
+                    content: format!("Navigated to {url}. Page title: \"{title}\""),
+                    is_error: false,
+                    raw_content: None,
+                }),
+                Err(e) => Some(ToolResult {
+                    content: format!("Navigation failed: {e}"),
+                    is_error: true,
+                    raw_content: None,
+                }),
+            }
+        }
+
+        "BrowserScreenshot" => {
+            debug!("BrowserScreenshot");
+            let browser_guard = ctx.browser.lock().await;
+            let session = match browser_guard.as_ref() {
+                Some(s) => s,
+                None => {
+                    return Some(ToolResult {
+                        content: "No browser session. Use BrowserOpen first.".into(),
+                        is_error: true,
+                        raw_content: None,
+                    });
+                }
+            };
+
+            match session.screenshot().await {
+                Ok(b64) => Some(ToolResult {
+                    content: String::new(),
+                    is_error: false,
+                    raw_content: Some(json!([{
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": b64
+                        }
+                    }])),
+                }),
+                Err(e) => Some(ToolResult {
+                    content: format!("Screenshot failed: {e}"),
+                    is_error: true,
+                    raw_content: None,
+                }),
+            }
+        }
+
+        "BrowserClick" => {
+            let selector = input.get("selector")?.as_str()?;
+            debug!(selector = %selector, "BrowserClick");
+
+            let browser_guard = ctx.browser.lock().await;
+            let session = match browser_guard.as_ref() {
+                Some(s) => s,
+                None => {
+                    return Some(ToolResult {
+                        content: "No browser session. Use BrowserOpen first.".into(),
+                        is_error: true,
+                        raw_content: None,
+                    });
+                }
+            };
+
+            match session.click(selector).await {
+                Ok(()) => Some(ToolResult {
+                    content: format!("Clicked element: {selector}"),
+                    is_error: false,
+                    raw_content: None,
+                }),
+                Err(e) => Some(ToolResult {
+                    content: format!("Click failed: {e}"),
+                    is_error: true,
+                    raw_content: None,
+                }),
+            }
+        }
+
+        "BrowserType" => {
+            let selector = input.get("selector")?.as_str()?;
+            let text = input.get("text")?.as_str()?;
+            debug!(selector = %selector, "BrowserType");
+
+            let browser_guard = ctx.browser.lock().await;
+            let session = match browser_guard.as_ref() {
+                Some(s) => s,
+                None => {
+                    return Some(ToolResult {
+                        content: "No browser session. Use BrowserOpen first.".into(),
+                        is_error: true,
+                        raw_content: None,
+                    });
+                }
+            };
+
+            match session.type_text(selector, text).await {
+                Ok(()) => Some(ToolResult {
+                    content: format!("Typed text into: {selector}"),
+                    is_error: false,
+                    raw_content: None,
+                }),
+                Err(e) => Some(ToolResult {
+                    content: format!("Type failed: {e}"),
+                    is_error: true,
+                    raw_content: None,
+                }),
+            }
+        }
+
+        "BrowserExtract" => {
+            let selector = input.get("selector").and_then(|v| v.as_str());
+            debug!(selector = ?selector, "BrowserExtract");
+
+            let browser_guard = ctx.browser.lock().await;
+            let session = match browser_guard.as_ref() {
+                Some(s) => s,
+                None => {
+                    return Some(ToolResult {
+                        content: "No browser session. Use BrowserOpen first.".into(),
+                        is_error: true,
+                        raw_content: None,
+                    });
+                }
+            };
+
+            match session.extract(selector).await {
+                Ok(text) => Some(ToolResult {
+                    content: text,
+                    is_error: false,
+                    raw_content: None,
+                }),
+                Err(e) => Some(ToolResult {
+                    content: format!("Extract failed: {e}"),
+                    is_error: true,
+                    raw_content: None,
+                }),
+            }
+        }
+
+        "BrowserEval" => {
+            let js = input.get("javascript")?.as_str()?;
+            debug!("BrowserEval");
+
+            let browser_guard = ctx.browser.lock().await;
+            let session = match browser_guard.as_ref() {
+                Some(s) => s,
+                None => {
+                    return Some(ToolResult {
+                        content: "No browser session. Use BrowserOpen first.".into(),
+                        is_error: true,
+                        raw_content: None,
+                    });
+                }
+            };
+
+            match session.evaluate(js).await {
+                Ok(result) => Some(ToolResult {
+                    content: result,
+                    is_error: false,
+                    raw_content: None,
+                }),
+                Err(e) => Some(ToolResult {
+                    content: format!("JS evaluation failed: {e}"),
+                    is_error: true,
+                    raw_content: None,
+                }),
+            }
+        }
+
+        "BrowserClose" => {
+            debug!("BrowserClose");
+            let mut browser_guard = ctx.browser.lock().await;
+            match browser_guard.take() {
+                Some(session) => {
+                    match session.close().await {
+                        Ok(()) => Some(ToolResult {
+                            content: "Browser session closed.".into(),
+                            is_error: false,
+                            raw_content: None,
+                        }),
+                        Err(e) => Some(ToolResult {
+                            content: format!("Close error: {e}"),
+                            is_error: true,
+                            raw_content: None,
+                        }),
+                    }
+                }
+                None => Some(ToolResult {
+                    content: "No browser session to close.".into(),
+                    is_error: false,
+                    raw_content: None,
+                }),
+            }
+        }
+
         _ => None,
     }
 }
@@ -1484,6 +1811,9 @@ mod tests {
             user_view: None,
             skills,
             cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: true,
+            browser_cdp_url: None,
             user_tz: None,
             home_dir: tmp.path().to_path_buf(),
             agent_home: tmp.path().join(".starpod"),
@@ -1515,6 +1845,9 @@ mod tests {
             user_view: None,
             skills,
             cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: true,
+            browser_cdp_url: None,
             user_tz: None,
             home_dir: tmp.path().to_path_buf(),
             agent_home: tmp.path().join(".starpod"),
@@ -1544,6 +1877,9 @@ mod tests {
             user_view: None,
             skills,
             cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: true,
+            browser_cdp_url: None,
             user_tz: None,
             home_dir: tmp.path().to_path_buf(),
             agent_home: tmp.path().join(".starpod"),
@@ -1590,6 +1926,9 @@ mod tests {
             user_view: None,
             skills,
             cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: true,
+            browser_cdp_url: None,
             user_tz: None,
             home_dir: home_dir.clone(),
             agent_home: home_dir.join(".starpod"),
@@ -1630,6 +1969,9 @@ mod tests {
             user_view: None,
             skills,
             cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: true,
+            browser_cdp_url: None,
             user_tz: None,
             home_dir: home_dir.clone(),
             agent_home: home_dir.join(".starpod"),
@@ -1662,6 +2004,9 @@ mod tests {
             user_view: None,
             skills,
             cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: true,
+            browser_cdp_url: None,
             user_tz: None,
             home_dir: home_dir.clone(),
             agent_home: home_dir.join(".starpod"),
@@ -1694,6 +2039,9 @@ mod tests {
             user_view: None,
             skills,
             cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: true,
+            browser_cdp_url: None,
             user_tz: None,
             home_dir: home_dir.clone(),
             agent_home: home_dir.join(".starpod"),
@@ -1723,6 +2071,9 @@ mod tests {
             user_view: None,
             skills,
             cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: true,
+            browser_cdp_url: None,
             user_tz: None,
             home_dir: home_dir.clone(),
             agent_home: home_dir.join(".starpod"),
@@ -1766,6 +2117,9 @@ mod tests {
             user_view: Some(user_view),
             skills,
             cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: true,
+            browser_cdp_url: None,
             user_tz: None,
             home_dir: tmp.path().to_path_buf(),
             agent_home: tmp.path().join(".starpod"),
@@ -2092,6 +2446,9 @@ mod tests {
             user_view: None,
             skills,
             cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: true,
+            browser_cdp_url: None,
             user_tz: None,
             home_dir: tmp.path().join("home"),
             agent_home: tmp.path().join(".starpod"),
@@ -2213,5 +2570,109 @@ mod tests {
         assert!(result.content.contains("FileRead"), "Should suggest FileRead");
         assert!(result.content.contains("SkillCreate"), "Should suggest SkillCreate");
         assert!(result.content.contains("CronAdd"), "Should suggest CronAdd");
+    }
+
+    // ── Browser tool handler tests ──────────────────────────────────
+
+    async fn browser_ctx(tmp: &TempDir) -> ToolContext {
+        let memory = Arc::new(
+            starpod_memory::MemoryStore::new(
+                &tmp.path().join("agent"),
+                &tmp.path().join("agent").join("config"),
+                &tmp.path().join("db"),
+            ).await.unwrap(),
+        );
+        let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
+
+        ToolContext {
+            memory,
+            user_view: None,
+            skills,
+            cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: true,
+            browser_cdp_url: None,
+            user_tz: None,
+            home_dir: tmp.path().to_path_buf(),
+            agent_home: tmp.path().join(".starpod"),
+            user_id: Some("admin".into()),
+        }
+    }
+
+    #[tokio::test]
+    async fn browser_screenshot_without_session_returns_error() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = browser_ctx(&tmp).await;
+        let result = handle_custom_tool(&ctx, "BrowserScreenshot", &serde_json::json!({}))
+            .await.unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("No browser session"));
+    }
+
+    #[tokio::test]
+    async fn browser_click_without_session_returns_error() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = browser_ctx(&tmp).await;
+        let result = handle_custom_tool(&ctx, "BrowserClick", &serde_json::json!({"selector": "button"}))
+            .await.unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("No browser session"));
+    }
+
+    #[tokio::test]
+    async fn browser_type_without_session_returns_error() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = browser_ctx(&tmp).await;
+        let result = handle_custom_tool(&ctx, "BrowserType", &serde_json::json!({"selector": "input", "text": "hello"}))
+            .await.unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("No browser session"));
+    }
+
+    #[tokio::test]
+    async fn browser_extract_without_session_returns_error() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = browser_ctx(&tmp).await;
+        let result = handle_custom_tool(&ctx, "BrowserExtract", &serde_json::json!({}))
+            .await.unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("No browser session"));
+    }
+
+    #[tokio::test]
+    async fn browser_eval_without_session_returns_error() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = browser_ctx(&tmp).await;
+        let result = handle_custom_tool(&ctx, "BrowserEval", &serde_json::json!({"javascript": "1+1"}))
+            .await.unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("No browser session"));
+    }
+
+    #[tokio::test]
+    async fn browser_close_without_session_is_not_error() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = browser_ctx(&tmp).await;
+        let result = handle_custom_tool(&ctx, "BrowserClose", &serde_json::json!({}))
+            .await.unwrap();
+        assert!(!result.is_error, "BrowserClose with no session should not error");
+        assert!(result.content.contains("No browser session to close"));
+    }
+
+    #[tokio::test]
+    async fn browser_click_missing_selector_returns_none() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = browser_ctx(&tmp).await;
+        let result = handle_custom_tool(&ctx, "BrowserClick", &serde_json::json!({})).await;
+        assert!(result.is_none(), "missing required field should return None");
+    }
+
+    #[tokio::test]
+    async fn browser_open_missing_url_returns_none() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = browser_ctx(&tmp).await;
+        let result = handle_custom_tool(&ctx, "BrowserOpen", &serde_json::json!({})).await;
+        assert!(result.is_none(), "missing required url should return None");
     }
 }

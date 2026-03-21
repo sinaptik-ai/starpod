@@ -82,8 +82,8 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::config::{
-    AttachmentsConfig, AuthConfig, ChannelsConfig, CompactionConfig, CronConfig, FollowupMode,
-    MemoryConfig, ProvidersConfig, ReasoningEffort, StarpodConfig,
+    AttachmentsConfig, AuthConfig, BrowserConfig, ChannelsConfig, CompactionConfig, CronConfig,
+    FollowupMode, MemoryConfig, ProvidersConfig, ReasoningEffort, StarpodConfig,
 };
 use crate::error::StarpodError;
 
@@ -520,6 +520,10 @@ pub struct AgentConfig {
     #[serde(default)]
     pub compaction: CompactionConfig,
 
+    /// Browser automation settings.
+    #[serde(default)]
+    pub browser: BrowserConfig,
+
     /// Attachment settings.
     #[serde(default)]
     pub attachments: AttachmentsConfig,
@@ -569,6 +573,7 @@ impl Default for AgentConfig {
             memory: MemoryConfig::default(),
             cron: CronConfig::default(),
             compaction: CompactionConfig::default(),
+            browser: BrowserConfig::default(),
             attachments: AttachmentsConfig::default(),
             auth: AuthConfig::default(),
         }
@@ -597,6 +602,7 @@ impl AgentConfig {
             memory: self.memory,
             cron: self.cron,
             compaction: self.compaction,
+            browser: self.browser,
             attachments: self.attachments,
             auth: self.auth,
             project_root: paths.project_root.clone(),

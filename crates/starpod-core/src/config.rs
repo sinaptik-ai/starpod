@@ -305,6 +305,40 @@ impl Default for CompactionConfig {
     }
 }
 
+/// Browser automation configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BrowserConfig {
+    /// Whether browser tools are enabled (default: true).
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// CDP endpoint URL. When set, the agent connects to this existing
+    /// CDP endpoint instead of auto-spawning Lightpanda.
+    /// Example: `ws://127.0.0.1:9222`
+    #[serde(default)]
+    pub cdp_url: Option<String>,
+
+    /// Timeout in seconds for waiting for the browser process to start
+    /// (only used in auto-spawn mode). Default: 10.
+    #[serde(default = "default_browser_startup_timeout")]
+    pub startup_timeout_secs: u64,
+}
+
+fn default_browser_startup_timeout() -> u64 {
+    10
+}
+
+impl Default for BrowserConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            cdp_url: None,
+            startup_timeout_secs: default_browser_startup_timeout(),
+        }
+    }
+}
+
 /// Attachment handling configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -456,6 +490,10 @@ pub struct StarpodConfig {
     #[serde(default)]
     pub compaction: CompactionConfig,
 
+    /// Browser automation settings.
+    #[serde(default)]
+    pub browser: BrowserConfig,
+
     /// Attachment handling settings.
     #[serde(default)]
     pub attachments: AttachmentsConfig,
@@ -556,6 +594,7 @@ impl Default for StarpodConfig {
             timezone: None,
             providers: ProvidersConfig::default(),
             channels: ChannelsConfig::default(),
+            browser: BrowserConfig::default(),
             attachments: AttachmentsConfig::default(),
             auth: AuthConfig::default(),
             project_root: PathBuf::new(),

@@ -11,6 +11,7 @@ starpod-memory = { path = "../starpod-memory", features = ["embeddings"] }
 starpod-session = { path = "../starpod-session" }
 starpod-skills = { path = "../starpod-skills" }
 starpod-cron = { path = "../starpod-cron" }
+starpod-browser = { path = "../starpod-browser" }
 chrono = { version = "0.4", features = ["serde"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }

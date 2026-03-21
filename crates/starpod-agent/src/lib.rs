@@ -33,6 +33,8 @@ const CUSTOM_TOOLS: &[&str] = &[
     "SkillActivate", "SkillCreate", "SkillUpdate", "SkillDelete", "SkillList",
     "CronAdd", "CronList", "CronRemove", "CronRuns",
     "CronRun", "CronUpdate", "HeartbeatWake",
+    "BrowserOpen", "BrowserScreenshot", "BrowserClick", "BrowserType",
+    "BrowserExtract", "BrowserEval", "BrowserClose",
 ];
 
 /// The Starpod agent orchestrator.
@@ -76,6 +78,7 @@ impl StarpodAgent {
             memory: config.memory.clone(),
             cron: config.cron.clone(),
             compaction: config.compaction.clone(),
+            browser: config.browser.clone(),
             attachments: config.attachments.clone(),
             auth: config.auth.clone(),
         };
@@ -327,7 +330,11 @@ impl StarpodAgent {
              You have access to memory tools (MemorySearch, MemoryWrite, MemoryAppendDaily), \
              environment tools (EnvGet), file tools (FileRead, FileWrite, FileList, FileDelete), \
              skill tools (SkillActivate, SkillCreate, SkillUpdate, SkillDelete, SkillList), \
-             and scheduling tools (CronAdd, CronList, CronRemove, CronRuns, CronRun, CronUpdate, HeartbeatWake).\n\
+             scheduling tools (CronAdd, CronList, CronRemove, CronRuns, CronRun, CronUpdate, HeartbeatWake), \
+             and browser tools (BrowserOpen, BrowserScreenshot, BrowserClick, BrowserType, BrowserExtract, BrowserEval, BrowserClose).\n\
+             Browser tools let you automate web tasks: BrowserOpen navigates to a URL (auto-launches a browser process), \
+             BrowserScreenshot captures the page, BrowserExtract gets text content, BrowserClick/BrowserType interact \
+             with elements by CSS selector, BrowserEval runs JavaScript, and BrowserClose ends the session.\n\
              You can read image files (png, jpg, gif, webp) with the Read tool — the image will be loaded \
              directly into the conversation so you can see and analyze it. For other file types like CSV or \
              PDF, use Python via the Bash tool.\n\n\
@@ -601,6 +608,9 @@ impl StarpodAgent {
             user_view,
             skills: Arc::clone(&self.skills),
             cron: Arc::clone(&self.cron),
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: config.browser.enabled,
+            browser_cdp_url: config.browser.cdp_url.clone(),
             user_tz: config.resolved_timezone(),
             home_dir: self.paths.home_dir.clone(),
             agent_home: self.paths.agent_home.clone(),
@@ -1511,7 +1521,15 @@ mod tests {
         assert!(names.contains(&"HeartbeatWake"));
 
         assert!(names.contains(&"MemoryRead"));
-        assert_eq!(defs.len(), 21);
+        // Browser tools
+        assert!(names.contains(&"BrowserOpen"));
+        assert!(names.contains(&"BrowserScreenshot"));
+        assert!(names.contains(&"BrowserClick"));
+        assert!(names.contains(&"BrowserType"));
+        assert!(names.contains(&"BrowserExtract"));
+        assert!(names.contains(&"BrowserEval"));
+        assert!(names.contains(&"BrowserClose"));
+        assert_eq!(defs.len(), 28);
     }
 
     #[tokio::test]
@@ -1525,6 +1543,9 @@ mod tests {
             user_view: None,
             skills: Arc::clone(agent.skills()),
             cron: Arc::clone(agent.cron()),
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: true,
+            browser_cdp_url: None,
             user_tz: None,
             home_dir: tmp.path().to_path_buf(),
             agent_home: tmp.path().join(".starpod"),
