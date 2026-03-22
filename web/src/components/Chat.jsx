@@ -98,7 +98,7 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
             const fmt = n => n >= 1000 ? Math.round(n / 1000) + 'k' : n
             const tokensIn = fmt(data.input_tokens)
             const tokensOut = fmt(data.output_tokens)
-            const cached = data.cache_read_input_tokens + data.cache_creation_input_tokens
+            const cached = data.cache_read_input_tokens || 0
             stats = {
               numTurns: data.num_turns,
               costUsd: data.cost_usd,

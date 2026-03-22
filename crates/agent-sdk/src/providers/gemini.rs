@@ -393,14 +393,20 @@ impl LlmProvider for GeminiProvider {
             m if m.contains("flash") => CostRates {
                 input_per_million: 0.15,
                 output_per_million: 0.6,
+                cache_read_multiplier: None,
+                cache_creation_multiplier: None,
             },
             m if m.contains("pro") => CostRates {
                 input_per_million: 1.25,
                 output_per_million: 10.0,
+                cache_read_multiplier: None,
+                cache_creation_multiplier: None,
             },
             _ => CostRates {
                 input_per_million: 0.15,
                 output_per_million: 0.6,
+                cache_read_multiplier: None,
+                cache_creation_multiplier: None,
             },
         }
     }

@@ -414,13 +414,13 @@ impl LlmProvider for OpenAiProvider {
 
     fn cost_rates(&self, model: &str) -> CostRates {
         match model {
-            "gpt-4.1" => CostRates { input_per_million: 2.0, output_per_million: 8.0 },
-            "gpt-4o" => CostRates { input_per_million: 2.5, output_per_million: 10.0 },
-            "gpt-4o-mini" => CostRates { input_per_million: 0.15, output_per_million: 0.6 },
-            "o3" => CostRates { input_per_million: 10.0, output_per_million: 40.0 },
-            "o4-mini" => CostRates { input_per_million: 1.1, output_per_million: 4.4 },
+            "gpt-4.1" => CostRates { input_per_million: 2.0, output_per_million: 8.0, cache_read_multiplier: None, cache_creation_multiplier: None },
+            "gpt-4o" => CostRates { input_per_million: 2.5, output_per_million: 10.0, cache_read_multiplier: None, cache_creation_multiplier: None },
+            "gpt-4o-mini" => CostRates { input_per_million: 0.15, output_per_million: 0.6, cache_read_multiplier: None, cache_creation_multiplier: None },
+            "o3" => CostRates { input_per_million: 10.0, output_per_million: 40.0, cache_read_multiplier: None, cache_creation_multiplier: None },
+            "o4-mini" => CostRates { input_per_million: 1.1, output_per_million: 4.4, cache_read_multiplier: None, cache_creation_multiplier: None },
             // Reasonable default for unknown models
-            _ => CostRates { input_per_million: 2.0, output_per_million: 8.0 },
+            _ => CostRates { input_per_million: 2.0, output_per_million: 8.0, cache_read_multiplier: None, cache_creation_multiplier: None },
         }
     }
 

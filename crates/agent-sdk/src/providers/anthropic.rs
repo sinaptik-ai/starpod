@@ -175,22 +175,32 @@ impl LlmProvider for AnthropicProvider {
     }
 
     fn cost_rates(&self, model: &str) -> CostRates {
+        // Anthropic cache pricing: reads at 10% of input rate, writes at 125%.
+        let cache = (Some(0.1), Some(1.25));
         match model {
             m if m.contains("opus") => CostRates {
                 input_per_million: 15.0,
                 output_per_million: 75.0,
+                cache_read_multiplier: cache.0,
+                cache_creation_multiplier: cache.1,
             },
             m if m.contains("sonnet") => CostRates {
                 input_per_million: 3.0,
                 output_per_million: 15.0,
+                cache_read_multiplier: cache.0,
+                cache_creation_multiplier: cache.1,
             },
             m if m.contains("haiku") => CostRates {
                 input_per_million: 0.25,
                 output_per_million: 1.25,
+                cache_read_multiplier: cache.0,
+                cache_creation_multiplier: cache.1,
             },
             _ => CostRates {
                 input_per_million: 3.0,
                 output_per_million: 15.0,
+                cache_read_multiplier: cache.0,
+                cache_creation_multiplier: cache.1,
             },
         }
     }
