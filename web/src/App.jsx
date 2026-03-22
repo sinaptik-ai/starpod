@@ -120,6 +120,7 @@ function AppInner() {
   const handleSelectSession = useCallback((session) => {
     if (settingsVisible) dispatch({ type: 'HIDE_SETTINGS' })
     if (cronVisible) dispatch({ type: 'HIDE_CRON' })
+    if (previewUrl) dispatch({ type: 'CLOSE_PREVIEW' })
     dispatch({ type: 'SET_SESSION', payload: { id: session.id, key: session.channel_session_key || generateUUID() } })
     if (!session.is_read) {
       dispatch({ type: 'MARK_SESSION_READ', payload: session.id })
@@ -127,16 +128,17 @@ function AppInner() {
     }
     if (chatRef.current) chatRef.current.loadSession(session.id)
     if (isMobile()) dispatch({ type: 'CLOSE_SIDEBAR' })
-  }, [dispatch, settingsVisible, cronVisible])
+  }, [dispatch, settingsVisible, cronVisible, previewUrl])
 
   // ── New chat ──
   const handleNewChat = useCallback(() => {
     if (settingsVisible) dispatch({ type: 'HIDE_SETTINGS' })
     if (cronVisible) dispatch({ type: 'HIDE_CRON' })
+    if (previewUrl) dispatch({ type: 'CLOSE_PREVIEW' })
     dispatch({ type: 'NEW_CHAT' })
     if (chatRef.current) chatRef.current.showWelcome()
     if (isMobile()) dispatch({ type: 'CLOSE_SIDEBAR' })
-  }, [dispatch, settingsVisible, cronVisible])
+  }, [dispatch, settingsVisible, cronVisible, previewUrl])
 
   // ── Toast navigation ──
   const handleToastNavigate = useCallback((sessionId) => {
@@ -227,7 +229,8 @@ function AppInner() {
 
       <div id="layout">
         {/* Sidebar */}
-        <aside id="sidebar" className={`${state.sidebarOpen ? 'open' : ''} ${previewUrl ? 'transient' : ''}`}>
+        <aside id="sidebar" className={`${state.sidebarOpen ? 'open' : ''} ${previewUrl ? 'transient' : ''}`}
+          onMouseLeave={(e) => e.currentTarget.classList.remove('peeking')}>
           <div id="sidebar-inner">
             <Sidebar
               onSelectSession={handleSelectSession}

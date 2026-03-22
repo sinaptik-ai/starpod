@@ -7,7 +7,8 @@ import { ComposeIcon, CloseIcon, GearIcon } from './ui/Icons'
 
 function Sidebar({ onSelectSession, onNewChat }) {
   const { state, dispatch } = useApp()
-  const { sidebarOpen, currentSessionId, sessions, settingsVisible, cronVisible } = state
+  const { sidebarOpen, currentSessionId, sessions, settingsVisible, cronVisible, previewUrl } = state
+  const isTransient = sidebarOpen && !!previewUrl
 
   function closeSidebar() {
     dispatch({ type: 'CLOSE_SIDEBAR' })
@@ -59,17 +60,19 @@ function Sidebar({ onSelectSession, onNewChat }) {
       {/* Header with branding and toggle */}
       <div className="flex items-center justify-between px-4 h-12 shrink-0">
         <span className="font-mono text-sm font-bold tracking-tight text-primary">starpod</span>
-        <button
-          onClick={closeSidebar}
-          className="text-muted hover:text-primary p-1.5 rounded-lg hover:bg-elevated transition-colors cursor-pointer"
-          id="sidebar-close"
-          aria-label="Close sidebar"
-        >
-          <svg className="w-4 h-4 stroke-current fill-none stroke-2" viewBox="0 0 24 24" strokeLinecap="round">
-            <rect x="3" y="3" width="18" height="18" rx="2" />
-            <line x1="9" y1="3" x2="9" y2="21" />
-          </svg>
-        </button>
+        {!isTransient && (
+          <button
+            onClick={closeSidebar}
+            className="text-muted hover:text-primary p-1.5 rounded-lg hover:bg-elevated transition-colors cursor-pointer"
+            id="sidebar-close"
+            aria-label="Close sidebar"
+          >
+            <svg className="w-4 h-4 stroke-current fill-none stroke-2" viewBox="0 0 24 24" strokeLinecap="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <line x1="9" y1="3" x2="9" y2="21" />
+            </svg>
+          </button>
+        )}
       </div>
 
       {/* Nav items */}
