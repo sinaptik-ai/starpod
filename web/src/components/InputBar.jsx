@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { PaperclipIcon } from './ui/Icons'
+import SlashMenu, { filterSkills } from './SlashMenu'
+import { fetchSkills } from '../lib/api'
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024
 
@@ -14,6 +16,10 @@ function readFileAsBase64(file) {
 
 function InputBar({ onSend, disabled }) {
   const [pendingAttachments, setPendingAttachments] = useState([])
+  const [slashOpen, setSlashOpen] = useState(false)
+  const [slashFilter, setSlashFilter] = useState('')
+  const [slashSkills, setSlashSkills] = useState([])
+  const [slashIndex, setSlashIndex] = useState(0)
   const textareaRef = useRef(null)
   const fileInputRef = useRef(null)
   const dragCounterRef = useRef(0)
@@ -27,6 +33,31 @@ function InputBar({ onSend, disabled }) {
     if (!el) return
     el.style.height = 'auto'
     el.style.height = Math.min(el.scrollHeight, 160) + 'px'
+  }
+
+  async function handleSlashDetect() {
+    const val = textareaRef.current?.value || ''
+    if (val.startsWith('/') && !val.includes(' ')) {
+      const query = val.slice(1)
+      if (!slashOpen) {
+        const skills = await fetchSkills()
+        setSlashSkills(skills)
+      }
+      setSlashFilter(query)
+      setSlashOpen(true)
+      setSlashIndex(0)
+    } else {
+      setSlashOpen(false)
+    }
+  }
+
+  function selectSkill(skill) {
+    if (textareaRef.current) {
+      textareaRef.current.value = `/${skill.name} `
+      autoResize()
+    }
+    setSlashOpen(false)
+    textareaRef.current?.focus()
   }
 
   const addFiles = useCallback(async (files) => {
@@ -68,6 +99,29 @@ function InputBar({ onSend, disabled }) {
   }
 
   function handleKeyDown(e) {
+    if (slashOpen) {
+      const filtered = filterSkills(slashSkills, slashFilter)
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setSlashIndex(i => (i + 1) % Math.max(filtered.length, 1))
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setSlashIndex(i => (i - 1 + filtered.length) % Math.max(filtered.length, 1))
+        return
+      }
+      if ((e.key === 'Enter' || e.key === 'Tab') && filtered.length > 0) {
+        e.preventDefault()
+        selectSkill(filtered[slashIndex])
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setSlashOpen(false)
+        return
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSubmit(e)
@@ -163,6 +217,16 @@ function InputBar({ onSend, disabled }) {
         )}
 
         {/* Input form */}
+        <div className="relative">
+          {slashOpen && (
+            <SlashMenu
+              skills={slashSkills}
+              filter={slashFilter}
+              activeIndex={slashIndex}
+              onSelect={selectSkill}
+              onHover={setSlashIndex}
+            />
+          )}
         <form
           id="input-form"
           className="input-form-styled"
@@ -192,7 +256,7 @@ function InputBar({ onSend, disabled }) {
             className="flex-1 bg-transparent text-primary text-[13px] resize-none outline-none placeholder:text-dim leading-relaxed max-h-40"
             rows={1}
             placeholder={`Message ${agentName}...`}
-            onInput={autoResize}
+            onInput={() => { autoResize(); handleSlashDetect() }}
             onKeyDown={handleKeyDown}
             disabled={disabled}
             autoFocus
@@ -209,6 +273,7 @@ function InputBar({ onSend, disabled }) {
             </svg>
           </button>
         </form>
+        </div>
       </div>
     </div>
   )

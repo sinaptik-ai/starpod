@@ -20,6 +20,27 @@ export function markSessionRead(sessionId, isRead = true) {
   }).catch(() => {})
 }
 
+let cachedSkills = null
+let skillsFetchedAt = 0
+const SKILLS_TTL = 30_000
+
+export async function fetchSkills() {
+  if (cachedSkills && Date.now() - skillsFetchedAt < SKILLS_TTL) return cachedSkills
+  try {
+    const resp = await fetch('/api/settings/skills', { headers: apiHeaders() })
+    if (resp.ok) {
+      cachedSkills = await resp.json()
+      skillsFetchedAt = Date.now()
+    }
+  } catch {}
+  return cachedSkills || []
+}
+
+export function invalidateSkillsCache() {
+  cachedSkills = null
+  skillsFetchedAt = 0
+}
+
 let cachedModels = null
 export async function fetchModels() {
   if (cachedModels) return cachedModels
