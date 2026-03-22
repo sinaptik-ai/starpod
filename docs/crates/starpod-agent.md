@@ -18,12 +18,13 @@ let response = agent.chat(ChatMessage {
 }).await?;
 
 // Streaming chat
-let (stream, session_id, followup_tx) = agent.chat_stream(&message).await?;
+let (stream, session_id, followup_tx, si_tracker) = agent.chat_stream(&message).await?;
 // stream is a Query (tokio Stream of Message)
 // followup_tx can inject messages into the running agent loop
+// si_tracker tracks skill activations/errors when self_improve is enabled
 
 // Finalize after streaming
-agent.finalize_chat(&session_id, &user_text, &result_text, &result).await;
+agent.finalize_chat(&session_id, &user_text, &result_text, &result, None, si_tracker.as_ref()).await;
 ```
 
 ## Chat Pipeline
@@ -36,8 +37,9 @@ agent.finalize_chat(&session_id, &user_text, &result_text, &result).await;
 5. **Build provider** — construct `LlmProvider` from `config.provider` (anthropic, openai, gemini, groq, deepseek, openrouter, ollama)
 6. **Run agent-sdk query** — agentic loop with custom tools via the selected provider + automatic conversation compaction
 7. **Drain followup messages** — at each iteration boundary, inject any queued user messages (when `followup_mode = "inject"`)
-8. **Record usage** — tokens and cost to session database
-9. **Append daily log** — conversation summary
+8. **Self-improve reflection** — if `self_improve` is enabled and conditions are met (skill failure or 5+ tool calls), run a follow-up query to create/update skills
+9. **Record usage** — tokens and cost to session database
+10. **Append daily log** — conversation summary
 
 ## Followup Message Handling
 
@@ -89,6 +91,20 @@ agent.cron()        // &Arc<CronStore>
 agent.config()      // StarpodConfig (owned snapshot)
 ```
 
+## Memory Nudging
+
+The system prompt includes always-on memory guidance that instructs the agent to proactively persist knowledge — user corrections, preferences, environment facts, and daily log summaries — without waiting to be asked. This is not gated behind `self_improve` as it's core agent behavior.
+
+## Self-Improve Mode
+
+When `self_improve = true`, a `SelfImproveTracker` is attached to the tool handler. It tracks:
+- Which skill was activated (via `SkillActivate`)
+- How many tool calls returned errors
+- Total tool call count
+- Whether `SkillCreate`/`SkillUpdate` was already called
+
+After the main agent loop, `run_self_improve_reflection()` checks these metrics and fires a follow-up query if needed. See the [skills concept doc](../concepts/skills.md#self-improve-mode-beta) for details.
+
 ## Tests
 
-11+ unit tests covering agent construction, custom tools, attachments, config reload, and session export.
+15+ unit tests covering agent construction, custom tools, attachments, config reload, session export, and self-improve tracking.

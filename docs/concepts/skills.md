@@ -180,6 +180,26 @@ Always respond in this format:
 - Keep responses concise
 ```
 
+## Self-Improve Mode (Beta)
+
+When `self_improve = true` in config, the agent automatically learns from experience through skills:
+
+**Auto-creation** — After completing a procedural task (5+ tool calls) — browser automations, data extractions, multi-step workflows, API integrations — the agent creates a skill capturing the approach, steps, and pitfalls so it can reuse the workflow next time.
+
+**Failure recovery** — If the agent activates a skill and any step fails or requires deviation, it updates the skill with the correct approach so the same mistake doesn't happen again.
+
+**Staleness detection** — When a skill's instructions are outdated (deprecated commands, changed APIs), the agent updates them even if it managed to work around the issue.
+
+This is enforced at the code level via a post-loop reflection pass, not just prompt suggestions. After the main agent loop completes, the `SelfImproveTracker` checks whether a reflection is needed and fires a follow-up query if so. The agent is skipped from double-prompting if it already called `SkillCreate` or `SkillUpdate` during the main loop.
+
+Enable in `agent.toml`:
+
+```toml
+self_improve = true
+```
+
+Or toggle it from **Settings → General → Self-improve** in the web UI.
+
 ## Backward Compatibility
 
 Skills without YAML frontmatter (plain markdown) continue to work. The directory name is used as the skill name, and the first line of content becomes the description.
