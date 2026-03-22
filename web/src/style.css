@@ -241,6 +241,63 @@ html, body {
   opacity: 0.5;
 }
 
+/* ── Slash command menu ── */
+.slash-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-main);
+  border-radius: 12px;
+  padding: 4px;
+  max-height: 288px;
+  overflow-y: auto;
+  z-index: 50;
+  box-shadow: 0 -4px 24px rgba(0,0,0,0.4);
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-main) transparent;
+}
+
+.slash-menu-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.slash-menu-item:hover,
+.slash-menu-item.active {
+  background: var(--color-elevated);
+}
+
+.slash-menu-name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--color-primary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.slash-menu-desc {
+  font-size: 12px;
+  color: var(--color-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.slash-menu-empty {
+  padding: 12px 10px;
+  font-size: 12px;
+  color: var(--color-dim);
+  text-align: center;
+}
+
 /* ── Tool icon variants ── */
 .tool-icon-read { background: var(--color-accent-muted); color: var(--color-accent-soft); }
 .tool-icon-write, .tool-icon-edit { background: var(--color-purple-muted); color: var(--color-purple); }
