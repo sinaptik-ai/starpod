@@ -360,12 +360,16 @@ impl Default for CompactionConfig {
     }
 }
 
-/// Browser automation configuration (Lightpanda CDP).
+/// Browser automation configuration (beta).
+///
+/// Uses Lightpanda (a lightweight headless browser) for CDP-based web
+/// browsing. Currently in beta — works well for server-rendered pages but
+/// does not reliably render JavaScript-heavy SPAs (Angular, React, Vue).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BrowserConfig {
-    /// Whether browser tools are enabled (default: true).
-    #[serde(default = "default_true")]
+    /// Whether browser tools are enabled (default: false — beta feature).
+    #[serde(default)]
     pub enabled: bool,
 
     /// CDP endpoint URL. When set, the agent connects to this existing
@@ -387,7 +391,7 @@ fn default_browser_startup_timeout() -> u64 {
 impl Default for BrowserConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             cdp_url: None,
             startup_timeout_secs: default_browser_startup_timeout(),
         }

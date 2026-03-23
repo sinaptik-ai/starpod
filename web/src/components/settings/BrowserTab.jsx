@@ -30,8 +30,8 @@ export default function BrowserTab() {
 
   return (
     <>
-      <Card title="Browser automation" desc="CDP-based browser control for web tasks">
-        <Row label="Enabled" helpTip="When enabled, the agent can use BrowserOpen, BrowserClick, BrowserType, BrowserScreenshot, BrowserExtract, and BrowserEval tools.">
+      <Card title="Browser automation" desc="CDP-based browser control for web tasks (beta — works best with server-rendered pages)">
+        <Row label="Enabled" helpTip="When enabled, the agent can use BrowserOpen, BrowserClick, BrowserType, BrowserExtract, and BrowserEval tools. Beta: uses Lightpanda, which works well for server-rendered pages but may not render JavaScript-heavy SPAs (Angular, React, Vue).">
           <Toggle checked={config.enabled} onChange={v => set('enabled', v)} />
         </Row>
         <Row label="CDP endpoint" sub="leave empty to auto-spawn" helpTip="WebSocket URL of an existing CDP browser (e.g. ws://127.0.0.1:9222). When empty, the agent auto-spawns a Lightpanda process.">

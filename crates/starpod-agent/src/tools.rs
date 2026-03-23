@@ -508,10 +508,10 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
                 "required": ["url"]
             }),
         },
-        // --- Browser tools ---
+        // --- Browser tools (beta) ---
         CustomToolDefinition {
             name: "BrowserOpen".into(),
-            description: "Open a browser and navigate to a URL. Auto-launches a lightweight browser process if not already running. Returns the page title.".into(),
+            description: "[Beta] Open a browser and navigate to a URL. Auto-launches a lightweight browser process if not already running. Returns the page title. Note: works best with server-rendered pages; JavaScript-heavy SPAs (Angular, React, Vue) may not render correctly.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1676,7 +1676,7 @@ pub async fn handle_custom_tool(
 
             if !ctx.browser_enabled {
                 return Some(ToolResult {
-                    content: "Browser tools are disabled. Enable them in Settings > Browser.".into(),
+                    content: "Browser tools are disabled (beta feature). Enable them in Settings > Browser.".into(),
                     is_error: true,
                     raw_content: None,
                 });
