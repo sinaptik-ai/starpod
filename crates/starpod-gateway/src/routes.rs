@@ -57,6 +57,7 @@ pub fn api_routes() -> Router<Arc<AppState>> {
         .route("/api/cron/jobs", get(list_cron_jobs_handler).post(create_cron_job_handler))
         .route("/api/cron/jobs/{id}", axum::routing::put(update_cron_job_handler).delete(delete_cron_job_handler))
         .merge(crate::settings::settings_routes())
+        .merge(crate::files::files_routes())
 }
 
 // ── Auth verify endpoint ─────────────────────────────────────────────────
@@ -75,6 +76,7 @@ struct VerifyUser {
     id: String,
     display_name: Option<String>,
     role: String,
+    filesystem_enabled: bool,
 }
 
 /// Check whether the provided API key is valid.
@@ -105,6 +107,7 @@ async fn verify_handler(
                 id: u.id,
                 display_name: u.display_name,
                 role: format!("{:?}", u.role).to_lowercase(),
+                filesystem_enabled: u.filesystem_enabled,
             }),
         }),
         _ => Json(VerifyResponse { authenticated: false, auth_disabled: false, user: None }),

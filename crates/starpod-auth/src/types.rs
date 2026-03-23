@@ -56,6 +56,8 @@ pub struct User {
     pub role: Role,
     /// `false` means the user is soft-deleted — all auth attempts will fail.
     pub is_active: bool,
+    /// Whether this user can browse the instance filesystem via the web UI.
+    pub filesystem_enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

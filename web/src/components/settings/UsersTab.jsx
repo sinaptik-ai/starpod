@@ -347,6 +347,36 @@ export default function UsersTab() {
                     )}
                   </div>
 
+                  {/* Features */}
+                  <div className="pt-3 border-t border-border-subtle mb-4">
+                    <SectionLabel className="mb-2">Features</SectionLabel>
+                    <div className="flex items-center justify-between py-1.5 px-2 rounded bg-elevated/50">
+                      <div className="flex flex-col">
+                        <span className="text-xs text-primary">Filesystem Access</span>
+                        <span className="text-[10px] text-dim">Browse and edit files in the instance sandbox</span>
+                      </div>
+                      <label className="s-toggle-wrap">
+                        <input
+                          type="checkbox"
+                          checked={u.filesystem_enabled || false}
+                          onChange={async (e) => {
+                            const val = e.target.checked
+                            try {
+                              const r = await fetch(`/api/settings/auth/users/${encodeURIComponent(u.id)}`, {
+                                method: 'PUT',
+                                headers: apiHeaders(),
+                                body: JSON.stringify({ filesystem_enabled: val }),
+                              })
+                              if (r.ok) await load()
+                            } catch {}
+                          }}
+                          className="s-toggle-input"
+                        />
+                        <span className="s-toggle-track"><span className="s-toggle-thumb" /></span>
+                      </label>
+                    </div>
+                  </div>
+
                   {/* API Keys */}
                   <div className="pt-3 border-t border-border-subtle">
                     <SectionLabel className="mb-2">API Keys</SectionLabel>

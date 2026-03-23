@@ -1,3 +1,4 @@
+mod files;
 mod routes;
 mod settings;
 mod ws;
