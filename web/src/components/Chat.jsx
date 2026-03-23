@@ -27,6 +27,12 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
     scrollToBottom()
   }, [messages, streamingMessage, scrollToBottom])
 
+  // Update header title from first user message
+  useEffect(() => {
+    const first = messages.find(m => m.role === 'user')
+    dispatch({ type: 'SET_CHAT_TITLE', payload: first ? first.content : null })
+  }, [messages, dispatch])
+
   function handleStreamEvent(data) {
     switch (data.type) {
       case 'stream_start': {

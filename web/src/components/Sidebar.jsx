@@ -137,9 +137,13 @@ function Sidebar({ onSelectSession, onNewChat }) {
       {/* Rail — visible when sidebar is collapsed (desktop only) */}
       <div className="sidebar-rail">
         <button
-          onClick={sidebarOpen ? closeSidebar : openSidebar}
+          onClick={settingsVisible ? undefined : (sidebarOpen ? closeSidebar : openSidebar)}
+          onMouseEnter={settingsVisible ? () => {
+            const el = document.getElementById('sidebar')
+            if (el) el.classList.add('peeking')
+          } : undefined}
           className="sidebar-rail-btn"
-          data-tooltip={sidebarOpen ? 'Collapse' : 'Expand'}
+          data-tooltip={settingsVisible ? 'Chats' : (sidebarOpen ? 'Collapse' : 'Expand')}
         >
           <svg className="w-4 h-4 stroke-current fill-none stroke-2" viewBox="0 0 24 24" strokeLinecap="round">
             <rect x="3" y="3" width="18" height="18" rx="2" />

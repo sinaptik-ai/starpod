@@ -232,7 +232,7 @@ function AppInner() {
 
       <div id="layout">
         {/* Sidebar */}
-        <aside id="sidebar" className={`${state.sidebarOpen ? 'open' : ''} ${previewUrl ? 'transient' : ''}`}
+        <aside id="sidebar" className={`${state.sidebarOpen && !settingsVisible ? 'open' : ''} ${previewUrl ? 'transient' : ''}`}
           onMouseLeave={(e) => e.currentTarget.classList.remove('peeking')}>
           <Sidebar
             onSelectSession={handleSelectSession}

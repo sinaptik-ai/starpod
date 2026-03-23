@@ -13,7 +13,7 @@ function modelLabel(spec) {
 
 function Header() {
   const { state, dispatch } = useApp()
-  const { wsStatus, selectedModel } = state
+  const { wsStatus, selectedModel, chatTitle } = state
 
   const cfg = window.__STARPOD__ || {}
   const models = cfg.models || []
@@ -76,6 +76,9 @@ function Header() {
     <ViewHeader
       border={true}
       left={modelSelector}
+      center={chatTitle ? (
+        <span className="text-xs text-muted truncate block">{chatTitle}</span>
+      ) : null}
       right={<>
         <span
           className={`w-2 h-2 rounded-full shrink-0 dot-${wsStatus}`}

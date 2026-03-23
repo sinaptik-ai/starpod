@@ -526,6 +526,23 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   }
 }
 
+/* ── Sidebar peeking (hover-expand from rail) ── */
+#sidebar.peeking:not(.transient) {
+  width: var(--sidebar-w);
+  min-width: var(--sidebar-w);
+  z-index: 150;
+  box-shadow: 20px 0 60px rgba(0,0,0,0.5);
+}
+#sidebar.peeking:not(.transient) .sidebar-rail {
+  display: none;
+}
+#sidebar.peeking:not(.transient) #sidebar-inner {
+  display: flex;
+}
+#sidebar.peeking:not(.transient) #sidebar-close {
+  display: none;
+}
+
 /* ── Sidebar transient mode (when preview is open) ── */
 #sidebar.transient {
   position: absolute;

@@ -34,6 +34,7 @@ const initialState = {
   sessions: [],
   previewUrl: null,
   selectedModel: null, // null = use default (first in models list)
+  chatTitle: null, // first user message, shown in header
 }
 
 function appReducer(state, action) {
@@ -102,6 +103,7 @@ function appReducer(state, action) {
         ...state,
         currentSessionId: null,
         currentSessionKey: generateUUID(),
+        chatTitle: null,
       }
 
     case 'SET_SESSIONS':
@@ -117,6 +119,9 @@ function appReducer(state, action) {
 
     case 'SET_MODEL':
       return { ...state, selectedModel: action.payload }
+
+    case 'SET_CHAT_TITLE':
+      return { ...state, chatTitle: action.payload }
 
     case 'OPEN_PREVIEW':
       return { ...state, previewUrl: action.payload }
