@@ -189,12 +189,12 @@ function InputBar({ onSend, disabled }) {
               return (
                 <div
                   key={i}
-                  className="flex items-center gap-1.5 bg-elevated border border-border-main rounded-lg px-2 py-1 font-mono text-[11px] text-secondary max-w-[200px] transition-colors hover:border-dim"
+                  className="flex items-center gap-1.5 bg-elevated border border-border-main rounded-none px-2 py-1 font-mono text-[11px] text-secondary max-w-[200px] transition-colors hover:border-dim"
                 >
                   {isImage ? (
                     <img
                       src={`data:${att.mime_type};base64,${att.data}`}
-                      className="w-7 h-7 object-cover rounded shrink-0"
+                      className="w-7 h-7 object-cover rounded-none shrink-0"
                       alt={att.file_name}
                     />
                   ) : (

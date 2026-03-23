@@ -155,7 +155,7 @@ export default function SkillsTab() {
 
       {/* Wizard / Create */}
       {wizardOpen && (
-        <div className="mb-4 p-4 rounded-lg border border-border-subtle bg-elevated/50">
+        <div className="mb-4 p-4 rounded-none border border-border-subtle bg-elevated/50">
           <div className="flex items-center justify-between mb-3">
             <SectionLabel>New Skill</SectionLabel>
             <button onClick={closeWizard} className="text-xs text-muted hover:text-primary cursor-pointer transition-colors">
@@ -274,7 +274,7 @@ export default function SkillsTab() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="font-mono text-sm text-primary truncate">{s.name}</span>
-                    {s.version && <span className="text-[10px] text-dim bg-elevated px-1.5 py-0.5 rounded shrink-0">{s.version}</span>}
+                    {s.version && <span className="text-[10px] text-dim bg-elevated px-1.5 py-0.5 rounded-none shrink-0">{s.version}</span>}
                   </div>
                   {s.description && <div className="text-dim text-xs mt-1 line-clamp-2">{s.description}</div>}
                 </div>
@@ -309,7 +309,7 @@ export default function SkillsTab() {
               {confirmDelete === s.name && (
                 <div className="mt-3 pt-3 border-t border-border-subtle flex items-center gap-3">
                   <span className="text-xs text-err">Delete this skill?</span>
-                  <button onClick={() => doDelete(s.name)} className="text-xs bg-err/10 text-err px-3 py-1 rounded cursor-pointer hover:bg-err/20 transition-colors">Yes</button>
+                  <button onClick={() => doDelete(s.name)} className="text-xs bg-err/10 text-err px-3 py-1 rounded-none cursor-pointer hover:bg-err/20 transition-colors">Yes</button>
                   <button onClick={() => setConfirmDelete(null)} className="text-xs text-muted hover:text-primary cursor-pointer transition-colors">Cancel</button>
                 </div>
               )}

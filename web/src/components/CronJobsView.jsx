@@ -47,7 +47,7 @@ function formatSchedule(schedule) {
   }
 }
 
-const INPUT_CLASS = 'w-full bg-elevated border border-border-main rounded-lg px-3 py-2 text-[13px] text-primary font-mono placeholder:text-dim focus:outline-none focus:border-accent/50 transition-colors'
+const INPUT_CLASS = 'w-full bg-elevated border border-border-main rounded-none px-3 py-2 text-[13px] text-primary font-mono placeholder:text-dim focus:outline-none focus:border-accent/50 transition-colors'
 const LABEL_CLASS = 'block text-[11px] text-muted font-mono uppercase tracking-wider mb-1.5'
 
 function scheduleToForm(schedule) {
@@ -94,7 +94,7 @@ function ScheduleFields({ scheduleType, setScheduleType, cronExpr, setCronExpr, 
             key={t}
             type="button"
             onClick={() => setScheduleType(t)}
-            className={`text-[11px] font-mono px-2.5 py-1 rounded-md border transition-colors ${
+            className={`text-[11px] font-mono px-2.5 py-1 rounded-none border transition-colors ${
               scheduleType === t
                 ? 'border-accent/50 bg-accent/10 text-accent'
                 : 'border-border-main text-muted hover:text-secondary'
@@ -187,7 +187,7 @@ function CreateJobForm({ onCreated, onCancel }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="bg-surface border border-border-main rounded-lg p-4 mb-4">
+    <form onSubmit={handleSubmit} className="bg-surface border border-border-main rounded-none p-4 mb-4">
       <div className="space-y-3">
         <div>
           <label className={LABEL_CLASS}>Name</label>
@@ -216,14 +216,14 @@ function CreateJobForm({ onCreated, onCancel }) {
           <button
             type="button"
             onClick={onCancel}
-            className="text-[12px] font-mono text-muted hover:text-secondary px-3 py-1.5 rounded-md border border-border-main hover:border-border-main/80 transition-colors"
+            className="text-[12px] font-mono text-muted hover:text-secondary px-3 py-1.5 rounded-none border border-border-main hover:border-border-main/80 transition-colors"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={saving || !name.trim() || !prompt.trim()}
-            className="text-[12px] font-mono text-bg bg-accent hover:bg-accent/90 disabled:opacity-40 px-3 py-1.5 rounded-md transition-colors"
+            className="text-[12px] font-mono text-bg bg-accent hover:bg-accent/90 disabled:opacity-40 px-3 py-1.5 rounded-none transition-colors"
           >
             {saving ? 'Creating...' : 'Create'}
           </button>
@@ -289,14 +289,14 @@ function EditJobForm({ job, onUpdated, onCancel }) {
         <button
           type="button"
           onClick={onCancel}
-          className="text-[12px] font-mono text-muted hover:text-secondary px-3 py-1.5 rounded-md border border-border-main transition-colors"
+          className="text-[12px] font-mono text-muted hover:text-secondary px-3 py-1.5 rounded-none border border-border-main transition-colors"
         >
           Cancel
         </button>
         <button
           type="submit"
           disabled={saving || !prompt.trim()}
-          className="text-[12px] font-mono text-bg bg-accent hover:bg-accent/90 disabled:opacity-40 px-3 py-1.5 rounded-md transition-colors"
+          className="text-[12px] font-mono text-bg bg-accent hover:bg-accent/90 disabled:opacity-40 px-3 py-1.5 rounded-none transition-colors"
         >
           {saving ? 'Saving...' : 'Save'}
         </button>
@@ -350,7 +350,7 @@ function JobRow({ job, isAdmin, onUpdate, onDelete }) {
   }
 
   return (
-    <div className="bg-surface border border-border-main rounded-lg px-4 py-3">
+    <div className="bg-surface border border-border-main rounded-none px-4 py-3">
       <div className="flex items-start justify-between gap-3">
         <div
           className="flex-1 min-w-0 cursor-pointer"
@@ -368,7 +368,7 @@ function JobRow({ job, isAdmin, onUpdate, onDelete }) {
             <button
               onClick={e => { e.stopPropagation(); handleToggle() }}
               disabled={toggling}
-              className={`text-[11px] px-1.5 py-0.5 rounded font-mono transition-colors ${
+              className={`text-[11px] px-1.5 py-0.5 rounded-none font-mono transition-colors ${
                 job.enabled
                   ? 'bg-green-500/10 text-green-400 hover:bg-green-500/20'
                   : 'bg-neutral-500/10 text-dim hover:bg-neutral-500/20'
@@ -478,7 +478,7 @@ export default function CronJobsView() {
         right={!showForm && (
           <button
             onClick={() => setShowForm(true)}
-            className="px-2.5 py-1.5 text-[12px] font-mono text-secondary hover:text-primary hover:bg-elevated rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
+            className="px-2.5 py-1.5 text-[12px] font-mono text-secondary hover:text-primary hover:bg-elevated rounded-none transition-colors cursor-pointer flex items-center gap-1.5"
           >
             <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M8 3v10M3 8h10" />

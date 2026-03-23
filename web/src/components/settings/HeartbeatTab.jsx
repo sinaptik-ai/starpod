@@ -48,7 +48,7 @@ export default function HeartbeatTab() {
       </Card>
 
       {config.enabled && (
-        <div className="border border-border-subtle rounded-lg overflow-hidden mt-4">
+        <div className="border border-border-subtle rounded-none overflow-hidden mt-4">
           <div className="flex items-center justify-between px-3 py-1.5 bg-surface border-b border-border-subtle">
             <span className="font-mono text-[11px] text-dim">HEARTBEAT.md</span>
           </div>
