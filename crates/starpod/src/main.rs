@@ -16,7 +16,7 @@ use starpod_core::{
     ChatMessage, StarpodConfig, ResolvedPaths,
     detect_mode, load_agent_config,
 };
-use starpod_instances::{DeployClient, DeployOpts, DeployReadiness, InstanceClient, SecretResponse, parse_env_file};
+use starpod_instances::{DeployClient, DeployOpts, InstanceClient, parse_env_file};
 
 #[derive(Parser)]
 #[command(name = "starpod", about = "Starpod — personal AI assistant platform", version)]
