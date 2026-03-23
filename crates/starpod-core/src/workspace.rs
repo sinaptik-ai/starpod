@@ -82,8 +82,9 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::config::{
-    AttachmentsConfig, AuthConfig, BrowserConfig, ChannelsConfig, CompactionConfig, CronConfig,
-    FollowupMode, MemoryConfig, ProvidersConfig, ReasoningEffort, StarpodConfig,
+    AttachmentsConfig, AuthConfig, BrowserConfig, ChannelsConfig, CompactionConfig,
+    CronConfig, FollowupMode, MemoryConfig, ProvidersConfig,
+    ReasoningEffort, StarpodConfig,
 };
 use crate::error::StarpodError;
 

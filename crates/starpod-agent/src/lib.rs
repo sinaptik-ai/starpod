@@ -1326,6 +1326,14 @@ fn resolve_channel(msg: &ChatMessage) -> (Channel, String) {
                 .unwrap_or_else(|| "default".into());
             (Channel::Telegram, key)
         }
+        "email" => {
+            // Email channel: key is the sender email address.
+            // All emails from the same sender continue the same session
+            // until the gap timeout (24h default) expires.
+            let key = msg.channel_session_key.clone()
+                .unwrap_or_else(|| "unknown@sender".into());
+            (Channel::Email, key)
+        }
         _ => {
             // "main", "scheduler", or any unknown → explicit Main session
             let key = msg.channel_session_key.clone()

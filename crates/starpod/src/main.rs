@@ -1,6 +1,7 @@
 mod auth;
 mod onboarding;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -15,7 +16,7 @@ use starpod_core::{
     ChatMessage, StarpodConfig, ResolvedPaths,
     detect_mode, load_agent_config,
 };
-use starpod_instances::{DeployClient, DeployOpts, InstanceClient, parse_env_file};
+use starpod_instances::{DeployClient, DeployOpts, DeployReadiness, InstanceClient, SecretResponse, parse_env_file};
 
 #[derive(Parser)]
 #[command(name = "starpod", about = "Starpod — personal AI assistant platform", version)]
@@ -113,6 +114,12 @@ enum Commands {
         action: InstanceCommand,
     },
 
+    /// Manage secrets in the remote secret store.
+    Secret {
+        #[command(subcommand)]
+        action: SecretCommand,
+    },
+
     /// Build a standalone .starpod/ from an agent blueprint.
     Build {
         /// Path to agent blueprint folder (must contain agent.toml).
@@ -180,20 +187,39 @@ enum AgentCommand {
     },
     /// List agents in the workspace.
     List,
+    /// Push local agent blueprint to the remote (Spawner).
+    Push {
+        /// Agent name from agents/ directory.
+        name: String,
+    },
+    /// Pull remote agent blueprint to the local workspace.
+    Pull {
+        /// Agent name from agents/ directory.
+        name: String,
+    },
 }
 
 // ── Instance subcommands ────────────────────────────────────────────────────
 
 #[derive(Subcommand)]
 enum InstanceCommand {
-    /// Create a new remote instance.
+    /// Create a new remote instance (validates deploy.toml if present).
     Create {
+        /// Agent name from agents/ directory.
+        #[arg(short, long)]
+        agent: Option<String>,
         /// Instance name.
         #[arg(short, long)]
         name: Option<String>,
         /// Cloud region.
         #[arg(short, long)]
         region: Option<String>,
+        /// Variable overrides (KEY=VALUE).
+        #[arg(long = "var")]
+        var_overrides: Vec<String>,
+        /// Skip confirmations (CI/CD mode). Hard-fails if secrets are missing.
+        #[arg(long)]
+        yes: bool,
     },
     /// List running instances.
     List,
@@ -229,6 +255,42 @@ enum InstanceCommand {
     Health {
         /// Instance ID.
         id: String,
+    },
+}
+
+// ── Secret subcommands ──────────────────────────────────────────────────────
+
+#[derive(Subcommand)]
+enum SecretCommand {
+    /// Set a secret value (prompted interactively if --value is omitted).
+    Set {
+        /// Secret key name (e.g. ANTHROPIC_API_KEY).
+        key: String,
+        /// Secret value (if omitted, you'll be prompted).
+        #[arg(long)]
+        value: Option<String>,
+        /// Make this secret agent-specific (default: user-global).
+        #[arg(long)]
+        agent: Option<String>,
+    },
+    /// List all secrets (keys and hints only, never values).
+    List {
+        /// Filter to secrets for a specific agent.
+        #[arg(long)]
+        agent: Option<String>,
+    },
+    /// Delete a secret by key.
+    Delete {
+        /// Secret key name.
+        key: String,
+        /// Delete agent-specific secret (default: user-global).
+        #[arg(long)]
+        agent: Option<String>,
+    },
+    /// Import secrets from a .env file (interactive).
+    Import {
+        /// Path to .env file (default: .env in workspace root).
+        path: Option<String>,
     },
 }
 
@@ -1190,6 +1252,86 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
 
+            AgentCommand::Push { name } => {
+                // Resolve auth + workspace (same pattern as deploy)
+                let saved = auth::load_credentials();
+                let backend_url = std::env::var(auth::SPAWNER_URL_ENV)
+                    .ok()
+                    .or_else(|| saved.as_ref().map(|c| c.backend_url.clone()))
+                    .unwrap_or_else(|| auth::DEFAULT_SPAWNER_URL.to_string());
+                let api_key = std::env::var("STARPOD_API_KEY")
+                    .ok()
+                    .or_else(|| saved.as_ref().map(|c| c.api_key.clone()));
+                let Some(api_key) = api_key else {
+                    eprintln!("  {} Authentication required. Run {}.", "✗".red().bold(), "starpod auth login".bright_white());
+                    std::process::exit(1);
+                };
+
+                let cwd = std::env::current_dir()?;
+                let workspace_root = find_workspace_root(&cwd).unwrap_or_else(|| {
+                    eprintln!("  {} Not inside a starpod workspace.", "✗".red().bold());
+                    std::process::exit(1);
+                });
+
+                let agent_dir = workspace_root.join("agents").join(&name);
+                if !agent_dir.exists() {
+                    eprintln!("  {} Agent '{}' not found in agents/ directory.", "✗".red().bold(), name);
+                    std::process::exit(1);
+                }
+
+                let skills_dir = workspace_root.join("skills");
+                let skills_path = if skills_dir.exists() { Some(skills_dir.as_path()) } else { None };
+
+                let client = DeployClient::new(&backend_url, &api_key)?;
+                println!("  {} Pushing agent {}...", "⟳".bright_cyan(), name.bright_white().bold());
+
+                let summary = client.push_agent(&name, &agent_dir, skills_path).await?;
+
+                println!("  {} Push complete:", "✓".green().bold());
+                println!("  {} {} uploaded, {} deleted, {} unchanged",
+                    "│".dimmed(),
+                    summary.uploaded.to_string().bright_green(),
+                    summary.deleted_remote.to_string().bright_red(),
+                    summary.unchanged.to_string().dimmed(),
+                );
+            }
+
+            AgentCommand::Pull { name } => {
+                let saved = auth::load_credentials();
+                let backend_url = std::env::var(auth::SPAWNER_URL_ENV)
+                    .ok()
+                    .or_else(|| saved.as_ref().map(|c| c.backend_url.clone()))
+                    .unwrap_or_else(|| auth::DEFAULT_SPAWNER_URL.to_string());
+                let api_key = std::env::var("STARPOD_API_KEY")
+                    .ok()
+                    .or_else(|| saved.as_ref().map(|c| c.api_key.clone()));
+                let Some(api_key) = api_key else {
+                    eprintln!("  {} Authentication required. Run {}.", "✗".red().bold(), "starpod auth login".bright_white());
+                    std::process::exit(1);
+                };
+
+                let cwd = std::env::current_dir()?;
+                let workspace_root = find_workspace_root(&cwd).unwrap_or_else(|| {
+                    eprintln!("  {} Not inside a starpod workspace.", "✗".red().bold());
+                    std::process::exit(1);
+                });
+
+                let agent_dir = workspace_root.join("agents").join(&name);
+
+                let client = DeployClient::new(&backend_url, &api_key)?;
+                println!("  {} Pulling agent {}...", "⟳".bright_cyan(), name.bright_white().bold());
+
+                let summary = client.pull_agent(&name, &agent_dir).await?;
+
+                println!("  {} Pull complete:", "✓".green().bold());
+                println!("  {} {} downloaded, {} deleted locally, {} unchanged",
+                    "│".dimmed(),
+                    summary.downloaded.to_string().bright_green(),
+                    summary.deleted_local.to_string().bright_red(),
+                    summary.unchanged.to_string().dimmed(),
+                );
+            }
+
         },
 
         // ── Dev ──────────────────────────────────────────────────────
@@ -1781,21 +1923,213 @@ async fn main() -> anyhow::Result<()> {
             let client = InstanceClient::new_with_timeout(&backend_url, api_key, 30)?;
 
             match action {
-                InstanceCommand::Create { name, region } => {
-                    let req = starpod_instances::CreateInstanceRequest { name, region };
-                    match client.create_instance(&req).await {
+                InstanceCommand::Create { agent: agent_name, name: _, region, var_overrides, yes } => {
+                    // Need the DeployClient for the deploy-config API
+                    let api_key_str = std::env::var("STARPOD_API_KEY")
+                        .ok()
+                        .or_else(|| saved.as_ref().map(|c| c.api_key.clone()));
+                    let api_key_str = match api_key_str {
+                        Some(k) => k,
+                        None => {
+                            eprintln!("  {} Not authenticated. Run: starpod auth login", "✗".red());
+                            std::process::exit(1);
+                        }
+                    };
+                    let deploy_client = DeployClient::new(&backend_url, &api_key_str)?;
+
+                    // Step 1: Find or push the agent
+                    let agent_name = match agent_name {
+                        Some(n) => n,
+                        None => {
+                            eprintln!("  {} Please specify --agent <name>", "✗".red());
+                            std::process::exit(1);
+                        }
+                    };
+
+                    println!("  {} Checking agent {}...", "⟳".bright_cyan(), agent_name.bright_white());
+
+                    let agents = deploy_client.list_agents().await?;
+                    let agent = match agents.iter().find(|a| a.name == agent_name) {
+                        Some(a) => {
+                            println!("  {} Agent found on remote", "✓".green());
+                            a.clone()
+                        }
+                        None => {
+                            // Try to push local blueprint
+                            let ws_agents_dir = std::path::PathBuf::from("agents").join(&agent_name);
+                            if !ws_agents_dir.join("agent.toml").exists() {
+                                eprintln!("  {} Agent '{}' not found locally or on remote.", "✗".red(), agent_name);
+                                std::process::exit(1);
+                            }
+
+                            if !yes {
+                                eprint!("  Agent '{}' not found on remote. Push local blueprint? [Y/n] ", agent_name);
+                                let mut buf = String::new();
+                                std::io::stdin().read_line(&mut buf)?;
+                                let answer = buf.trim().to_lowercase();
+                                if !answer.is_empty() && answer != "y" && answer != "yes" {
+                                    eprintln!("  {} Aborted.", "✗".red());
+                                    std::process::exit(1);
+                                }
+                            }
+
+                            println!("  {} Pushing blueprint...", "⟳".bright_cyan());
+                            let summary = deploy_client.push_agent(&agent_name, &ws_agents_dir, None).await?;
+                            println!("  {} Agent created ({} files pushed)", "✓".green().bold(), summary.uploaded);
+
+                            let agents = deploy_client.list_agents().await?;
+                            agents.into_iter().find(|a| a.name == agent_name).unwrap()
+                        }
+                    };
+
+                    // Step 2: Check deploy.toml readiness
+                    let deploy_config = deploy_client.get_deploy_config(&agent.id).await?;
+
+                    if let Some(ref config) = deploy_config {
+                        println!("\n  {} Validating deploy.toml...", "⟳".bright_cyan());
+
+                        // Show secrets status
+                        println!("\n  Secrets:");
+                        for s in &config.secrets {
+                            let status = if s.present {
+                                let scope = s.scope.as_deref().unwrap_or("unknown");
+                                let hint = s.hint.as_deref().unwrap_or("****");
+                                format!("{} ({}, hint: ...{})", "✓".green(), scope, hint)
+                            } else if s.required {
+                                format!("{} missing ({})", "✗".red(), "required".bright_red())
+                            } else {
+                                format!("{} missing ({})", "–".dimmed(), "optional".dimmed())
+                            };
+                            println!("    {:<24} {}", s.key, status);
+                        }
+
+                        // Handle missing required secrets
+                        if !config.missing_required.is_empty() {
+                            println!(
+                                "\n  {} {} required secret(s) missing: {}",
+                                "⚠".yellow(),
+                                config.missing_required.len(),
+                                config.missing_required.join(", ")
+                            );
+
+                            // Try to find them in local .env
+                            let env_path = std::path::PathBuf::from(".env");
+                            if env_path.exists() && !yes {
+                                let local_env = parse_env_file(&env_path)?;
+                                let pushable: Vec<&String> = config
+                                    .missing_required
+                                    .iter()
+                                    .filter(|k| local_env.contains_key(k.as_str()))
+                                    .collect();
+
+                                if !pushable.is_empty() {
+                                    println!(
+                                        "\n  Found in local .env: {}",
+                                        pushable.iter().map(|k| k.as_str()).collect::<Vec<_>>().join(", ")
+                                    );
+                                    for key in &pushable {
+                                        let value = &local_env[key.as_str()];
+                                        eprint!("  ? Push {} to remote as agent-specific secret? [Y/n] ", key.bright_white());
+                                        let mut buf = String::new();
+                                        std::io::stdin().read_line(&mut buf)?;
+                                        let answer = buf.trim().to_lowercase();
+                                        if answer.is_empty() || answer == "y" || answer == "yes" {
+                                            match deploy_client.set_secret(&agent.id, key, value).await {
+                                                Ok(s) => {
+                                                    println!(
+                                                        "    {} {} pushed (hint: ••••{})",
+                                                        "✓".green(),
+                                                        key,
+                                                        s.hint.as_deref().unwrap_or("****")
+                                                    );
+                                                }
+                                                Err(e) => {
+                                                    eprintln!("    {} Failed to push {}: {}", "✗".red(), key, e);
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Re-check readiness
+                                    let recheck = deploy_client.get_deploy_config(&agent.id).await?;
+                                    if let Some(ref rc) = recheck {
+                                        if !rc.ready {
+                                            eprintln!(
+                                                "\n  {} Cannot create instance: still missing required secrets: {}",
+                                                "✗".red().bold(),
+                                                rc.missing_required.join(", ")
+                                            );
+                                            eprintln!("  Run: starpod secret set <KEY> --agent {}", agent_name);
+                                            std::process::exit(1);
+                                        }
+                                    }
+                                } else {
+                                    eprintln!("\n  {} Cannot create instance: {} required secret(s) missing.", "✗".red().bold(), config.missing_required.len());
+                                    eprintln!("  Run: starpod secret set <KEY> --agent {}", agent_name);
+                                    std::process::exit(1);
+                                }
+                            } else if yes {
+                                // CI mode: hard fail, never auto-push
+                                eprintln!(
+                                    "\n  {} Cannot create instance: {} required secret(s) missing from deploy.toml: {}",
+                                    "✗".red().bold(),
+                                    config.missing_required.len(),
+                                    config.missing_required.join(", ")
+                                );
+                                std::process::exit(1);
+                            } else {
+                                eprintln!("\n  {} Cannot create instance: {} required secret(s) missing.", "✗".red().bold(), config.missing_required.len());
+                                eprintln!("  Run: starpod secret set <KEY> --agent {}", agent_name);
+                                eprintln!("  Or create a .env file with the missing values.");
+                                std::process::exit(1);
+                            }
+                        } else {
+                            println!("\n  {} All required secrets present.", "✓".green().bold());
+                        }
+
+                        // Show variables
+                        if !config.variables.is_empty() {
+                            println!("\n  Variables (from deploy.toml):");
+                            for (k, v) in &config.variables {
+                                println!("    {} = \"{}\"", k.dimmed(), v);
+                            }
+                        }
+                    }
+
+                    // Step 3: Parse variable overrides
+                    let overrides: HashMap<String, String> = var_overrides
+                        .iter()
+                        .filter_map(|s| {
+                            s.split_once('=').map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+                        })
+                        .collect();
+
+                    if !overrides.is_empty() {
+                        println!("\n  Variable overrides:");
+                        for (k, v) in &overrides {
+                            println!("    {} = \"{}\" (override)", k, v);
+                        }
+                    }
+
+                    // Step 4: Create the instance
+                    println!("\n  {} Creating instance...", "⟳".bright_cyan());
+
+                    let _variable_overrides = if overrides.is_empty() { None } else { Some(overrides) };
+
+                    match deploy_client.create_instance(
+                        &agent.id,
+                        region.as_deref(),
+                        None, // machine_type
+                    ).await {
                         Ok(inst) => {
                             println!(
-                                "  {} Created instance {}",
+                                "  {} Instance created (id: {})",
                                 "✓".green().bold(),
                                 inst.id.bright_white()
                             );
-                            if let Some(name) = &inst.name {
-                                println!("  {} Name: {}", "│".dimmed(), name);
-                            }
                             println!("  {} Status: {}", "│".dimmed(), inst.status);
-                            if let Some(region) = &inst.region {
-                                println!("  {} Region: {}", "│".dimmed(), region);
+                            if let Some(ref zone) = inst.zone {
+                                println!("  {} Zone: {}", "│".dimmed(), zone);
                             }
                         }
                         Err(e) => {
@@ -1983,6 +2317,235 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
+        // ── Secret ────────────────────────────────────────────────────
+        Commands::Secret { action } => {
+            let saved = auth::load_credentials();
+            let backend_url = std::env::var(auth::SPAWNER_URL_ENV)
+                .ok()
+                .or_else(|| saved.as_ref().map(|c| c.backend_url.clone()))
+                .unwrap_or_else(|| auth::DEFAULT_SPAWNER_URL.to_string());
+            let api_key = std::env::var("STARPOD_API_KEY")
+                .ok()
+                .or_else(|| saved.as_ref().map(|c| c.api_key.clone()));
+            let api_key = match api_key {
+                Some(k) => k,
+                None => {
+                    eprintln!("  {} Not authenticated. Run: starpod auth login", "✗".red());
+                    std::process::exit(1);
+                }
+            };
+            let deploy_client = DeployClient::new(&backend_url, &api_key)?;
+
+            match action {
+                SecretCommand::Set { key, value, agent: agent_name } => {
+                    // Get value from --value flag or prompt interactively
+                    let secret_value = match value {
+                        Some(v) => v,
+                        None => {
+                            eprint!("  Enter value for {}: ", key.bright_white());
+                            let mut buf = String::new();
+                            std::io::stdin().read_line(&mut buf)?;
+                            buf.trim().to_string()
+                        }
+                    };
+
+                    if secret_value.is_empty() {
+                        eprintln!("  {} Secret value cannot be empty.", "✗".red());
+                        std::process::exit(1);
+                    }
+
+                    if let Some(ref agent_name) = agent_name {
+                        // Agent-scoped secret
+                        let agents = deploy_client.list_agents().await?;
+                        let agent = agents.iter().find(|a| a.name == *agent_name);
+                        match agent {
+                            Some(a) => {
+                                match deploy_client.set_secret(&a.id, &key, &secret_value).await {
+                                    Ok(s) => {
+                                        println!(
+                                            "  {} {} set (agent: {}, hint: ••••{})",
+                                            "✓".green().bold(),
+                                            key.bright_white(),
+                                            agent_name,
+                                            s.hint.as_deref().unwrap_or("****")
+                                        );
+                                    }
+                                    Err(e) => {
+                                        eprintln!("  {} Failed to set secret: {}", "✗".red(), e);
+                                        std::process::exit(1);
+                                    }
+                                }
+                            }
+                            None => {
+                                eprintln!("  {} Agent '{}' not found on remote.", "✗".red(), agent_name);
+                                std::process::exit(1);
+                            }
+                        }
+                    } else {
+                        // User-global secret
+                        match deploy_client.set_user_secret(&key, &secret_value).await {
+                            Ok(s) => {
+                                println!(
+                                    "  {} {} set (user-global, hint: ••••{})",
+                                    "✓".green().bold(),
+                                    key.bright_white(),
+                                    s.hint.as_deref().unwrap_or("****")
+                                );
+                            }
+                            Err(e) => {
+                                eprintln!("  {} Failed to set secret: {}", "✗".red(), e);
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                }
+
+                SecretCommand::List { agent: agent_name } => {
+                    if let Some(ref agent_name) = agent_name {
+                        let agents = deploy_client.list_agents().await?;
+                        let agent = agents.iter().find(|a| a.name == *agent_name);
+                        match agent {
+                            Some(a) => {
+                                let secrets = deploy_client.list_agent_secrets(&a.id).await?;
+                                if secrets.is_empty() {
+                                    println!("  {} No secrets for agent '{}'.", "ℹ".bright_cyan(), agent_name);
+                                } else {
+                                    println!(
+                                        "  {:<28} {:<10} {:<12} {}",
+                                        "KEY".dimmed(),
+                                        "SCOPE".dimmed(),
+                                        "HINT".dimmed(),
+                                        "UPDATED".dimmed()
+                                    );
+                                    for s in &secrets {
+                                        let scope = if s.agent_id.is_some() { "agent" } else { "global" };
+                                        let hint = s.hint.as_deref().map(|h| format!("••••{}", h)).unwrap_or_else(|| "••••••••".into());
+                                        println!(
+                                            "  {:<28} {:<10} {:<12} {}",
+                                            s.key,
+                                            scope,
+                                            hint,
+                                            &s.created_at[..10]
+                                        );
+                                    }
+                                }
+                            }
+                            None => {
+                                eprintln!("  {} Agent '{}' not found.", "✗".red(), agent_name);
+                                std::process::exit(1);
+                            }
+                        }
+                    } else {
+                        let secrets = deploy_client.list_user_secrets().await?;
+                        if secrets.is_empty() {
+                            println!("  {} No user-global secrets found.", "ℹ".bright_cyan());
+                        } else {
+                            println!(
+                                "  {:<28} {:<12} {}",
+                                "KEY".dimmed(),
+                                "HINT".dimmed(),
+                                "UPDATED".dimmed()
+                            );
+                            for s in &secrets {
+                                let hint = s.hint.as_deref().map(|h| format!("••••{}", h)).unwrap_or_else(|| "••••••••".into());
+                                println!(
+                                    "  {:<28} {:<12} {}",
+                                    s.key,
+                                    hint,
+                                    &s.created_at[..10]
+                                );
+                            }
+                        }
+                    }
+                }
+
+                SecretCommand::Delete { key, agent: agent_name } => {
+                    if let Some(ref agent_name) = agent_name {
+                        let agents = deploy_client.list_agents().await?;
+                        let agent = agents.iter().find(|a| a.name == *agent_name);
+                        match agent {
+                            Some(a) => {
+                                let secrets = deploy_client.list_agent_secrets(&a.id).await?;
+                                let secret = secrets.iter().find(|s| s.key == key);
+                                match secret {
+                                    Some(s) => {
+                                        deploy_client.delete_agent_secret(&a.id, &s.id).await?;
+                                        println!("  {} Deleted {} (agent: {})", "✓".green().bold(), key.bright_white(), agent_name);
+                                    }
+                                    None => {
+                                        eprintln!("  {} Secret '{}' not found for agent '{}'.", "✗".red(), key, agent_name);
+                                        std::process::exit(1);
+                                    }
+                                }
+                            }
+                            None => {
+                                eprintln!("  {} Agent '{}' not found.", "✗".red(), agent_name);
+                                std::process::exit(1);
+                            }
+                        }
+                    } else {
+                        let secrets = deploy_client.list_user_secrets().await?;
+                        let secret = secrets.iter().find(|s| s.key == key);
+                        match secret {
+                            Some(s) => {
+                                deploy_client.delete_user_secret(&s.id).await?;
+                                println!("  {} Deleted {} (user-global)", "✓".green().bold(), key.bright_white());
+                            }
+                            None => {
+                                eprintln!("  {} Secret '{}' not found.", "✗".red(), key);
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                }
+
+                SecretCommand::Import { path } => {
+                    let env_path = path
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|| std::path::PathBuf::from(".env"));
+
+                    if !env_path.exists() {
+                        eprintln!("  {} File not found: {}", "✗".red(), env_path.display());
+                        std::process::exit(1);
+                    }
+
+                    let env_vars = parse_env_file(&env_path)?;
+                    if env_vars.is_empty() {
+                        println!("  {} No variables found in {}", "ℹ".bright_cyan(), env_path.display());
+                        return Ok(());
+                    }
+
+                    println!("  Found {} entries in {}:", env_vars.len(), env_path.display());
+                    let mut count = 0;
+                    for (key, value) in &env_vars {
+                        eprint!("  ? Push {} as user-global secret? [Y/n] ", key.bright_white());
+                        let mut buf = String::new();
+                        std::io::stdin().read_line(&mut buf)?;
+                        let answer = buf.trim().to_lowercase();
+                        if answer.is_empty() || answer == "y" || answer == "yes" {
+                            match deploy_client.set_user_secret(key, value).await {
+                                Ok(s) => {
+                                    println!(
+                                        "    {} {} pushed (hint: ••••{})",
+                                        "✓".green(),
+                                        key,
+                                        s.hint.as_deref().unwrap_or("****")
+                                    );
+                                    count += 1;
+                                }
+                                Err(e) => {
+                                    eprintln!("    {} Failed to push {}: {}", "✗".red(), key, e);
+                                }
+                            }
+                        } else {
+                            println!("    {} Skipped {}", "–".dimmed(), key);
+                        }
+                    }
+                    println!("  {} {} secret(s) imported.", "✓".green().bold(), count);
+                }
+            }
+        }
+
         // ── Build ─────────────────────────────────────────────────────
         Commands::Build { agent, skills, output, env_file, force } => {
             let agent_path = std::path::PathBuf::from(&agent);
@@ -2091,7 +2654,7 @@ async fn main() -> anyhow::Result<()> {
             let env_vars = if env_path.exists() {
                 parse_env_file(&env_path)?
             } else {
-                std::collections::HashMap::new()
+                HashMap::new()
             };
 
             println!(

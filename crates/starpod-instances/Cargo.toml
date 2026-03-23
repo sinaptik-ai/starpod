@@ -14,7 +14,11 @@ tokio-stream = "0.1"
 futures = "0.3"
 tracing = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
+md5 = "0.7"
+base64 = "0.22"
+urlencoding = "2"
 
 [dev-dependencies]
 wiremock = "=0.6.4"
 tokio = { version = "1", features = ["full", "test-util"] }
+tempfile = "3"

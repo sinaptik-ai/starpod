@@ -793,6 +793,7 @@ async fn run_agent_loop(
                 let id = &pt.tool_use_id;
                 async move {
                     debug!(tool = %name, "Executing tool");
+
                     let tool_result = if let Some(ref handler) = handler {
                         let ext_result = handler(name.clone(), input.clone()).await;
                         if let Some(tr) = ext_result {

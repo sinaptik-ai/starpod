@@ -19,6 +19,8 @@ pub enum Channel {
     Main,
     /// Time-gap sessions — new session after inactivity threshold (6h).
     Telegram,
+    /// Time-gap sessions via email — new session after inactivity threshold (24h).
+    Email,
 }
 
 impl Channel {
@@ -26,12 +28,14 @@ impl Channel {
         match self {
             Channel::Main => "main",
             Channel::Telegram => "telegram",
+            Channel::Email => "email",
         }
     }
 
     pub fn from_channel_str(s: &str) -> Self {
         match s {
             "telegram" => Channel::Telegram,
+            "email" => Channel::Email,
             _ => Channel::Main,
         }
     }

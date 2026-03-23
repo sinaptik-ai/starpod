@@ -171,13 +171,37 @@ impl Default for AuthConfig {
     }
 }
 
+/// Email channel configuration (lives under `[channels.email]`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EmailChannelConfig {
+    /// Whether this channel is enabled (default: true).
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Inactivity gap (in minutes) before auto-closing an email session (default: 1440 = 24h).
+    #[serde(default = "default_email_gap_minutes")]
+    pub gap_minutes: Option<i64>,
+}
+
+fn default_email_gap_minutes() -> Option<i64> { Some(1440) }
+
+impl Default for EmailChannelConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            gap_minutes: default_email_gap_minutes(),
+        }
+    }
+}
+
 /// Channel configuration namespace (`[channels.*]`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ChannelsConfig {
     /// Telegram channel settings.
     pub telegram: Option<TelegramChannelConfig>,
-    // future: discord, whatsapp, etc.
+    /// Email channel settings.
+    pub email: Option<EmailChannelConfig>,
 }
 
 fn default_stream_mode() -> String {
@@ -305,7 +329,7 @@ impl Default for CompactionConfig {
     }
 }
 
-/// Browser automation configuration.
+/// Browser automation configuration (Lightpanda CDP).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BrowserConfig {
@@ -407,6 +431,7 @@ impl AttachmentsConfig {
     }
 }
 
+/// Computer Use configuration for desktop control via Anthropic's native tools.
 // ── Main config ──────────────────────────────────────────────────────────
 
 /// Main configuration for Starpod, loaded from `.starpod/config.toml` in the current directory.
@@ -625,6 +650,7 @@ impl StarpodConfig {
     pub fn channel_gap_minutes(&self, channel: &str) -> Option<i64> {
         match channel {
             "telegram" => self.channels.telegram.as_ref().and_then(|t| t.gap_minutes),
+            "email" => self.channels.email.as_ref().and_then(|e| e.gap_minutes),
             _ => None,
         }
     }

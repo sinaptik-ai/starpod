@@ -5,8 +5,8 @@ pub mod types;
 pub mod workspace;
 
 pub use config::{
-    AttachmentsConfig, AuthConfig, BrowserConfig, ChannelsConfig, CompactionConfig, CronConfig,
-    FollowupMode, FrontendConfig, MemoryConfig, StarpodConfig,
+    AttachmentsConfig, AuthConfig, BrowserConfig, ChannelsConfig, CompactionConfig,
+    CronConfig, FollowupMode, FrontendConfig, MemoryConfig, StarpodConfig,
     ProviderConfig, ProvidersConfig, ReasoningEffort, TelegramChannelConfig,
 };
 pub use error::{StarpodError, Result};

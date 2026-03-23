@@ -121,7 +121,10 @@ impl AnthropicProvider {
     }
 
     /// Internal helper: send a POST with retry on 429/529.
-    async fn send_with_retry(&self, body: &serde_json::Value) -> Result<reqwest::Response> {
+    async fn send_with_retry(
+        &self,
+        body: &serde_json::Value,
+    ) -> Result<reqwest::Response> {
         let mut attempt: u32 = 0;
         loop {
             let response = self
