@@ -14,10 +14,10 @@ renderer.code = function({ text, lang }) {
   const codeId = 'code-' + Math.random().toString(36).slice(2, 8)
   const escaped = escapeHtml(text)
   const escapedLang = escapeHtml(langLabel)
-  return '<pre class="bg-bg border border-border-main rounded-lg my-3 overflow-x-auto font-mono text-[13px] leading-relaxed text-secondary">' +
+  return '<pre class="bg-bg border border-border-main rounded-none my-3 overflow-x-auto font-mono text-[13px] leading-relaxed text-secondary">' +
     '<div class="flex items-center justify-between px-3 py-1.5 border-b border-border-subtle text-[11px] text-dim font-mono tracking-wide select-none">' +
       '<span>' + escapedLang + '</span>' +
-      '<button class="copy-btn bg-transparent border border-border-main text-dim font-mono text-[11px] px-2 py-0.5 rounded transition-all" data-code-id="' + codeId + '">copy</button>' +
+      '<button class="copy-btn bg-transparent border border-border-main text-dim font-mono text-[11px] px-2 py-0.5 rounded-none transition-all" data-code-id="' + codeId + '">copy</button>' +
     '</div>' +
     '<div class="px-4 py-3" id="' + codeId + '">' + escaped + '</div>' +
   '</pre>'

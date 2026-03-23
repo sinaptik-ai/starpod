@@ -151,7 +151,7 @@ function HtmlPreview({ content }) {
     <iframe
       srcDoc={content}
       sandbox="allow-scripts"
-      className="w-full h-full border-0 rounded-lg bg-white"
+      className="w-full h-full border-0 rounded-none bg-white"
       title="HTML preview"
     />
   )
@@ -183,7 +183,7 @@ function ImagePreview({ path }) {
   if (!src) return <div className="flex items-center justify-center h-full text-dim font-mono text-xs">Loading...</div>
   return (
     <div className="flex items-center justify-center h-full">
-      <img src={src} alt={path.split('/').pop()} className="max-w-full max-h-full object-contain rounded-lg" />
+      <img src={src} alt={path.split('/').pop()} className="max-w-full max-h-full object-contain rounded-none" />
     </div>
   )
 }
@@ -191,7 +191,7 @@ function ImagePreview({ path }) {
 function PdfPreview({ path }) {
   const src = useBlobUrl(path)
   if (!src) return <div className="flex items-center justify-center h-full text-dim font-mono text-xs">Loading...</div>
-  return <iframe src={src} className="w-full h-full border-0 rounded-lg" title="PDF preview" />
+  return <iframe src={src} className="w-full h-full border-0 rounded-none" title="PDF preview" />
 }
 
 function VideoPreview({ path }) {
@@ -199,7 +199,7 @@ function VideoPreview({ path }) {
   if (!src) return <div className="flex items-center justify-center h-full text-dim font-mono text-xs">Loading...</div>
   return (
     <div className="flex items-center justify-center h-full">
-      <video src={src} controls className="max-w-full max-h-full rounded-lg" />
+      <video src={src} controls className="max-w-full max-h-full rounded-none" />
     </div>
   )
 }
@@ -235,7 +235,7 @@ const ChevronRight = ({ className }) => (
   </svg>
 )
 
-const INPUT_CLASS = 'w-full bg-elevated border border-border-main rounded-lg px-3 py-2 text-[13px] text-primary font-mono placeholder:text-dim focus:outline-none focus:border-accent/50 transition-colors'
+const INPUT_CLASS = 'w-full bg-elevated border border-border-main rounded-none px-3 py-2 text-[13px] text-primary font-mono placeholder:text-dim focus:outline-none focus:border-accent/50 transition-colors'
 
 export default function FilesView() {
   const { dispatch } = useApp()
@@ -461,13 +461,13 @@ export default function FilesView() {
         right={<>
           <button
             onClick={() => { setShowCreate('folder'); setNewName('') }}
-            className="px-2.5 py-1.5 text-[12px] font-mono text-secondary hover:text-primary hover:bg-elevated rounded-lg transition-colors cursor-pointer"
+            className="px-2.5 py-1.5 text-[12px] font-mono text-secondary hover:text-primary hover:bg-elevated rounded-none transition-colors cursor-pointer"
           >
             + Folder
           </button>
           <button
             onClick={() => { setShowCreate('file'); setNewName('') }}
-            className="px-2.5 py-1.5 text-[12px] font-mono text-secondary hover:text-primary hover:bg-elevated rounded-lg transition-colors cursor-pointer"
+            className="px-2.5 py-1.5 text-[12px] font-mono text-secondary hover:text-primary hover:bg-elevated rounded-none transition-colors cursor-pointer"
           >
             + File
           </button>
@@ -514,7 +514,7 @@ export default function FilesView() {
             <button
               onClick={handleCreate}
               disabled={creating || !newName.trim()}
-              className="px-3 py-1.5 text-[12px] font-mono bg-accent text-white rounded-lg hover:brightness-110 disabled:opacity-40 transition-all cursor-pointer"
+              className="px-3 py-1.5 text-[12px] font-mono bg-accent text-bg rounded-none hover:brightness-110 disabled:opacity-40 transition-all cursor-pointer"
             >
               Create
             </button>
@@ -537,7 +537,7 @@ export default function FilesView() {
             </span>
             <button
               onClick={handleDelete}
-              className="px-3 py-1.5 text-[12px] font-mono bg-err text-white rounded-lg hover:brightness-110 transition-all cursor-pointer"
+              className="px-3 py-1.5 text-[12px] font-mono bg-err text-white rounded-none hover:brightness-110 transition-all cursor-pointer"
             >
               Delete
             </button>
@@ -632,7 +632,7 @@ export default function FilesView() {
                 <FileIcon className="w-4 h-4 stroke-current fill-none stroke-[1.5] text-muted shrink-0" />
                 <span className="text-[13px] font-mono text-primary truncate">{viewingFile.name}</span>
                 {fileType !== 'text' && (
-                  <span className="text-[10px] font-mono text-dim uppercase tracking-wider px-1.5 py-0.5 bg-elevated rounded">{fileType}</span>
+                  <span className="text-[10px] font-mono text-dim uppercase tracking-wider px-1.5 py-0.5 bg-elevated rounded-none">{fileType}</span>
                 )}
               </div>
               <div className="flex items-center gap-2 shrink-0">
@@ -644,7 +644,7 @@ export default function FilesView() {
                 {canTogglePreview && !editing && (
                   <button
                     onClick={() => setRawMode(!rawMode)}
-                    className={`px-2.5 py-1 text-[12px] font-mono rounded-lg transition-colors cursor-pointer ${rawMode ? 'text-accent bg-accent/10' : 'text-secondary hover:text-primary hover:bg-elevated'}`}
+                    className={`px-2.5 py-1 text-[12px] font-mono rounded-none transition-colors cursor-pointer ${rawMode ? 'text-accent bg-accent/10' : 'text-secondary hover:text-primary hover:bg-elevated'}`}
                   >
                     {rawMode ? 'Preview' : 'Raw'}
                   </button>
@@ -652,7 +652,7 @@ export default function FilesView() {
                 {canEdit && !editing && (
                   <button
                     onClick={() => { setEditing(true); setEditContent(fileContent); setRawMode(false) }}
-                    className="px-2.5 py-1 text-[12px] font-mono text-secondary hover:text-primary hover:bg-elevated rounded-lg transition-colors cursor-pointer"
+                    className="px-2.5 py-1 text-[12px] font-mono text-secondary hover:text-primary hover:bg-elevated rounded-none transition-colors cursor-pointer"
                   >
                     Edit
                   </button>
@@ -661,7 +661,7 @@ export default function FilesView() {
                   <>
                     <button
                       onClick={saveFile}
-                      className="px-2.5 py-1 text-[12px] font-mono bg-accent text-white rounded-lg hover:brightness-110 transition-all cursor-pointer"
+                      className="px-2.5 py-1 text-[12px] font-mono bg-accent text-bg rounded-none hover:brightness-110 transition-all cursor-pointer"
                     >
                       Save
                     </button>

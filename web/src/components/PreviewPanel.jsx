@@ -130,7 +130,7 @@ function PreviewPanel() {
           {frameable === false && (
             <div className="flex flex-col items-center justify-center h-full gap-4 px-8 text-center">
               {ogImage && (
-                <div className="max-w-md rounded-xl overflow-hidden border border-border-main shadow-lg">
+                <div className="max-w-md rounded-none overflow-hidden border border-border-main shadow-lg">
                   <img src={ogImage} className="w-full" alt="" />
                 </div>
               )}

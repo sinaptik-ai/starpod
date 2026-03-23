@@ -10,7 +10,7 @@ const PERIODS = [
 ]
 
 const MODEL_COLORS = [
-  '#3b82f6', // blue
+  '#C0C0C0', // silver
   '#8b5cf6', // violet
   '#06b6d4', // cyan
   '#f59e0b', // amber
@@ -135,7 +135,7 @@ function CostChart({ byDay }) {
       {/* Tooltip */}
       {hoveredIdx !== null && byDay[hoveredIdx] && (
         <div
-          className="absolute pointer-events-none bg-elevated border border-border-main rounded-lg px-3 py-2 text-xs shadow-lg"
+          className="absolute pointer-events-none bg-elevated border border-border-main rounded-none px-3 py-2 text-xs shadow-lg"
           style={{
             top: 8,
             left: `${Math.min(75, Math.max(5, (hoveredIdx / byDay.length) * 100))}%`,
@@ -146,7 +146,7 @@ function CostChart({ byDay }) {
           <div className="text-secondary font-medium mb-1">{formatDate(byDay[hoveredIdx].date)}</div>
           {byDay[hoveredIdx].by_model.map((m, i) => (
             <div key={i} className="flex items-center gap-2 text-muted">
-              <span className="inline-block w-2 h-2 rounded-sm flex-shrink-0"
+              <span className="inline-block w-2 h-2 rounded-none flex-shrink-0"
                 style={{ backgroundColor: colorMap[m.model] }} />
               <span className="truncate" style={{ maxWidth: 120 }}>{m.model || 'unknown'}</span>
               <span className="ml-auto font-mono text-primary">{formatCost(m.cost_usd)}</span>
@@ -163,7 +163,7 @@ function CostChart({ byDay }) {
         <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 px-1">
           {models.map(m => (
             <div key={m} className="flex items-center gap-1.5 text-xs text-muted">
-              <span className="inline-block w-2 h-2 rounded-sm flex-shrink-0"
+              <span className="inline-block w-2 h-2 rounded-none flex-shrink-0"
                 style={{ backgroundColor: colorMap[m] }} />
               <span>{m || 'unknown'}</span>
             </div>
@@ -196,14 +196,14 @@ export default function CostsTab() {
     <>
       {/* Period selector */}
       <div className="flex items-center gap-3 mb-5">
-        <div className="flex gap-1 bg-surface border border-border-subtle rounded-lg p-1">
+        <div className="flex gap-1 bg-surface border border-border-subtle rounded-none p-1">
           {PERIODS.map(p => (
             <button
               key={p.value}
               onClick={() => setPeriod(p.value)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md cursor-pointer transition-all ${
+              className={`px-3 py-1.5 text-xs font-medium rounded-none cursor-pointer transition-all ${
                 period === p.value
-                  ? 'bg-accent text-white shadow-sm'
+                  ? 'bg-accent text-bg shadow-sm'
                   : 'text-muted hover:text-secondary'
               }`}
             >

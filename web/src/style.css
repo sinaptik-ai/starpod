@@ -1,20 +1,20 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg: #09090b;
-  --color-surface: #111114;
-  --color-elevated: #19191e;
-  --color-input-bg: #111114;
-  --color-border-main: #27272a;
-  --color-border-subtle: #1e1e23;
-  --color-dim: #52525b;
-  --color-muted: #71717a;
-  --color-secondary: #a1a1aa;
-  --color-primary: #e4e4e7;
-  --color-accent: #3b82f6;
-  --color-accent-soft: #60a5fa;
-  --color-accent-glow: rgba(59,130,246,0.10);
-  --color-accent-muted: rgba(59,130,246,0.08);
+  --color-bg: #0A0A0A;
+  --color-surface: #111111;
+  --color-elevated: #151515;
+  --color-input-bg: #111111;
+  --color-border-main: #222222;
+  --color-border-subtle: #1A1A1A;
+  --color-dim: #555555;
+  --color-muted: #666666;
+  --color-secondary: #888888;
+  --color-primary: #E8E8E8;
+  --color-accent: #C0C0C0;
+  --color-accent-soft: #D0D0D0;
+  --color-accent-glow: rgba(192,192,192,0.10);
+  --color-accent-muted: rgba(192,192,192,0.08);
   --color-ok: #22c55e;
   --color-ok-muted: rgba(34,197,94,0.08);
   --color-err: #ef4444;
@@ -27,6 +27,7 @@
 
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', Helvetica, Arial, sans-serif;
   --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  --font-display: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 
   --sidebar-w: 280px;
 }
@@ -57,7 +58,7 @@ html, body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-::selection { background: rgba(59,130,246,0.25); }
+::selection { background: rgba(192,192,192,0.25); }
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
@@ -109,7 +110,7 @@ html, body {
   justify-content: center;
   width: 36px;
   height: 36px;
-  border-radius: 8px;
+  border-radius: 0;
   color: var(--color-secondary);
   cursor: pointer;
   transition: color 0.15s ease, background 0.15s ease;
@@ -134,7 +135,7 @@ html, body {
   top: 50%;
   transform: translateY(-50%);
   padding: 4px 8px;
-  border-radius: 6px;
+  border-radius: 0;
   background: var(--color-elevated);
   border: 1px solid var(--color-border-main);
   color: var(--color-primary);
@@ -204,7 +205,7 @@ html, body {
     justify-content: center;
     width: 32px;
     height: 32px;
-    border-radius: 8px;
+    border-radius: 0;
     color: var(--color-muted);
     cursor: pointer;
     transition: color 0.15s ease, background 0.15s ease;
@@ -228,7 +229,7 @@ html, body {
   gap: 4px;
   padding: 4px 0px;
   border: none;
-  border-radius: 8px;
+  border-radius: 0;
   background: none;
   color: var(--color-primary);
   font-family: var(--font-sans);
@@ -250,7 +251,7 @@ html, body {
   min-width: 220px;
   background: var(--color-surface);
   border: 1px solid var(--color-border-main);
-  border-radius: 8px;
+  border-radius: 0;
   padding: 4px;
   z-index: 50;
   box-shadow: 0 8px 24px rgba(0,0,0,0.4);
@@ -264,7 +265,7 @@ html, body {
   width: 100%;
   padding: 6px 10px;
   border: none;
-  border-radius: 6px;
+  border-radius: 0;
   background: none;
   color: var(--color-secondary);
   font-family: var(--font-mono);
@@ -335,14 +336,14 @@ html, body {
   align-items: center;
   background: var(--color-surface);
   border: 1px solid var(--color-border-main);
-  border-radius: 16px;
+  border-radius: 0;
   padding: 6px 6px 6px 12px;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .input-form-styled:focus-within {
   border-color: var(--color-dim);
-  box-shadow: 0 0 0 1px rgba(59,130,246,0.08);
+  box-shadow: 0 0 0 1px rgba(192,192,192,0.08);
 }
 
 /* Kill focus ring on input-form internals — the form border handles it */
@@ -386,7 +387,7 @@ html, body {
   right: 0;
   background: var(--color-surface);
   border: 1px solid var(--color-border-main);
-  border-radius: 12px;
+  border-radius: 0;
   padding: 4px;
   max-height: 288px;
   overflow-y: auto;
@@ -401,7 +402,7 @@ html, body {
   align-items: baseline;
   gap: 10px;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: 0;
   cursor: pointer;
   transition: background 0.1s ease;
 }
@@ -452,9 +453,9 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(9,9,11,0.9);
+  background: rgba(10,10,10,0.9);
   border: 2px dashed var(--color-accent);
-  border-radius: 16px;
+  border-radius: 0;
   margin: 8px;
   color: var(--color-accent);
   font-family: var(--font-sans);
@@ -495,7 +496,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   flex-direction: column;
   background: var(--color-surface);
   border: 1px solid var(--color-border-main);
-  border-radius: 16px;
+  border-radius: 0;
   overflow: hidden;
   box-shadow: 0 8px 40px rgba(0,0,0,0.35),
               0 0 0 1px rgba(255,255,255,0.03);
@@ -586,7 +587,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   background: var(--color-elevated);
   border: 1px solid var(--color-border-subtle);
   padding: 0.15em 0.4em;
-  border-radius: 4px;
+  border-radius: 0;
   font-family: var(--font-mono);
   font-size: 0.875em;
   color: var(--color-secondary);
@@ -641,7 +642,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
 
 .markdown-body img {
   max-width: 100%;
-  border-radius: 8px;
+  border-radius: 0;
   margin: 0.5em 0;
 }
 
@@ -653,7 +654,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   padding: 6px 10px;
   background: var(--color-bg);
   border: 1px solid var(--color-border-subtle);
-  border-radius: 8px;
+  border-radius: 0;
   transition: border-color 0.15s ease;
 }
 
@@ -717,7 +718,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   padding: 8px 16px;
   background: var(--color-surface);
   border: 1px solid var(--color-border-subtle);
-  border-radius: 12px;
+  border-radius: 0;
   cursor: pointer;
   transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
 }
@@ -744,7 +745,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   height: 6px;
   border-radius: 50%;
   background: var(--color-accent);
-  box-shadow: 0 0 4px rgba(59,130,246,0.4);
+  box-shadow: 0 0 4px rgba(192,192,192,0.4);
   flex-shrink: 0;
   margin-top: 6px;
 }
@@ -772,7 +773,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   align-items: flex-start;
   gap: 10px;
   padding: 10px 14px;
-  border-radius: 10px;
+  border-radius: 0;
   background: var(--color-surface);
   border: 1px solid var(--color-border-main);
   box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.03);
@@ -837,7 +838,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   color: var(--color-muted);
   border: none;
   background: none;
-  border-radius: 6px;
+  border-radius: 0;
   cursor: pointer;
   transition: color 0.15s, background 0.15s;
 }
@@ -860,7 +861,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   width: 100%;
   padding: 6px 8px;
   border: none;
-  border-radius: 6px;
+  border-radius: 0;
   background: none;
   font-size: 13px;
   font-family: var(--font-sans);
@@ -899,7 +900,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
 /* Card: grouped section */
 .s-card {
   border: 1px solid var(--color-border-subtle);
-  border-radius: 10px;
+  border-radius: 0;
   margin-bottom: 16px;
 }
 
@@ -910,7 +911,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   padding: 12px 16px;
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-border-subtle);
-  border-radius: 10px 10px 0 0;
+  border-radius: 0;
 }
 
 .s-card-title {
@@ -992,7 +993,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   width: 100%;
   background: var(--color-bg);
   border: 1px solid var(--color-border-main);
-  border-radius: 6px;
+  border-radius: 0;
   padding: 6px 10px;
   font-size: 0.8125rem;
   color: var(--color-primary);
@@ -1048,7 +1049,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   align-items: center;
   gap: 10px;
   padding: 6px 8px;
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--color-bg);
   border: 1px solid var(--color-border-subtle);
   transition: border-color 0.15s ease;
@@ -1086,10 +1087,10 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--color-accent);
-  background: rgba(59, 130, 246, 0.1);
-  border: 1px solid rgba(59, 130, 246, 0.2);
+  background: rgba(192, 192, 192, 0.1);
+  border: 1px solid rgba(192, 192, 192, 0.2);
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: 0;
   white-space: nowrap;
 }
 
@@ -1106,7 +1107,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   appearance: none;
   background: var(--color-elevated);
   border: 1px solid var(--color-border-main);
-  border-radius: 6px;
+  border-radius: 0;
   padding: 3px 24px 3px 8px;
   font-size: 0.6875rem;
   font-weight: 500;
@@ -1136,7 +1137,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   justify-content: center;
   width: 28px;
   height: 28px;
-  border-radius: 6px;
+  border-radius: 0;
   color: var(--color-dim);
   background: transparent;
   border: none;
@@ -1169,7 +1170,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   font-family: var(--font-mono);
   color: var(--color-primary);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: 0;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2352525b' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 6px center;
@@ -1214,7 +1215,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   align-items: center;
   gap: 5px;
   padding: 4px 10px;
-  border-radius: 6px;
+  border-radius: 0;
   border: 1px dashed var(--color-border-main);
   background: transparent;
   color: var(--color-muted);
@@ -1344,7 +1345,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   padding: 6px 10px;
   background: var(--color-elevated);
   border: 1px solid var(--color-border-main);
-  border-radius: 6px;
+  border-radius: 0;
   font-size: 0.6875rem;
   line-height: 1.5;
   color: var(--color-secondary);
@@ -1402,7 +1403,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   background: var(--color-primary);
   color: var(--color-bg);
   border: none;
-  border-radius: 6px;
+  border-radius: 0;
   padding: 6px 20px;
   font-size: 0.8125rem;
   font-weight: 500;
@@ -1425,7 +1426,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   font-size: 0.625rem;
   color: var(--color-dim);
   border: 1px solid var(--color-border-main);
-  border-radius: 3px;
+  border-radius: 0;
   background: var(--color-elevated);
   margin-left: 4px;
 }
@@ -1433,7 +1434,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
 /* Stat card (costs overview) */
 .s-stat-card {
   border: 1px solid var(--color-border-subtle);
-  border-radius: 10px;
+  border-radius: 0;
   padding: 14px 16px;
   background: var(--color-surface);
   transition: border-color 0.15s ease;
@@ -1479,7 +1480,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
 /* User card / Skill card */
 .user-card, .skill-card {
   border: 1px solid var(--color-border-subtle);
-  border-radius: 8px;
+  border-radius: 0;
   padding: 12px 14px;
   margin-bottom: 6px;
   transition: border-color 0.15s ease;
@@ -1519,7 +1520,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   width: 100%;
   padding: 8px 12px;
   border: none;
-  border-radius: 8px;
+  border-radius: 0;
   background: none;
   color: var(--color-muted);
   font-size: 0.8125rem;

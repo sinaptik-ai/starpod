@@ -143,7 +143,7 @@ export default function SettingsView() {
               <select
                 value={settingsActiveTab}
                 onChange={e => dispatch({ type: 'SET_SETTINGS_TAB', payload: e.target.value })}
-                className="bg-elevated text-secondary text-xs rounded-md px-2 py-1.5 border border-border-main cursor-pointer"
+                className="bg-elevated text-secondary text-xs rounded-none px-2 py-1.5 border border-border-main cursor-pointer"
               >
                 {tabGroups.map(group => (
                   <optgroup key={group.label} label={group.label}>
