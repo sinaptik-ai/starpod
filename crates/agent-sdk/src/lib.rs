@@ -44,6 +44,7 @@ pub mod pricing {
 }
 pub mod providers;
 pub mod query;
+pub mod sanitize;
 pub mod session;
 pub mod tools;
 pub mod types;

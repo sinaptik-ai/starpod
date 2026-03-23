@@ -1,8 +1,15 @@
 //! Conversation compaction — summarize older messages when approaching context limits.
 //!
-//! When `input_tokens` from the API response exceeds the configured `context_budget`,
-//! older messages are summarized via a cheaper model call and replaced with a compact
-//! summary, preserving the system prompt and recent turns.
+//! Two-tier context management:
+//!
+//! 1. **Pruning** ([`prune_tool_results`]) — lightweight pass that truncates oversized
+//!    tool results in older messages. Triggers at a configurable percentage of
+//!    `context_budget` (default 70%). This often frees enough space to avoid full
+//!    compaction.
+//!
+//! 2. **Compaction** ([`call_summarizer`]) — when `input_tokens` exceeds `context_budget`,
+//!    older messages are summarized via a cheaper model call and replaced with a compact
+//!    summary, preserving the system prompt and recent turns.
 
 use tracing::{debug, warn};
 
@@ -197,6 +204,103 @@ pub struct CompactResult {
     pub pre_tokens: u64,
     pub summary: String,
     pub messages_compacted: usize,
+}
+
+// ── tool result pruning ──────────────────────────────────────────────────
+
+/// Default: tool results longer than this (in chars) are candidates for pruning.
+pub const DEFAULT_PRUNE_TOOL_RESULT_MAX_CHARS: usize = 2_000;
+
+/// Default: pruning triggers at 70% of context budget.
+pub const DEFAULT_PRUNE_THRESHOLD_PCT: u8 = 70;
+
+/// Check whether lightweight pruning should trigger.
+///
+/// Returns `true` when `input_tokens` exceeds `threshold_pct`% of `context_budget`
+/// but is still within the budget (i.e. before full compaction fires).
+pub fn should_prune(input_tokens: u64, context_budget: u64, threshold_pct: u8) -> bool {
+    let threshold = context_budget * threshold_pct as u64 / 100;
+    input_tokens > threshold
+}
+
+/// Prune oversized tool results in-place to free context space.
+///
+/// Walks the conversation from oldest to newest, skipping the last
+/// `preserve_tail` messages. For each `ToolResult` whose text content exceeds
+/// `max_chars`, replaces it with: first 500 chars + marker + last 200 chars.
+///
+/// Returns the total number of characters removed.
+pub fn prune_tool_results(
+    conversation: &mut [ApiMessage],
+    max_chars: usize,
+    preserve_tail: usize,
+) -> usize {
+    let len = conversation.len();
+    let end = len.saturating_sub(preserve_tail);
+    let mut total_removed = 0;
+
+    for msg in conversation[..end].iter_mut() {
+        for block in msg.content.iter_mut() {
+            if let ApiContentBlock::ToolResult { content, .. } = block {
+                let text = content.to_string();
+                if text.len() <= max_chars {
+                    continue;
+                }
+
+                let original_len = text.len();
+
+                // Build pruned version: head + marker + tail
+                let head_end = char_boundary(&text, 500);
+                let tail_start = char_boundary_rev(&text, 200);
+
+                let pruned = format!(
+                    "{}\n\n[...{} chars pruned...]\n\n{}",
+                    &text[..head_end],
+                    original_len - head_end - (original_len - tail_start),
+                    &text[tail_start..]
+                );
+
+                let removed = original_len - pruned.len();
+                total_removed += removed;
+                *content = serde_json::json!(pruned);
+
+                debug!(
+                    original = original_len,
+                    pruned = pruned.len(),
+                    saved = removed,
+                    "Pruned tool result"
+                );
+            }
+        }
+    }
+
+    if total_removed > 0 {
+        debug!(total_chars_removed = total_removed, "Tool result pruning complete");
+    }
+
+    total_removed
+}
+
+/// Find a char boundary at or before `target` bytes from the start.
+fn char_boundary(s: &str, target: usize) -> usize {
+    let target = target.min(s.len());
+    let mut pos = target;
+    while pos > 0 && !s.is_char_boundary(pos) {
+        pos -= 1;
+    }
+    pos
+}
+
+/// Find a char boundary at or after `distance` bytes from the end.
+fn char_boundary_rev(s: &str, distance: usize) -> usize {
+    if distance >= s.len() {
+        return 0;
+    }
+    let mut pos = s.len() - distance;
+    while pos < s.len() && !s.is_char_boundary(pos) {
+        pos += 1;
+    }
+    pos
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────
@@ -422,5 +526,130 @@ mod tests {
         assert!(prompt.contains("[assistant]"));
         assert!(prompt.contains("Rust is a systems language."));
         assert!(prompt.contains("<conversation>"));
+    }
+
+    // ── should_prune ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_should_prune_threshold() {
+        // 70% of 160_000 = 112_000
+        assert!(!should_prune(100_000, 160_000, 70));
+        assert!(should_prune(120_000, 160_000, 70));
+        assert!(!should_prune(112_000, 160_000, 70));
+        assert!(should_prune(112_001, 160_000, 70));
+    }
+
+    // ── prune_tool_results ────────────────────────────────────────────
+
+    fn large_tool_result_msg(size: usize) -> ApiMessage {
+        ApiMessage {
+            role: "user".to_string(),
+            content: vec![ApiContentBlock::ToolResult {
+                tool_use_id: "tu_big".to_string(),
+                content: serde_json::json!("x".repeat(size)),
+                is_error: None,
+                cache_control: None,
+                name: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn prune_truncates_large_tool_results() {
+        let mut conv = vec![
+            text_msg("user", "start"),
+            tool_use_msg(),
+            large_tool_result_msg(5000),
+            text_msg("assistant", "ok"),
+            text_msg("user", "next"),
+        ];
+
+        let removed = prune_tool_results(&mut conv, 2000, 2);
+        assert!(removed > 0, "Should have pruned chars");
+
+        // The tool result (index 2) should now contain the pruning marker
+        if let ApiContentBlock::ToolResult { content, .. } = &conv[2].content[0] {
+            let text = content.as_str().unwrap();
+            assert!(text.contains("[..."), "Should contain prune marker");
+            assert!(text.len() < 5000, "Should be smaller than original");
+        } else {
+            panic!("Expected tool result");
+        }
+    }
+
+    #[test]
+    fn prune_preserves_small_tool_results() {
+        let mut conv = vec![
+            text_msg("user", "start"),
+            tool_use_msg(),
+            tool_result_msg(), // Small result
+            text_msg("assistant", "ok"),
+            text_msg("user", "next"),
+        ];
+
+        let removed = prune_tool_results(&mut conv, 2000, 2);
+        assert_eq!(removed, 0, "Small results should not be pruned");
+    }
+
+    #[test]
+    fn prune_skips_tail_messages() {
+        let mut conv = vec![
+            text_msg("user", "old"),
+            text_msg("assistant", "old reply"),
+            tool_use_msg(),
+            large_tool_result_msg(5000), // index 3 — in the tail (preserve_tail=2)
+            text_msg("assistant", "done"),
+        ];
+
+        // preserve_tail=2 → only process [0..3], skipping indices 3 and 4
+        let removed = prune_tool_results(&mut conv, 2000, 2);
+        assert_eq!(removed, 0, "Tail messages should not be pruned");
+    }
+
+    #[test]
+    fn prune_handles_empty_conversation() {
+        let mut conv: Vec<ApiMessage> = vec![];
+        let removed = prune_tool_results(&mut conv, 2000, 2);
+        assert_eq!(removed, 0);
+    }
+
+    #[test]
+    fn prune_multiple_large_tool_results() {
+        let mut conv = vec![
+            text_msg("user", "q1"),
+            tool_use_msg(),
+            large_tool_result_msg(5000),   // index 2 — should be pruned
+            text_msg("assistant", "a1"),
+            text_msg("user", "q2"),
+            tool_use_msg(),
+            large_tool_result_msg(8000),   // index 6 — should be pruned
+            text_msg("assistant", "a2"),
+            text_msg("user", "latest"),    // tail
+            text_msg("assistant", "done"), // tail
+        ];
+
+        let removed = prune_tool_results(&mut conv, 2000, 2);
+        assert!(removed > 0, "Should have pruned chars");
+
+        // Both tool results should be pruned
+        for idx in [2, 6] {
+            if let ApiContentBlock::ToolResult { content, .. } = &conv[idx].content[0] {
+                let text = content.as_str().unwrap();
+                assert!(text.contains("[..."), "Index {} should be pruned", idx);
+            }
+        }
+    }
+
+    #[test]
+    fn prune_all_messages_in_tail() {
+        let mut conv = vec![
+            text_msg("user", "hello"),
+            tool_use_msg(),
+            large_tool_result_msg(5000),
+        ];
+
+        // preserve_tail=10 > len=3 → nothing should be pruned
+        let removed = prune_tool_results(&mut conv, 2000, 10);
+        assert_eq!(removed, 0, "All messages in tail — nothing to prune");
     }
 }

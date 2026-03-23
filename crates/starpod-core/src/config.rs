@@ -209,8 +209,16 @@ impl Default for EmailChannelConfig {
 pub struct InternetConfig {
     /// Whether web search and fetch tools are enabled.
     pub enabled: bool,
-    /// Maximum response body size in bytes for WebFetch (default: 512 KiB).
+    /// Maximum response body size in bytes for WebFetch (default: 2 MiB).
+    ///
+    /// This is the raw HTTP response limit applied *before* any HTML processing.
+    /// A larger limit gives readability extraction more content to work with.
     pub max_fetch_bytes: usize,
+    /// Maximum extracted text length in characters (default: 50 000).
+    ///
+    /// Applied *after* readability extraction and markdown conversion.
+    /// This is the final size guard before content enters the agent's context.
+    pub max_text_chars: usize,
     /// Request timeout in seconds (default: 15).
     pub timeout_secs: u64,
 }
@@ -219,7 +227,8 @@ impl Default for InternetConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            max_fetch_bytes: 512 * 1024,
+            max_fetch_bytes: 2 * 1024 * 1024,
+            max_text_chars: 50_000,
             timeout_secs: 15,
         }
     }
@@ -342,11 +351,26 @@ pub struct CompactionConfig {
     /// Falls back to `compaction_model` then the primary model if not set.
     #[serde(default)]
     pub flush_model: Option<String>,
+    /// Maximum size in bytes for any single tool result (default: 50 000).
+    ///
+    /// Applied to all tool results before they enter the conversation.
+    /// Also strips base64 data URIs and hex blobs.
+    #[serde(default = "default_max_tool_result_bytes")]
+    pub max_tool_result_bytes: usize,
+    /// Percentage of context_budget at which lightweight tool-result pruning triggers (default: 70).
+    #[serde(default = "default_prune_threshold_pct")]
+    pub prune_threshold_pct: u8,
+    /// Tool results longer than this (in chars) are candidates for pruning (default: 2000).
+    #[serde(default = "default_prune_tool_result_max_chars")]
+    pub prune_tool_result_max_chars: usize,
 }
 
 fn default_context_budget() -> u64 { 160_000 }
 fn default_summary_max_tokens() -> u32 { 4096 }
 fn default_min_keep_messages() -> usize { 4 }
+fn default_max_tool_result_bytes() -> usize { 50_000 }
+fn default_prune_threshold_pct() -> u8 { 70 }
+fn default_prune_tool_result_max_chars() -> usize { 2_000 }
 
 impl Default for CompactionConfig {
     fn default() -> Self {
@@ -356,6 +380,9 @@ impl Default for CompactionConfig {
             min_keep_messages: default_min_keep_messages(),
             memory_flush: true,
             flush_model: None,
+            max_tool_result_bytes: default_max_tool_result_bytes(),
+            prune_threshold_pct: default_prune_threshold_pct(),
+            prune_tool_result_max_chars: default_prune_tool_result_max_chars(),
         }
     }
 }
@@ -1134,6 +1161,9 @@ mod tests {
         assert_eq!(cfg.min_keep_messages, 4);
         assert!(cfg.memory_flush, "memory_flush should default to true");
         assert!(cfg.flush_model.is_none(), "flush_model should default to None");
+        assert_eq!(cfg.max_tool_result_bytes, 50_000);
+        assert_eq!(cfg.prune_threshold_pct, 70);
+        assert_eq!(cfg.prune_tool_result_max_chars, 2_000);
     }
 
     #[test]
@@ -1145,6 +1175,9 @@ mod tests {
         assert_eq!(config.compaction.min_keep_messages, 4);
         assert!(config.compaction.memory_flush);
         assert!(config.compaction.flush_model.is_none());
+        assert_eq!(config.compaction.max_tool_result_bytes, 50_000);
+        assert_eq!(config.compaction.prune_threshold_pct, 70);
+        assert_eq!(config.compaction.prune_tool_result_max_chars, 2_000);
     }
 
     #[test]
@@ -1154,11 +1187,17 @@ mod tests {
             context_budget = 80000
             summary_max_tokens = 2048
             min_keep_messages = 8
+            max_tool_result_bytes = 75000
+            prune_threshold_pct = 60
+            prune_tool_result_max_chars = 5000
         "#;
         let config: StarpodConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.compaction.context_budget, 80_000);
         assert_eq!(config.compaction.summary_max_tokens, 2048);
         assert_eq!(config.compaction.min_keep_messages, 8);
+        assert_eq!(config.compaction.max_tool_result_bytes, 75_000);
+        assert_eq!(config.compaction.prune_threshold_pct, 60);
+        assert_eq!(config.compaction.prune_tool_result_max_chars, 5_000);
     }
 
     #[test]
@@ -1173,6 +1212,9 @@ mod tests {
         assert_eq!(config.compaction.summary_max_tokens, 4096); // default
         assert_eq!(config.compaction.min_keep_messages, 4); // default
         assert!(config.compaction.memory_flush); // default true
+        assert_eq!(config.compaction.max_tool_result_bytes, 50_000); // default
+        assert_eq!(config.compaction.prune_threshold_pct, 70); // default
+        assert_eq!(config.compaction.prune_tool_result_max_chars, 2_000); // default
     }
 
     #[test]
@@ -1484,7 +1526,8 @@ mod tests {
     fn internet_config_defaults() {
         let config = InternetConfig::default();
         assert!(config.enabled);
-        assert_eq!(config.max_fetch_bytes, 512 * 1024);
+        assert_eq!(config.max_fetch_bytes, 2 * 1024 * 1024);
+        assert_eq!(config.max_text_chars, 50_000);
         assert_eq!(config.timeout_secs, 15);
     }
 
@@ -1492,7 +1535,8 @@ mod tests {
     fn internet_config_from_toml_defaults() {
         let config: InternetConfig = toml::from_str("").unwrap();
         assert!(config.enabled);
-        assert_eq!(config.max_fetch_bytes, 512 * 1024);
+        assert_eq!(config.max_fetch_bytes, 2 * 1024 * 1024);
+        assert_eq!(config.max_text_chars, 50_000);
         assert_eq!(config.timeout_secs, 15);
     }
 
@@ -1507,7 +1551,8 @@ mod tests {
         .unwrap();
         assert!(!config.enabled);
         assert_eq!(config.timeout_secs, 30);
-        assert_eq!(config.max_fetch_bytes, 512 * 1024);
+        assert_eq!(config.max_fetch_bytes, 2 * 1024 * 1024);
+        assert_eq!(config.max_text_chars, 50_000);
     }
 
     #[test]
@@ -1516,12 +1561,14 @@ mod tests {
             r#"
             enabled = true
             max_fetch_bytes = 1048576
+            max_text_chars = 25000
             timeout_secs = 60
             "#,
         )
         .unwrap();
         assert!(config.enabled);
         assert_eq!(config.max_fetch_bytes, 1_048_576);
+        assert_eq!(config.max_text_chars, 25_000);
         assert_eq!(config.timeout_secs, 60);
     }
 

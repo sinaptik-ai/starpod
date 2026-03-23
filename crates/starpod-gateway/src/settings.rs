@@ -128,10 +128,22 @@ struct BrowserSettings {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct CompactionSettings {
+    context_budget: u64,
+    summary_max_tokens: u32,
+    min_keep_messages: usize,
+    max_tool_result_bytes: usize,
+    prune_threshold_pct: u8,
+    prune_tool_result_max_chars: usize,
+    memory_flush: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct InternetSettings {
     enabled: bool,
     timeout_secs: u64,
     max_fetch_bytes: usize,
+    max_text_chars: usize,
     #[serde(default)]
     brave_api_key: Option<String>,
 }
@@ -299,6 +311,8 @@ pub fn settings_routes() -> Router<Arc<AppState>> {
             get(list_auth_api_keys).post(create_auth_api_key),
         )
         .route("/api/settings/auth/api-keys/{id}/revoke", axum::routing::post(revoke_auth_api_key))
+        // Compaction
+        .route("/api/settings/compaction", get(get_compaction).put(put_compaction))
         // Internet
         .route("/api/settings/internet", get(get_internet).put(put_internet))
         // Channels
@@ -1416,6 +1430,59 @@ async fn revoke_auth_api_key(
     Ok(ok_json())
 }
 
+// ── Compaction ──────────────────────────────────────────────────────────
+
+async fn get_compaction(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> ApiResult<CompactionSettings> {
+    let auth_user = authenticate_request(&state, &headers).await?;
+    require_admin(&auth_user)?;
+
+    let cfg = state.config.read().unwrap();
+    Ok(Json(CompactionSettings {
+        context_budget: cfg.compaction.context_budget,
+        summary_max_tokens: cfg.compaction.summary_max_tokens,
+        min_keep_messages: cfg.compaction.min_keep_messages,
+        max_tool_result_bytes: cfg.compaction.max_tool_result_bytes,
+        prune_threshold_pct: cfg.compaction.prune_threshold_pct,
+        prune_tool_result_max_chars: cfg.compaction.prune_tool_result_max_chars,
+        memory_flush: cfg.compaction.memory_flush,
+    }))
+}
+
+async fn put_compaction(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(settings): Json<CompactionSettings>,
+) -> ApiResult<serde_json::Value> {
+    let auth_user = authenticate_request(&state, &headers).await?;
+    require_admin(&auth_user)?;
+
+    let mut doc = read_agent_toml(&state)?;
+    let table = doc
+        .as_table_mut()
+        .ok_or_else(|| internal("agent.toml is not a table"))?;
+
+    let compaction = table
+        .entry("compaction")
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| internal("[compaction] is not a table"))?;
+
+    compaction.insert("context_budget".into(), toml::Value::Integer(settings.context_budget as i64));
+    compaction.insert("summary_max_tokens".into(), toml::Value::Integer(settings.summary_max_tokens as i64));
+    compaction.insert("min_keep_messages".into(), toml::Value::Integer(settings.min_keep_messages as i64));
+    compaction.insert("max_tool_result_bytes".into(), toml::Value::Integer(settings.max_tool_result_bytes as i64));
+    compaction.insert("prune_threshold_pct".into(), toml::Value::Integer(settings.prune_threshold_pct as i64));
+    compaction.insert("prune_tool_result_max_chars".into(), toml::Value::Integer(settings.prune_tool_result_max_chars as i64));
+    compaction.insert("memory_flush".into(), toml::Value::Boolean(settings.memory_flush));
+
+    write_agent_toml(&state, &doc)?;
+
+    Ok(ok_json())
+}
+
 // ── Internet ────────────────────────────────────────────────────────────
 
 async fn get_internet(
@@ -1431,6 +1498,7 @@ async fn get_internet(
         enabled: cfg.internet.enabled,
         timeout_secs: cfg.internet.timeout_secs,
         max_fetch_bytes: cfg.internet.max_fetch_bytes,
+        max_text_chars: cfg.internet.max_text_chars,
         brave_api_key,
     }))
 }
@@ -1462,6 +1530,10 @@ async fn put_internet(
     internet.insert(
         "max_fetch_bytes".into(),
         toml::Value::Integer(settings.max_fetch_bytes as i64),
+    );
+    internet.insert(
+        "max_text_chars".into(),
+        toml::Value::Integer(settings.max_text_chars as i64),
     );
 
     write_agent_toml(&state, &doc)?;
@@ -2994,6 +3066,93 @@ mod tests {
         assert_eq!(parsed.telegram.stream_mode, None);
     }
 
+    // ── Compaction ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn get_compaction_returns_defaults() {
+        let (_tmp, state) = test_app_state().await;
+        let (status, json) = get_json(state, "/api/settings/compaction").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["context_budget"], 160_000);
+        assert_eq!(json["summary_max_tokens"], 4096);
+        assert_eq!(json["min_keep_messages"], 4);
+        assert_eq!(json["max_tool_result_bytes"], 50_000);
+        assert_eq!(json["prune_threshold_pct"], 70);
+        assert_eq!(json["prune_tool_result_max_chars"], 2_000);
+        assert_eq!(json["memory_flush"], true);
+    }
+
+    #[tokio::test]
+    async fn put_compaction_updates_toml() {
+        let (_tmp, state) = test_app_state().await;
+        let (status, _) = put_json(
+            Arc::clone(&state),
+            "/api/settings/compaction",
+            serde_json::json!({
+                "context_budget": 200000,
+                "summary_max_tokens": 8192,
+                "min_keep_messages": 6,
+                "max_tool_result_bytes": 75000,
+                "prune_threshold_pct": 80,
+                "prune_tool_result_max_chars": 5000,
+                "memory_flush": false,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (_, json) = get_json(state, "/api/settings/compaction").await;
+        assert_eq!(json["context_budget"], 200_000);
+        assert_eq!(json["summary_max_tokens"], 8192);
+        assert_eq!(json["min_keep_messages"], 6);
+        assert_eq!(json["max_tool_result_bytes"], 75_000);
+        assert_eq!(json["prune_threshold_pct"], 80);
+        assert_eq!(json["prune_tool_result_max_chars"], 5_000);
+        assert_eq!(json["memory_flush"], false);
+    }
+
+    #[tokio::test]
+    async fn compaction_settings_serde_roundtrip() {
+        let settings = CompactionSettings {
+            context_budget: 200_000,
+            summary_max_tokens: 8192,
+            min_keep_messages: 6,
+            max_tool_result_bytes: 75_000,
+            prune_threshold_pct: 80,
+            prune_tool_result_max_chars: 5_000,
+            memory_flush: false,
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: CompactionSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.context_budget, 200_000);
+        assert_eq!(back.max_tool_result_bytes, 75_000);
+        assert_eq!(back.prune_threshold_pct, 80);
+        assert_eq!(back.prune_tool_result_max_chars, 5_000);
+    }
+
+    #[tokio::test]
+    async fn put_compaction_preserves_other_sections() {
+        let (_tmp, state) = test_app_state().await;
+        let (_, before) = get_json(Arc::clone(&state), "/api/settings/general").await;
+        put_json(
+            Arc::clone(&state),
+            "/api/settings/compaction",
+            serde_json::json!({
+                "context_budget": 200000,
+                "summary_max_tokens": 8192,
+                "min_keep_messages": 6,
+                "max_tool_result_bytes": 75000,
+                "prune_threshold_pct": 80,
+                "prune_tool_result_max_chars": 5000,
+                "memory_flush": false,
+            }),
+        )
+        .await;
+        let (_, after) = get_json(state, "/api/settings/general").await;
+        assert_eq!(before["model"], after["model"]);
+        assert_eq!(before["provider"], after["provider"]);
+    }
+
     // ── Internet ────────────────────────────────────────────────────────
 
     #[tokio::test]
@@ -3003,7 +3162,8 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(json["enabled"], true);
         assert_eq!(json["timeout_secs"], 15);
-        assert_eq!(json["max_fetch_bytes"], 512 * 1024);
+        assert_eq!(json["max_fetch_bytes"], 2 * 1024 * 1024);
+        assert_eq!(json["max_text_chars"], 50_000);
     }
 
     #[tokio::test]
@@ -3016,6 +3176,7 @@ mod tests {
                 "enabled": false,
                 "timeout_secs": 30,
                 "max_fetch_bytes": 1048576,
+                "max_text_chars": 25000,
             }),
         )
         .await;
@@ -3025,6 +3186,7 @@ mod tests {
         assert_eq!(json["enabled"], false);
         assert_eq!(json["timeout_secs"], 30);
         assert_eq!(json["max_fetch_bytes"], 1048576);
+        assert_eq!(json["max_text_chars"], 25000);
     }
 
     #[tokio::test]
@@ -3038,6 +3200,7 @@ mod tests {
                 "enabled": false,
                 "timeout_secs": 20,
                 "max_fetch_bytes": 262144,
+                "max_text_chars": 30000,
             }),
         )
         .await;
@@ -3052,6 +3215,7 @@ mod tests {
             enabled: true,
             timeout_secs: 30,
             max_fetch_bytes: 1_048_576,
+            max_text_chars: 50_000,
             brave_api_key: None,
         };
         let json = serde_json::to_string(&settings).unwrap();

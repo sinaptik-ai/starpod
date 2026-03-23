@@ -25,6 +25,7 @@ use crate::client::{
 };
 use crate::compact;
 use crate::error::{AgentError, Result};
+use crate::sanitize;
 use crate::hooks::HookRegistry;
 use crate::options::{Options, PermissionMode, ThinkingConfig};
 use crate::permissions::{PermissionEvaluator, PermissionVerdict};
@@ -828,7 +829,14 @@ async fn run_agent_loop(
             })
             .collect();
 
-        while let Some((tool_use_id, tool_name, actual_input, tool_result)) = futs.next().await {
+        while let Some((tool_use_id, tool_name, actual_input, mut tool_result)) = futs.next().await {
+            // Sanitize tool result: strip blobs, enforce byte limit.
+            let max_result_bytes = options
+                .max_tool_result_bytes
+                .unwrap_or(sanitize::DEFAULT_MAX_TOOL_RESULT_BYTES);
+            tool_result.content =
+                sanitize::sanitize_tool_result(&tool_result.content, max_result_bytes);
+
             // Run PostToolUse hooks
             hook_registry.run_post_tool_use(
                 tool_name,
@@ -881,6 +889,31 @@ async fn run_agent_loop(
             role: "user".to_string(),
             content: tool_results,
         });
+
+        // --- Lightweight pruning (between turns, before full compaction) ---
+        if let Some(context_budget) = options.context_budget {
+            let prune_pct = options
+                .prune_threshold_pct
+                .unwrap_or(compact::DEFAULT_PRUNE_THRESHOLD_PCT);
+            if compact::should_prune(response.usage.input_tokens, context_budget, prune_pct) {
+                let max_chars = options
+                    .prune_tool_result_max_chars
+                    .unwrap_or(compact::DEFAULT_PRUNE_TOOL_RESULT_MAX_CHARS);
+                let min_keep = options.min_keep_messages.unwrap_or(4);
+                let removed = compact::prune_tool_results(
+                    &mut conversation,
+                    max_chars,
+                    min_keep,
+                );
+                if removed > 0 {
+                    debug!(
+                        chars_removed = removed,
+                        input_tokens = response.usage.input_tokens,
+                        "Pruned oversized tool results to free context space"
+                    );
+                }
+            }
+        }
 
         // --- Compaction check (between turns) ---
         if let Some(context_budget) = options.context_budget {
