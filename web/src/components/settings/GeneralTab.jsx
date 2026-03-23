@@ -67,42 +67,49 @@ export default function GeneralTab() {
   return (
     <>
       <Card title="Models" desc="first model is the default">
-        {configModels.map((spec, idx) => {
-          const { provider, model } = parseSpec(spec)
-          const providerModels = catalog[provider] || []
-          return (
-            <div key={idx} className="flex items-center gap-2 mb-2">
-              <Select
-                value={provider}
-                onChange={v => setModelAt(idx, buildSpec(v, (catalog[v] || [])[0] || model))}
-                options={providers}
-                className="w-32 shrink-0"
-              />
-              <div className="flex-1">
-                <ModelSelect
-                  value={model}
-                  onChange={v => setModelAt(idx, buildSpec(provider, v))}
-                  models={providerModels}
-                />
+        <div className="s-model-list">
+          {configModels.map((spec, idx) => {
+            const { provider, model } = parseSpec(spec)
+            const providerModels = catalog[provider] || []
+            return (
+              <div key={idx} className="s-model-row">
+                <div className="s-model-row-left">
+                  {idx === 0 && <span className="s-model-badge">default</span>}
+                  {idx > 0 && <span className="s-model-index">{idx + 1}</span>}
+                  <select
+                    className="s-model-provider"
+                    value={provider}
+                    onChange={e => setModelAt(idx, buildSpec(e.target.value, (catalog[e.target.value] || [])[0] || model))}
+                  >
+                    {providers.map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+                <div className="s-model-row-right">
+                  <ModelSelect
+                    value={model}
+                    onChange={v => setModelAt(idx, buildSpec(provider, v))}
+                    models={providerModels}
+                  />
+                  {configModels.length > 1 && (
+                    <button
+                      className="s-model-remove"
+                      onClick={() => removeModel(idx)}
+                      title="Remove model"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                    </button>
+                  )}
+                </div>
               </div>
-              {configModels.length > 1 && (
-                <button
-                  className="text-dim hover:text-err text-xs px-1"
-                  onClick={() => removeModel(idx)}
-                  title="Remove model"
-                >
-                  ×
-                </button>
-              )}
-            </div>
-          )
-        })}
-        <button
-          className="text-xs text-muted hover:text-primary mt-1"
-          onClick={addModel}
-        >
-          + Add model
-        </button>
+            )
+          })}
+        </div>
+        <div className="s-model-actions">
+          <button className="s-model-add" onClick={addModel}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            Add model
+          </button>
+        </div>
         <Row label="Reasoning" helpTip="Higher = more thinking time. Low is fastest, High most thorough. Only some models support this.">
           <Select value={config.reasoning_effort || ''} onChange={v => set('reasoning_effort', v || null)} options={[
             { value: '', label: 'Default' }, { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' }, { value: 'high', label: 'High' },
