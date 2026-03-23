@@ -29,6 +29,7 @@ const initialState = {
   currentSessionKey: generateUUID(),
   sessions: [],
   previewUrl: null,
+  selectedModel: null, // null = use default (first in models list)
 }
 
 function appReducer(state, action) {
@@ -99,6 +100,9 @@ function appReducer(state, action) {
           s.id === action.payload ? { ...s, is_read: true } : s
         ),
       }
+
+    case 'SET_MODEL':
+      return { ...state, selectedModel: action.payload }
 
     case 'OPEN_PREVIEW':
       return { ...state, previewUrl: action.payload }

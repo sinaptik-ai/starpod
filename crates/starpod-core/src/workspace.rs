@@ -461,13 +461,9 @@ pub struct AgentConfig {
     #[serde(default = "default_server_addr")]
     pub server_addr: String,
 
-    /// Active LLM provider.
-    #[serde(default = "default_provider")]
-    pub provider: String,
-
-    /// Model to use.
-    #[serde(default = "default_model")]
-    pub model: String,
+    /// Allowed models in `"provider/model"` format.
+    #[serde(default = "default_models")]
+    pub models: Vec<String>,
 
     /// Maximum agentic turns per request.
     #[serde(default = "default_max_turns")]
@@ -481,13 +477,9 @@ pub struct AgentConfig {
     #[serde(default)]
     pub reasoning_effort: Option<ReasoningEffort>,
 
-    /// Compaction model override.
+    /// Compaction model in `"provider/model"` format.
     #[serde(default)]
     pub compaction_model: Option<String>,
-
-    /// Compaction provider override.
-    #[serde(default)]
-    pub compaction_provider: Option<String>,
 
     /// Agent display name.
     #[serde(default = "default_agent_name")]
@@ -548,11 +540,8 @@ fn default_agent_name() -> String {
 fn default_server_addr() -> String {
     "127.0.0.1:3000".to_string()
 }
-fn default_provider() -> String {
-    "anthropic".to_string()
-}
-fn default_model() -> String {
-    "claude-haiku-4-5".to_string()
+fn default_models() -> Vec<String> {
+    vec!["anthropic/claude-haiku-4-5".to_string()]
 }
 fn default_max_turns() -> u32 {
     30
@@ -567,13 +556,11 @@ impl Default for AgentConfig {
             name: default_agent_name(),
             skills: Vec::new(),
             server_addr: default_server_addr(),
-            provider: default_provider(),
-            model: default_model(),
+            models: default_models(),
             max_turns: default_max_turns(),
             max_tokens: default_max_tokens(),
             reasoning_effort: None,
             compaction_model: None,
-            compaction_provider: None,
             agent_name: default_agent_name(),
             timezone: None,
             followup_mode: FollowupMode::default(),
@@ -598,13 +585,11 @@ impl AgentConfig {
             db_dir: paths.db_dir.clone(),
             db_path: None,
             server_addr: self.server_addr,
-            provider: self.provider,
-            model: self.model,
+            models: self.models,
             max_turns: self.max_turns,
             max_tokens: self.max_tokens,
             reasoning_effort: self.reasoning_effort,
             compaction_model: self.compaction_model,
-            compaction_provider: self.compaction_provider,
             agent_name: self.agent_name,
             timezone: self.timezone,
             followup_mode: self.followup_mode,
@@ -630,9 +615,7 @@ impl AgentConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkspaceConfig {
     #[serde(default)]
-    pub provider: Option<String>,
-    #[serde(default)]
-    pub model: Option<String>,
+    pub models: Option<Vec<String>>,
     #[serde(default)]
     pub max_turns: Option<u32>,
     #[serde(default)]
@@ -1020,8 +1003,7 @@ mod tests {
             config_dir.join("agent.toml"),
             r#"
 agent_name = "TestBot"
-model = "claude-haiku-4-5"
-provider = "anthropic"
+models = ["anthropic/claude-haiku-4-5"]
 "#,
         )
         .unwrap();
@@ -1033,7 +1015,7 @@ provider = "anthropic"
         let config = load_agent_config(&paths).unwrap();
 
         assert_eq!(config.agent_name, "TestBot");
-        assert_eq!(config.model, "claude-haiku-4-5");
+        assert_eq!(config.models, vec!["anthropic/claude-haiku-4-5"]);
     }
 
     #[test]
@@ -1045,8 +1027,7 @@ provider = "anthropic"
         std::fs::write(
             root.join("starpod.toml"),
             r#"
-provider = "openai"
-model = "gpt-4o"
+models = ["openai/gpt-4o"]
 max_turns = 99
 "#,
         )
@@ -1058,8 +1039,7 @@ max_turns = 99
         std::fs::write(
             agent_dir.join("agent.toml"),
             r#"
-provider = "anthropic"
-model = "claude-haiku-4-5"
+models = ["anthropic/claude-haiku-4-5"]
 agent_name = "MyAgent"
 max_turns = 30
 "#,
@@ -1075,9 +1055,8 @@ max_turns = 30
         let config = load_agent_config(&paths).unwrap();
 
         // All values from agent.toml, NOT starpod.toml
-        assert_eq!(config.model, "claude-haiku-4-5");
+        assert_eq!(config.models, vec!["anthropic/claude-haiku-4-5"]);
         assert_eq!(config.agent_name, "MyAgent");
-        assert_eq!(config.provider, "anthropic");
         assert_eq!(config.max_turns, 30);
     }
 
@@ -1106,7 +1085,7 @@ max_turns = 30
     fn agent_config_to_starpod_config_bridge() {
         let config = AgentConfig {
             agent_name: "TestBot".to_string(),
-            model: "claude-haiku-4-5".to_string(),
+            models: vec!["anthropic/claude-haiku-4-5".to_string()],
             ..Default::default()
         };
         let paths = ResolvedPaths {
@@ -1127,7 +1106,7 @@ max_turns = 30
 
         let starpod_config = config.into_starpod_config(&paths);
         assert_eq!(starpod_config.agent_name, "TestBot");
-        assert_eq!(starpod_config.model, "claude-haiku-4-5");
+        assert_eq!(starpod_config.model(), "claude-haiku-4-5");
         assert_eq!(starpod_config.db_dir, PathBuf::from("/app/.starpod/db"));
         assert_eq!(starpod_config.project_root, PathBuf::from("/app/home"));
     }
@@ -1142,7 +1121,7 @@ max_turns = 30
 
         let agent_dir = root.join("agents").join("env-test");
         std::fs::create_dir_all(&agent_dir).unwrap();
-        std::fs::write(agent_dir.join("agent.toml"), "provider = \"anthropic\"\n").unwrap();
+        std::fs::write(agent_dir.join("agent.toml"), "models = [\"anthropic/claude-haiku-4-5\"]\n").unwrap();
 
         let mode = Mode::Workspace {
             root: root.to_path_buf(),
@@ -1271,23 +1250,23 @@ max_turns = 30
         std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::write(
             config_dir.join("agent.toml"),
-            "model = \"claude-haiku-4-5\"\n",
+            "models = [\"anthropic/claude-haiku-4-5\"]\n",
         ).unwrap();
 
         let mode = Mode::SingleAgent { starpod_dir: starpod_dir.clone() };
         let paths = ResolvedPaths::resolve(&mode).unwrap();
 
         let config1 = reload_agent_config(&paths).unwrap();
-        assert_eq!(config1.model, "claude-haiku-4-5");
+        assert_eq!(config1.models, vec!["anthropic/claude-haiku-4-5"]);
 
         // Update config on disk
         std::fs::write(
             config_dir.join("agent.toml"),
-            "model = \"claude-opus-4-6\"\n",
+            "models = [\"anthropic/claude-opus-4-6\"]\n",
         ).unwrap();
 
         let config2 = reload_agent_config(&paths).unwrap();
-        assert_eq!(config2.model, "claude-opus-4-6");
+        assert_eq!(config2.models, vec!["anthropic/claude-opus-4-6"]);
     }
 
     // ── AgentConfig defaults ────────────────────────────────────────
@@ -1296,8 +1275,7 @@ max_turns = 30
     fn agent_config_defaults_are_sane() {
         let config = AgentConfig::default();
         assert_eq!(config.name, "Aster");
-        assert_eq!(config.provider, "anthropic");
-        assert_eq!(config.model, "claude-haiku-4-5");
+        assert_eq!(config.models, vec!["anthropic/claude-haiku-4-5"]);
         assert_eq!(config.max_turns, 30);
         assert_eq!(config.max_tokens, 16384);
         assert!(config.skills.is_empty());
@@ -1307,11 +1285,11 @@ max_turns = 30
     fn agent_config_deserializes_skills_filter() {
         let toml = r#"
 skills = ["email-draft", "code-review"]
-model = "gpt-4o"
+models = ["openai/gpt-4o"]
 "#;
         let config: AgentConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.skills, vec!["email-draft", "code-review"]);
-        assert_eq!(config.model, "gpt-4o");
+        assert_eq!(config.models, vec!["openai/gpt-4o"]);
     }
 
     // ── WorkspaceConfig ─────────────────────────────────────────────
@@ -1319,20 +1297,17 @@ model = "gpt-4o"
     #[test]
     fn workspace_config_all_optional() {
         let config: WorkspaceConfig = toml::from_str("").unwrap();
-        assert!(config.provider.is_none());
-        assert!(config.model.is_none());
+        assert!(config.models.is_none());
         assert!(config.max_turns.is_none());
     }
 
     #[test]
     fn workspace_config_parses_partial() {
         let toml = r#"
-provider = "anthropic"
-model = "claude-haiku-4-5"
+models = ["anthropic/claude-haiku-4-5"]
 "#;
         let config: WorkspaceConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.provider.as_deref(), Some("anthropic"));
-        assert_eq!(config.model.as_deref(), Some("claude-haiku-4-5"));
+        assert_eq!(config.models.as_deref(), Some(&["anthropic/claude-haiku-4-5".to_string()][..]));
         assert!(config.max_turns.is_none());
     }
 
@@ -1409,7 +1384,7 @@ model = "claude-haiku-4-5"
         std::fs::write(
             root.join("starpod.toml"),
             r#"
-            provider = "anthropic"
+            models = ["anthropic/claude-haiku-4-5"]
             [providers.anthropic]
             api_key = "sk-ant-legacy"
             "#,
@@ -1428,7 +1403,6 @@ model = "claude-haiku-4-5"
         let paths = ResolvedPaths::resolve(&mode).unwrap();
         let config = load_agent_config(&paths).unwrap();
 
-        assert_eq!(config.provider, "anthropic");
         assert!(config.channels.telegram.is_some());
     }
 
@@ -1446,7 +1420,7 @@ model = "claude-haiku-4-5"
             config_dir.join("agent.toml"),
             r#"
 agent_name = "Aster"
-model = "claude-haiku-4-5"
+models = ["anthropic/claude-haiku-4-5"]
 "#,
         ).unwrap();
 
@@ -1457,7 +1431,7 @@ model = "claude-haiku-4-5"
         let paths = ResolvedPaths::resolve(&mode).unwrap();
         let config = load_agent_config(&paths).unwrap();
 
-        assert_eq!(config.model, "claude-haiku-4-5");
+        assert_eq!(config.models, vec!["anthropic/claude-haiku-4-5"]);
         assert_eq!(config.name, "aster");
     }
 

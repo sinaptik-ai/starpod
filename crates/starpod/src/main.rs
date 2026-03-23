@@ -1469,12 +1469,12 @@ async fn main() -> anyhow::Result<()> {
             println!(
                 "  {} {}",
                 "Provider".dimmed(),
-                config.provider.bright_white()
+                config.provider().bright_white()
             );
             println!(
                 "  {} {}",
                 "Model   ".dimmed(),
-                config.model.bright_white()
+                config.model().bright_white()
             );
             if let Some(ref effort) = config.reasoning_effort {
                 println!(
@@ -1507,6 +1507,7 @@ async fn main() -> anyhow::Result<()> {
                 channel_session_key: Some(uuid::Uuid::new_v4().to_string()),
                 attachments: Vec::new(),
                 triggered_by: None,
+                model: None,
             };
             let (mut stream, session_id, _followup_tx) = agent.chat_stream(&chat_msg).await?;
             let (result_text, result_msg) = process_stream(&mut stream, &start).await?;
@@ -1807,6 +1808,7 @@ async fn main() -> anyhow::Result<()> {
                                     },
                                     attachments: Vec::new(),
                                     triggered_by: Some(j.name.clone()),
+                                    model: None,
                                 };
                                 match agent.chat(msg).await {
                                     Ok(resp) => println!("{}", resp.text),
@@ -2860,6 +2862,7 @@ async fn run_repl(agent: StarpodAgent, name: &str) -> anyhow::Result<()> {
             channel_session_key: Some(session_key.clone()),
             attachments: Vec::new(),
             triggered_by: None,
+            model: None,
         };
         let (mut stream, session_id, _followup_tx) = agent.chat_stream(&chat_msg).await?;
         let (result_text, result_msg) = process_stream(&mut stream, &start).await?;

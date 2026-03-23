@@ -3,9 +3,20 @@ import { apiHeaders, fetchModels } from '../../lib/api'
 import { Card, Row, Field, Input, Select, ModelSelect, Toggle, SaveBar } from './fields'
 import { Loading } from '../ui/EmptyState'
 
+/** Parse "provider/model" → { provider, model } */
+function parseSpec(spec) {
+  const idx = spec.indexOf('/')
+  return idx >= 0 ? { provider: spec.slice(0, idx), model: spec.slice(idx + 1) } : { provider: '', model: spec }
+}
+
+/** Build "provider/model" from parts */
+function buildSpec(provider, model) {
+  return `${provider}/${model}`
+}
+
 export default function GeneralTab() {
   const [config, setConfig] = useState(null)
-  const [models, setModels] = useState({})
+  const [catalog, setCatalog] = useState({}) // full model catalog by provider
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState(null)
 
@@ -14,18 +25,35 @@ export default function GeneralTab() {
       .then(r => r.json())
       .then(d => setConfig(d))
       .catch(() => setStatus({ type: 'error', text: 'Failed to load' }))
-    fetchModels().then(m => setModels(m || {}))
+    fetchModels().then(m => setCatalog(m || {}))
   }, [])
 
   if (!config) return <Loading />
 
-  const providers = Object.keys(models)
-  const currentProvider = config.provider || providers[0] || ''
-  const providerModels = models[currentProvider] || []
-  const cp = config.compaction_provider || ''
-  const compactionModels = cp ? (models[cp] || []) : providerModels
+  const configModels = config.models || []
+  const providers = Object.keys(catalog)
 
   const set = (key, val) => setConfig(prev => ({ ...prev, [key]: val }))
+
+  // Update a model at a given index in the models list
+  const setModelAt = (idx, spec) => {
+    const next = [...configModels]
+    next[idx] = spec
+    set('models', next)
+  }
+
+  const addModel = () => {
+    const firstProvider = providers[0] || 'anthropic'
+    const firstModel = (catalog[firstProvider] || [])[0] || 'model'
+    set('models', [...configModels, buildSpec(firstProvider, firstModel)])
+  }
+
+  const removeModel = (idx) => {
+    set('models', configModels.filter((_, i) => i !== idx))
+  }
+
+  // Parse compaction model
+  const compactionSpec = config.compaction_model ? parseSpec(config.compaction_model) : null
 
   const save = async () => {
     setSaving(true); setStatus(null)
@@ -38,13 +66,43 @@ export default function GeneralTab() {
 
   return (
     <>
-      <Card title="Model">
-        <Row label="Provider">
-          <Select value={currentProvider} onChange={v => { set('provider', v); set('model', (models[v] || [])[0] || '') }} options={providers} />
-        </Row>
-        <Row label="Model" mono>
-          <ModelSelect value={config.model || ''} onChange={v => set('model', v)} models={providerModels} />
-        </Row>
+      <Card title="Models" desc="first model is the default">
+        {configModels.map((spec, idx) => {
+          const { provider, model } = parseSpec(spec)
+          const providerModels = catalog[provider] || []
+          return (
+            <div key={idx} className="flex items-center gap-2 mb-2">
+              <Select
+                value={provider}
+                onChange={v => setModelAt(idx, buildSpec(v, (catalog[v] || [])[0] || model))}
+                options={providers}
+                className="w-32 shrink-0"
+              />
+              <div className="flex-1">
+                <ModelSelect
+                  value={model}
+                  onChange={v => setModelAt(idx, buildSpec(provider, v))}
+                  models={providerModels}
+                />
+              </div>
+              {configModels.length > 1 && (
+                <button
+                  className="text-dim hover:text-err text-xs px-1"
+                  onClick={() => removeModel(idx)}
+                  title="Remove model"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          )
+        })}
+        <button
+          className="text-xs text-muted hover:text-primary mt-1"
+          onClick={addModel}
+        >
+          + Add model
+        </button>
         <Row label="Reasoning" helpTip="Higher = more thinking time. Low is fastest, High most thorough. Only some models support this.">
           <Select value={config.reasoning_effort || ''} onChange={v => set('reasoning_effort', v || null)} options={[
             { value: '', label: 'Default' }, { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' }, { value: 'high', label: 'High' },
@@ -67,11 +125,13 @@ export default function GeneralTab() {
       </Card>
 
       <Card title="Compaction" desc="summarization model for long conversations">
-        <Row label="Provider">
-          <Select value={cp} onChange={v => { set('compaction_provider', v || null); set('compaction_model', (models[v] || [])[0] || '') }} options={[{ value: '', label: 'Same as primary' }, ...providers.map(p => ({ value: p, label: p }))]} />
-        </Row>
-        <Row label="Model" mono>
-          <ModelSelect value={config.compaction_model || ''} onChange={v => set('compaction_model', v)} models={compactionModels} />
+        <Row label="Model" mono helpTip="provider/model format, or leave empty for same as primary">
+          <Input
+            value={config.compaction_model || ''}
+            onChange={v => set('compaction_model', v || null)}
+            placeholder="same as primary"
+            mono
+          />
         </Row>
       </Card>
 

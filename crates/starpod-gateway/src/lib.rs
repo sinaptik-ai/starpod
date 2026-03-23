@@ -93,7 +93,8 @@ async fn static_handler(
     match Asset::get("index.html") {
         Some(file) => {
             let html = String::from_utf8_lossy(&file.data);
-            let html = inject_frontend_config(&html, &state.paths.config_dir);
+            let starpod_config = state.config.read().unwrap();
+            let html = inject_frontend_config(&html, &state.paths.config_dir, &starpod_config);
             Response::builder()
                 .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
                 .body(Body::from(html))
@@ -106,10 +107,16 @@ async fn static_handler(
     }
 }
 
-/// Read frontend.toml and inject it as `window.__STARPOD__` into the HTML.
-fn inject_frontend_config(html: &str, config_dir: &std::path::Path) -> String {
-    let config = starpod_core::FrontendConfig::load(config_dir);
-    let json = serde_json::to_string(&config).unwrap_or_else(|_| "{}".to_string());
+/// Read frontend.toml + starpod config and inject as `window.__STARPOD__` into the HTML.
+fn inject_frontend_config(html: &str, config_dir: &std::path::Path, starpod_config: &starpod_core::StarpodConfig) -> String {
+    let frontend = starpod_core::FrontendConfig::load(config_dir);
+    let merged = serde_json::json!({
+        "greeting": frontend.greeting,
+        "prompts": frontend.prompts,
+        "models": starpod_config.models,
+        "agent_name": starpod_config.agent_name,
+    });
+    let json = serde_json::to_string(&merged).unwrap_or_else(|_| "{}".to_string());
     let script = format!("<script>window.__STARPOD__={}</script>", json);
     html.replace("</head>", &format!("{}\n</head>", script))
 }
@@ -429,11 +436,8 @@ fn start_config_watcher(
                                 let old_config = state.config.read().unwrap().clone();
 
                                 // Log what changed
-                                if old_config.model != new_config.model {
-                                    info!(old = %old_config.model, new = %new_config.model, "Model changed");
-                                }
-                                if old_config.provider != new_config.provider {
-                                    info!(old = %old_config.provider, new = %new_config.provider, "Provider changed");
+                                if old_config.models != new_config.models {
+                                    info!(old = ?old_config.models, new = ?new_config.models, "Models changed");
                                 }
                                 if old_config.agent_name != new_config.agent_name {
                                     info!(old = %old_config.agent_name, new = %new_config.agent_name, "Agent name changed");
@@ -472,6 +476,12 @@ fn start_config_watcher(
 mod tests {
     use super::*;
 
+    fn test_starpod_config() -> starpod_core::StarpodConfig {
+        let mut cfg = starpod_core::StarpodConfig::default();
+        cfg.models = vec!["anthropic/claude-sonnet-4-6".into()];
+        cfg
+    }
+
     #[test]
     fn inject_frontend_config_with_file() {
         let dir = tempfile::tempdir().unwrap();
@@ -481,11 +491,14 @@ mod tests {
         ).unwrap();
 
         let html = "<html><head><title>Test</title></head><body></body></html>";
-        let result = inject_frontend_config(html, dir.path());
+        let cfg = test_starpod_config();
+        let result = inject_frontend_config(html, dir.path(), &cfg);
 
         assert!(result.contains("window.__STARPOD__="));
         assert!(result.contains("\"greeting\":\"Hi!\""));
         assert!(result.contains("\"prompts\":[\"help me\"]"));
+        assert!(result.contains("\"models\":[\"anthropic/claude-sonnet-4-6\"]"));
+        assert!(result.contains("\"agent_name\":\"Aster\""));
         assert!(result.contains("</head>"), "closing head tag should be preserved");
     }
 
@@ -493,18 +506,21 @@ mod tests {
     fn inject_frontend_config_missing_file() {
         let dir = tempfile::tempdir().unwrap();
         let html = "<html><head></head><body></body></html>";
-        let result = inject_frontend_config(html, dir.path());
+        let cfg = test_starpod_config();
+        let result = inject_frontend_config(html, dir.path(), &cfg);
 
         assert!(result.contains("window.__STARPOD__="));
         assert!(result.contains("\"greeting\":null"));
         assert!(result.contains("\"prompts\":[]"));
+        assert!(result.contains("\"models\":[\"anthropic/claude-sonnet-4-6\"]"));
     }
 
     #[test]
     fn inject_frontend_config_preserves_html_structure() {
         let dir = tempfile::tempdir().unwrap();
         let html = "<html><head><meta charset=\"UTF-8\"></head><body>content</body></html>";
-        let result = inject_frontend_config(html, dir.path());
+        let cfg = test_starpod_config();
+        let result = inject_frontend_config(html, dir.path(), &cfg);
 
         assert!(result.contains("<meta charset=\"UTF-8\">"));
         assert!(result.contains("<body>content</body>"));

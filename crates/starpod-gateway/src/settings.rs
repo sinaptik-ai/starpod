@@ -64,8 +64,7 @@ type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ErrorResponse>)>;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GeneralSettings {
-    provider: String,
-    model: String,
+    models: Vec<String>,
     max_turns: u32,
     max_tokens: u32,
     agent_name: String,
@@ -75,8 +74,6 @@ struct GeneralSettings {
     reasoning_effort: Option<ReasoningEffort>,
     #[serde(default)]
     compaction_model: Option<String>,
-    #[serde(default)]
-    compaction_provider: Option<String>,
     #[serde(default)]
     followup_mode: FollowupMode,
     server_addr: String,
@@ -327,15 +324,13 @@ async fn get_general(
     }
     let cfg = state.config.read().unwrap();
     Ok(Json(GeneralSettings {
-        provider: cfg.provider.clone(),
-        model: cfg.model.clone(),
+        models: cfg.models.clone(),
         max_turns: cfg.max_turns,
         max_tokens: cfg.max_tokens,
         agent_name: cfg.agent_name.clone(),
         timezone: cfg.timezone.clone(),
         reasoning_effort: cfg.reasoning_effort,
         compaction_model: cfg.compaction_model.clone(),
-        compaction_provider: cfg.compaction_provider.clone(),
         followup_mode: cfg.followup_mode,
         server_addr: cfg.server_addr.clone(),
         self_improve: cfg.self_improve,
@@ -355,11 +350,13 @@ async fn put_general(
         }
     }
 
-    if settings.model.is_empty() {
-        return Err(bad_request("model cannot be empty"));
+    if settings.models.is_empty() {
+        return Err(bad_request("models cannot be empty"));
     }
-    if settings.provider.is_empty() {
-        return Err(bad_request("provider cannot be empty"));
+    for spec in &settings.models {
+        if starpod_core::parse_model_spec(spec).is_none() {
+            return Err(bad_request(&format!("invalid model spec: '{}' — expected 'provider/model'", spec)));
+        }
     }
     if settings.max_turns == 0 {
         return Err(bad_request("max_turns must be > 0"));
@@ -368,8 +365,10 @@ async fn put_general(
     let mut doc = read_agent_toml(&state)?;
     let table = doc.as_table_mut().ok_or_else(|| internal("agent.toml is not a table"))?;
 
-    table.insert("provider".into(), toml::Value::String(settings.provider));
-    table.insert("model".into(), toml::Value::String(settings.model));
+    let models_arr: Vec<toml::Value> = settings.models.into_iter().map(toml::Value::String).collect();
+    table.insert("models".into(), toml::Value::Array(models_arr));
+    table.remove("provider"); // clean up legacy fields if present
+    table.remove("model");
     table.insert("max_turns".into(), toml::Value::Integer(settings.max_turns as i64));
     table.insert("max_tokens".into(), toml::Value::Integer(settings.max_tokens as i64));
     table.insert("agent_name".into(), toml::Value::String(settings.agent_name));
@@ -377,7 +376,6 @@ async fn put_general(
 
     set_or_remove_string(table, "timezone", settings.timezone);
     set_or_remove_string(table, "compaction_model", settings.compaction_model);
-    set_or_remove_string(table, "compaction_provider", settings.compaction_provider);
 
     match settings.reasoning_effort {
         Some(re) => {
@@ -1796,13 +1794,13 @@ mod tests {
         std::fs::create_dir_all(&skills_dir).unwrap();
 
         // Write a minimal agent.toml
-        std::fs::write(&agent_toml, "model = \"test-model\"\nagent_name = \"TestBot\"\n").unwrap();
+        std::fs::write(&agent_toml, "models = [\"anthropic/test-model\"]\nagent_name = \"TestBot\"\n").unwrap();
 
         let config = StarpodConfig {
             db_dir: db_dir.clone(),
             db_path: Some(db_dir.join("memory.db")),
             project_root: tmp.path().to_path_buf(),
-            model: "test-model".into(),
+            models: vec!["anthropic/test-model".into()],
             agent_name: "TestBot".into(),
             ..StarpodConfig::default()
         };
@@ -2031,32 +2029,28 @@ mod tests {
     #[test]
     fn general_settings_serializes() {
         let settings = GeneralSettings {
-            provider: "anthropic".into(),
-            model: "claude-haiku-4-5".into(),
+            models: vec!["anthropic/claude-haiku-4-5".into()],
             max_turns: 30,
             max_tokens: 16384,
             agent_name: "Aster".into(),
             timezone: Some("Europe/Rome".into()),
             reasoning_effort: Some(ReasoningEffort::High),
             compaction_model: None,
-            compaction_provider: None,
             followup_mode: FollowupMode::Inject,
             server_addr: "127.0.0.1:3000".into(),
             self_improve: false,
         };
         let json = serde_json::to_string(&settings).unwrap();
         let back: GeneralSettings = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.provider, "anthropic");
-        assert_eq!(back.model, "claude-haiku-4-5");
+        assert_eq!(back.models, vec!["anthropic/claude-haiku-4-5"]);
         assert_eq!(back.timezone.as_deref(), Some("Europe/Rome"));
         assert!(back.compaction_model.is_none());
-        assert!(back.compaction_provider.is_none());
     }
 
     #[test]
     fn general_settings_deserializes_with_defaults() {
         // Missing optional fields should default
-        let json = r#"{"provider":"openai","model":"gpt-4","max_turns":10,"max_tokens":4096,"agent_name":"Bot","server_addr":"0.0.0.0:8080"}"#;
+        let json = r#"{"models":["openai/gpt-4"],"max_turns":10,"max_tokens":4096,"agent_name":"Bot","server_addr":"0.0.0.0:8080"}"#;
         let s: GeneralSettings = serde_json::from_str(json).unwrap();
         assert!(s.timezone.is_none());
         assert!(s.reasoning_effort.is_none());
@@ -2150,7 +2144,7 @@ mod tests {
         let (_tmp, state) = test_app_state().await;
         let (status, json) = get_json(state, "/api/settings/general").await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(json["model"], "test-model");
+        assert_eq!(json["models"][0], "anthropic/test-model");
         assert_eq!(json["agent_name"], "TestBot");
     }
 
@@ -2161,8 +2155,7 @@ mod tests {
             Arc::clone(&state),
             "/api/settings/general",
             serde_json::json!({
-                "provider": "openai",
-                "model": "gpt-4o",
+                "models": ["openai/gpt-4o"],
                 "max_turns": 50,
                 "max_tokens": 8192,
                 "agent_name": "Nova",
@@ -2182,7 +2175,7 @@ mod tests {
 
         // Verify round-trip: read it back
         let parsed: toml::Value = toml::from_str(&content).unwrap();
-        assert_eq!(parsed["model"].as_str(), Some("gpt-4o"));
+        assert_eq!(parsed["models"].as_array().unwrap()[0].as_str(), Some("openai/gpt-4o"));
         assert_eq!(parsed["max_turns"].as_integer(), Some(50));
     }
 
@@ -2193,12 +2186,65 @@ mod tests {
             state,
             "/api/settings/general",
             serde_json::json!({
-                "provider": "anthropic", "model": "", "max_turns": 1,
+                "models": [], "max_turns": 1,
                 "max_tokens": 1024, "agent_name": "x", "server_addr": "x"
             }),
         ).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(json["error"].as_str().unwrap().contains("model"));
+        assert!(json["error"].as_str().unwrap().contains("models"));
+    }
+
+    #[tokio::test]
+    async fn put_general_rejects_invalid_model_spec() {
+        let (_tmp, state) = test_app_state().await;
+        // Missing provider/ prefix
+        let (status, json) = put_json(
+            Arc::clone(&state),
+            "/api/settings/general",
+            serde_json::json!({
+                "models": ["gpt-4o"], "max_turns": 1,
+                "max_tokens": 1024, "agent_name": "x", "server_addr": "x"
+            }),
+        ).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(json["error"].as_str().unwrap().contains("provider/model"));
+    }
+
+    #[tokio::test]
+    async fn put_general_rejects_mixed_valid_invalid_specs() {
+        let (_tmp, state) = test_app_state().await;
+        let (status, json) = put_json(
+            state,
+            "/api/settings/general",
+            serde_json::json!({
+                "models": ["anthropic/claude-sonnet-4-6", "invalid-no-slash"], "max_turns": 1,
+                "max_tokens": 1024, "agent_name": "x", "server_addr": "x"
+            }),
+        ).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(json["error"].as_str().unwrap().contains("invalid-no-slash"));
+    }
+
+    #[tokio::test]
+    async fn put_general_accepts_multiple_models() {
+        let (_tmp, state) = test_app_state().await;
+        let (status, _) = put_json(
+            Arc::clone(&state),
+            "/api/settings/general",
+            serde_json::json!({
+                "models": ["anthropic/claude-sonnet-4-6", "openai/gpt-4o"], "max_turns": 1,
+                "max_tokens": 1024, "agent_name": "x", "server_addr": "x"
+            }),
+        ).await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Verify both models are in agent.toml
+        let content = std::fs::read_to_string(&state.paths.agent_toml).unwrap();
+        let parsed: toml::Value = toml::from_str(&content).unwrap();
+        let models = parsed["models"].as_array().unwrap();
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].as_str(), Some("anthropic/claude-sonnet-4-6"));
+        assert_eq!(models[1].as_str(), Some("openai/gpt-4o"));
     }
 
     #[tokio::test]
@@ -2208,7 +2254,7 @@ mod tests {
             state,
             "/api/settings/general",
             serde_json::json!({
-                "provider": "anthropic", "model": "m", "max_turns": 0,
+                "models": ["anthropic/m"], "max_turns": 0,
                 "max_tokens": 1024, "agent_name": "x", "server_addr": "x"
             }),
         ).await;
@@ -2224,7 +2270,7 @@ mod tests {
             Arc::clone(&state),
             "/api/settings/general",
             serde_json::json!({
-                "provider": "anthropic", "model": "m", "max_turns": 1,
+                "models": ["anthropic/m"], "max_turns": 1,
                 "max_tokens": 1024, "agent_name": "x", "server_addr": "x",
                 "timezone": "UTC"
             }),
@@ -2235,7 +2281,7 @@ mod tests {
             Arc::clone(&state),
             "/api/settings/general",
             serde_json::json!({
-                "provider": "anthropic", "model": "m", "max_turns": 1,
+                "models": ["anthropic/m"], "max_turns": 1,
                 "max_tokens": 1024, "agent_name": "x", "server_addr": "x",
                 "timezone": null
             }),
@@ -2755,7 +2801,7 @@ mod tests {
         // Write a TOML with extra sections
         std::fs::write(
             &state.paths.agent_toml,
-            "model = \"old\"\nagent_name = \"Old\"\n\n[memory]\nhalf_life_days = 7.0\n",
+            "models = [\"anthropic/old\"]\nagent_name = \"Old\"\n\n[memory]\nhalf_life_days = 7.0\n",
         ).unwrap();
 
         // Update general only
@@ -2763,7 +2809,7 @@ mod tests {
             Arc::clone(&state),
             "/api/settings/general",
             serde_json::json!({
-                "provider": "anthropic", "model": "new-model", "max_turns": 10,
+                "models": ["anthropic/new-model"], "max_turns": 10,
                 "max_tokens": 4096, "agent_name": "New", "server_addr": "x"
             }),
         ).await;
@@ -2771,7 +2817,7 @@ mod tests {
         // [memory] section should be preserved
         let content = std::fs::read_to_string(&state.paths.agent_toml).unwrap();
         let parsed: toml::Value = toml::from_str(&content).unwrap();
-        assert_eq!(parsed["model"].as_str(), Some("new-model"));
+        assert_eq!(parsed["models"].as_array().unwrap()[0].as_str(), Some("anthropic/new-model"));
         assert_eq!(parsed["memory"]["half_life_days"].as_float(), Some(7.0));
     }
 

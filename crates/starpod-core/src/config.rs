@@ -480,13 +480,10 @@ pub struct StarpodConfig {
     #[serde(default = "default_server_addr")]
     pub server_addr: String,
 
-    /// Active LLM provider (default: "anthropic").
-    #[serde(default = "default_provider")]
-    pub provider: String,
-
-    /// Claude model to use
-    #[serde(default = "default_model")]
-    pub model: String,
+    /// Allowed models in `"provider/model"` format (e.g. `"anthropic/claude-sonnet-4-6"`).
+    /// The first entry is the default. Must contain at least one entry.
+    #[serde(default = "default_models")]
+    pub models: Vec<String>,
 
     /// Maximum agentic turns per request
     #[serde(default = "default_max_turns")]
@@ -496,14 +493,10 @@ pub struct StarpodConfig {
     #[serde(default)]
     pub reasoning_effort: Option<ReasoningEffort>,
 
-    /// Model used for conversation compaction summaries.
+    /// Compaction model in `"provider/model"` format.
     /// Defaults to the primary model if not set.
     #[serde(default)]
     pub compaction_model: Option<String>,
-
-    /// Provider for compaction model. If not set, uses the primary provider.
-    #[serde(default)]
-    pub compaction_provider: Option<String>,
 
     /// Agent display name (default: "Aster").
     /// Used in CLI headers, daily logs, and Telegram display.
@@ -618,12 +611,8 @@ fn default_server_addr() -> String {
     "127.0.0.1:3000".to_string()
 }
 
-fn default_provider() -> String {
-    "anthropic".to_string()
-}
-
-fn default_model() -> String {
-    "claude-haiku-4-5".to_string()
+fn default_models() -> Vec<String> {
+    vec!["anthropic/claude-haiku-4-5".to_string()]
 }
 
 fn default_max_turns() -> u32 {
@@ -644,13 +633,11 @@ impl Default for StarpodConfig {
             db_dir: PathBuf::new(),
             db_path: None,
             server_addr: default_server_addr(),
-            provider: default_provider(),
-            model: default_model(),
+            models: default_models(),
             max_turns: default_max_turns(),
             max_tokens: default_max_tokens(),
             reasoning_effort: None,
             compaction_model: None,
-            compaction_provider: None,
             followup_mode: FollowupMode::default(),
             memory: MemoryConfig::default(),
             cron: CronConfig::default(),
@@ -669,7 +656,72 @@ impl Default for StarpodConfig {
     }
 }
 
+/// Parse a `"provider/model"` string into `(provider, model)`.
+///
+/// Returns `None` if the string contains no `/`.
+///
+/// ```
+/// use starpod_core::parse_model_spec;
+/// assert_eq!(parse_model_spec("anthropic/claude-sonnet-4-6"), Some(("anthropic", "claude-sonnet-4-6")));
+/// assert_eq!(parse_model_spec("gpt-4o"), None);
+/// ```
+pub fn parse_model_spec(spec: &str) -> Option<(&str, &str)> {
+    spec.split_once('/')
+}
+
 impl StarpodConfig {
+    /// Default (provider, model) — first entry in `models`.
+    pub fn default_model(&self) -> (&str, &str) {
+        self.models
+            .first()
+            .and_then(|s| parse_model_spec(s))
+            .unwrap_or(("anthropic", "claude-haiku-4-5"))
+    }
+
+    /// Default provider name (from the first model entry).
+    pub fn provider(&self) -> &str {
+        self.default_model().0
+    }
+
+    /// Default model name (from the first model entry).
+    pub fn model(&self) -> &str {
+        self.default_model().1
+    }
+
+    /// Resolve a model override against the allowed list.
+    /// Returns `(provider, model)`. If `override_spec` is `None`, returns the default.
+    /// If the override is not in the allowed list, returns an error.
+    pub fn resolve_model(&self, override_spec: Option<&str>) -> Result<(String, String), String> {
+        match override_spec {
+            None => {
+                let (p, m) = self.default_model();
+                Ok((p.to_string(), m.to_string()))
+            }
+            Some(spec) => {
+                if self.models.iter().any(|m| m == spec) {
+                    match parse_model_spec(spec) {
+                        Some((p, m)) => Ok((p.to_string(), m.to_string())),
+                        None => Err(format!("invalid model spec: {spec}")),
+                    }
+                } else {
+                    Err(format!("model {spec} is not in the allowed list"))
+                }
+            }
+        }
+    }
+
+    /// Resolve the compaction model. Returns `(provider, model)`.
+    /// Falls back to the primary model if not set.
+    pub fn resolve_compaction_model(&self) -> (String, String) {
+        if let Some(ref spec) = self.compaction_model {
+            if let Some((p, m)) = parse_model_spec(spec) {
+                return (p.to_string(), m.to_string());
+            }
+        }
+        let (p, m) = self.default_model();
+        (p.to_string(), m.to_string())
+    }
+
     /// Resolved timezone: config value → system timezone fallback.
     pub fn resolved_timezone(&self) -> Option<String> {
         self.timezone
@@ -1306,21 +1358,21 @@ mod tests {
 
     #[test]
     fn deep_merge_overlay_adds_new_keys() {
-        let mut base: toml::Value = toml::from_str(r#"model = "haiku""#).unwrap();
+        let mut base: toml::Value = toml::from_str(r#"models = ["anthropic/haiku"]"#).unwrap();
         let overlay: toml::Value = toml::from_str(r#"agent_name = "Nova""#).unwrap();
         deep_merge(&mut base, overlay);
         let config: StarpodConfig = base.try_into().unwrap();
-        assert_eq!(config.model, "haiku");
+        assert_eq!(config.models, vec!["anthropic/haiku"]);
         assert_eq!(config.agent_name, "Nova");
     }
 
     #[test]
     fn deep_merge_overlay_overrides_existing() {
-        let mut base: toml::Value = toml::from_str(r#"model = "haiku""#).unwrap();
-        let overlay: toml::Value = toml::from_str(r#"model = "sonnet""#).unwrap();
+        let mut base: toml::Value = toml::from_str(r#"models = ["anthropic/haiku"]"#).unwrap();
+        let overlay: toml::Value = toml::from_str(r#"models = ["anthropic/sonnet"]"#).unwrap();
         deep_merge(&mut base, overlay);
         let config: StarpodConfig = base.try_into().unwrap();
-        assert_eq!(config.model, "sonnet");
+        assert_eq!(config.models, vec!["anthropic/sonnet"]);
     }
 
     #[test]
@@ -1363,31 +1415,31 @@ mod tests {
     #[test]
     fn deep_merge_empty_overlay_preserves_base() {
         let mut base: toml::Value = toml::from_str(r#"
-            model = "haiku"
+            models = ["anthropic/haiku"]
             agent_name = "Aster"
         "#).unwrap();
         let overlay: toml::Value = toml::from_str("").unwrap();
         deep_merge(&mut base, overlay);
         let config: StarpodConfig = base.try_into().unwrap();
-        assert_eq!(config.model, "haiku");
+        assert_eq!(config.models, vec!["anthropic/haiku"]);
         assert_eq!(config.agent_name, "Aster");
     }
 
     #[test]
     fn deep_merge_instance_overrides_model_but_keeps_other_fields() {
         let mut base: toml::Value = toml::from_str(r#"
-            model = "haiku"
+            models = ["anthropic/haiku"]
             max_turns = 30
             agent_name = "Aster"
         "#).unwrap();
         let overlay: toml::Value = toml::from_str(r#"
-            model = "sonnet"
+            models = ["anthropic/sonnet"]
             [channels.telegram]
             gap_minutes = 120
         "#).unwrap();
         deep_merge(&mut base, overlay);
         let config: StarpodConfig = base.try_into().unwrap();
-        assert_eq!(config.model, "sonnet"); // overridden
+        assert_eq!(config.models, vec!["anthropic/sonnet"]); // overridden
         assert_eq!(config.max_turns, 30); // preserved
         assert_eq!(config.agent_name, "Aster"); // preserved
         let tg = config.channels.telegram.unwrap();
@@ -1602,5 +1654,164 @@ mod tests {
         let config: StarpodConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.channel_gap_minutes("telegram"), Some(360));
         assert_eq!(config.channel_gap_minutes("email"), Some(1440));
+    }
+
+    // ── parse_model_spec ────────────────────────────────────────────────
+
+    #[test]
+    fn parse_model_spec_valid() {
+        assert_eq!(parse_model_spec("anthropic/claude-sonnet-4-6"), Some(("anthropic", "claude-sonnet-4-6")));
+        assert_eq!(parse_model_spec("openai/gpt-4o"), Some(("openai", "gpt-4o")));
+        assert_eq!(parse_model_spec("ollama/llama3"), Some(("ollama", "llama3")));
+    }
+
+    #[test]
+    fn parse_model_spec_no_slash() {
+        assert_eq!(parse_model_spec("gpt-4o"), None);
+        assert_eq!(parse_model_spec(""), None);
+    }
+
+    #[test]
+    fn parse_model_spec_multiple_slashes() {
+        // Only splits on first slash
+        assert_eq!(parse_model_spec("openrouter/openai/gpt-4o"), Some(("openrouter", "openai/gpt-4o")));
+    }
+
+    #[test]
+    fn parse_model_spec_empty_parts() {
+        assert_eq!(parse_model_spec("/model"), Some(("", "model")));
+        assert_eq!(parse_model_spec("provider/"), Some(("provider", "")));
+    }
+
+    // ── default_model / provider / model ────────────────────────────────
+
+    #[test]
+    fn default_model_returns_first_entry() {
+        let config: StarpodConfig = toml::from_str(r#"
+            models = ["openai/gpt-4o", "anthropic/claude-sonnet-4-6"]
+        "#).unwrap();
+        assert_eq!(config.default_model(), ("openai", "gpt-4o"));
+        assert_eq!(config.provider(), "openai");
+        assert_eq!(config.model(), "gpt-4o");
+    }
+
+    #[test]
+    fn default_model_fallback_when_empty() {
+        let mut config = StarpodConfig::default();
+        config.models = vec![];
+        assert_eq!(config.default_model(), ("anthropic", "claude-haiku-4-5"));
+    }
+
+    #[test]
+    fn default_model_from_default_config() {
+        let config = StarpodConfig::default();
+        assert_eq!(config.provider(), "anthropic");
+        assert_eq!(config.model(), "claude-haiku-4-5");
+    }
+
+    // ── resolve_model ───────────────────────────────────────────────────
+
+    #[test]
+    fn resolve_model_none_returns_default() {
+        let config: StarpodConfig = toml::from_str(r#"
+            models = ["anthropic/claude-sonnet-4-6", "openai/gpt-4o"]
+        "#).unwrap();
+        let (p, m) = config.resolve_model(None).unwrap();
+        assert_eq!(p, "anthropic");
+        assert_eq!(m, "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn resolve_model_valid_override() {
+        let config: StarpodConfig = toml::from_str(r#"
+            models = ["anthropic/claude-sonnet-4-6", "openai/gpt-4o"]
+        "#).unwrap();
+        let (p, m) = config.resolve_model(Some("openai/gpt-4o")).unwrap();
+        assert_eq!(p, "openai");
+        assert_eq!(m, "gpt-4o");
+    }
+
+    #[test]
+    fn resolve_model_override_not_in_list() {
+        let config: StarpodConfig = toml::from_str(r#"
+            models = ["anthropic/claude-sonnet-4-6"]
+        "#).unwrap();
+        let err = config.resolve_model(Some("openai/gpt-4o")).unwrap_err();
+        assert!(err.contains("not in the allowed list"));
+    }
+
+    #[test]
+    fn resolve_model_override_matches_default() {
+        let config: StarpodConfig = toml::from_str(r#"
+            models = ["anthropic/claude-sonnet-4-6"]
+        "#).unwrap();
+        let (p, m) = config.resolve_model(Some("anthropic/claude-sonnet-4-6")).unwrap();
+        assert_eq!(p, "anthropic");
+        assert_eq!(m, "claude-sonnet-4-6");
+    }
+
+    // ── resolve_compaction_model ────────────────────────────────────────
+
+    #[test]
+    fn resolve_compaction_model_none_falls_back_to_default() {
+        let config: StarpodConfig = toml::from_str(r#"
+            models = ["anthropic/claude-sonnet-4-6"]
+        "#).unwrap();
+        let (p, m) = config.resolve_compaction_model();
+        assert_eq!(p, "anthropic");
+        assert_eq!(m, "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn resolve_compaction_model_with_spec() {
+        let config: StarpodConfig = toml::from_str(r#"
+            models = ["anthropic/claude-sonnet-4-6"]
+            compaction_model = "openai/gpt-4o-mini"
+        "#).unwrap();
+        let (p, m) = config.resolve_compaction_model();
+        assert_eq!(p, "openai");
+        assert_eq!(m, "gpt-4o-mini");
+    }
+
+    #[test]
+    fn resolve_compaction_model_invalid_spec_falls_back() {
+        let config: StarpodConfig = toml::from_str(r#"
+            models = ["anthropic/claude-sonnet-4-6"]
+            compaction_model = "no-slash"
+        "#).unwrap();
+        // Invalid spec (no slash) falls back to primary
+        let (p, m) = config.resolve_compaction_model();
+        assert_eq!(p, "anthropic");
+        assert_eq!(m, "claude-sonnet-4-6");
+    }
+
+    // ── models from TOML ────────────────────────────────────────────────
+
+    #[test]
+    fn models_from_toml_single() {
+        let config: StarpodConfig = toml::from_str(r#"
+            models = ["anthropic/claude-haiku-4-5"]
+        "#).unwrap();
+        assert_eq!(config.models, vec!["anthropic/claude-haiku-4-5"]);
+    }
+
+    #[test]
+    fn models_from_toml_multiple() {
+        let config: StarpodConfig = toml::from_str(r#"
+            models = [
+                "anthropic/claude-sonnet-4-6",
+                "anthropic/claude-opus-4-6",
+                "openai/gpt-4o",
+            ]
+        "#).unwrap();
+        assert_eq!(config.models.len(), 3);
+        assert_eq!(config.model(), "claude-sonnet-4-6");
+        assert_eq!(config.provider(), "anthropic");
+    }
+
+    #[test]
+    fn models_default_when_absent() {
+        let config: StarpodConfig = toml::from_str("").unwrap();
+        assert_eq!(config.models, vec!["anthropic/claude-haiku-4-5"]);
     }
 }

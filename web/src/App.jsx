@@ -108,13 +108,15 @@ function AppInner() {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Send message ──
+  const { selectedModel } = state
   const handleSend = useCallback((text, attachments) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
     const payload = { type: 'message', text, channel_id: 'web', channel_session_key: currentSessionKey }
     if (attachments && attachments.length > 0) payload.attachments = attachments
+    if (selectedModel) payload.model = selectedModel
     wsRef.current.send(JSON.stringify(payload))
     if (chatRef.current) chatRef.current.addUserMessage(text, attachments)
-  }, [currentSessionKey])
+  }, [currentSessionKey, selectedModel])
 
   // ── Session selection ──
   const handleSelectSession = useCallback((session) => {

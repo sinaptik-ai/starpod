@@ -274,6 +274,8 @@ struct ChatRequest {
     channel_id: Option<String>,
     #[serde(default)]
     channel_session_key: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
 }
 
 /// Chat endpoint — POST /api/chat
@@ -294,6 +296,7 @@ async fn chat_handler(
         channel_session_key: req.channel_session_key,
         attachments: Vec::new(),
         triggered_by: None,
+        model: req.model,
     };
 
     match state.agent.chat(message).await {
@@ -672,13 +675,13 @@ mod tests {
         std::fs::create_dir_all(&db_dir).unwrap();
         std::fs::create_dir_all(&users_dir).unwrap();
         std::fs::create_dir_all(&skills_dir).unwrap();
-        std::fs::write(&agent_toml, "model = \"test\"\nagent_name = \"Test\"\n").unwrap();
+        std::fs::write(&agent_toml, "models = [\"anthropic/test\"]\nagent_name = \"Test\"\n").unwrap();
 
         let config = StarpodConfig {
             db_dir: db_dir.clone(),
             db_path: Some(db_dir.join("memory.db")),
             project_root: tmp.path().to_path_buf(),
-            model: "test".into(),
+            models: vec!["anthropic/test".into()],
             agent_name: "Test".into(),
             ..StarpodConfig::default()
         };
