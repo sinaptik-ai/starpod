@@ -2,15 +2,15 @@
 //!
 //! This crate provides [`BrowserSession`], a high-level async interface for
 //! controlling a CDP-speaking browser (Lightpanda or headless Chromium). It
-//! wraps [`chromiumoxide`] and handles process lifecycle, connection management,
-//! and common browser operations.
+//! uses direct CDP over WebSocket and handles process lifecycle, connection
+//! management, and common browser operations.
 //!
 //! # Architecture
 //!
 //! ```text
 //! ┌────────────────────┐     CDP/WebSocket     ┌──────────────────────┐
 //! │  BrowserSession    │ ◄──────────────────── │  lightpanda serve    │
-//! │  (chromiumoxide)   │                       │  (auto-spawned)      │
+//! │  (async-tungstenite)│                       │  (auto-spawned)      │
 //! └────────────────────┘                       └──────────────────────┘
 //! ```
 //!
@@ -25,12 +25,8 @@
 //!
 //! # Requirements
 //!
-//! For auto-spawn mode, the `lightpanda` binary must be on `PATH`.
-//! Install it with:
-//!
-//! ```bash
-//! curl -fsSL https://pkg.lightpanda.io/install.sh | bash
-//! ```
+//! For auto-spawn mode, `lightpanda` is automatically downloaded and installed
+//! to `~/.local/bin/` if not already on `PATH`. No manual setup is needed.
 //!
 //! # Example
 //!
@@ -47,26 +43,27 @@
 //! let text = session.extract(None).await?;
 //! println!("Page text: {text}");
 //!
-//! // Take a screenshot (base64 PNG)
-//! let screenshot = session.screenshot().await?;
-//!
 //! // Clean up
 //! session.close().await?;
 //! # Ok(())
 //! # }
 //! ```
 
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
-use base64::Engine;
-use chromiumoxide::browser::Browser;
-use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
-use chromiumoxide::page::ScreenshotParams;
-use chromiumoxide::Page;
-use futures::StreamExt;
+use async_tungstenite::tungstenite::Message as WsMessage;
+use futures_util::{SinkExt, StreamExt};
 use tokio::process::{Child, Command};
+use tokio::sync::{broadcast, oneshot, Mutex};
 use tracing::{debug, info};
+
+/// Timeout for individual CDP commands.
+const CDP_TIMEOUT: Duration = Duration::from_secs(30);
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -95,10 +92,6 @@ pub enum BrowserError {
     #[error("element not found: {0}")]
     ElementNotFound(String),
 
-    /// Screenshot capture failed.
-    #[error("screenshot failed: {0}")]
-    ScreenshotFailed(String),
-
     /// JavaScript evaluation failed.
     #[error("JS evaluation failed: {0}")]
     EvalFailed(String),
@@ -106,10 +99,148 @@ pub enum BrowserError {
     /// Timed out waiting for the browser process to accept CDP connections.
     #[error("timeout waiting for browser to start")]
     Timeout,
+
+    /// Auto-installation of Lightpanda failed.
+    #[error("failed to install lightpanda: {0}")]
+    InstallFailed(String),
 }
 
 /// Convenience alias for `Result<T, BrowserError>`.
 pub type Result<T> = std::result::Result<T, BrowserError>;
+
+// ---------------------------------------------------------------------------
+// CdpClient — lightweight CDP-over-WebSocket client
+// ---------------------------------------------------------------------------
+
+type WsWriter = futures_util::stream::SplitSink<
+    async_tungstenite::WebSocketStream<async_tungstenite::tokio::ConnectStream>,
+    WsMessage,
+>;
+
+/// A lightweight CDP client that sends commands and routes responses by `id`.
+struct CdpClient {
+    writer: Mutex<WsWriter>,
+    next_id: AtomicU64,
+    pending: Arc<Mutex<HashMap<u64, oneshot::Sender<serde_json::Value>>>>,
+    events: broadcast::Sender<serde_json::Value>,
+    _reader_task: tokio::task::JoinHandle<()>,
+}
+
+impl CdpClient {
+    /// Connect to a CDP WebSocket endpoint.
+    async fn connect(ws_url: &str) -> Result<Self> {
+        let (ws, _) = async_tungstenite::tokio::connect_async(ws_url)
+            .await
+            .map_err(|e| BrowserError::ConnectionFailed(e.to_string()))?;
+
+        let (writer, reader) = ws.split();
+        let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<serde_json::Value>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let (events_tx, _) = broadcast::channel(64);
+
+        let pending_clone = Arc::clone(&pending);
+        let events_clone = events_tx.clone();
+
+        let reader_task = tokio::spawn(async move {
+            let mut reader = reader;
+            while let Some(msg) = reader.next().await {
+                let text = match msg {
+                    Ok(WsMessage::Text(t)) => t.to_string(),
+                    Ok(WsMessage::Close(_)) => break,
+                    Ok(_) => continue,
+                    Err(e) => {
+                        debug!("CDP WebSocket error: {e}");
+                        break;
+                    }
+                };
+
+                let json: serde_json::Value = match serde_json::from_str(&text) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        debug!("CDP parse error: {e}");
+                        continue;
+                    }
+                };
+
+                // Response (has "id" field) → route to pending sender
+                if let Some(id) = json.get("id").and_then(|v| v.as_u64()) {
+                    let mut map = pending_clone.lock().await;
+                    if let Some(tx) = map.remove(&id) {
+                        let _ = tx.send(json);
+                    }
+                } else {
+                    // Event (has "method" field) → broadcast
+                    let _ = events_clone.send(json);
+                }
+            }
+        });
+
+        Ok(Self {
+            writer: Mutex::new(writer),
+            next_id: AtomicU64::new(1),
+            pending,
+            events: events_tx,
+            _reader_task: reader_task,
+        })
+    }
+
+    /// Send a CDP command and wait for its response.
+    async fn send(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        session_id: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+
+        let mut msg = serde_json::json!({
+            "id": id,
+            "method": method,
+            "params": params,
+        });
+        if let Some(sid) = session_id {
+            msg["sessionId"] = serde_json::Value::String(sid.to_string());
+        }
+
+        let (tx, rx) = oneshot::channel();
+        self.pending.lock().await.insert(id, tx);
+
+        let text = serde_json::to_string(&msg)
+            .map_err(|e| BrowserError::ConnectionFailed(e.to_string()))?;
+
+        self.writer
+            .lock()
+            .await
+            .send(WsMessage::Text(text.into()))
+            .await
+            .map_err(|e| BrowserError::ConnectionFailed(e.to_string()))?;
+
+        let resp = tokio::time::timeout(CDP_TIMEOUT, rx)
+            .await
+            .map_err(|_| BrowserError::Timeout)?
+            .map_err(|_| BrowserError::ConnectionFailed("response channel closed".into()))?;
+
+        // Check for CDP error
+        if let Some(err) = resp.get("error") {
+            let message = err
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("unknown CDP error");
+            return Err(BrowserError::EvalFailed(message.to_string()));
+        }
+
+        // Return the "result" field, or the whole response if no "result"
+        Ok(resp
+            .get("result")
+            .cloned()
+            .unwrap_or(serde_json::Value::Object(serde_json::Map::new())))
+    }
+
+    /// Subscribe to CDP events.
+    fn subscribe(&self) -> broadcast::Receiver<serde_json::Value> {
+        self.events.subscribe()
+    }
+}
 
 // ---------------------------------------------------------------------------
 // BrowserSession
@@ -117,8 +248,8 @@ pub type Result<T> = std::result::Result<T, BrowserError>;
 
 /// A browser automation session backed by CDP.
 ///
-/// Manages an optional child process (auto-spawned Lightpanda) and a
-/// [`chromiumoxide::Browser`] + [`Page`] for interaction.
+/// Manages an optional child process (auto-spawned Lightpanda) and a direct
+/// CDP WebSocket connection for interaction.
 ///
 /// The session is designed to be held behind `Arc<tokio::sync::Mutex<Option<BrowserSession>>>`
 /// for shared access across async tool calls. All public methods take `&self`.
@@ -131,12 +262,10 @@ pub type Result<T> = std::result::Result<T, BrowserError>;
 pub struct BrowserSession {
     /// Auto-spawned browser process (`None` if connected to external endpoint).
     process: Option<Child>,
-    /// The chromiumoxide browser handle (kept alive for the CDP connection).
-    _browser: Browser,
-    /// The active page used for all operations.
-    page: Page,
-    /// Background task that drives the CDP WebSocket handler stream.
-    _handler: tokio::task::JoinHandle<()>,
+    /// The CDP WebSocket client.
+    cdp: CdpClient,
+    /// The CDP session ID for the attached target.
+    session_id: String,
 }
 
 impl std::fmt::Debug for BrowserSession {
@@ -155,29 +284,43 @@ impl BrowserSession {
     /// 3. Polls the port until CDP accepts connections (up to 10 seconds)
     /// 4. Connects via WebSocket and opens a blank page
     ///
+    /// If `lightpanda` is not found on `PATH`, it is automatically downloaded
+    /// from GitHub releases and installed to `~/.local/bin/`.
+    ///
     /// # Errors
     ///
-    /// - [`BrowserError::SpawnFailed`] if `lightpanda` is not on `PATH` or fails to start
+    /// - [`BrowserError::InstallFailed`] if auto-installation fails
+    /// - [`BrowserError::SpawnFailed`] if `lightpanda` fails to start after installation
     /// - [`BrowserError::Timeout`] if CDP doesn't become available within 10 seconds
     /// - [`BrowserError::ConnectionFailed`] if WebSocket handshake fails
     pub async fn launch() -> Result<Self> {
         let port = find_free_port().await?;
         let addr = format!("127.0.0.1:{port}");
 
-        info!(port, "Spawning lightpanda");
+        // Resolve the lightpanda binary, auto-installing if needed.
+        let binary = resolve_lightpanda_binary().await?;
 
-        let child = Command::new("lightpanda")
-            .args(["serve", "--host", "127.0.0.1", "--port", &port.to_string()])
+        info!(port, binary = %binary.display(), "Spawning lightpanda");
+
+        let child = Command::new(&binary)
+            .args([
+                "serve",
+                "--host", "127.0.0.1",
+                "--port", &port.to_string(),
+                // Keep alive for up to 1 hour — the agent can take minutes
+                // between tool calls, and the default 10s timeout kills the
+                // session mid-conversation.
+                "--timeout", "3600",
+            ])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| BrowserError::SpawnFailed(e.to_string()))?;
 
-        // Wait for CDP to become available
+        // Wait for CDP to become available, then discover the WebSocket URL
         wait_for_cdp(&addr).await?;
-
-        let ws_url = format!("ws://{addr}");
+        let ws_url = discover_ws_url(&addr).await?;
         Self::connect_internal(Some(child), &ws_url).await
     }
 
@@ -188,8 +331,7 @@ impl BrowserSession {
     ///
     /// # Arguments
     ///
-    /// * `cdp_url` — WebSocket URL (e.g. `ws://127.0.0.1:9222`) or HTTP URL
-    ///   (chromiumoxide will fetch the WS URL from `/json/version`).
+    /// * `cdp_url` — WebSocket URL (e.g. `ws://127.0.0.1:9222/`).
     ///
     /// # Errors
     ///
@@ -201,28 +343,44 @@ impl BrowserSession {
 
     /// Shared connection logic for both `launch()` and `connect()`.
     async fn connect_internal(process: Option<Child>, ws_url: &str) -> Result<Self> {
-        let (browser, handler) = Browser::connect(ws_url)
-            .await
-            .map_err(|e| BrowserError::ConnectionFailed(e.to_string()))?;
+        let cdp = CdpClient::connect(ws_url).await?;
 
-        let page = browser
-            .new_page("about:blank")
-            .await
-            .map_err(|e| BrowserError::ConnectionFailed(e.to_string()))?;
+        // 1. Enable target discovery
+        cdp.send("Target.setDiscoverTargets", serde_json::json!({"discover": true}), None)
+            .await?;
 
-        let handler = tokio::spawn(async move {
-            handler
-                .for_each(|event| async move {
-                    debug!(?event, "CDP handler event");
-                })
-                .await;
-        });
+        // 2. Create a new target (page)
+        let result = cdp
+            .send("Target.createTarget", serde_json::json!({"url": "about:blank"}), None)
+            .await?;
+        let target_id = result["targetId"]
+            .as_str()
+            .ok_or_else(|| BrowserError::ConnectionFailed("no targetId in response".into()))?
+            .to_string();
+
+        // 3. Attach to the target to get a session ID
+        let result = cdp
+            .send(
+                "Target.attachToTarget",
+                serde_json::json!({"targetId": target_id, "flatten": true}),
+                None,
+            )
+            .await?;
+        let session_id = result["sessionId"]
+            .as_str()
+            .ok_or_else(|| BrowserError::ConnectionFailed("no sessionId in response".into()))?
+            .to_string();
+
+        // 4. Enable Page domain (needed for navigation events)
+        cdp.send("Page.enable", serde_json::json!({}), Some(&session_id))
+            .await?;
+
+        debug!(session_id = %session_id, "CDP session established");
 
         Ok(Self {
             process,
-            _browser: browser,
-            page,
-            _handler: handler,
+            cdp,
+            session_id,
         })
     }
 
@@ -232,42 +390,39 @@ impl BrowserSession {
     ///
     /// - [`BrowserError::NavigationFailed`] on invalid URL or network error
     pub async fn navigate(&self, url: &str) -> Result<String> {
-        self.page
-            .goto(url)
+        // Subscribe to events BEFORE sending the navigate command
+        let mut events = self.cdp.subscribe();
+
+        self.cdp
+            .send(
+                "Page.navigate",
+                serde_json::json!({"url": url}),
+                Some(&self.session_id),
+            )
             .await
             .map_err(|e| BrowserError::NavigationFailed(e.to_string()))?;
 
-        let title = self
-            .page
-            .get_title()
-            .await
-            .map_err(|e| BrowserError::NavigationFailed(e.to_string()))?
-            .unwrap_or_default();
+        // Wait for Page.loadEventFired
+        let deadline = tokio::time::Instant::now() + CDP_TIMEOUT;
+        loop {
+            match tokio::time::timeout_at(deadline, events.recv()).await {
+                Ok(Ok(event)) => {
+                    if event.get("method").and_then(|m| m.as_str())
+                        == Some("Page.loadEventFired")
+                    {
+                        break;
+                    }
+                }
+                Ok(Err(broadcast::error::RecvError::Lagged(_))) => continue,
+                Ok(Err(_)) => break,
+                Err(_) => {
+                    return Err(BrowserError::NavigationFailed("page load timeout".into()));
+                }
+            }
+        }
 
-        Ok(title)
-    }
-
-    /// Take a full-page screenshot. Returns base64-encoded PNG.
-    ///
-    /// The returned string can be used directly in a `data:image/png;base64,...`
-    /// URI or passed to an LLM as a vision input.
-    ///
-    /// # Errors
-    ///
-    /// - [`BrowserError::ScreenshotFailed`] if the CDP command fails
-    pub async fn screenshot(&self) -> Result<String> {
-        let params = ScreenshotParams::builder()
-            .format(CaptureScreenshotFormat::Png)
-            .full_page(true)
-            .build();
-
-        let bytes = self
-            .page
-            .screenshot(params)
-            .await
-            .map_err(|e| BrowserError::ScreenshotFailed(e.to_string()))?;
-
-        Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+        // Get the page title
+        self.evaluate("document.title").await
     }
 
     /// Extract text content from the page or a specific element.
@@ -281,68 +436,100 @@ impl BrowserSession {
     /// - [`BrowserError::EvalFailed`] if text extraction fails
     pub async fn extract(&self, selector: Option<&str>) -> Result<String> {
         match selector {
+            None => self.evaluate("document.body.textContent").await,
             Some(sel) => {
-                let element = self
-                    .page
-                    .find_element(sel)
-                    .await
-                    .map_err(|e| BrowserError::ElementNotFound(format!("{sel}: {e}")))?;
-
-                let text = element
-                    .inner_text()
-                    .await
-                    .map_err(|e| BrowserError::EvalFailed(e.to_string()))?
-                    .unwrap_or_default();
-                Ok(text)
+                let sel_json = serde_json::to_string(sel)
+                    .map_err(|e| BrowserError::EvalFailed(e.to_string()))?;
+                let js = format!(
+                    r#"(function(){{ var el = document.querySelector({sel}); if (!el) return null; return el.textContent; }})()"#,
+                    sel = sel_json,
+                );
+                let result = self.evaluate(&js).await?;
+                if result == "null" || result.is_empty() {
+                    Err(BrowserError::ElementNotFound(sel.to_string()))
+                } else {
+                    Ok(result)
+                }
             }
-            None => self.evaluate("document.body.innerText").await,
         }
     }
 
     /// Click an element by CSS selector.
     ///
+    /// Dispatches a full `MouseEvent` (not just `el.click()`) so that
+    /// framework event listeners (React, Vue, etc.) see the event.
+    /// For submit buttons, also calls `form.requestSubmit()` to ensure
+    /// form submission fires correctly.
+    ///
     /// # Errors
     ///
     /// - [`BrowserError::ElementNotFound`] if the selector matches nothing
     pub async fn click(&self, selector: &str) -> Result<()> {
-        let element = self
-            .page
-            .find_element(selector)
-            .await
-            .map_err(|e| BrowserError::ElementNotFound(format!("{selector}: {e}")))?;
-
-        element
-            .click()
-            .await
+        let sel_json = serde_json::to_string(selector)
             .map_err(|e| BrowserError::EvalFailed(e.to_string()))?;
-
+        let js = format!(
+            r#"(function(){{
+  var el = document.querySelector({sel});
+  if (!el) throw new Error('element not found');
+  el.dispatchEvent(new MouseEvent('click', {{bubbles: true, cancelable: true, view: window}}));
+  if ((el.type === 'submit' || el.tagName === 'BUTTON') && el.form) {{
+    try {{ el.form.requestSubmit(el); }} catch(e) {{ el.form.submit(); }}
+  }}
+  return true;
+}})()"#,
+            sel = sel_json,
+        );
+        self.evaluate(&js).await.map_err(|e| {
+            if e.to_string().contains("element not found") {
+                BrowserError::ElementNotFound(selector.to_string())
+            } else {
+                e
+            }
+        })?;
         Ok(())
     }
 
     /// Type text into an element identified by CSS selector.
     ///
-    /// Clicks the element first to focus it, then types character by character.
+    /// Uses the native HTMLInputElement value setter to bypass React's
+    /// internal value tracker, then dispatches `input` and `change` events
+    /// so both React controlled inputs and plain HTML inputs update correctly.
     ///
     /// # Errors
     ///
     /// - [`BrowserError::ElementNotFound`] if the selector matches nothing
     pub async fn type_text(&self, selector: &str, text: &str) -> Result<()> {
-        let element = self
-            .page
-            .find_element(selector)
-            .await
-            .map_err(|e| BrowserError::ElementNotFound(format!("{selector}: {e}")))?;
-
-        element
-            .click()
-            .await
+        let sel_json = serde_json::to_string(selector)
             .map_err(|e| BrowserError::EvalFailed(e.to_string()))?;
-
-        element
-            .type_str(text)
-            .await
+        let val_json = serde_json::to_string(text)
             .map_err(|e| BrowserError::EvalFailed(e.to_string()))?;
-
+        let js = format!(
+            r#"(function(){{
+  var el = document.querySelector({sel});
+  if (!el) throw new Error('element not found');
+  el.focus();
+  var nativeSetter = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype, 'value'
+  );
+  if (nativeSetter && nativeSetter.set) {{
+    nativeSetter.set.call(el, {val});
+  }} else {{
+    el.value = {val};
+  }}
+  el.dispatchEvent(new Event('input', {{bubbles: true}}));
+  el.dispatchEvent(new Event('change', {{bubbles: true}}));
+  return true;
+}})()"#,
+            sel = sel_json,
+            val = val_json,
+        );
+        self.evaluate(&js).await.map_err(|e| {
+            if e.to_string().contains("element not found") {
+                BrowserError::ElementNotFound(selector.to_string())
+            } else {
+                e
+            }
+        })?;
         Ok(())
     }
 
@@ -355,30 +542,60 @@ impl BrowserSession {
     ///
     /// - [`BrowserError::EvalFailed`] on syntax errors or runtime exceptions
     pub async fn evaluate(&self, js: &str) -> Result<String> {
-        let value: serde_json::Value = self
-            .page
-            .evaluate_expression(js)
+        // Wrap in an IIFE to isolate variable declarations between calls.
+        // Without this, consecutive evaluate() calls that declare `const` or
+        // `let` variables with the same name would fail with
+        // "Identifier has already been declared".
+        //
+        // Code that is already an IIFE `(function(){...})()` is left as-is.
+        // Simple expressions get `return` prepended so they return a value.
+        // Multi-statement code is wrapped as-is (caller must use `return`).
+        let trimmed = js.trim();
+        let wrapped = if trimmed.starts_with("(function") {
+            // Already an IIFE — don't double-wrap
+            trimmed.to_string()
+        } else if trimmed.contains(';') || trimmed.contains('\n') {
+            format!("(function(){{{trimmed}}})()")
+        } else {
+            format!("(function(){{ return {trimmed} }})()")
+        };
+        let result = self
+            .cdp
+            .send(
+                "Runtime.evaluate",
+                serde_json::json!({
+                    "expression": wrapped,
+                    "returnByValue": true,
+                }),
+                Some(&self.session_id),
+            )
             .await
-            .map_err(|e| BrowserError::EvalFailed(e.to_string()))?
-            .into_value()
             .map_err(|e| BrowserError::EvalFailed(e.to_string()))?;
 
+        // Check for exception
+        if let Some(exc) = result.get("exceptionDetails") {
+            // Try exception.description first (has the real message),
+            // fall back to exceptionDetails.text
+            let text = exc
+                .get("exception")
+                .and_then(|e| e.get("description"))
+                .and_then(|d| d.as_str())
+                .or_else(|| exc.get("text").and_then(|t| t.as_str()))
+                .unwrap_or("unknown error");
+            return Err(BrowserError::EvalFailed(text.to_string()));
+        }
+
+        let value = &result["result"]["value"];
         match value {
-            serde_json::Value::String(s) => Ok(s),
+            serde_json::Value::String(s) => Ok(s.clone()),
+            serde_json::Value::Null => Ok(String::new()),
             other => Ok(other.to_string()),
         }
     }
 
     /// Get the current page URL.
     pub async fn url(&self) -> Result<String> {
-        let url = self
-            .page
-            .url()
-            .await
-            .map_err(|e| BrowserError::EvalFailed(e.to_string()))?
-            .map(|u| u.to_string())
-            .unwrap_or_default();
-        Ok(url)
+        self.evaluate("window.location.href").await
     }
 
     /// Returns `true` if this session was auto-spawned (vs. connected to an
@@ -412,6 +629,138 @@ impl Drop for BrowserSession {
 }
 
 // ---------------------------------------------------------------------------
+// Auto-install
+// ---------------------------------------------------------------------------
+
+/// Resolve the `lightpanda` binary path.
+///
+/// 1. Check if `lightpanda` is on `PATH` (via `which`).
+/// 2. Check the default install location (`~/.local/bin/lightpanda`).
+/// 3. If not found, download from GitHub releases and install to `~/.local/bin/`.
+async fn resolve_lightpanda_binary() -> Result<PathBuf> {
+    // 1. Already on PATH?
+    if let Ok(path) = which_lightpanda().await {
+        debug!(path = %path.display(), "Found lightpanda on PATH");
+        return Ok(path);
+    }
+
+    // 2. Check default install location
+    let install_dir = default_install_dir()?;
+    let binary_path = install_dir.join("lightpanda");
+    if binary_path.is_file() {
+        debug!(path = %binary_path.display(), "Found lightpanda in ~/.local/bin");
+        return Ok(binary_path);
+    }
+
+    // 3. Auto-install
+    info!("lightpanda not found — downloading automatically");
+    install_lightpanda(&install_dir).await?;
+    Ok(binary_path)
+}
+
+/// Try to find `lightpanda` on PATH using `which`.
+async fn which_lightpanda() -> Result<PathBuf> {
+    let output = tokio::process::Command::new("which")
+        .arg("lightpanda")
+        .output()
+        .await
+        .map_err(|e| BrowserError::SpawnFailed(e.to_string()))?;
+
+    if output.status.success() {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Ok(PathBuf::from(path));
+        }
+    }
+    Err(BrowserError::SpawnFailed("not on PATH".into()))
+}
+
+/// Returns `~/.local/bin`, creating it if it doesn't exist.
+fn default_install_dir() -> Result<PathBuf> {
+    let home = std::env::var("HOME")
+        .map_err(|_| BrowserError::InstallFailed("HOME not set".into()))?;
+    let dir = PathBuf::from(home).join(".local").join("bin");
+    Ok(dir)
+}
+
+/// Returns the platform-specific asset name for lightpanda GitHub releases.
+fn lightpanda_asset_name() -> Result<&'static str> {
+    let os = std::env::consts::OS;
+    let arch = std::env::consts::ARCH;
+
+    match (os, arch) {
+        ("macos", "aarch64") => Ok("lightpanda-aarch64-macos"),
+        ("macos", "x86_64") => Ok("lightpanda-x86_64-macos"),
+        ("linux", "aarch64") => Ok("lightpanda-aarch64-linux"),
+        ("linux", "x86_64") => Ok("lightpanda-x86_64-linux"),
+        _ => Err(BrowserError::InstallFailed(format!(
+            "unsupported platform: {os}/{arch}"
+        ))),
+    }
+}
+
+/// Download and install the lightpanda binary to `install_dir`.
+async fn install_lightpanda(install_dir: &std::path::Path) -> Result<()> {
+    let asset = lightpanda_asset_name()?;
+    let url = format!(
+        "https://github.com/lightpanda-io/browser/releases/download/nightly/{asset}"
+    );
+
+    info!(url = %url, "Downloading lightpanda");
+
+    // Download with curl (follows redirects, which GitHub requires)
+    let output = tokio::process::Command::new("curl")
+        .args(["-fsSL", "--output", "-", &url])
+        .output()
+        .await
+        .map_err(|e| BrowserError::InstallFailed(format!("curl failed: {e}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(BrowserError::InstallFailed(format!(
+            "download failed ({}): {stderr}",
+            output.status
+        )));
+    }
+
+    if output.stdout.is_empty() {
+        return Err(BrowserError::InstallFailed(
+            "downloaded file is empty".into(),
+        ));
+    }
+
+    // Create install directory
+    tokio::fs::create_dir_all(install_dir)
+        .await
+        .map_err(|e| {
+            BrowserError::InstallFailed(format!(
+                "cannot create {}: {e}",
+                install_dir.display()
+            ))
+        })?;
+
+    let binary_path = install_dir.join("lightpanda");
+
+    // Write binary
+    tokio::fs::write(&binary_path, &output.stdout)
+        .await
+        .map_err(|e| BrowserError::InstallFailed(format!("cannot write binary: {e}")))?;
+
+    // Make executable
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o755);
+        tokio::fs::set_permissions(&binary_path, perms)
+            .await
+            .map_err(|e| BrowserError::InstallFailed(format!("chmod failed: {e}")))?;
+    }
+
+    info!(path = %binary_path.display(), "lightpanda installed successfully");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -426,6 +775,33 @@ async fn find_free_port() -> Result<u16> {
         .port();
     drop(listener);
     Ok(port)
+}
+
+/// Fetch the WebSocket debugger URL from the CDP `/json/version` endpoint.
+///
+/// Falls back to `ws://{addr}/` if the endpoint is unavailable.
+async fn discover_ws_url(addr: &str) -> Result<String> {
+    let url = format!("http://{addr}/json/version");
+
+    let output = tokio::process::Command::new("curl")
+        .args(["-sf", "--max-time", "5", &url])
+        .output()
+        .await
+        .map_err(|e| BrowserError::ConnectionFailed(format!("curl /json/version: {e}")))?;
+
+    if output.status.success() {
+        if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+            if let Some(ws) = json.get("webSocketDebuggerUrl").and_then(|v| v.as_str()) {
+                debug!(ws_url = %ws, "Discovered WebSocket URL");
+                return Ok(ws.to_string());
+            }
+        }
+    }
+
+    // Fallback — append trailing slash (lightpanda requires it)
+    let fallback = format!("ws://{addr}/");
+    debug!(ws_url = %fallback, "Using fallback WebSocket URL");
+    Ok(fallback)
 }
 
 /// Wait for a TCP endpoint to accept connections, polling every 100ms.
@@ -541,10 +917,7 @@ mod tests {
         assert_eq!(err.to_string(), "element not found: div.missing");
 
         let err = BrowserError::Timeout;
-        assert_eq!(
-            err.to_string(),
-            "timeout waiting for browser to start"
-        );
+        assert_eq!(err.to_string(), "timeout waiting for browser to start");
 
         let err = BrowserError::NotConnected;
         assert_eq!(err.to_string(), "browser not connected");
@@ -555,28 +928,33 @@ mod tests {
         let err = BrowserError::NavigationFailed("404".into());
         assert_eq!(err.to_string(), "navigation failed: 404");
 
-        let err = BrowserError::ScreenshotFailed("no page".into());
-        assert_eq!(err.to_string(), "screenshot failed: no page");
-
         let err = BrowserError::EvalFailed("syntax error".into());
         assert_eq!(err.to_string(), "JS evaluation failed: syntax error");
     }
 
-    #[tokio::test]
-    async fn launch_fails_when_lightpanda_not_installed() {
-        // Set PATH to empty so lightpanda can't be found
-        let original_path = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var("PATH", "");
-
-        let result = BrowserSession::launch().await;
-
-        std::env::set_var("PATH", &original_path);
-
-        assert!(result.is_err(), "should fail when lightpanda not on PATH");
-        let err = result.unwrap_err();
+    #[test]
+    fn lightpanda_asset_name_returns_valid_name() {
+        // Should succeed on any supported CI/dev platform
+        let name = lightpanda_asset_name().unwrap();
         assert!(
-            matches!(err, BrowserError::SpawnFailed(_)),
-            "expected SpawnFailed, got: {err}"
+            name.starts_with("lightpanda-"),
+            "asset name should start with 'lightpanda-', got: {name}"
+        );
+    }
+
+    #[test]
+    fn install_failed_error_display() {
+        let err = BrowserError::InstallFailed("no curl".into());
+        assert_eq!(err.to_string(), "failed to install lightpanda: no curl");
+    }
+
+    #[test]
+    fn default_install_dir_is_under_home() {
+        let dir = default_install_dir().unwrap();
+        assert!(
+            dir.ends_with(".local/bin"),
+            "install dir should end with .local/bin, got: {}",
+            dir.display()
         );
     }
 
@@ -602,7 +980,7 @@ mod tests {
     //   lightpanda serve &
     //
     //   # Run integration tests
-    //   BROWSER_CDP_URL=ws://127.0.0.1:9222 cargo test -p starpod-browser -- --ignored
+    //   BROWSER_CDP_URL=ws://127.0.0.1:9222/ cargo test -p starpod-browser -- --ignored
     //
 
     fn cdp_url() -> Option<String> {
@@ -620,30 +998,6 @@ mod tests {
         assert!(
             !title.is_empty(),
             "title should not be empty after navigating to example.com"
-        );
-
-        session.close().await.unwrap();
-    }
-
-    #[tokio::test]
-    #[ignore = "requires running CDP browser (set BROWSER_CDP_URL)"]
-    async fn integration_screenshot_returns_valid_base64_png() {
-        let url = cdp_url().expect("BROWSER_CDP_URL not set");
-        let session = BrowserSession::connect(&url).await.unwrap();
-
-        session.navigate("https://example.com").await.unwrap();
-        let b64 = session.screenshot().await.unwrap();
-
-        // Verify it's valid base64
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(&b64)
-            .expect("screenshot should be valid base64");
-
-        // Verify PNG magic bytes
-        assert!(
-            bytes.starts_with(&[0x89, b'P', b'N', b'G']),
-            "screenshot should be a PNG (magic bytes: {:?})",
-            &bytes[..4.min(bytes.len())]
         );
 
         session.close().await.unwrap();

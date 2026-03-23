@@ -611,9 +611,14 @@ async fn run_agent_loop(
         total_usage.cache_read_input_tokens +=
             response.usage.cache_read_input_tokens.unwrap_or(0);
 
-        // Estimate cost using provider-specific rates
+        // Estimate cost using provider-specific rates (with cache-aware pricing)
         let rates = provider.cost_rates(&model);
-        let turn_cost = rates.compute(response.usage.input_tokens, response.usage.output_tokens);
+        let turn_cost = rates.compute_with_cache(
+            response.usage.input_tokens,
+            response.usage.output_tokens,
+            response.usage.cache_read_input_tokens.unwrap_or(0),
+            response.usage.cache_creation_input_tokens.unwrap_or(0),
+        );
         total_cost += turn_cost;
 
         // Update model usage

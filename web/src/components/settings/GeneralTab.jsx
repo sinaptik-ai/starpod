@@ -75,6 +75,11 @@ export default function GeneralTab() {
         </Row>
       </Card>
 
+      <Card title="Self-improve" desc="beta — agent learns from experience">
+        <Toggle checked={config.self_improve} onChange={v => set('self_improve', v)}
+          label="Enabled" helpTip="When on, the agent proactively creates skills from complex tasks and updates outdated skills during use." />
+      </Card>
+
       <Card title="Limits">
         <Row label="Max turns" sub="per request">
           <Input type="number" value={config.max_turns ?? ''} onChange={v => set('max_turns', v === '' ? null : Number(v))} placeholder="200" />

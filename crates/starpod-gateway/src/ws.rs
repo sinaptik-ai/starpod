@@ -134,13 +134,23 @@ enum ServerMessage {
     },
 
     /// Stream completed with final stats.
+    ///
+    /// `input_tokens` is the **total** input context (uncached + cache_read +
+    /// cache_creation). `cache_read_input_tokens` and `cache_creation_input_tokens`
+    /// are the cached subsets of that total, allowing the frontend to show
+    /// e.g. "2.3k in (2.1k cached) / 3k out".
     #[serde(rename = "stream_end")]
     StreamEnd {
         session_id: String,
         num_turns: u32,
         cost_usd: f64,
+        /// Total input tokens (uncached + cache_read + cache_creation).
         input_tokens: u64,
         output_tokens: u64,
+        /// Tokens served from prompt cache (subset of input_tokens).
+        cache_read_input_tokens: u64,
+        /// Tokens written to prompt cache (subset of input_tokens).
+        cache_creation_input_tokens: u64,
         is_error: bool,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         errors: Vec<String>,
@@ -426,6 +436,8 @@ async fn process_stream_with_followups(
                             cost_usd: 0.0,
                             input_tokens: 0,
                             output_tokens: 0,
+                            cache_read_input_tokens: 0,
+                            cache_creation_input_tokens: 0,
                             is_error: true,
                             errors: vec![format!("Stream error: {}", e)],
                         }).await;
@@ -441,6 +453,8 @@ async fn process_stream_with_followups(
                             cost_usd: 0.0,
                             input_tokens: 0,
                             output_tokens: 0,
+                            cache_read_input_tokens: 0,
+                            cache_creation_input_tokens: 0,
                             is_error: false,
                             errors: Vec::new(),
                         }).await;
@@ -663,8 +677,10 @@ async fn handle_stream_message(
                 session_id: session_id.to_string(),
                 num_turns: result.num_turns,
                 cost_usd: result.total_cost_usd,
-                input_tokens: result.usage.as_ref().map(|u| u.input_tokens).unwrap_or(0),
+                input_tokens: result.usage.as_ref().map(|u| u.input_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens).unwrap_or(0),
                 output_tokens: result.usage.as_ref().map(|u| u.output_tokens).unwrap_or(0),
+                cache_read_input_tokens: result.usage.as_ref().map(|u| u.cache_read_input_tokens).unwrap_or(0),
+                cache_creation_input_tokens: result.usage.as_ref().map(|u| u.cache_creation_input_tokens).unwrap_or(0),
                 is_error: result.is_error,
                 errors: result.errors.clone(),
             }).await;
@@ -723,6 +739,8 @@ async fn process_stream(
                     cost_usd: 0.0,
                     input_tokens: 0,
                     output_tokens: 0,
+                    cache_read_input_tokens: 0,
+                    cache_creation_input_tokens: 0,
                     is_error: true,
                     errors: vec![format!("Stream error: {}", e)],
                 }).await;
@@ -738,6 +756,8 @@ async fn process_stream(
         cost_usd: 0.0,
         input_tokens: 0,
         output_tokens: 0,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
         is_error: false,
         errors: Vec::new(),
     }).await;
@@ -860,6 +880,61 @@ mod tests {
         assert_eq!(json["session_id"], "sess-abc-123");
         assert_eq!(json["result_preview"], "No critical errors found today.");
         assert_eq!(json["success"], true);
+    }
+
+    #[test]
+    fn stream_end_serializes_with_cache_tokens() {
+        let msg = ServerMessage::StreamEnd {
+            session_id: "sess-123".into(),
+            num_turns: 5,
+            cost_usd: 0.042,
+            input_tokens: 8600,
+            output_tokens: 3000,
+            cache_read_input_tokens: 4000,
+            cache_creation_input_tokens: 4000,
+            is_error: false,
+            errors: Vec::new(),
+        };
+        let json: serde_json::Value = serde_json::from_str(
+            &serde_json::to_string(&msg).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(json["type"], "stream_end");
+        assert_eq!(json["session_id"], "sess-123");
+        assert_eq!(json["num_turns"], 5);
+        assert_eq!(json["input_tokens"], 8600);
+        assert_eq!(json["output_tokens"], 3000);
+        assert_eq!(json["cache_read_input_tokens"], 4000);
+        assert_eq!(json["cache_creation_input_tokens"], 4000);
+        assert_eq!(json["is_error"], false);
+        // errors should be omitted when empty
+        assert!(json.get("errors").is_none());
+    }
+
+    #[test]
+    fn stream_end_error_includes_cache_fields() {
+        let msg = ServerMessage::StreamEnd {
+            session_id: "sess-err".into(),
+            num_turns: 0,
+            cost_usd: 0.0,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+            is_error: true,
+            errors: vec!["Stream error: timeout".into()],
+        };
+        let json: serde_json::Value = serde_json::from_str(
+            &serde_json::to_string(&msg).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(json["type"], "stream_end");
+        assert_eq!(json["is_error"], true);
+        assert_eq!(json["cache_read_input_tokens"], 0);
+        assert_eq!(json["cache_creation_input_tokens"], 0);
+        assert_eq!(json["errors"][0], "Stream error: timeout");
     }
 
     #[test]

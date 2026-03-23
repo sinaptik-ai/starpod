@@ -95,13 +95,16 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
           // Build stats
           let stats = null
           if (data.num_turns > 0) {
-            const tokensIn = data.input_tokens >= 1000 ? Math.round(data.input_tokens / 1000) + 'k' : data.input_tokens
-            const tokensOut = data.output_tokens >= 1000 ? Math.round(data.output_tokens / 1000) + 'k' : data.output_tokens
+            const fmt = n => n >= 1000 ? Math.round(n / 1000) + 'k' : n
+            const tokensIn = fmt(data.input_tokens)
+            const tokensOut = fmt(data.output_tokens)
+            const cached = data.cache_read_input_tokens || 0
             stats = {
               numTurns: data.num_turns,
               costUsd: data.cost_usd,
               tokensIn,
               tokensOut,
+              cached: cached > 0 ? fmt(cached) : null,
             }
           }
 
@@ -117,7 +120,7 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
           // Move to finalized messages
           const finalized = {
             role: 'assistant_stream',
-            bubbles: bubbles.filter(b => b.text.trim()),
+            bubbles,
             tools,
             stats,
             errors,
@@ -411,7 +414,7 @@ function AssistantMessage({ msg }) {
         <div className="font-mono text-xs text-dim mt-2 pt-2 border-t border-border-subtle flex gap-3 flex-wrap tabular-nums">
           <span>{stats.numTurns} turn{stats.numTurns > 1 ? 's' : ''}</span>
           <span>${stats.costUsd.toFixed(4)}</span>
-          <span>{stats.tokensIn} in / {stats.tokensOut} out</span>
+          <span>{stats.tokensIn} in{stats.cached && <span className="text-dim"> ({stats.cached} cached)</span>} / {stats.tokensOut} out</span>
         </div>
       )}
     </div>

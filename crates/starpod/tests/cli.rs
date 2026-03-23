@@ -321,8 +321,7 @@ fn build_creates_starpod_directory() {
     assert!(cfg.join("agent.toml").is_file(), ".starpod/config/agent.toml should exist");
     assert!(cfg.join("SOUL.md").is_file(), ".starpod/config/SOUL.md should exist");
     assert!(sp.join("db").is_dir(), ".starpod/db/ should exist");
-    assert!(sp.join("users/admin/USER.md").is_file(), "admin user should be created");
-    assert!(sp.join("users/user/USER.md").is_file(), "default user should be created");
+    assert!(sp.join("users").is_dir(), ".starpod/users/ should exist");
 }
 
 #[test]

@@ -30,6 +30,9 @@ agent_name = "Aster"              # Agent display name (personality in SOUL.md)
 # Followup message handling during active agent loops
 # followup_mode = "inject"        # "inject" or "queue"
 
+# Self-improve (beta): auto-create skills from complex tasks, auto-fix broken skills
+# self_improve = false
+
 # ─── Providers ─────────────────────────────────────────
 # API keys must be set via environment variables or .env files, not here.
 # e.g. ANTHROPIC_API_KEY=sk-ant-... in .env
@@ -117,6 +120,7 @@ agent_name = "Aster"              # Agent display name (personality in SOUL.md)
 | `reasoning_effort` | string | — | Extended thinking: `"low"`, `"medium"`, `"high"` |
 | `compaction_model` | string | primary model | Model for conversation compaction summaries |
 | `followup_mode` | string | `"inject"` | How followup messages are handled during an active agent loop: `"inject"` or `"queue"` |
+| `self_improve` | bool | `false` | Beta: agent proactively creates skills from complex tasks and updates broken skills |
 
 ## Agent Personality & User Profile
 
@@ -222,6 +226,7 @@ Starpod watches `starpod.toml` and `agent.toml` for changes while the server is 
 - `compaction` settings — adjust context budget
 - `memory.export_sessions` — toggle session export
 - `followup_mode` — switch between inject and queue
+- `self_improve` — toggle self-improve mode
 
 ### What requires a restart
 

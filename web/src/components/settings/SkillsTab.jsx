@@ -270,13 +270,15 @@ export default function SkillsTab() {
         <div className="flex flex-col gap-1.5">
           {skills.map(s => (
             <div key={s.name} className="skill-card">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3 min-w-0">
-                  <span className="font-mono text-sm text-primary">{s.name}</span>
-                  {s.version && <span className="text-[10px] text-dim bg-elevated px-1.5 py-0.5 rounded">{s.version}</span>}
-                  {s.description && <span className="text-dim text-xs truncate">{s.description}</span>}
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-sm text-primary truncate">{s.name}</span>
+                    {s.version && <span className="text-[10px] text-dim bg-elevated px-1.5 py-0.5 rounded shrink-0">{s.version}</span>}
+                  </div>
+                  {s.description && <div className="text-dim text-xs mt-1 line-clamp-2">{s.description}</div>}
                 </div>
-                <div className="flex gap-3 shrink-0 ml-3">
+                <div className="flex gap-3 shrink-0 pt-0.5">
                   <button onClick={() => startEdit(s.name)} className="text-xs text-muted hover:text-primary transition-colors cursor-pointer">
                     {editName === s.name ? 'close' : 'edit'}
                   </button>

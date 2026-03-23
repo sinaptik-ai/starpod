@@ -334,13 +334,25 @@ impl SkillStore {
     /// The model uses this to decide which skills to activate.
     /// Returns an empty string if no skills exist.
     pub fn skill_catalog(&self) -> Result<String> {
+        self.skill_catalog_excluding(None)
+    }
+
+    /// Build the skill catalog, optionally excluding a skill by name.
+    ///
+    /// Used to omit a skill that was already inline-activated via slash command
+    /// so the system prompt doesn't send conflicting signals.
+    pub fn skill_catalog_excluding(&self, exclude: Option<&str>) -> Result<String> {
         let skills = self.list()?;
-        if skills.is_empty() {
+        let filtered: Vec<_> = skills
+            .iter()
+            .filter(|s| exclude.map_or(true, |ex| !s.name.eq_ignore_ascii_case(ex)))
+            .collect();
+        if filtered.is_empty() {
             return Ok(String::new());
         }
 
         let mut xml = String::from("<available_skills>\n");
-        for skill in &skills {
+        for skill in &filtered {
             xml.push_str(&format!(
                 "  <skill>\n    <name>{}</name>\n    <description>{}</description>\n  </skill>\n",
                 xml_escape(&skill.name),

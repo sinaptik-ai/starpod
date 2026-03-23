@@ -1,0 +1,314 @@
+# Model catalog — single source of truth for supported models.
+#
+# This file defines every model the system knows about: pricing, capabilities,
+# and provider metadata. Override at runtime with a models.toml in your config
+# directory (e.g. .starpod/config/models.toml).
+#
+# Prices verified from official docs on 2026-03-22.
+#
+# Schema:
+#   [<provider>]
+#   default_model = "<model-id>"          # default for this provider
+#   api_key_env   = "<ENV_VAR>"           # env var for the API key (optional)
+#   cache_read_multiplier  = <float>      # relative to input rate (0.1 = 10%)
+#   cache_creation_multiplier = <float>
+#
+#   [<provider>.models.<model-id>]
+#   input  = <float>                      # USD per million input tokens
+#   output = <float>                      # USD per million output tokens
+#   context_window = <int>                # max tokens in context (optional)
+#   supports_tool_use = <bool>            # (default: true)
+#   supports_vision = <bool>              # (default: false)
+#   # Optional per-model cache overrides:
+#   # cache_read_multiplier = <float>
+#   # cache_creation_multiplier = <float>
+
+# ── Anthropic ──────────────────────────────────────────────────────────
+# Source: https://platform.claude.com/docs/en/about-claude/pricing
+# Cache: 5-min write = 1.25x, read/hit = 0.1x
+
+[anthropic]
+default_model = "claude-haiku-4-5"
+api_key_env = "ANTHROPIC_API_KEY"
+cache_read_multiplier = 0.1
+cache_creation_multiplier = 1.25
+
+[anthropic.models.claude-opus-4-6]
+input = 5.0
+output = 25.0
+context_window = 1000000
+supports_vision = true
+
+[anthropic.models.claude-sonnet-4-6]
+input = 3.0
+output = 15.0
+context_window = 1000000
+supports_vision = true
+
+[anthropic.models.claude-sonnet-4-5]
+input = 3.0
+output = 15.0
+context_window = 200000
+supports_vision = true
+
+[anthropic.models.claude-haiku-4-5]
+input = 1.0
+output = 5.0
+context_window = 200000
+supports_vision = true
+
+# ── OpenAI ─────────────────────────────────────────────────────────────
+# Source: https://developers.openai.com/api/docs/pricing
+# Cache: automatic, read = 0.1x, write = 1.0x (no surcharge)
+
+[openai]
+default_model = "gpt-4o"
+api_key_env = "OPENAI_API_KEY"
+cache_read_multiplier = 0.1
+cache_creation_multiplier = 1.0
+
+# --- GPT-5.4 series (latest flagship) ---
+
+[openai.models."gpt-5.4"]
+input = 2.50
+output = 15.0
+context_window = 1100000
+supports_vision = true
+
+[openai.models."gpt-5.4-mini"]
+input = 0.75
+output = 4.50
+context_window = 1100000
+supports_vision = true
+
+[openai.models."gpt-5.4-nano"]
+input = 0.20
+output = 1.25
+context_window = 1100000
+
+[openai.models."gpt-5.4-pro"]
+input = 30.0
+output = 180.0
+context_window = 1100000
+supports_vision = true
+
+# --- GPT-5 / 5.2 series ---
+
+[openai.models.gpt-5]
+input = 0.625
+output = 5.0
+context_window = 400000
+supports_vision = true
+
+[openai.models."gpt-5.2"]
+input = 0.875
+output = 7.0
+context_window = 400000
+supports_vision = true
+
+[openai.models.gpt-5-mini]
+input = 0.25
+output = 2.0
+context_window = 400000
+
+[openai.models.gpt-5-nano]
+input = 0.05
+output = 0.40
+context_window = 400000
+
+# --- GPT-4.1 series ---
+
+[openai.models."gpt-4.1"]
+input = 2.0
+output = 8.0
+context_window = 1047576
+
+[openai.models."gpt-4.1-mini"]
+input = 0.20
+output = 0.80
+context_window = 1047576
+
+[openai.models."gpt-4.1-nano"]
+input = 0.05
+output = 0.20
+context_window = 1047576
+
+# --- GPT-4o series ---
+
+[openai.models.gpt-4o]
+input = 2.5
+output = 10.0
+context_window = 128000
+supports_vision = true
+
+[openai.models.gpt-4o-mini]
+input = 0.15
+output = 0.6
+context_window = 128000
+supports_vision = true
+
+# --- Reasoning (o-series) ---
+
+[openai.models.o3]
+input = 2.0
+output = 8.0
+context_window = 200000
+
+[openai.models.o4-mini]
+input = 1.1
+output = 4.4
+context_window = 200000
+supports_vision = true
+
+[openai.models.o1]
+input = 15.0
+output = 60.0
+context_window = 200000
+
+[openai.models.o1-mini]
+input = 0.55
+output = 2.20
+context_window = 128000
+
+# ── Gemini ─────────────────────────────────────────────────────────────
+# Source: https://ai.google.dev/gemini-api/docs/pricing
+# Cache: read ≈ 0.1x, write = 1.0x + per-hour storage fee
+
+[gemini]
+default_model = "gemini-2.5-pro"
+api_key_env = "GEMINI_API_KEY"
+cache_read_multiplier = 0.1
+cache_creation_multiplier = 1.0
+
+# --- Gemini 3 series (preview) ---
+
+[gemini.models.gemini-3-1-pro-preview]
+input = 2.0
+output = 12.0
+context_window = 1048576
+supports_vision = true
+
+[gemini.models.gemini-3-flash-preview]
+input = 0.50
+output = 3.0
+context_window = 1048576
+supports_vision = true
+
+[gemini.models.gemini-3-1-flash-lite-preview]
+input = 0.25
+output = 1.50
+context_window = 1048576
+supports_vision = true
+
+# --- Gemini 2.5 series (stable) ---
+
+[gemini.models.gemini-2-5-pro]
+input = 1.25
+output = 10.0
+context_window = 1048576
+supports_vision = true
+
+[gemini.models.gemini-2-5-flash]
+input = 0.30
+output = 2.50
+context_window = 1048576
+supports_vision = true
+
+[gemini.models.gemini-2-5-flash-lite]
+input = 0.10
+output = 0.40
+context_window = 1048576
+supports_vision = true
+
+# --- Gemini 2.0 ---
+
+[gemini.models.gemini-2-0-flash]
+input = 0.10
+output = 0.40
+context_window = 1048576
+supports_vision = true
+
+# ── Groq ───────────────────────────────────────────────────────────────
+# Source: https://console.groq.com/docs/models
+
+[groq]
+default_model = "llama-3.3-70b-versatile"
+api_key_env = "GROQ_API_KEY"
+
+[groq.models.llama-3-3-70b-versatile]
+input = 0.59
+output = 0.79
+context_window = 131072
+
+[groq.models.llama-3-1-8b-instant]
+input = 0.05
+output = 0.08
+context_window = 131072
+
+[groq.models."openai/gpt-oss-120b"]
+input = 0.039
+output = 0.10
+context_window = 131072
+
+[groq.models."openai/gpt-oss-20b"]
+input = 0.030
+output = 0.10
+context_window = 131072
+
+# ── DeepSeek ───────────────────────────────────────────────────────────
+# Source: https://api-docs.deepseek.com/quick_start/pricing
+# Both models are DeepSeek-V3.2; cache read = 0.1x
+
+[deepseek]
+default_model = "deepseek-chat"
+api_key_env = "DEEPSEEK_API_KEY"
+cache_read_multiplier = 0.1
+cache_creation_multiplier = 1.0
+
+[deepseek.models.deepseek-chat]
+input = 0.28
+output = 0.42
+context_window = 65536
+
+[deepseek.models.deepseek-reasoner]
+input = 0.28
+output = 0.42
+context_window = 65536
+
+# ── OpenRouter ─────────────────────────────────────────────────────────
+# Prices are approximate — OpenRouter adds a small markup.
+
+[openrouter]
+default_model = "anthropic/claude-haiku-4-5"
+api_key_env = "OPENROUTER_API_KEY"
+
+[openrouter.models."anthropic/claude-haiku-4-5"]
+input = 1.0
+output = 5.0
+context_window = 200000
+
+[openrouter.models."anthropic/claude-sonnet-4-6"]
+input = 3.0
+output = 15.0
+context_window = 1000000
+
+[openrouter.models."openai/gpt-4o"]
+input = 2.5
+output = 10.0
+context_window = 128000
+
+[openrouter.models."google/gemini-2.5-pro"]
+input = 1.25
+output = 10.0
+context_window = 1048576
+
+[openrouter.models."meta-llama/llama-3.3-70b-instruct"]
+input = 0.30
+output = 0.30
+context_window = 128000
+
+# ── Ollama ─────────────────────────────────────────────────────────────
+# Local models — no API key, free.
+
+[ollama]
+default_model = "llama3.3"

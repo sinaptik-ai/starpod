@@ -77,3 +77,27 @@ export function ChevronDownIcon({ className }) {
     </svg>
   )
 }
+
+export function SearchIcon({ className }) {
+  return (
+    <svg className={className || s35()} viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
+    </svg>
+  )
+}
+
+export function ArrowUpIcon({ className }) {
+  return (
+    <svg className={className || 'w-4 h-4'} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 19V5M5 12l7-7 7 7" />
+    </svg>
+  )
+}
+
+export function EllipsisIcon({ className }) {
+  return (
+    <svg className={className || 'w-4 h-4'} viewBox="0 0 24 24" fill="currentColor">
+      <circle cx="12" cy="12" r="1.5" /><circle cx="6" cy="12" r="1.5" /><circle cx="18" cy="12" r="1.5" />
+    </svg>
+  )
+}

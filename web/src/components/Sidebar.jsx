@@ -1,13 +1,42 @@
-import React from 'react'
+import React, { useState, useMemo } from 'react'
 import { useApp, isMobile } from '../contexts/AppContext'
 import { formatSessionDate } from '../lib/utils'
 import { markSessionRead } from '../lib/api'
 import IconButton from './ui/IconButton'
-import { ComposeIcon, CloseIcon, GearIcon } from './ui/Icons'
+import { ComposeIcon, CloseIcon, GearIcon, SearchIcon } from './ui/Icons'
+
+function groupSessionsByDate(sessions) {
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1)
+  const weekAgo = new Date(today); weekAgo.setDate(weekAgo.getDate() - 7)
+
+  const groups = { today: [], yesterday: [], week: [], older: [] }
+
+  for (const s of sessions) {
+    const d = new Date(s.last_message_at || s.created_at)
+    if (d >= today) groups.today.push(s)
+    else if (d >= yesterday) groups.yesterday.push(s)
+    else if (d >= weekAgo) groups.week.push(s)
+    else groups.older.push(s)
+  }
+
+  const result = []
+  if (groups.today.length) result.push({ label: 'Today', sessions: groups.today })
+  if (groups.yesterday.length) result.push({ label: 'Yesterday', sessions: groups.yesterday })
+  if (groups.week.length) result.push({ label: 'Last 7 days', sessions: groups.week })
+  if (groups.older.length) result.push({ label: 'Older', sessions: groups.older })
+  return result
+}
 
 function Sidebar({ onSelectSession, onNewChat }) {
   const { state, dispatch } = useApp()
-  const { sidebarOpen, currentSessionId, sessions, settingsVisible, cronVisible } = state
+  const { sidebarOpen, currentSessionId, sessions, settingsVisible, cronVisible, previewUrl } = state
+  const isTransient = sidebarOpen && !!previewUrl
+  const [searchQuery, setSearchQuery] = useState('')
+
+  const cfg = window.__STARPOD__ || {}
+  const agentName = cfg.agent_name || 'Starpod'
 
   function closeSidebar() {
     dispatch({ type: 'CLOSE_SIDEBAR' })
@@ -40,40 +69,78 @@ function Sidebar({ onSelectSession, onNewChat }) {
     }
   }
 
-  // Sort: unread first, then by date
-  const sorted = [...(sessions || [])].sort((a, b) => {
-    const aUnread = a.is_read ? 0 : 1
-    const bUnread = b.is_read ? 0 : 1
-    if (aUnread !== bUnread) return bUnread - aUnread
-    return new Date(b.last_message_at || b.created_at) - new Date(a.last_message_at || a.created_at)
-  })
-
   function handleCronClick() {
     dispatch({ type: 'SHOW_CRON' })
     if (isMobile()) closeSidebar()
   }
 
-  // Render the sidebar inner content — the <aside id="sidebar"> wrapper is in App.jsx
+  // Sort: unread first, then by date
+  const sorted = useMemo(() => {
+    let list = [...(sessions || [])]
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase()
+      list = list.filter(s => {
+        const text = (s.title || s.summary || '').toLowerCase()
+        return text.includes(q)
+      })
+    }
+    list.sort((a, b) => {
+      const aUnread = a.is_read ? 0 : 1
+      const bUnread = b.is_read ? 0 : 1
+      if (aUnread !== bUnread) return bUnread - aUnread
+      return new Date(b.last_message_at || b.created_at) - new Date(a.last_message_at || a.created_at)
+    })
+    return list
+  }, [sessions, searchQuery])
+
+  const dateGroups = useMemo(() => groupSessionsByDate(sorted), [sorted])
+
+  function renderSession(s) {
+    const active = s.id === currentSessionId
+    const unread = !s.is_read && !active
+    const summary = s.title || s.summary || 'New conversation'
+
+    return (
+      <button
+        key={s.id}
+        className={`session-item px-3 py-2.5 rounded-lg cursor-pointer mb-0.5 w-full text-left${active ? ' active' : ''}`}
+        data-sid={s.id}
+        onClick={() => handleSessionClick(s)}
+      >
+        <div className="flex items-center gap-2">
+          {unread && <span className="unread-dot" />}
+          <div className="flex-1 min-w-0">
+            <div className={`text-[13px] leading-snug truncate${active ? ' text-primary font-medium' : ' text-secondary'}`}>
+              {summary}
+            </div>
+          </div>
+        </div>
+      </button>
+    )
+  }
+
   return (
     <>
       {/* Header with branding and toggle */}
       <div className="flex items-center justify-between px-4 h-12 shrink-0">
         <span className="font-mono text-sm font-bold tracking-tight text-primary">starpod</span>
-        <button
-          onClick={closeSidebar}
-          className="text-muted hover:text-primary p-1.5 rounded-lg hover:bg-elevated transition-colors cursor-pointer"
-          id="sidebar-close"
-          aria-label="Close sidebar"
-        >
-          <svg className="w-4 h-4 stroke-current fill-none stroke-2" viewBox="0 0 24 24" strokeLinecap="round">
-            <rect x="3" y="3" width="18" height="18" rx="2" />
-            <line x1="9" y1="3" x2="9" y2="21" />
-          </svg>
-        </button>
+        {!isTransient && (
+          <button
+            onClick={closeSidebar}
+            className="text-muted hover:text-primary p-1.5 rounded-lg hover:bg-elevated transition-colors cursor-pointer"
+            id="sidebar-close"
+            aria-label="Close sidebar"
+          >
+            <svg className="w-4 h-4 stroke-current fill-none stroke-2" viewBox="0 0 24 24" strokeLinecap="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <line x1="9" y1="3" x2="9" y2="21" />
+            </svg>
+          </button>
+        )}
       </div>
 
       {/* Nav items */}
-      <div className="px-3 pb-2 flex flex-col gap-1">
+      <div className="px-3 pb-2 flex flex-col gap-0.5">
         <button
           onClick={newChat}
           className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-secondary hover:text-primary hover:bg-elevated transition-colors cursor-pointer text-[13px] w-full text-left"
@@ -95,14 +162,23 @@ function Sidebar({ onSelectSession, onNewChat }) {
         </button>
       </div>
 
-      {/* Chats label */}
-      <div className="px-4 pt-2 pb-1 border-t border-border-subtle">
-        <span className="text-xs font-semibold text-muted tracking-wider uppercase">Chats</span>
+      {/* Search */}
+      <div className="px-3 pb-2">
+        <div className="sidebar-search">
+          <SearchIcon className="w-3.5 h-3.5 stroke-current fill-none stroke-[1.5] shrink-0 text-dim" />
+          <input
+            type="text"
+            placeholder="Search chats..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className="sidebar-search-input"
+          />
+        </div>
       </div>
 
       {/* Session list */}
-      <div className="flex-1 overflow-y-auto px-3 py-2" id="session-list">
-        {sorted.length === 0 ? (
+      <div className="flex-1 overflow-y-auto px-2 py-1" id="session-list">
+        {sorted.length === 0 && !searchQuery ? (
           <div className="text-center text-dim text-xs py-8">
             <p>No conversations yet</p>
             <button
@@ -112,42 +188,24 @@ function Sidebar({ onSelectSession, onNewChat }) {
               Start a new chat
             </button>
           </div>
+        ) : sorted.length === 0 && searchQuery ? (
+          <div className="text-center text-dim text-xs py-8">
+            No results
+          </div>
         ) : (
-          sorted.map(s => {
-            const active = s.id === currentSessionId
-            const unread = !s.is_read && !active
-            const summary = s.title || s.summary || 'New conversation'
-            const date = formatSessionDate(s.last_message_at || s.created_at)
-            const msgs = s.message_count || 0
-            const closed = s.is_closed ? ' \u00b7 closed' : ''
-
-            return (
-              <button
-                key={s.id}
-                className={`session-item px-3.5 py-3 rounded-lg cursor-pointer mb-1 w-full text-left${active ? ' active' : ''}`}
-                data-sid={s.id}
-                onClick={() => handleSessionClick(s)}
-              >
-                <div className="flex items-start gap-2">
-                  {unread && <span className="unread-dot" />}
-                  <div className="flex-1 min-w-0">
-                    <div className={`text-[13px] leading-snug line-clamp-2 break-words${active ? ' text-primary font-medium' : ' text-secondary'}`}>
-                      {summary}
-                    </div>
-                    <div className="text-[11px] text-dim mt-1 flex gap-2">
-                      <span>{date}</span>
-                      <span>{msgs} message{msgs !== 1 ? 's' : ''}{closed}</span>
-                    </div>
-                  </div>
-                </div>
-              </button>
-            )
-          })
+          dateGroups.map(group => (
+            <div key={group.label} className="mb-1">
+              <div className="px-3 pt-3 pb-1">
+                <span className="text-[11px] font-semibold text-dim tracking-wider uppercase">{group.label}</span>
+              </div>
+              {group.sessions.map(renderSession)}
+            </div>
+          ))
         )}
       </div>
 
-      {/* Settings button — sticky footer */}
-      <div className="sidebar-settings-footer">
+      {/* Footer with settings */}
+      <div className="sidebar-footer">
         <button
           className={`sidebar-settings-btn${settingsVisible ? ' active' : ''}`}
           onClick={handleSettingsClick}

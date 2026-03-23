@@ -1047,17 +1047,19 @@ async fn main() -> anyhow::Result<()> {
                 onboarding::run_wizard()
             };
 
-            let (provider, model, api_key, first_agent, agent_display) = match answers {
+            let (provider, model, api_key, brave_api_key, first_agent, agent_display) = match answers {
                 Some(a) => (
                     a.provider,
                     a.model,
                     a.api_key,
+                    a.brave_api_key,
                     a.first_agent_name,
                     a.agent_display_name,
                 ),
                 None => (
                     "anthropic".to_string(),
                     "claude-haiku-4-5".to_string(),
+                    None,
                     None,
                     None,
                     None,
@@ -1073,11 +1075,11 @@ async fn main() -> anyhow::Result<()> {
             tokio::fs::create_dir_all(cwd.join("skills")).await?;
             tokio::fs::write(
                 cwd.join(".env"),
-                onboarding::generate_env_content(&provider, api_key.as_deref()),
+                onboarding::generate_env_content_full(&provider, api_key.as_deref(), brave_api_key.as_deref()),
             ).await?;
             tokio::fs::write(
                 cwd.join(".env.dev"),
-                onboarding::generate_env_dev_content(&provider, api_key.as_deref()),
+                onboarding::generate_env_dev_content_full(&provider, api_key.as_deref(), brave_api_key.as_deref()),
             ).await?;
 
             // Add .env and .instances/ to .gitignore if not already there
@@ -1124,11 +1126,27 @@ async fn main() -> anyhow::Result<()> {
                     "✓".green().bold(),
                     agent_name.bright_white()
                 );
-                println!(
-                    "  {} Run {} to start.",
-                    "→".dimmed(),
-                    format!("starpod dev {}", agent_name).bright_white()
-                );
+
+                let start_now = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                    .with_prompt("Start the agent now?")
+                    .default(true)
+                    .interact()
+                    .unwrap_or(false);
+
+                if start_now {
+                    println!();
+                    let exe = std::env::current_exe().unwrap_or_else(|_| "starpod".into());
+                    let mut cmd = std::process::Command::new(&exe);
+                    cmd.arg("dev").arg(&agent_name);
+                    let status = cmd.status()?;
+                    std::process::exit(status.code().unwrap_or(1));
+                } else {
+                    println!(
+                        "  {} Run {} to start.",
+                        "→".dimmed(),
+                        format!("starpod dev {}", agent_name).bright_white()
+                    );
+                }
             } else {
                 println!(
                     "  {} Run {} to create your first agent.",

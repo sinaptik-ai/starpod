@@ -129,10 +129,36 @@ html, body {
   height: 100dvh;
 }
 
-/* Hide header new-chat button when sidebar is open (it's in the sidebar header) */
-#sidebar.open ~ #app #new-chat-header-btn { display: none; }
+/* Hide header new-chat button when sidebar is open (unless transient/preview mode) */
+#sidebar.open:not(.transient) ~ #app #new-chat-header-btn { display: none; }
 
-/* Sidebar close button is now visible on all viewports (serves as sidebar toggle) */
+/* ── Header ── */
+#main-header {
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.15s ease;
+}
+
+/* Model pill */
+.model-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--color-primary);
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  white-space: nowrap;
+}
+
+.model-pill:hover {
+  background: var(--color-elevated);
+}
 
 /* ── Animations ── */
 @keyframes msg-in {
@@ -165,20 +191,111 @@ html, body {
 /* ── Badge pulse ── */
 .badge-running { animation: badge-pulse 1.2s ease-in-out infinite; }
 
-/* ── Input focus ── */
-#input-form {
-  transition: border-color 0.15s ease;
+/* ── Input form ── */
+.input-form-styled {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-main);
+  border-radius: 16px;
+  padding: 6px 6px 6px 12px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-form#input-form:focus-within {
+
+.input-form-styled:focus-within {
   border-color: var(--color-dim);
+  box-shadow: 0 0 0 1px rgba(59,130,246,0.08);
 }
 
 /* Kill focus ring on input-form internals — the form border handles it */
-#input-form textarea:focus,
-#input-form textarea:focus-visible,
-#input-form button:focus,
-#input-form button:focus-visible {
+.input-form-styled textarea:focus,
+.input-form-styled textarea:focus-visible,
+.input-form-styled button:focus,
+.input-form-styled button:focus-visible {
   outline: none;
+}
+
+/* Send button */
+.send-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: var(--color-primary);
+  color: var(--color-bg);
+  cursor: pointer;
+  shrink: 0;
+  transition: background 0.15s ease, opacity 0.15s ease;
+  flex-shrink: 0;
+}
+
+.send-btn:hover { opacity: 0.85; }
+.send-btn:disabled {
+  background: var(--color-elevated);
+  color: var(--color-dim);
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* ── Slash command menu ── */
+.slash-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-main);
+  border-radius: 12px;
+  padding: 4px;
+  max-height: 288px;
+  overflow-y: auto;
+  z-index: 50;
+  box-shadow: 0 -4px 24px rgba(0,0,0,0.4);
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-main) transparent;
+}
+
+.slash-menu-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.slash-menu-item:hover,
+.slash-menu-item.active {
+  background: var(--color-elevated);
+}
+
+.slash-menu-name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--color-primary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.slash-menu-desc {
+  font-size: 12px;
+  color: var(--color-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.slash-menu-empty {
+  padding: 12px 10px;
+  font-size: 12px;
+  color: var(--color-dim);
+  text-align: center;
 }
 
 /* ── Tool icon variants ── */
@@ -278,7 +395,28 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   bottom: 0;
   left: 0;
   z-index: 150;
+  width: 0;
+  min-width: 0;
+  border-right-color: transparent;
+  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              min-width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+#sidebar.transient #sidebar-inner {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+#sidebar.transient.peeking {
+  width: var(--sidebar-w);
+  min-width: var(--sidebar-w);
+  border-right-color: var(--color-border-subtle);
   box-shadow: 20px 0 60px rgba(0,0,0,0.5);
+}
+
+#sidebar.transient.peeking #sidebar-inner {
+  opacity: 1;
+  transition-delay: 0.1s;
 }
 
 /* ── Markdown body ── */
@@ -372,21 +510,86 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   margin: 0.5em 0;
 }
 
-/* ── Prompt chips ── */
-.prompt-chip {
+/* ── Sidebar search ── */
+.sidebar-search {
   display: flex;
   align-items: center;
-  font-family: var(--font-mono);
-  font-size: 0.8125rem;
-  color: var(--color-muted);
-  padding: 0.25rem 0;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  transition: border-color 0.15s ease;
+}
+
+.sidebar-search:focus-within {
+  border-color: var(--color-dim);
+}
+
+.sidebar-search-input {
+  flex: 1;
   background: none;
   border: none;
+  outline: none;
+  font-size: 0.8125rem;
+  color: var(--color-primary);
+  font-family: var(--font-sans);
+}
+
+.sidebar-search-input::placeholder {
+  color: var(--color-dim);
+}
+
+/* ── Sidebar footer ── */
+.sidebar-footer {
+  border-top: 1px solid var(--color-border-subtle);
+  padding: 8px 12px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebar-user-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+}
+
+.sidebar-user-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-elevated);
+  border: 1px solid var(--color-border-main);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-secondary);
+  flex-shrink: 0;
+}
+
+/* ── Prompt chips ── */
+.prompt-chip {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  color: var(--color-secondary);
+  padding: 8px 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 12px;
   cursor: pointer;
-  transition: color 0.15s ease;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
 }
 .prompt-chip:hover {
   color: var(--color-primary);
+  border-color: var(--color-border-main);
+  background: var(--color-elevated);
 }
 
 /* ── Session items ── */
@@ -514,6 +717,48 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   background: var(--color-elevated);
 }
 
+/* Settings sidebar tab buttons */
+.settings-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  font-size: 13px;
+  font-family: var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+  color: var(--color-secondary);
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.settings-tab-btn:hover {
+  color: var(--color-primary);
+  background: var(--color-elevated);
+}
+
+.settings-tab-btn.active {
+  color: var(--color-accent);
+  background: var(--color-accent-muted);
+  font-weight: 500;
+}
+
+.settings-tab-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.settings-tab-btn.active .settings-tab-icon { opacity: 1; }
+.settings-tab-btn:hover .settings-tab-icon { opacity: 0.85; }
+
 /* ── Settings design system ── */
 
 /* Card: grouped section */
@@ -527,19 +772,17 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   display: flex;
   align-items: baseline;
   gap: 8px;
-  padding: 10px 14px;
+  padding: 12px 16px;
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-border-subtle);
   border-radius: 10px 10px 0 0;
 }
 
 .s-card-title {
-  font-family: var(--font-mono);
-  font-size: 0.6875rem;
+  font-size: 0.8125rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--color-muted);
+  letter-spacing: -0.01em;
+  color: var(--color-secondary);
 }
 
 .s-card-desc {
@@ -557,8 +800,8 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 8px 14px;
-  min-height: 40px;
+  padding: 8px 16px;
+  min-height: 42px;
   transition: background 0.1s ease;
 }
 
@@ -816,12 +1059,13 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
 .s-save-bar {
   position: sticky;
   bottom: 0;
-  padding: 12px 14px;
+  padding: 16px 14px;
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
-  background: linear-gradient(to top, var(--color-bg) 70%, transparent);
+  background: linear-gradient(to top, var(--color-bg) 60%, var(--color-bg) 40%, transparent);
+  z-index: 5;
 }
 
 .s-save-btn {
@@ -855,6 +1099,52 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   background: var(--color-elevated);
   margin-left: 4px;
 }
+
+/* Stat card (costs overview) */
+.s-stat-card {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: var(--color-surface);
+  transition: border-color 0.15s ease;
+}
+
+.s-stat-card:hover { border-color: var(--color-border-main); }
+
+/* Settings table */
+.s-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.s-table {
+  width: 100%;
+  font-size: 0.8125rem;
+  border-collapse: collapse;
+}
+
+.s-table thead th {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-dim);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  white-space: nowrap;
+}
+
+.s-table tbody td {
+  padding: 8px 12px;
+  font-size: 0.75rem;
+  border-bottom: 1px solid var(--color-border-subtle);
+  white-space: nowrap;
+}
+
+.s-table tbody tr:last-child td { border-bottom: none; }
+
+.s-table tbody tr { transition: background 0.1s ease; }
+.s-table tbody tr:hover { background: rgba(255,255,255,0.015); }
 
 /* User card / Skill card */
 .user-card, .skill-card {
@@ -891,13 +1181,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
 
 .prompt-item button:hover { color: var(--color-err); }
 
-/* ── Sidebar settings footer ── */
-.sidebar-settings-footer {
-  border-top: 1px solid var(--color-border-subtle);
-  padding: 8px 12px;
-  flex-shrink: 0;
-}
-
+/* ── Sidebar settings button ── */
 .sidebar-settings-btn {
   display: flex;
   align-items: center;
@@ -940,7 +1224,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   }
 
   /* Touch targets: ensure minimum 44px hit area */
-  #input-form button,
+  .input-form-styled button,
   header button {
     min-width: 44px;
     min-height: 44px;
@@ -950,7 +1234,7 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
   }
   .prompt-chip {
     min-height: 44px;
-    padding: 0.5rem 0;
+    padding: 8px 16px;
   }
   .s-save-btn {
     min-height: 44px;

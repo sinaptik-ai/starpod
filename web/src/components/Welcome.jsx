@@ -3,7 +3,7 @@ import Logo from './ui/Logo'
 
 function Welcome({ onSendPrompt }) {
   const cfg = window.__STARPOD__ || {}
-  const greeting = cfg.greeting || 'ready_'
+  const greeting = cfg.greeting || 'What can I help with?'
   const prompts = cfg.prompts || []
 
   return (
@@ -12,18 +12,17 @@ function Welcome({ onSendPrompt }) {
       id="welcome"
       style={{ minHeight: 'calc(100dvh - 120px)' }}
     >
-      <div>
-        <div className="mb-3"><Logo large /></div>
-        <p className="text-sm text-dim font-mono">{greeting}</p>
+      <div className="max-w-lg">
+        <div className="mb-4"><Logo large /></div>
+        <p className="text-xl text-secondary font-light tracking-tight">{greeting}</p>
         {prompts.length > 0 && (
-          <div className="mt-6 flex flex-col items-start gap-1.5">
+          <div className="mt-8 flex flex-wrap justify-center gap-2">
             {prompts.map((p, i) => (
               <button
                 key={i}
                 className="prompt-chip"
                 onClick={() => onSendPrompt(p)}
               >
-                <span className="text-dim font-mono mr-2">&gt;</span>
                 {p}
               </button>
             ))}

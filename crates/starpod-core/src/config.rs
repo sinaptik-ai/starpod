@@ -194,6 +194,37 @@ impl Default for EmailChannelConfig {
     }
 }
 
+/// Internet access settings for web search and fetch tools.
+///
+/// # Example
+///
+/// ```toml
+/// [internet]
+/// enabled = true
+/// ```
+///
+/// The Brave Search API key should be set in `.env` as `BRAVE_API_KEY`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InternetConfig {
+    /// Whether web search and fetch tools are enabled.
+    pub enabled: bool,
+    /// Maximum response body size in bytes for WebFetch (default: 512 KiB).
+    pub max_fetch_bytes: usize,
+    /// Request timeout in seconds (default: 15).
+    pub timeout_secs: u64,
+}
+
+impl Default for InternetConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_fetch_bytes: 512 * 1024,
+            timeout_secs: 15,
+        }
+    }
+}
+
 /// Channel configuration namespace (`[channels.*]`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -527,6 +558,15 @@ pub struct StarpodConfig {
     #[serde(default)]
     pub auth: AuthConfig,
 
+    /// Internet access settings (web search & fetch).
+    #[serde(default)]
+    pub internet: InternetConfig,
+
+    /// Self-improve mode (beta): when enabled, the agent proactively creates
+    /// skills from complex tasks and updates outdated skills during use.
+    #[serde(default)]
+    pub self_improve: bool,
+
     /// The project root directory (not serialized — set at load time).
     #[serde(skip)]
     pub project_root: PathBuf,
@@ -622,6 +662,8 @@ impl Default for StarpodConfig {
             browser: BrowserConfig::default(),
             attachments: AttachmentsConfig::default(),
             auth: AuthConfig::default(),
+            internet: InternetConfig::default(),
+            self_improve: false,
             project_root: PathBuf::new(),
         }
     }
@@ -1434,5 +1476,70 @@ mod tests {
         let json = serde_json::to_string(&config).unwrap();
         assert!(json.contains("\"greeting\":\"Hello\""));
         assert!(json.contains("\"prompts\":[\"a\",\"b\"]"));
+    }
+
+    // ── InternetConfig ────────────────────────────────────────────────
+
+    #[test]
+    fn internet_config_defaults() {
+        let config = InternetConfig::default();
+        assert!(config.enabled);
+        assert_eq!(config.max_fetch_bytes, 512 * 1024);
+        assert_eq!(config.timeout_secs, 15);
+    }
+
+    #[test]
+    fn internet_config_from_toml_defaults() {
+        let config: InternetConfig = toml::from_str("").unwrap();
+        assert!(config.enabled);
+        assert_eq!(config.max_fetch_bytes, 512 * 1024);
+        assert_eq!(config.timeout_secs, 15);
+    }
+
+    #[test]
+    fn internet_config_from_toml_partial_override() {
+        let config: InternetConfig = toml::from_str(
+            r#"
+            enabled = false
+            timeout_secs = 30
+            "#,
+        )
+        .unwrap();
+        assert!(!config.enabled);
+        assert_eq!(config.timeout_secs, 30);
+        assert_eq!(config.max_fetch_bytes, 512 * 1024);
+    }
+
+    #[test]
+    fn internet_config_from_toml_full_override() {
+        let config: InternetConfig = toml::from_str(
+            r#"
+            enabled = true
+            max_fetch_bytes = 1048576
+            timeout_secs = 60
+            "#,
+        )
+        .unwrap();
+        assert!(config.enabled);
+        assert_eq!(config.max_fetch_bytes, 1_048_576);
+        assert_eq!(config.timeout_secs, 60);
+    }
+
+    #[test]
+    fn starpod_config_includes_internet_section() {
+        let config: StarpodConfig = toml::from_str(
+            r#"
+            [internet]
+            enabled = false
+            "#,
+        )
+        .unwrap();
+        assert!(!config.internet.enabled);
+    }
+
+    #[test]
+    fn starpod_config_default_has_internet_enabled() {
+        let config = StarpodConfig::default();
+        assert!(config.internet.enabled);
     }
 }

@@ -18,6 +18,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn, debug};
 
+use agent_sdk::models::ModelRegistry;
 use starpod_agent::StarpodAgent;
 use starpod_auth::{AuthStore, RateLimiter};
 use starpod_core::{StarpodConfig, ResolvedPaths, reload_agent_config};
@@ -55,6 +56,8 @@ pub struct AppState {
     pub rate_limiter: Arc<RateLimiter>,
     pub config: RwLock<StarpodConfig>,
     pub paths: ResolvedPaths,
+    /// Centralized model catalog (pricing + capabilities + provider metadata).
+    pub model_registry: Arc<ModelRegistry>,
     /// Broadcast channel for pushing events to connected WebSocket clients.
     pub events_tx: tokio::sync::broadcast::Sender<GatewayEvent>,
 }
@@ -267,12 +270,33 @@ pub async fn serve_with_agent(
         std::time::Duration::from_secs(config.auth.rate_limit_window_secs),
     ));
 
+    // Load model registry: embedded defaults + optional config override.
+    let mut model_registry = ModelRegistry::with_defaults();
+    let models_path = paths.config_dir.join("models.toml");
+    if models_path.exists() {
+        match std::fs::read_to_string(&models_path) {
+            Ok(contents) => match ModelRegistry::from_toml(&contents) {
+                Ok(overrides) => {
+                    debug!(path = %models_path.display(), "loaded model registry overrides");
+                    model_registry.merge(overrides);
+                }
+                Err(e) => {
+                    warn!(path = %models_path.display(), error = %e, "failed to parse models.toml");
+                }
+            },
+            Err(e) => {
+                warn!(path = %models_path.display(), error = %e, "failed to read models.toml");
+            }
+        }
+    }
+
     let state = Arc::new(AppState {
         agent,
         auth,
         rate_limiter,
         config: RwLock::new(config.clone()),
         paths,
+        model_registry: Arc::new(model_registry),
         events_tx,
     });
 

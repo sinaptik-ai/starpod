@@ -83,7 +83,7 @@ use tracing::warn;
 
 use crate::config::{
     AttachmentsConfig, AuthConfig, BrowserConfig, ChannelsConfig, CompactionConfig,
-    CronConfig, FollowupMode, MemoryConfig, ProvidersConfig,
+    CronConfig, FollowupMode, InternetConfig, MemoryConfig, ProvidersConfig,
     ReasoningEffort, StarpodConfig,
 };
 use crate::error::StarpodError;
@@ -532,6 +532,14 @@ pub struct AgentConfig {
     /// Authentication settings.
     #[serde(default)]
     pub auth: AuthConfig,
+
+    /// Internet access settings (web search & fetch).
+    #[serde(default)]
+    pub internet: InternetConfig,
+
+    /// Self-improve mode (beta).
+    #[serde(default)]
+    pub self_improve: bool,
 }
 
 fn default_agent_name() -> String {
@@ -577,6 +585,8 @@ impl Default for AgentConfig {
             browser: BrowserConfig::default(),
             attachments: AttachmentsConfig::default(),
             auth: AuthConfig::default(),
+            internet: InternetConfig::default(),
+            self_improve: false,
         }
     }
 }
@@ -606,6 +616,8 @@ impl AgentConfig {
             browser: self.browser,
             attachments: self.attachments,
             auth: self.auth,
+            internet: self.internet,
+            self_improve: self.self_improve,
             project_root: paths.project_root.clone(),
         }
     }

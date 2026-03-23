@@ -20,8 +20,6 @@ use tracing::{debug, info};
 
 use crate::error::StarpodError;
 
-/// Default USER.md content seeded for new users.
-
 /// Which `.env` file to copy from the workspace root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnvSource {

@@ -710,6 +710,7 @@ mod tests {
             rate_limiter,
             config: RwLock::new(config),
             paths,
+            model_registry: Arc::new(agent_sdk::models::ModelRegistry::with_defaults()),
             events_tx,
         });
 
@@ -802,6 +803,7 @@ mod tests {
             rate_limiter: Arc::new(AuthRateLimiter::new(1, Duration::from_secs(60))),
             config: RwLock::new(state.config.read().unwrap().clone()),
             paths: state.paths.clone(),
+            model_registry: Arc::clone(&state.model_registry),
             events_tx: state.events_tx.clone(),
         });
 

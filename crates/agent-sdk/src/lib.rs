@@ -35,7 +35,13 @@ pub mod hooks;
 pub mod mcp;
 pub mod options;
 pub mod permissions;
+pub mod models;
 pub mod provider;
+
+/// Backward-compatible alias for `models`.
+pub mod pricing {
+    pub use crate::models::*;
+}
 pub mod providers;
 pub mod query;
 pub mod session;
@@ -47,6 +53,7 @@ pub use error::AgentError;
 pub use hooks::{hook_fn, HookCallback, HookCallbackMatcher, HookEvent, HookInput, HookOutput, HookRegistry};
 pub use mcp::{McpServerConfig, McpStdioServerConfig, McpHttpServerConfig, McpSseServerConfig};
 pub use options::{CustomToolDefinition, ExternalToolHandlerFn, Options, OptionsBuilder, PermissionMode, PreCompactHandlerFn, QueryAttachment};
+pub use models::{ModelRegistry, PricingRegistry};
 pub use provider::{CostRates, LlmProvider, ProviderCapabilities};
 pub use providers::{AnthropicProvider, GeminiProvider, OpenAiProvider};
 pub use query::{query, Query};

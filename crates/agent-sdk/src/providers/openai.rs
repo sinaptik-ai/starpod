@@ -4,6 +4,7 @@
 //! (all OpenAI-compatible APIs).
 
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -20,6 +21,7 @@ use crate::client::{
     MessageDelta, MessageResponse, RetryConfig, StreamEvent,
 };
 use crate::error::{AgentError, Result};
+use crate::models::ModelRegistry;
 use crate::provider::{CostRates, LlmProvider, ProviderCapabilities};
 
 const DEFAULT_OPENAI_URL: &str = "https://api.openai.com/v1/chat/completions";
@@ -34,6 +36,7 @@ pub struct OpenAiProvider {
     base_url: String,
     provider_name: String,
     retry_config: RetryConfig,
+    pricing: Option<Arc<ModelRegistry>>,
 }
 
 impl OpenAiProvider {
@@ -54,12 +57,19 @@ impl OpenAiProvider {
             base_url: base_url.into(),
             provider_name: provider_name.into(),
             retry_config: RetryConfig::default(),
+            pricing: None,
         }
     }
 
     /// Override the default retry configuration.
     pub fn with_retry_config(mut self, config: RetryConfig) -> Self {
         self.retry_config = config;
+        self
+    }
+
+    /// Attach a pricing registry for cost lookups.
+    pub fn with_pricing(mut self, registry: Arc<ModelRegistry>) -> Self {
+        self.pricing = Some(registry);
         self
     }
 
@@ -413,14 +423,20 @@ impl LlmProvider for OpenAiProvider {
     }
 
     fn cost_rates(&self, model: &str) -> CostRates {
+        if let Some(ref registry) = self.pricing {
+            if let Some(rates) = registry.get_pricing(&self.provider_name, model) {
+                return rates;
+            }
+        }
+        // Hardcoded fallback
+        let cache = (Some(0.1), Some(1.0));
         match model {
-            "gpt-4.1" => CostRates { input_per_million: 2.0, output_per_million: 8.0 },
-            "gpt-4o" => CostRates { input_per_million: 2.5, output_per_million: 10.0 },
-            "gpt-4o-mini" => CostRates { input_per_million: 0.15, output_per_million: 0.6 },
-            "o3" => CostRates { input_per_million: 10.0, output_per_million: 40.0 },
-            "o4-mini" => CostRates { input_per_million: 1.1, output_per_million: 4.4 },
-            // Reasonable default for unknown models
-            _ => CostRates { input_per_million: 2.0, output_per_million: 8.0 },
+            "gpt-4.1" => CostRates { input_per_million: 2.0, output_per_million: 8.0, cache_read_multiplier: cache.0, cache_creation_multiplier: cache.1 },
+            "gpt-4o" => CostRates { input_per_million: 2.5, output_per_million: 10.0, cache_read_multiplier: cache.0, cache_creation_multiplier: cache.1 },
+            "gpt-4o-mini" => CostRates { input_per_million: 0.15, output_per_million: 0.6, cache_read_multiplier: cache.0, cache_creation_multiplier: cache.1 },
+            "o3" => CostRates { input_per_million: 2.0, output_per_million: 8.0, cache_read_multiplier: cache.0, cache_creation_multiplier: cache.1 },
+            "o4-mini" => CostRates { input_per_million: 1.1, output_per_million: 4.4, cache_read_multiplier: cache.0, cache_creation_multiplier: cache.1 },
+            _ => CostRates { input_per_million: 2.0, output_per_million: 8.0, cache_read_multiplier: cache.0, cache_creation_multiplier: cache.1 },
         }
     }
 

@@ -8,7 +8,7 @@ use chrono::Local;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
 
-use agent_sdk::{ExternalToolHandlerFn, LlmProvider, Message, Options, PermissionMode, Query, QueryAttachment};
+use agent_sdk::{ExternalToolHandlerFn, LlmProvider, Message, ModelRegistry, Options, PermissionMode, Query, QueryAttachment};
 use agent_sdk::{AnthropicProvider, GeminiProvider, OpenAiProvider};
 use agent_sdk::options::{SystemPrompt, ThinkingConfig};
 use starpod_core::{FollowupMode, ReasoningEffort};
@@ -33,8 +33,9 @@ const CUSTOM_TOOLS: &[&str] = &[
     "SkillActivate", "SkillCreate", "SkillUpdate", "SkillDelete", "SkillList",
     "CronAdd", "CronList", "CronRemove", "CronRuns",
     "CronRun", "CronUpdate", "HeartbeatWake",
-    "BrowserOpen", "BrowserScreenshot", "BrowserClick", "BrowserType",
-    "BrowserExtract", "BrowserEval", "BrowserClose",
+    "WebSearch", "WebFetch",
+    "BrowserOpen", "BrowserClick", "BrowserType",
+    "BrowserExtract", "BrowserEval", "BrowserWaitFor", "BrowserClose",
 ];
 
 /// The Starpod agent orchestrator.
@@ -81,6 +82,8 @@ impl StarpodAgent {
             browser: config.browser.clone(),
             attachments: config.attachments.clone(),
             auth: config.auth.clone(),
+            internet: config.internet.clone(),
+            self_improve: config.self_improve,
         };
 
         let starpod_dir = config.db_dir.parent().unwrap_or(&config.db_dir).to_path_buf();
@@ -309,7 +312,7 @@ impl StarpodAgent {
     }
 
     /// Build the system prompt from bootstrap context + skill catalog.
-    async fn build_system_prompt(&self, session_id: &str, config: &StarpodConfig, user_id: Option<&str>) -> Result<String> {
+    async fn build_system_prompt(&self, session_id: &str, config: &StarpodConfig, user_id: Option<&str>, activated_skill: Option<&str>) -> Result<String> {
         let agent_name = &config.agent_name;
         let bootstrap = if let Some(uid) = user_id {
             let user_dir = self.paths.users_dir.join(uid);
@@ -318,7 +321,7 @@ impl StarpodAgent {
         } else {
             self.memory.bootstrap_context()?
         };
-        let skill_catalog = self.skills.skill_catalog()?;
+        let skill_catalog = self.skills.skill_catalog_excluding(activated_skill)?;
         let date_str = Local::now().format("%A, %B %d, %Y at %H:%M").to_string();
         let tz_str = config.resolved_timezone().unwrap_or_else(|| "UTC".to_string());
 
@@ -331,10 +334,11 @@ impl StarpodAgent {
              environment tools (EnvGet), file tools (FileRead, FileWrite, FileList, FileDelete), \
              skill tools (SkillActivate, SkillCreate, SkillUpdate, SkillDelete, SkillList), \
              scheduling tools (CronAdd, CronList, CronRemove, CronRuns, CronRun, CronUpdate, HeartbeatWake), \
-             and browser tools (BrowserOpen, BrowserScreenshot, BrowserClick, BrowserType, BrowserExtract, BrowserEval, BrowserClose).\n\
+             and browser tools (BrowserOpen, BrowserClick, BrowserType, BrowserExtract, BrowserEval, BrowserWaitFor, BrowserClose).\n\
              Browser tools let you automate web tasks: BrowserOpen navigates to a URL (auto-launches a browser process), \
-             BrowserScreenshot captures the page, BrowserExtract gets text content, BrowserClick/BrowserType interact \
-             with elements by CSS selector, BrowserEval runs JavaScript, and BrowserClose ends the session.\n\
+             BrowserExtract gets text content, BrowserClick/BrowserType interact with elements by CSS selector, \
+             BrowserEval runs JavaScript, BrowserWaitFor waits for a condition (URL change, element, or JS expression), \
+             and BrowserClose ends the session.\n\
              You can read image files (png, jpg, gif, webp) with the Read tool — the image will be loaded \
              directly into the conversation so you can see and analyze it. For other file types like CSV or \
              PDF, use Python via the Bash tool.\n\n\
@@ -351,7 +355,43 @@ impl StarpodAgent {
              IMPORTANT: Always create files and run commands within ~/, never in /tmp or other external directories.",
         );
 
-        // Inject skill catalog (progressive disclosure — names + descriptions only)
+        // ── Memory nudging ────────────────────────────────────────────
+        prompt.push_str(
+            "\n\n--- MEMORY GUIDANCE ---\n\
+             Proactively persist knowledge — do not wait to be asked:\n\
+             • When the user corrects you or says \"remember this\" / \"don't do that again\" \
+             → save to USER.md via MemoryWrite so you never repeat the mistake.\n\
+             • When the user shares a preference, habit, name, or personal detail \
+             → update USER.md.\n\
+             • When you discover an environment fact, API quirk, or non-obvious workflow \
+             → append to MEMORY.md.\n\
+             • After every substantive conversation, append a brief summary to the daily log \
+             via MemoryAppendDaily — what was discussed, decisions made, and outcomes.\n\
+             Prioritize what reduces future user effort — the most valuable memory is one \
+             that prevents the user from having to correct or remind you again.\n\
+             Do NOT save: task progress, TODO lists, or information that only matters right now.",
+        );
+
+        // ── Self-improve guidance (skill auto-creation + improvement) ─
+        if config.self_improve {
+            prompt.push_str(
+                "\n\n--- SELF-IMPROVE MODE (beta) ---\n\
+                 You have self-improvement enabled. This means:\n\n\
+                 SKILL AUTO-CREATION:\n\
+                 After completing a complex task (roughly 5+ tool calls), fixing a tricky error, \
+                 or discovering a non-trivial workflow, save the approach as a skill with SkillCreate \
+                 so you can reuse it next time. Include clear steps, context on when to use it, \
+                 and any pitfalls you encountered. Do not create skills for trivial or one-off tasks.\n\n\
+                 SKILL SELF-IMPROVEMENT:\n\
+                 When using a skill and finding it outdated, incomplete, or wrong, update it \
+                 immediately with SkillUpdate — don't wait to be asked. Skills that aren't \
+                 maintained become liabilities. If a skill's instructions led you astray, \
+                 fix them so the next invocation succeeds.",
+            );
+        }
+
+        // Inject skill catalog (progressive disclosure — names + descriptions only).
+        // The activated skill (if any) is already excluded by skill_catalog_excluding().
         if !skill_catalog.is_empty() {
             prompt.push_str("\n\nThe following skills provide specialized instructions for specific tasks.\n\
                              When a task matches a skill's description, call the SkillActivate tool \
@@ -411,12 +451,12 @@ impl StarpodAgent {
     }
 
     /// Build the LLM provider based on `config.provider`.
-    fn build_provider(config: &StarpodConfig) -> Result<Box<dyn LlmProvider>> {
-        Self::build_provider_for(&config.provider, config)
+    fn build_provider(&self, config: &StarpodConfig) -> Result<Box<dyn LlmProvider>> {
+        self.build_provider_for(&config.provider, config)
     }
 
     /// Build an LLM provider for the given provider name using config for API key / base URL.
-    fn build_provider_for(provider_name: &str, config: &StarpodConfig) -> Result<Box<dyn LlmProvider>> {
+    fn build_provider_for(&self, provider_name: &str, config: &StarpodConfig) -> Result<Box<dyn LlmProvider>> {
         let api_key = config.resolved_provider_api_key(provider_name)
             .ok_or_else(|| StarpodError::Config(format!(
                 "No API key found for provider '{}'. Set it in config.toml or via environment variable.",
@@ -428,12 +468,20 @@ impl StarpodAgent {
                 provider_name
             )))?;
 
+        let pricing = self.load_model_registry();
+
         let provider: Box<dyn LlmProvider> = match provider_name {
-            "anthropic" => Box::new(AnthropicProvider::new(api_key, base_url)),
-            "gemini" => Box::new(GeminiProvider::with_base_url(api_key, base_url)),
+            "anthropic" => Box::new(
+                AnthropicProvider::new(api_key, base_url).with_pricing(pricing)
+            ),
+            "gemini" => Box::new(
+                GeminiProvider::with_base_url(api_key, base_url).with_pricing(pricing)
+            ),
             // OpenAI-compatible providers
             "openai" | "groq" | "deepseek" | "openrouter" | "ollama" => {
-                Box::new(OpenAiProvider::with_base_url(api_key, base_url, provider_name))
+                Box::new(
+                    OpenAiProvider::with_base_url(api_key, base_url, provider_name).with_pricing(pricing)
+                )
             }
             other => {
                 return Err(StarpodError::Config(format!(
@@ -444,6 +492,31 @@ impl StarpodAgent {
         };
 
         Ok(provider)
+    }
+
+    /// Load the pricing registry: embedded defaults + optional config override.
+    fn load_model_registry(&self) -> Arc<ModelRegistry> {
+        let mut registry = ModelRegistry::with_defaults();
+
+        let pricing_path = self.paths.config_dir.join("models.toml");
+        if pricing_path.exists() {
+            match std::fs::read_to_string(&pricing_path) {
+                Ok(contents) => match ModelRegistry::from_toml(&contents) {
+                    Ok(overrides) => {
+                        debug!(path = %pricing_path.display(), "loaded pricing overrides");
+                        registry.merge(overrides);
+                    }
+                    Err(e) => {
+                        warn!(path = %pricing_path.display(), error = %e, "failed to parse pricing.toml, using defaults");
+                    }
+                },
+                Err(e) => {
+                    warn!(path = %pricing_path.display(), error = %e, "failed to read pricing.toml, using defaults");
+                }
+            }
+        }
+
+        Arc::new(registry)
     }
 
     /// Build the pre-compaction handler that saves key facts before context is discarded.
@@ -518,7 +591,7 @@ impl StarpodAgent {
             .or_else(|| config.compaction_model.clone())
             .unwrap_or_else(|| config.model.clone());
 
-        let provider: Arc<dyn LlmProvider> = match Self::build_provider(config) {
+        let provider: Arc<dyn LlmProvider> = match self.build_provider(config) {
             Ok(p) => Arc::from(p),
             Err(e) => {
                 warn!(error = %e, "Failed to build provider for memory flush, falling back to dumb dump");
@@ -603,6 +676,8 @@ impl StarpodAgent {
             None => None,
         };
 
+        let brave_api_key = std::env::var("BRAVE_API_KEY").ok();
+
         let ctx = Arc::new(ToolContext {
             memory: Arc::clone(&self.memory),
             user_view,
@@ -615,6 +690,9 @@ impl StarpodAgent {
             home_dir: self.paths.home_dir.clone(),
             agent_home: self.paths.agent_home.clone(),
             user_id: user_id.map(|s| s.to_string()),
+            http_client: reqwest::Client::new(),
+            internet: config.internet.clone(),
+            brave_api_key,
         });
 
         Box::new(move |tool_name, input| {
@@ -675,12 +753,12 @@ impl StarpodAgent {
         };
 
         // Step 3: Build system prompt
-        let mut system_prompt = self.build_system_prompt(&session_id, &config, message.user_id.as_deref()).await?;
+        let mut system_prompt = self.build_system_prompt(&session_id, &config, message.user_id.as_deref(), None).await?;
 
         append_execution_context(&mut system_prompt, message.channel_id.as_deref(), message.user_id.as_deref());
 
         // Step 4: Build provider and options, then run query
-        let provider = Self::build_provider(&config)?;
+        let provider = self.build_provider(&config)?;
 
         let mut builder = Options::builder()
             .allowed_tools(Self::allowed_tools())
@@ -713,7 +791,7 @@ impl StarpodAgent {
         }
         if let Some(ref cp) = config.compaction_provider {
             if cp != &config.provider {
-                match Self::build_provider_for(cp, &config) {
+                match self.build_provider_for(cp, &config) {
                     Ok(p) => { builder = builder.compaction_provider(p); }
                     Err(e) => {
                         tracing::warn!(provider = cp, error = %e, "Failed to build compaction provider, falling back to primary");
@@ -871,14 +949,42 @@ impl StarpodAgent {
             extra_text.push_str(&dl_ctx);
         }
 
-        let prompt = if extra_text.is_empty() {
+        let mut prompt = if extra_text.is_empty() {
             message.text.clone()
         } else {
             format!("{}{}", message.text, extra_text)
         };
 
-        let system_prompt = self.build_system_prompt(&session_id, &config, message.user_id.as_deref()).await?;
-        let provider = Self::build_provider(&config)?;
+        // Slash-command skill activation: /skill-name [args]
+        // When the message starts with /<name>, activate the skill inline so the
+        // LLM executes it immediately without an extra SkillActivate round-trip.
+        let mut activated_skill: Option<String> = None;
+        if let Some(skill_name) = message.text.strip_prefix('/') {
+            let skill_name = skill_name.split_whitespace().next().unwrap_or("");
+            if !skill_name.is_empty() {
+                if let Ok(Some(content)) = self.skills.activate_skill(skill_name) {
+                    let user_args = message.text[1 + skill_name.len()..].trim();
+                    let execute_preamble = format!(
+                        "The user invoked the /{skill_name} skill{}. \
+                         IMPORTANT: Execute the skill instructions below immediately — do NOT ask \
+                         clarifying questions, do NOT summarize the skill, do NOT ask for confirmation. \
+                         Start executing the first step right now. Use any defaults specified in the \
+                         skill when the user has not provided explicit overrides.",
+                        if user_args.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" with the following input: {user_args}")
+                        }
+                    );
+                    prompt = format!("{execute_preamble}\n\n{content}");
+                    activated_skill = Some(skill_name.to_string());
+                    debug!(skill = %skill_name, "Slash-command skill activated inline");
+                }
+            }
+        }
+
+        let system_prompt = self.build_system_prompt(&session_id, &config, message.user_id.as_deref(), activated_skill.as_deref()).await?;
+        let provider = self.build_provider(&config)?;
 
         // Create the followup channel — sender goes to caller, receiver to the agent loop
         let (followup_tx, followup_rx) = mpsc::unbounded_channel::<String>();
@@ -916,7 +1022,7 @@ impl StarpodAgent {
         }
         if let Some(ref cp) = config.compaction_provider {
             if cp != &config.provider {
-                match Self::build_provider_for(cp, &config) {
+                match self.build_provider_for(cp, &config) {
                     Ok(p) => { builder = builder.compaction_provider(p); }
                     Err(e) => {
                         tracing::warn!(provider = cp, error = %e, "Failed to build compaction provider, falling back to primary");
@@ -1531,13 +1637,15 @@ mod tests {
         assert!(names.contains(&"MemoryRead"));
         // Browser tools
         assert!(names.contains(&"BrowserOpen"));
-        assert!(names.contains(&"BrowserScreenshot"));
+        assert!(names.contains(&"BrowserWaitFor"));
         assert!(names.contains(&"BrowserClick"));
         assert!(names.contains(&"BrowserType"));
         assert!(names.contains(&"BrowserExtract"));
         assert!(names.contains(&"BrowserEval"));
         assert!(names.contains(&"BrowserClose"));
-        assert_eq!(defs.len(), 28);
+        assert!(names.contains(&"WebSearch"));
+        assert!(names.contains(&"WebFetch"));
+        assert_eq!(defs.len(), 30);
     }
 
     #[tokio::test]
@@ -1558,6 +1666,9 @@ mod tests {
             home_dir: tmp.path().to_path_buf(),
             agent_home: tmp.path().join(".starpod"),
             user_id: Some("admin".into()),
+            http_client: reqwest::Client::new(),
+            internet: starpod_core::InternetConfig::default(),
+            brave_api_key: None,
         };
 
         // Test MemorySearch

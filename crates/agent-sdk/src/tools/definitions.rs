@@ -188,48 +188,6 @@ pub fn get_tool_definition(name: &str) -> Option<ToolDef> {
                 "required": ["pattern"]
             }),
         }),
-        "WebSearch" => Some(ToolDef {
-            name: "WebSearch",
-            description: "Search the web and return formatted results.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "The search query"
-                    },
-                    "allowed_domains": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Only return results from these domains"
-                    },
-                    "blocked_domains": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Exclude results from these domains"
-                    }
-                },
-                "required": ["query"]
-            }),
-        }),
-        "WebFetch" => Some(ToolDef {
-            name: "WebFetch",
-            description: "Fetch content from a URL and process it with an AI model.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "url": {
-                        "type": "string",
-                        "description": "The URL to fetch"
-                    },
-                    "prompt": {
-                        "type": "string",
-                        "description": "What information to extract from the page"
-                    }
-                },
-                "required": ["url", "prompt"]
-            }),
-        }),
         "Agent" => Some(ToolDef {
             name: "Agent",
             description: "Launch a subagent to handle a complex, multi-step task autonomously.",
