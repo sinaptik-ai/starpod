@@ -1,0 +1,1 @@
+ALTER TABLE users ADD COLUMN filesystem_enabled INTEGER NOT NULL DEFAULT 0;

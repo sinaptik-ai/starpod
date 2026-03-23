@@ -239,6 +239,8 @@ struct UpdateAuthUserRequest {
     display_name: Option<String>,
     #[serde(default)]
     role: Option<Role>,
+    #[serde(default)]
+    filesystem_enabled: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1314,7 +1316,7 @@ async fn update_auth_user(
 
     state
         .auth
-        .update_user(&id, req.email.as_deref(), req.display_name.as_deref(), req.role)
+        .update_user(&id, req.email.as_deref(), req.display_name.as_deref(), req.role, req.filesystem_enabled)
         .await
         .map_err(|e| internal(e))?;
 

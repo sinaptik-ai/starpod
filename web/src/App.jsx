@@ -12,10 +12,11 @@ import PreviewPanel from './components/PreviewPanel'
 import ToastContainer from './components/Toasts'
 import SettingsView from './components/settings/SettingsView'
 import CronJobsView from './components/CronJobsView'
+import FilesView from './components/FilesView'
 
 function AppInner() {
   const { state, dispatch } = useApp()
-  const { wsStatus, settingsVisible, cronVisible, currentSessionId, currentSessionKey, previewUrl } = state
+  const { wsStatus, settingsVisible, cronVisible, filesVisible, currentSessionId, currentSessionKey, previewUrl } = state
   const wsRef = useRef(null)
   const chatRef = useRef(null)
   const toastsRef = useRef(null)
@@ -122,6 +123,7 @@ function AppInner() {
   const handleSelectSession = useCallback((session) => {
     if (settingsVisible) dispatch({ type: 'HIDE_SETTINGS' })
     if (cronVisible) dispatch({ type: 'HIDE_CRON' })
+    if (filesVisible) dispatch({ type: 'HIDE_FILES' })
     if (previewUrl) dispatch({ type: 'CLOSE_PREVIEW' })
     dispatch({ type: 'SET_SESSION', payload: { id: session.id, key: session.channel_session_key || generateUUID() } })
     if (!session.is_read) {
@@ -130,17 +132,18 @@ function AppInner() {
     }
     if (chatRef.current) chatRef.current.loadSession(session.id)
     if (isMobile()) dispatch({ type: 'CLOSE_SIDEBAR' })
-  }, [dispatch, settingsVisible, cronVisible, previewUrl])
+  }, [dispatch, settingsVisible, cronVisible, filesVisible, previewUrl])
 
   // ── New chat ──
   const handleNewChat = useCallback(() => {
     if (settingsVisible) dispatch({ type: 'HIDE_SETTINGS' })
     if (cronVisible) dispatch({ type: 'HIDE_CRON' })
+    if (filesVisible) dispatch({ type: 'HIDE_FILES' })
     if (previewUrl) dispatch({ type: 'CLOSE_PREVIEW' })
     dispatch({ type: 'NEW_CHAT' })
     if (chatRef.current) chatRef.current.showWelcome()
     if (isMobile()) dispatch({ type: 'CLOSE_SIDEBAR' })
-  }, [dispatch, settingsVisible, cronVisible, previewUrl])
+  }, [dispatch, settingsVisible, cronVisible, filesVisible, previewUrl])
 
   // ── Toast navigation ──
   const handleToastNavigate = useCallback((sessionId) => {
@@ -165,11 +168,17 @@ function AppInner() {
         if (tab) dispatch({ type: 'SET_SETTINGS_TAB', payload: tab })
       } else if (hash === '#/cron') {
         if (settingsVisible) dispatch({ type: 'HIDE_SETTINGS' })
+        if (filesVisible) dispatch({ type: 'HIDE_FILES' })
         if (!cronVisible) dispatch({ type: 'SHOW_CRON' })
+      } else if (hash === '#/files') {
+        if (settingsVisible) dispatch({ type: 'HIDE_SETTINGS' })
+        if (cronVisible) dispatch({ type: 'HIDE_CRON' })
+        if (!filesVisible) dispatch({ type: 'SHOW_FILES' })
       } else if (hash.startsWith('#/chat/')) {
         const id = hash.slice('#/chat/'.length)
         if (settingsVisible) dispatch({ type: 'HIDE_SETTINGS' })
         if (cronVisible) dispatch({ type: 'HIDE_CRON' })
+        if (filesVisible) dispatch({ type: 'HIDE_FILES' })
         if (id && id !== currentSessionId) {
           dispatch({ type: 'SET_SESSION', payload: { id, _fromPopState: true } })
           if (chatRef.current) chatRef.current.loadSession(id)
@@ -177,6 +186,7 @@ function AppInner() {
       } else {
         if (settingsVisible) dispatch({ type: 'HIDE_SETTINGS' })
         if (cronVisible) dispatch({ type: 'HIDE_CRON' })
+        if (filesVisible) dispatch({ type: 'HIDE_FILES' })
         if (currentSessionId) {
           dispatch({ type: 'NEW_CHAT', _fromPopState: true })
           if (chatRef.current) chatRef.current.showWelcome()
@@ -185,7 +195,7 @@ function AppInner() {
     }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
-  }, [dispatch, settingsVisible, cronVisible, currentSessionId])
+  }, [dispatch, settingsVisible, cronVisible, filesVisible, currentSessionId])
 
   // ── Keyboard shortcuts ──
   useEffect(() => {
@@ -194,6 +204,7 @@ function AppInner() {
         if (previewUrl) { dispatch({ type: 'CLOSE_PREVIEW' }); return }
         if (settingsVisible) { dispatch({ type: 'HIDE_SETTINGS' }); return }
         if (cronVisible) { dispatch({ type: 'HIDE_CRON' }); return }
+        if (filesVisible) { dispatch({ type: 'HIDE_FILES' }); return }
         if (state.sidebarOpen && isMobile()) dispatch({ type: 'CLOSE_SIDEBAR' })
       }
       if ((e.metaKey || e.ctrlKey) && e.key === ',') {
@@ -246,6 +257,8 @@ function AppInner() {
           <Header onNewChat={handleNewChat} onToggleSidebar={() => { if (!state.sidebarOpen) fetchSessionList() }} />
           {cronVisible ? (
             <CronJobsView />
+          ) : filesVisible ? (
+            <FilesView />
           ) : (
             <>
               <Chat ref={chatRef} wsRef={wsRef} onSendPrompt={(text) => handleSend(text, [])} />

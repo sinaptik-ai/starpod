@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react'
 import { useApp, isMobile } from '../contexts/AppContext'
+import { useUser } from './AuthGate'
 import { formatSessionDate } from '../lib/utils'
 import { markSessionRead } from '../lib/api'
 import IconButton from './ui/IconButton'
@@ -31,7 +32,9 @@ function groupSessionsByDate(sessions) {
 
 function Sidebar({ onSelectSession, onNewChat }) {
   const { state, dispatch } = useApp()
-  const { sidebarOpen, currentSessionId, sessions, settingsVisible, cronVisible, previewUrl } = state
+  const { sidebarOpen, currentSessionId, sessions, settingsVisible, cronVisible, filesVisible, previewUrl } = state
+  const { user } = useUser()
+  const showFiles = !user || user.filesystem_enabled // no user = auth_disabled = show
   const isTransient = sidebarOpen && !!previewUrl
   const [searchQuery, setSearchQuery] = useState('')
 
@@ -71,6 +74,11 @@ function Sidebar({ onSelectSession, onNewChat }) {
 
   function handleCronClick() {
     dispatch({ type: 'SHOW_CRON' })
+    if (isMobile()) closeSidebar()
+  }
+
+  function handleFilesClick() {
+    dispatch({ type: 'SHOW_FILES' })
     if (isMobile()) closeSidebar()
   }
 
@@ -160,6 +168,17 @@ function Sidebar({ onSelectSession, onNewChat }) {
           </svg>
           <span>Cron Jobs</span>
         </button>
+        {showFiles && (
+          <button
+            onClick={handleFilesClick}
+            className={`flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors cursor-pointer text-[13px] w-full text-left ${filesVisible ? 'text-accent bg-accent-muted' : 'text-secondary hover:text-primary hover:bg-elevated'}`}
+          >
+            <svg className="w-4 h-4 stroke-current fill-none stroke-[1.5]" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+            </svg>
+            <span>Files</span>
+          </button>
+        )}
       </div>
 
       {/* Search */}
