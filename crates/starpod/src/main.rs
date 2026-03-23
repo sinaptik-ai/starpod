@@ -16,7 +16,7 @@ use starpod_core::{
     ChatMessage, StarpodConfig, ResolvedPaths,
     detect_mode, load_agent_config,
 };
-use starpod_instances::{DeployClient, DeployOpts, DeployReadiness, InstanceClient, SecretResponse, parse_env_file};
+use starpod_instances::{DeployClient, InstanceClient, InstanceStatus, parse_env_file};
 
 #[derive(Parser)]
 #[command(name = "starpod", about = "Starpod — personal AI assistant platform", version)]
@@ -145,23 +145,6 @@ enum Commands {
         action: AuthCommand,
     },
 
-    /// Deploy stub (future).
-    Deploy {
-        /// Agent name from agents/ directory.
-        agent_name: String,
-        /// Cloud zone for the instance.
-        #[arg(long)]
-        zone: Option<String>,
-        /// Machine type for the instance.
-        #[arg(long)]
-        machine_type: Option<String>,
-        /// Skip instance creation (upload files & secrets only).
-        #[arg(long)]
-        no_instance: bool,
-        /// Path to .env file with secrets (defaults to .env in workspace root).
-        #[arg(long)]
-        env_file: Option<String>,
-    },
 }
 
 // ── Agent subcommands ──────────────────────────────────────────────────────
@@ -269,23 +252,13 @@ enum SecretCommand {
         /// Secret value (if omitted, you'll be prompted).
         #[arg(long)]
         value: Option<String>,
-        /// Make this secret agent-specific (default: user-global).
-        #[arg(long)]
-        agent: Option<String>,
     },
     /// List all secrets (keys and hints only, never values).
-    List {
-        /// Filter to secrets for a specific agent.
-        #[arg(long)]
-        agent: Option<String>,
-    },
+    List,
     /// Delete a secret by key.
     Delete {
         /// Secret key name.
         key: String,
-        /// Delete agent-specific secret (default: user-global).
-        #[arg(long)]
-        agent: Option<String>,
     },
     /// Import secrets from a .env file (interactive).
     Import {
@@ -2010,9 +1983,12 @@ async fn main() -> anyhow::Result<()> {
                         println!("\n  Secrets:");
                         for s in &config.secrets {
                             let status = if s.present {
-                                let scope = s.scope.as_deref().unwrap_or("unknown");
                                 let hint = s.hint.as_deref().unwrap_or("****");
-                                format!("{} ({}, hint: ...{})", "✓".green(), scope, hint)
+                                if let Some(ref alias) = s.resolved_from {
+                                    format!("{} → {} (hint: ...{})", "✓".green(), alias, hint)
+                                } else {
+                                    format!("{} (hint: ...{})", "✓".green(), hint)
+                                }
                             } else if s.required {
                                 format!("{} missing ({})", "✗".red(), "required".bright_red())
                             } else {
@@ -2047,12 +2023,12 @@ async fn main() -> anyhow::Result<()> {
                                     );
                                     for key in &pushable {
                                         let value = &local_env[key.as_str()];
-                                        eprint!("  ? Push {} to remote as agent-specific secret? [Y/n] ", key.bright_white());
+                                        eprint!("  ? Push {} to your secret vault? [Y/n] ", key.bright_white());
                                         let mut buf = String::new();
                                         std::io::stdin().read_line(&mut buf)?;
                                         let answer = buf.trim().to_lowercase();
                                         if answer.is_empty() || answer == "y" || answer == "yes" {
-                                            match deploy_client.set_secret(&agent.id, key, value).await {
+                                            match deploy_client.set_secret(key, value).await {
                                                 Ok(s) => {
                                                     println!(
                                                         "    {} {} pushed (hint: ••••{})",
@@ -2145,9 +2121,43 @@ async fn main() -> anyhow::Result<()> {
                                 "✓".green().bold(),
                                 inst.id.bright_white()
                             );
-                            println!("  {} Status: {}", "│".dimmed(), inst.status);
-                            if let Some(ref zone) = inst.zone {
-                                println!("  {} Zone: {}", "│".dimmed(), zone);
+
+                            // Wait for instance to become running (up to 15 min)
+                            let last_status = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+                            let last_status_clone = last_status.clone();
+                            let on_poll = move |inst: &starpod_instances::deploy::InstanceResponse| {
+                                let mut last = last_status_clone.lock().unwrap();
+                                if *last != inst.status {
+                                    eprint!(
+                                        "\r  {} Status: {}                    ",
+                                        "⟳".bright_cyan(),
+                                        inst.status.bright_yellow()
+                                    );
+                                    *last = inst.status.clone();
+                                }
+                            };
+
+                            match deploy_client.wait_for_instance_ready(
+                                &inst.id,
+                                std::time::Duration::from_secs(900),
+                                on_poll,
+                            ).await {
+                                Ok(ready) => {
+                                    eprint!("\r                                                \r");
+                                    println!("  {} Instance is running!", "✓".green().bold());
+                                    println!("  {} Status: {}", "│".dimmed(), ready.status.bright_green());
+                                    if let Some(ref ip) = ready.ip_address {
+                                        println!("  {} IP:     {}", "│".dimmed(), ip.bright_white().bold());
+                                    }
+                                    if let Some(ref z) = ready.zone {
+                                        println!("  {} Zone:   {}", "│".dimmed(), z);
+                                    }
+                                }
+                                Err(e) => {
+                                    eprint!("\r                                                \r");
+                                    eprintln!("  {} Instance failed to reach running state: {}", "✗".red(), e);
+                                    std::process::exit(1);
+                                }
                             }
                         }
                         Err(e) => {
@@ -2163,16 +2173,49 @@ async fn main() -> anyhow::Result<()> {
                             if instances.is_empty() {
                                 println!("  {} No instances found.", "ℹ".bright_cyan());
                             } else {
+                                println!();
                                 for inst in &instances {
-                                    let name = inst.name.as_deref().unwrap_or("(unnamed)");
-                                    let region = inst.region.as_deref().unwrap_or("-");
+                                    let id_short = &inst.id[..8.min(inst.id.len())];
+                                    let agent_short = &inst.agent_id[..8.min(inst.agent_id.len())];
+                                    let status_colored = match inst.status {
+                                        InstanceStatus::Running => "running".bright_green(),
+                                        InstanceStatus::Pending | InstanceStatus::Provisioning => format!("{}", inst.status).bright_yellow(),
+                                        InstanceStatus::Stopped | InstanceStatus::Stopping => format!("{}", inst.status).dimmed(),
+                                        InstanceStatus::Error => "error".bright_red(),
+                                        _ => format!("{}", inst.status).normal(),
+                                    };
                                     println!(
-                                        "  {} [{}] {} region={}",
-                                        &inst.id[..8.min(inst.id.len())],
-                                        inst.status,
-                                        name,
-                                        region
+                                        "  {}  {}",
+                                        id_short.bright_white().bold(),
+                                        status_colored,
                                     );
+                                    println!(
+                                        "  {}  Agent   {}",
+                                        "│".dimmed(),
+                                        agent_short,
+                                    );
+                                    if let Some(ref zone) = inst.zone {
+                                        println!(
+                                            "  {}  Zone    {}",
+                                            "│".dimmed(),
+                                            zone.dimmed(),
+                                        );
+                                    }
+                                    if let Some(ref ip) = inst.ip_address {
+                                        println!(
+                                            "  {}  IP      {}",
+                                            "│".dimmed(),
+                                            ip,
+                                        );
+                                    }
+                                    if let Some(ref err) = inst.error_message {
+                                        println!(
+                                            "  {}  Error   {}",
+                                            "│".dimmed(),
+                                            err.bright_red(),
+                                        );
+                                    }
+                                    println!();
                                 }
                             }
                         }
@@ -2355,7 +2398,7 @@ async fn main() -> anyhow::Result<()> {
             let deploy_client = DeployClient::new(&backend_url, &api_key)?;
 
             match action {
-                SecretCommand::Set { key, value, agent: agent_name } => {
+                SecretCommand::Set { key, value } => {
                     // Get value from --value flag or prompt interactively
                     let secret_value = match value {
                         Some(v) => v,
@@ -2372,147 +2415,56 @@ async fn main() -> anyhow::Result<()> {
                         std::process::exit(1);
                     }
 
-                    if let Some(ref agent_name) = agent_name {
-                        // Agent-scoped secret
-                        let agents = deploy_client.list_agents().await?;
-                        let agent = agents.iter().find(|a| a.name == *agent_name);
-                        match agent {
-                            Some(a) => {
-                                match deploy_client.set_secret(&a.id, &key, &secret_value).await {
-                                    Ok(s) => {
-                                        println!(
-                                            "  {} {} set (agent: {}, hint: ••••{})",
-                                            "✓".green().bold(),
-                                            key.bright_white(),
-                                            agent_name,
-                                            s.hint.as_deref().unwrap_or("****")
-                                        );
-                                    }
-                                    Err(e) => {
-                                        eprintln!("  {} Failed to set secret: {}", "✗".red(), e);
-                                        std::process::exit(1);
-                                    }
-                                }
-                            }
-                            None => {
-                                eprintln!("  {} Agent '{}' not found on remote.", "✗".red(), agent_name);
-                                std::process::exit(1);
-                            }
+                    match deploy_client.set_user_secret(&key, &secret_value).await {
+                        Ok(s) => {
+                            println!(
+                                "  {} {} set (hint: ••••{})",
+                                "✓".green().bold(),
+                                key.bright_white(),
+                                s.hint.as_deref().unwrap_or("****")
+                            );
                         }
-                    } else {
-                        // User-global secret
-                        match deploy_client.set_user_secret(&key, &secret_value).await {
-                            Ok(s) => {
-                                println!(
-                                    "  {} {} set (user-global, hint: ••••{})",
-                                    "✓".green().bold(),
-                                    key.bright_white(),
-                                    s.hint.as_deref().unwrap_or("****")
-                                );
-                            }
-                            Err(e) => {
-                                eprintln!("  {} Failed to set secret: {}", "✗".red(), e);
-                                std::process::exit(1);
-                            }
+                        Err(e) => {
+                            eprintln!("  {} Failed to set secret: {}", "✗".red(), e);
+                            std::process::exit(1);
                         }
                     }
                 }
 
-                SecretCommand::List { agent: agent_name } => {
-                    if let Some(ref agent_name) = agent_name {
-                        let agents = deploy_client.list_agents().await?;
-                        let agent = agents.iter().find(|a| a.name == *agent_name);
-                        match agent {
-                            Some(a) => {
-                                let secrets = deploy_client.list_agent_secrets(&a.id).await?;
-                                if secrets.is_empty() {
-                                    println!("  {} No secrets for agent '{}'.", "ℹ".bright_cyan(), agent_name);
-                                } else {
-                                    println!(
-                                        "  {:<28} {:<10} {:<12} {}",
-                                        "KEY".dimmed(),
-                                        "SCOPE".dimmed(),
-                                        "HINT".dimmed(),
-                                        "UPDATED".dimmed()
-                                    );
-                                    for s in &secrets {
-                                        let scope = if s.agent_id.is_some() { "agent" } else { "global" };
-                                        let hint = s.hint.as_deref().map(|h| format!("••••{}", h)).unwrap_or_else(|| "••••••••".into());
-                                        println!(
-                                            "  {:<28} {:<10} {:<12} {}",
-                                            s.key,
-                                            scope,
-                                            hint,
-                                            &s.created_at[..10]
-                                        );
-                                    }
-                                }
-                            }
-                            None => {
-                                eprintln!("  {} Agent '{}' not found.", "✗".red(), agent_name);
-                                std::process::exit(1);
-                            }
-                        }
+                SecretCommand::List => {
+                    let secrets = deploy_client.list_user_secrets().await?;
+                    if secrets.is_empty() {
+                        println!("  {} No secrets found.", "ℹ".bright_cyan());
                     } else {
-                        let secrets = deploy_client.list_user_secrets().await?;
-                        if secrets.is_empty() {
-                            println!("  {} No user-global secrets found.", "ℹ".bright_cyan());
-                        } else {
+                        println!(
+                            "  {:<28} {:<12} {}",
+                            "KEY".dimmed(),
+                            "HINT".dimmed(),
+                            "UPDATED".dimmed()
+                        );
+                        for s in &secrets {
+                            let hint = s.hint.as_deref().map(|h| format!("••••{}", h)).unwrap_or_else(|| "••••••••".into());
                             println!(
                                 "  {:<28} {:<12} {}",
-                                "KEY".dimmed(),
-                                "HINT".dimmed(),
-                                "UPDATED".dimmed()
+                                s.key,
+                                hint,
+                                &s.created_at[..10]
                             );
-                            for s in &secrets {
-                                let hint = s.hint.as_deref().map(|h| format!("••••{}", h)).unwrap_or_else(|| "••••••••".into());
-                                println!(
-                                    "  {:<28} {:<12} {}",
-                                    s.key,
-                                    hint,
-                                    &s.created_at[..10]
-                                );
-                            }
                         }
                     }
                 }
 
-                SecretCommand::Delete { key, agent: agent_name } => {
-                    if let Some(ref agent_name) = agent_name {
-                        let agents = deploy_client.list_agents().await?;
-                        let agent = agents.iter().find(|a| a.name == *agent_name);
-                        match agent {
-                            Some(a) => {
-                                let secrets = deploy_client.list_agent_secrets(&a.id).await?;
-                                let secret = secrets.iter().find(|s| s.key == key);
-                                match secret {
-                                    Some(s) => {
-                                        deploy_client.delete_agent_secret(&a.id, &s.id).await?;
-                                        println!("  {} Deleted {} (agent: {})", "✓".green().bold(), key.bright_white(), agent_name);
-                                    }
-                                    None => {
-                                        eprintln!("  {} Secret '{}' not found for agent '{}'.", "✗".red(), key, agent_name);
-                                        std::process::exit(1);
-                                    }
-                                }
-                            }
-                            None => {
-                                eprintln!("  {} Agent '{}' not found.", "✗".red(), agent_name);
-                                std::process::exit(1);
-                            }
+                SecretCommand::Delete { key } => {
+                    let secrets = deploy_client.list_user_secrets().await?;
+                    let secret = secrets.iter().find(|s| s.key == key);
+                    match secret {
+                        Some(s) => {
+                            deploy_client.delete_user_secret(&s.id).await?;
+                            println!("  {} Deleted {}", "✓".green().bold(), key.bright_white());
                         }
-                    } else {
-                        let secrets = deploy_client.list_user_secrets().await?;
-                        let secret = secrets.iter().find(|s| s.key == key);
-                        match secret {
-                            Some(s) => {
-                                deploy_client.delete_user_secret(&s.id).await?;
-                                println!("  {} Deleted {} (user-global)", "✓".green().bold(), key.bright_white());
-                            }
-                            None => {
-                                eprintln!("  {} Secret '{}' not found.", "✗".red(), key);
-                                std::process::exit(1);
-                            }
+                        None => {
+                            eprintln!("  {} Secret '{}' not found.", "✗".red(), key);
+                            std::process::exit(1);
                         }
                     }
                 }
@@ -2607,204 +2559,6 @@ async fn main() -> anyhow::Result<()> {
             println!();
         }
 
-        // ── Deploy stub ───────────────────────────────────────────────
-        Commands::Deploy {
-            agent_name,
-            zone,
-            machine_type,
-            no_instance,
-            env_file,
-        } => {
-            // Resolve backend URL and API key: env vars > saved credentials > default
-            let saved = auth::load_credentials();
-            let backend_url = std::env::var(auth::SPAWNER_URL_ENV)
-                .ok()
-                .or_else(|| saved.as_ref().map(|c| c.backend_url.clone()))
-                .unwrap_or_else(|| auth::DEFAULT_SPAWNER_URL.to_string());
-
-            let api_key = std::env::var("STARPOD_API_KEY")
-                .ok()
-                .or_else(|| saved.as_ref().map(|c| c.api_key.clone()));
-            let Some(api_key) = api_key else {
-                eprintln!(
-                    "  {} Authentication required.",
-                    "✗".red().bold()
-                );
-                eprintln!(
-                    "  {} Run {} to authenticate.",
-                    "→".dimmed(),
-                    "starpod auth login".bright_white()
-                );
-                std::process::exit(1);
-            };
-
-            let client = DeployClient::new(&backend_url, &api_key)?;
-
-            // Resolve workspace paths
-            let cwd = std::env::current_dir()?;
-            let workspace_root = find_workspace_root(&cwd).unwrap_or_else(|| {
-                eprintln!(
-                    "  {} Not inside a starpod workspace (no starpod.toml found).",
-                    "✗".red().bold()
-                );
-                std::process::exit(1);
-            });
-
-            let agent_dir = workspace_root.join("agents").join(&agent_name);
-            if !agent_dir.exists() {
-                eprintln!(
-                    "  {} Agent '{}' not found in agents/ directory.",
-                    "✗".red().bold(),
-                    agent_name
-                );
-                std::process::exit(1);
-            }
-
-            let skills_dir = workspace_root.join("skills");
-
-            // Collect env vars from .env file
-            let env_path = if let Some(ref p) = env_file {
-                std::path::PathBuf::from(p)
-            } else {
-                workspace_root.join(".env")
-            };
-
-            let env_vars = if env_path.exists() {
-                parse_env_file(&env_path)?
-            } else {
-                HashMap::new()
-            };
-
-            println!(
-                "  {} Deploying agent {}...",
-                "⟳".bright_cyan(),
-                agent_name.bright_white().bold()
-            );
-            println!(
-                "  {} Agent dir:  {}",
-                "│".dimmed(),
-                agent_dir.display()
-            );
-            if skills_dir.exists() {
-                println!(
-                    "  {} Skills dir: {}",
-                    "│".dimmed(),
-                    skills_dir.display()
-                );
-            }
-            if !env_vars.is_empty() {
-                println!(
-                    "  {} Secrets:    {} keys from {}",
-                    "│".dimmed(),
-                    env_vars.len(),
-                    env_path.display()
-                );
-            }
-            println!();
-
-            let skills_path = if skills_dir.exists() {
-                Some(skills_dir.as_path())
-            } else {
-                None
-            };
-
-            // Track last printed status so we only print on change
-            let last_status = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
-            let last_status_clone = last_status.clone();
-
-            let on_poll: Option<Box<dyn FnMut(&starpod_instances::deploy::InstanceResponse) + Send>> =
-                if !no_instance {
-                    Some(Box::new(move |inst| {
-                        let mut last = last_status_clone.lock().unwrap();
-                        if *last != inst.status {
-                            eprint!(
-                                "\r  {} Instance: {}                    ",
-                                "⟳".bright_cyan(),
-                                inst.status.bright_yellow()
-                            );
-                            *last = inst.status.clone();
-                        }
-                    }))
-                } else {
-                    None
-                };
-
-            let summary = client
-                .deploy(DeployOpts {
-                    agent_name: &agent_name,
-                    agent_dir: &agent_dir,
-                    skills_dir: skills_path,
-                    env_vars,
-                    create_instance: !no_instance,
-                    zone: zone.as_deref(),
-                    machine_type: machine_type.as_deref(),
-                    on_instance_poll: on_poll,
-                })
-                .await?;
-
-            // Clear the status line if we were polling
-            if !no_instance && summary.instance.is_some() {
-                eprint!("\r                                                \r");
-            }
-
-            println!(
-                "  {} Agent deployed successfully!",
-                "✓".green().bold()
-            );
-            println!(
-                "  {} Agent ID:   {}",
-                "│".dimmed(),
-                summary.agent_id.bright_white()
-            );
-            println!(
-                "  {} Files:      {}",
-                "│".dimmed(),
-                summary.files_uploaded
-            );
-            println!(
-                "  {} Secrets:    {}",
-                "│".dimmed(),
-                summary.secrets_set
-            );
-
-            if let Some(ref inst) = summary.instance {
-                println!();
-                println!(
-                    "  {} Instance is running!",
-                    "✓".green().bold()
-                );
-                println!(
-                    "  {} ID:     {}",
-                    "│".dimmed(),
-                    inst.id.bright_white()
-                );
-                println!(
-                    "  {} Status: {}",
-                    "│".dimmed(),
-                    inst.status.bright_green()
-                );
-                if let Some(ref ip) = inst.ip_address {
-                    println!(
-                        "  {} IP:     {}",
-                        "│".dimmed(),
-                        ip.bright_white().bold()
-                    );
-                }
-                if let Some(ref z) = inst.zone {
-                    println!(
-                        "  {} Zone:   {}",
-                        "│".dimmed(),
-                        z
-                    );
-                }
-            } else {
-                println!(
-                    "\n  {} No instance created (use without {} to launch one).",
-                    "ℹ".bright_cyan(),
-                    "--no-instance".bright_white()
-                );
-            }
-        }
 
     }
 

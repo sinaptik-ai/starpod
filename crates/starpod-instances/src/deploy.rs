@@ -68,7 +68,6 @@ pub struct SecretResponse {
     pub id: String,
     pub key: String,
     pub hint: Option<String>,
-    pub agent_id: Option<String>,
     pub created_at: String,
 }
 
@@ -114,7 +113,9 @@ pub struct SecretStatusInfo {
     #[serde(default)]
     pub description: String,
     pub present: bool,
-    pub scope: Option<String>,
+    /// The aliased secret name this resolves from (from deploy.toml `secret` field),
+    /// or None when using the literal key.
+    pub resolved_from: Option<String>,
     pub hint: Option<String>,
 }
 
@@ -429,18 +430,17 @@ impl DeployClient {
         Ok(())
     }
 
-    /// Set an agent-scoped secret.
+    /// Set a user-global secret.
     pub async fn set_secret(
         &self,
-        agent_id: &str,
         key: &str,
         value: &str,
     ) -> Result<SecretResponse> {
-        debug!(agent_id = %agent_id, key = %key, "Setting agent secret");
+        debug!(key = %key, "Setting user secret");
         let resp = self
             .auth(
                 self.client
-                    .post(self.url(&format!("/agents/{}/secrets", agent_id))),
+                    .post(self.url("/secrets")),
             )
             .json(&CreateSecretRequest {
                 key: key.to_string(),
@@ -611,7 +611,7 @@ impl DeployClient {
         // Step 4: Set secrets
         let secrets_count = opts.env_vars.len();
         for (key, value) in &opts.env_vars {
-            self.set_secret(agent_id, key, value).await?;
+            self.set_secret(key, value).await?;
         }
 
         // Step 5: Optionally create instance and wait for it to become ready
@@ -1421,7 +1421,7 @@ mod tests {
         let secrets = client.list_user_secrets().await.unwrap();
         assert_eq!(secrets.len(), 1);
         assert_eq!(secrets[0].key, "GLOBAL_KEY");
-        assert!(secrets[0].agent_id.is_none());
+        assert_eq!(secrets[0].hint.as_deref(), Some("glo"));
     }
 
     #[tokio::test]

@@ -134,12 +134,18 @@ mod tests {
     fn running_instance(id: &str) -> Instance {
         Instance {
             id: id.to_string(),
-            name: Some("test".to_string()),
             status: InstanceStatus::Running,
-            region: None,
-            created_at: 1710000000,
-            updated_at: 1710000000,
-            health: None,
+            agent_id: "test-agent".to_string(),
+            organization_id: None,
+            gcp_instance_name: None,
+            zone: None,
+            machine_type: None,
+            ip_address: None,
+            error_message: None,
+            email_address: None,
+            starpod_api_key: None,
+            secret_overrides: None,
+            created_at: "2025-03-10T00:00:00Z".to_string(),
         }
     }
 
@@ -151,7 +157,7 @@ mod tests {
         let instances = vec![running_instance("inst-stale")];
 
         Mock::given(method("GET"))
-            .and(path("/instances"))
+            .and(path("/api/v1/instances"))
             .respond_with(ResponseTemplate::new(200).set_body_json(&instances))
             .mount(&server)
             .await;
@@ -166,13 +172,13 @@ mod tests {
         };
 
         Mock::given(method("GET"))
-            .and(path("/instances/inst-stale/health"))
+            .and(path("/api/v1/instances/inst-stale/health"))
             .respond_with(ResponseTemplate::new(200).set_body_json(&stale_health))
             .mount(&server)
             .await;
 
         Mock::given(method("POST"))
-            .and(path("/instances/inst-stale/restart"))
+            .and(path("/api/v1/instances/inst-stale/restart"))
             .respond_with(ResponseTemplate::new(200))
             .expect(1)
             .mount(&server)
@@ -193,7 +199,7 @@ mod tests {
         let instances = vec![running_instance("inst-ok")];
 
         Mock::given(method("GET"))
-            .and(path("/instances"))
+            .and(path("/api/v1/instances"))
             .respond_with(ResponseTemplate::new(200).set_body_json(&instances))
             .mount(&server)
             .await;
@@ -208,14 +214,14 @@ mod tests {
         };
 
         Mock::given(method("GET"))
-            .and(path("/instances/inst-ok/health"))
+            .and(path("/api/v1/instances/inst-ok/health"))
             .respond_with(ResponseTemplate::new(200).set_body_json(&fresh_health))
             .mount(&server)
             .await;
 
         // No restart should be called
         Mock::given(method("POST"))
-            .and(path_regex(r"/instances/.*/restart"))
+            .and(path_regex(r"/api/v1/instances/.*/restart"))
             .respond_with(ResponseTemplate::new(200))
             .expect(0)
             .mount(&server)
@@ -234,23 +240,29 @@ mod tests {
 
         let instances = vec![Instance {
             id: "inst-paused".to_string(),
-            name: None,
-            status: InstanceStatus::Paused,
-            region: None,
-            created_at: 1710000000,
-            updated_at: 1710000000,
-            health: None,
+            status: InstanceStatus::Stopped,
+            agent_id: "test-agent".to_string(),
+            organization_id: None,
+            gcp_instance_name: None,
+            zone: None,
+            machine_type: None,
+            ip_address: None,
+            error_message: None,
+            email_address: None,
+            starpod_api_key: None,
+            secret_overrides: None,
+            created_at: "2025-03-10T00:00:00Z".to_string(),
         }];
 
         Mock::given(method("GET"))
-            .and(path("/instances"))
+            .and(path("/api/v1/instances"))
             .respond_with(ResponseTemplate::new(200).set_body_json(&instances))
             .mount(&server)
             .await;
 
         // Health should never be checked for paused instances
         Mock::given(method("GET"))
-            .and(path_regex(r"/instances/.*/health"))
+            .and(path_regex(r"/api/v1/instances/.*/health"))
             .respond_with(ResponseTemplate::new(200))
             .expect(0)
             .mount(&server)
@@ -268,7 +280,7 @@ mod tests {
         let instances = vec![running_instance("inst-cb")];
 
         Mock::given(method("GET"))
-            .and(path("/instances"))
+            .and(path("/api/v1/instances"))
             .respond_with(ResponseTemplate::new(200).set_body_json(&instances))
             .mount(&server)
             .await;
@@ -282,13 +294,13 @@ mod tests {
         };
 
         Mock::given(method("GET"))
-            .and(path("/instances/inst-cb/health"))
+            .and(path("/api/v1/instances/inst-cb/health"))
             .respond_with(ResponseTemplate::new(200).set_body_json(&stale_health))
             .mount(&server)
             .await;
 
         Mock::given(method("POST"))
-            .and(path("/instances/inst-cb/restart"))
+            .and(path("/api/v1/instances/inst-cb/restart"))
             .respond_with(ResponseTemplate::new(200))
             .mount(&server)
             .await;

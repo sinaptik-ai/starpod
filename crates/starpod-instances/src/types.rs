@@ -1,39 +1,63 @@
 use serde::{Deserialize, Serialize};
 
-/// Status of a remote instance.
+/// Status of a remote instance — mirrors Spawner's `InstanceStatus` enum.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum InstanceStatus {
-    Creating,
+    Pending,
+    Provisioning,
     Running,
-    Paused,
+    Stopping,
     Stopped,
+    Starting,
+    Restarting,
+    Deleting,
+    Deleted,
     Error,
 }
 
 impl std::fmt::Display for InstanceStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Creating => write!(f, "creating"),
+            Self::Pending => write!(f, "pending"),
+            Self::Provisioning => write!(f, "provisioning"),
             Self::Running => write!(f, "running"),
-            Self::Paused => write!(f, "paused"),
+            Self::Stopping => write!(f, "stopping"),
             Self::Stopped => write!(f, "stopped"),
+            Self::Starting => write!(f, "starting"),
+            Self::Restarting => write!(f, "restarting"),
+            Self::Deleting => write!(f, "deleting"),
+            Self::Deleted => write!(f, "deleted"),
             Self::Error => write!(f, "error"),
         }
     }
 }
 
-/// Metadata for a remote instance.
+/// Metadata for a remote instance — mirrors Spawner's `InstanceResponse`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Instance {
     pub id: String,
-    pub name: Option<String>,
     pub status: InstanceStatus,
-    pub region: Option<String>,
-    pub created_at: i64,
-    pub updated_at: i64,
+    pub agent_id: String,
     #[serde(default)]
-    pub health: Option<HealthInfo>,
+    pub organization_id: Option<String>,
+    #[serde(default)]
+    pub gcp_instance_name: Option<String>,
+    #[serde(default)]
+    pub zone: Option<String>,
+    #[serde(default)]
+    pub machine_type: Option<String>,
+    #[serde(default)]
+    pub ip_address: Option<String>,
+    #[serde(default)]
+    pub error_message: Option<String>,
+    #[serde(default)]
+    pub email_address: Option<String>,
+    #[serde(default)]
+    pub starpod_api_key: Option<String>,
+    #[serde(default)]
+    pub secret_overrides: Option<serde_json::Value>,
+    pub created_at: String,
 }
 
 /// Health / resource usage information.
@@ -67,6 +91,9 @@ pub struct SshInfo {
 /// Request body for creating an instance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateInstanceRequest {
-    pub name: Option<String>,
-    pub region: Option<String>,
+    pub agent_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zone: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub machine_type: Option<String>,
 }

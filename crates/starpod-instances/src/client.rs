@@ -38,7 +38,7 @@ impl InstanceClient {
     }
 
     fn url(&self, path: &str) -> String {
-        format!("{}{}", self.base_url, path)
+        format!("{}/api/v1{}", self.base_url, path)
     }
 
     fn auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
@@ -315,13 +315,19 @@ mod tests {
 
     fn sample_instance() -> Instance {
         Instance {
-            id: "inst-001".to_string(),
-            name: Some("my-agent".to_string()),
+            id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890".to_string(),
             status: InstanceStatus::Running,
-            region: Some("us-east-1".to_string()),
-            created_at: 1710000000,
-            updated_at: 1710003600,
-            health: None,
+            agent_id: "f0e1d2c3-b4a5-6789-0fed-cba987654321".to_string(),
+            organization_id: None,
+            gcp_instance_name: Some("agent-a1b2c3d4".to_string()),
+            zone: Some("europe-west4-a".to_string()),
+            machine_type: Some("e2-medium".to_string()),
+            ip_address: Some("34.90.1.2".to_string()),
+            error_message: None,
+            email_address: None,
+            starpod_api_key: None,
+            secret_overrides: None,
+            created_at: "2025-03-10T00:00:00Z".to_string(),
         }
     }
 
@@ -331,18 +337,19 @@ mod tests {
         let inst = sample_instance();
 
         Mock::given(method("POST"))
-            .and(path("/instances"))
+            .and(path("/api/v1/instances"))
             .and(header("Authorization", "Bearer test-key"))
             .respond_with(ResponseTemplate::new(201).set_body_json(&inst))
             .mount(&server)
             .await;
 
         let req = CreateInstanceRequest {
-            name: Some("my-agent".into()),
-            region: Some("us-east-1".into()),
+            agent_id: "f0e1d2c3-b4a5-6789-0fed-cba987654321".into(),
+            zone: None,
+            machine_type: None,
         };
         let result = client.create_instance(&req).await.unwrap();
-        assert_eq!(result.id, "inst-001");
+        assert_eq!(result.id, "a1b2c3d4-e5f6-7890-abcd-ef1234567890");
         assert_eq!(result.status, InstanceStatus::Running);
     }
 
@@ -352,14 +359,14 @@ mod tests {
         let instances = vec![sample_instance()];
 
         Mock::given(method("GET"))
-            .and(path("/instances"))
+            .and(path("/api/v1/instances"))
             .respond_with(ResponseTemplate::new(200).set_body_json(&instances))
             .mount(&server)
             .await;
 
         let result = client.list_instances().await.unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, "inst-001");
+        assert_eq!(result[0].id, "a1b2c3d4-e5f6-7890-abcd-ef1234567890");
     }
 
     #[tokio::test]
@@ -368,14 +375,14 @@ mod tests {
         let inst = sample_instance();
 
         Mock::given(method("GET"))
-            .and(path("/instances/inst-001"))
+            .and(path("/api/v1/instances/a1b2c3d4-e5f6-7890-abcd-ef1234567890"))
             .respond_with(ResponseTemplate::new(200).set_body_json(&inst))
             .mount(&server)
             .await;
 
-        let result = client.get_instance("inst-001").await.unwrap();
-        assert_eq!(result.id, "inst-001");
-        assert_eq!(result.name, Some("my-agent".to_string()));
+        let result = client.get_instance("a1b2c3d4-e5f6-7890-abcd-ef1234567890").await.unwrap();
+        assert_eq!(result.id, "a1b2c3d4-e5f6-7890-abcd-ef1234567890");
+        assert_eq!(result.zone, Some("europe-west4-a".to_string()));
     }
 
     #[tokio::test]
@@ -383,12 +390,12 @@ mod tests {
         let (server, client) = setup().await;
 
         Mock::given(method("DELETE"))
-            .and(path("/instances/inst-001"))
+            .and(path("/api/v1/instances/a1b2c3d4"))
             .respond_with(ResponseTemplate::new(204))
             .mount(&server)
             .await;
 
-        client.kill_instance("inst-001").await.unwrap();
+        client.kill_instance("a1b2c3d4").await.unwrap();
     }
 
     #[tokio::test]
@@ -396,12 +403,12 @@ mod tests {
         let (server, client) = setup().await;
 
         Mock::given(method("POST"))
-            .and(path("/instances/inst-001/pause"))
+            .and(path("/api/v1/instances/a1b2c3d4/pause"))
             .respond_with(ResponseTemplate::new(200))
             .mount(&server)
             .await;
 
-        client.pause_instance("inst-001").await.unwrap();
+        client.pause_instance("a1b2c3d4").await.unwrap();
     }
 
     #[tokio::test]
@@ -409,12 +416,12 @@ mod tests {
         let (server, client) = setup().await;
 
         Mock::given(method("POST"))
-            .and(path("/instances/inst-001/restart"))
+            .and(path("/api/v1/instances/a1b2c3d4/restart"))
             .respond_with(ResponseTemplate::new(200))
             .mount(&server)
             .await;
 
-        client.restart_instance("inst-001").await.unwrap();
+        client.restart_instance("a1b2c3d4").await.unwrap();
     }
 
     #[tokio::test]
@@ -428,12 +435,12 @@ mod tests {
         };
 
         Mock::given(method("GET"))
-            .and(path("/instances/inst-001/ssh"))
+            .and(path("/api/v1/instances/a1b2c3d4/ssh"))
             .respond_with(ResponseTemplate::new(200).set_body_json(&ssh))
             .mount(&server)
             .await;
 
-        let result = client.get_ssh_info("inst-001").await.unwrap();
+        let result = client.get_ssh_info("a1b2c3d4").await.unwrap();
         assert_eq!(result.host, "10.0.0.1");
         assert_eq!(result.user, "starpod");
     }
@@ -450,12 +457,12 @@ mod tests {
         };
 
         Mock::given(method("GET"))
-            .and(path("/instances/inst-001/health"))
+            .and(path("/api/v1/instances/a1b2c3d4/health"))
             .respond_with(ResponseTemplate::new(200).set_body_json(&health))
             .mount(&server)
             .await;
 
-        let result = client.get_health("inst-001").await.unwrap();
+        let result = client.get_health("a1b2c3d4").await.unwrap();
         assert_eq!(result.memory_mb, 512);
         assert!((result.cpu_percent - 23.5).abs() < f64::EPSILON);
     }
@@ -465,7 +472,7 @@ mod tests {
         let (server, client) = setup().await;
 
         Mock::given(method("POST"))
-            .and(path("/instances"))
+            .and(path("/api/v1/instances"))
             .respond_with(
                 ResponseTemplate::new(500).set_body_string("Internal Server Error"),
             )
@@ -473,8 +480,9 @@ mod tests {
             .await;
 
         let req = CreateInstanceRequest {
-            name: None,
-            region: None,
+            agent_id: "test-agent".into(),
+            zone: None,
+            machine_type: None,
         };
         let result = client.create_instance(&req).await;
         assert!(result.is_err());
@@ -487,7 +495,7 @@ mod tests {
         let (server, client) = setup().await;
 
         Mock::given(method("GET"))
-            .and(path("/instances"))
+            .and(path("/api/v1/instances"))
             .respond_with(ResponseTemplate::new(200).set_body_json(&Vec::<Instance>::new()))
             .mount(&server)
             .await;
@@ -518,12 +526,12 @@ mod tests {
         );
 
         Mock::given(method("GET"))
-            .and(path_regex(r"/instances/inst-001/logs.*"))
+            .and(path_regex(r"/api/v1/instances/a1b2c3d4/logs.*"))
             .respond_with(ResponseTemplate::new(200).set_body_string(body))
             .mount(&server)
             .await;
 
-        let stream = client.stream_logs("inst-001", Some(100)).await.unwrap();
+        let stream = client.stream_logs("a1b2c3d4", Some(100)).await.unwrap();
         let entries: Vec<LogEntry> = stream
             .filter_map(|r| std::future::ready(r.ok()))
             .collect()
@@ -544,7 +552,7 @@ mod tests {
         // Verify it works by making a request
         let client = client.unwrap();
         Mock::given(method("GET"))
-            .and(path("/instances"))
+            .and(path("/api/v1/instances"))
             .and(header("Authorization", "Bearer test-key"))
             .respond_with(ResponseTemplate::new(200).set_body_json(&Vec::<Instance>::new()))
             .mount(&server)
@@ -560,7 +568,7 @@ mod tests {
         let client = InstanceClient::new(&server.uri(), None).unwrap();
 
         Mock::given(method("GET"))
-            .and(path("/instances"))
+            .and(path("/api/v1/instances"))
             .respond_with(ResponseTemplate::new(200).set_body_json(&Vec::<Instance>::new()))
             .mount(&server)
             .await;
