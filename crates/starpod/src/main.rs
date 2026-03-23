@@ -40,13 +40,21 @@ enum Commands {
         action: AgentCommand,
     },
 
-    /// Apply blueprint and start agent in dev mode (workspace only).
+    /// Start agent in dev mode (workspace only).
+    ///
+    /// On first run, applies the blueprint from `agents/<name>/` to create the
+    /// instance at `.instances/<name>/`. On subsequent runs, reuses the existing
+    /// instance (preserving runtime state). Pass `--build` to force a blueprint
+    /// re-apply, which overwrites `config/` and re-syncs skills.
     Dev {
         /// Agent name from agents/ directory.
         agent: String,
         /// Port to serve on (overrides config).
         #[arg(short, long)]
         port: Option<u16>,
+        /// Force rebuild from blueprint (overwrites config/).
+        #[arg(long)]
+        build: bool,
     },
 
     /// Start the gateway HTTP/WS server (+ Telegram bot if configured).
@@ -57,8 +65,12 @@ enum Commands {
     },
 
     /// Send a one-shot chat message.
+    ///
+    /// If no agent is specified and none can be resolved from the current
+    /// directory, creates an ephemeral instance with default settings that
+    /// is automatically deleted when the command finishes.
     Chat {
-        /// Agent name.
+        /// Agent name (if omitted, uses an ephemeral instance).
         #[arg(short, long)]
         agent: Option<String>,
         /// The message to send.
@@ -1353,7 +1365,7 @@ async fn main() -> anyhow::Result<()> {
         },
 
         // ── Dev ──────────────────────────────────────────────────────
-        Commands::Dev { agent: agent_name, port } => {
+        Commands::Dev { agent: agent_name, port, build } => {
             // Require workspace mode
             let cwd = std::env::current_dir()?;
             let mode = starpod_core::detect_mode_from(Some(&agent_name), &cwd)?;
@@ -1365,16 +1377,39 @@ async fn main() -> anyhow::Result<()> {
                 }
             };
 
-            // Apply blueprint
             let blueprint_dir = workspace_root.join("agents").join(&agent_name);
             let instance_dir = workspace_root.join(".instances").join(&agent_name);
 
-            starpod_core::apply_blueprint(
-                &blueprint_dir,
-                &instance_dir,
-                &workspace_root,
-                starpod_core::EnvSource::Dev,
-            )?;
+            // Validate blueprint exists
+            if !blueprint_dir.join("agent.toml").is_file() {
+                eprintln!(
+                    "Error: No blueprint found for agent '{}'. Run `starpod agent new {}` first.",
+                    agent_name, agent_name
+                );
+                std::process::exit(1);
+            }
+
+            // Apply blueprint only on first run or when --build is passed
+            let instance_exists = instance_dir
+                .join(".starpod")
+                .join("config")
+                .join("agent.toml")
+                .is_file();
+
+            if !instance_exists || build {
+                starpod_core::apply_blueprint(
+                    &blueprint_dir,
+                    &instance_dir,
+                    &workspace_root,
+                    starpod_core::EnvSource::Dev,
+                )?;
+            } else {
+                println!(
+                    "  {} Using existing instance. Pass {} to rebuild from blueprint.",
+                    "ℹ".bright_cyan().bold(),
+                    "--build".bright_white()
+                );
+            }
 
             // Resolve paths as Instance mode
             let instance_mode = starpod_core::Mode::Instance {
@@ -1495,7 +1530,22 @@ async fn main() -> anyhow::Result<()> {
 
         // ── Chat ──────────────────────────────────────────────────────
         Commands::Chat { agent: agent_name, message } => {
-            let (agent, config, _paths) = resolve_agent(agent_name).await?;
+            // Try resolving an existing agent; if none found, create an ephemeral one
+            let _ephemeral_guard: Option<tempfile::TempDir>;
+            let (agent, config, _paths) = match resolve_agent(agent_name).await {
+                Ok(resolved) => {
+                    _ephemeral_guard = None;
+                    resolved
+                }
+                Err(_) => {
+                    let (tmp, paths) = starpod_core::create_ephemeral_instance()?;
+                    let agent_config = starpod_core::load_agent_config(&paths)?;
+                    let starpod_config = agent_config.clone().into_starpod_config(&paths);
+                    let agent = StarpodAgent::with_paths(agent_config, paths.clone()).await?;
+                    _ephemeral_guard = Some(tmp);
+                    (agent, starpod_config, paths)
+                }
+            };
             let name = config.agent_name.clone();
             print_header_with_name(&name);
             let start = Instant::now();
