@@ -17,7 +17,8 @@
 //! | Method | Path | Description |
 //! |--------|------|-------------|
 //! | `GET` | `/api/files?path=.` | List directory contents |
-//! | `GET` | `/api/files/read?path=file.txt` | Read file content |
+//! | `GET` | `/api/files/read?path=file.txt` | Read file content (UTF-8) |
+//! | `GET` | `/api/files/raw?path=photo.png` | Serve raw bytes (images, PDFs) |
 //! | `PUT` | `/api/files/write` | Write file content |
 //! | `DELETE` | `/api/files?path=file.txt` | Delete file or directory |
 //! | `POST` | `/api/files/mkdir` | Create directory (recursive) |
@@ -26,7 +27,8 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use axum::extract::{Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
@@ -49,6 +51,7 @@ pub fn files_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/files", get(list_handler).delete(delete_handler))
         .route("/api/files/read", get(read_handler))
+        .route("/api/files/raw", get(raw_handler))
         .route("/api/files/write", axum::routing::put(write_handler))
         .route("/api/files/mkdir", post(mkdir_handler))
 }
@@ -326,6 +329,47 @@ async fn mkdir_handler(
     std::fs::create_dir_all(&resolved).map_err(|e| internal(e))?;
 
     Ok(Json(serde_json::json!({"status": "ok"})))
+}
+
+/// Serve a file as raw bytes with the correct `Content-Type`.
+///
+/// `GET /api/files/raw?path=photo.png`
+///
+/// Useful for binary files (images, PDFs) that cannot be returned as UTF-8
+/// text via the `/read` endpoint. Capped at 50 MB.
+async fn raw_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(params): Query<PathQuery>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    require_filesystem_access(&state, &headers).await?;
+
+    let home = &state.paths.home_dir;
+    let resolved = validate_sandbox_path(&params.path, home)
+        .map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
+
+    if !resolved.exists() {
+        return Err(err(StatusCode::NOT_FOUND, format!("File not found: {}", params.path)));
+    }
+    if resolved.is_dir() {
+        return Err(err(StatusCode::BAD_REQUEST, "Cannot serve a directory as raw bytes"));
+    }
+
+    let meta = resolved.metadata().map_err(|e| internal(e))?;
+    const MAX_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
+    if meta.len() > MAX_SIZE {
+        return Err(err(StatusCode::UNPROCESSABLE_ENTITY, "File too large (max 50 MB)"));
+    }
+
+    let bytes = std::fs::read(&resolved).map_err(|e| internal(e))?;
+    let mime = mime_guess::from_path(&resolved)
+        .first_or_octet_stream()
+        .to_string();
+
+    Ok((
+        [(header::CONTENT_TYPE, mime)],
+        bytes,
+    ))
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────

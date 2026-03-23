@@ -1523,6 +1523,13 @@ button.copy-btn.copied { color: var(--color-ok); border-color: var(--color-ok); 
 .settings-sidebar { display: flex; }
 .settings-mobile-nav { display: none !important; }
 
+/* ── JSON syntax colors (file preview) ── */
+.json-key { color: #93c5fd; }
+.json-str { color: #86efac; }
+.json-num { color: #fde68a; }
+.json-bool { color: #c4b5fd; }
+.json-null { color: var(--color-dim); }
+
 /* ── Reduced motion ── */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
