@@ -71,6 +71,7 @@ export default defineConfig({
             { text: 'Chat', link: '/api-reference/chat' },
             { text: 'Sessions', link: '/api-reference/sessions' },
             { text: 'Memory', link: '/api-reference/memory' },
+            { text: 'Files', link: '/api-reference/files' },
             { text: 'Health', link: '/api-reference/health' },
             { text: 'Instances', link: '/api-reference/instances' },
           ],

@@ -99,9 +99,9 @@ export function ModelSelect({ value, onChange, models = [] }) {
   const [customValue, setCustomValue] = useState(isCustom ? value : '')
 
   return (
-    <div className="flex gap-2 items-center">
+    <div className="s-model-select">
       <select
-        className="s-input s-select flex-1"
+        className="s-model-select-dropdown"
         value={showCustom ? '__custom__' : (value || '')}
         onChange={e => {
           if (e.target.value === '__custom__') { setShowCustom(true) }
@@ -114,7 +114,7 @@ export function ModelSelect({ value, onChange, models = [] }) {
       {showCustom && (
         <input
           type="text"
-          className="s-input font-mono text-xs flex-1"
+          className="s-model-select-custom"
           value={customValue}
           onChange={e => { setCustomValue(e.target.value); onChange(e.target.value) }}
           placeholder="model-id"

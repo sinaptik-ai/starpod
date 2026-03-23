@@ -281,6 +281,7 @@ fn build_chat_msg(
         channel_session_key: Some(chat_id.0.to_string()),
         attachments,
         triggered_by: None,
+        model: None,
     }
 }
 

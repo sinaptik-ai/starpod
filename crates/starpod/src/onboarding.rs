@@ -163,13 +163,12 @@ pub fn generate_workspace_config_with(provider: &str, model: &str) -> String {
 # This is a template — values here are baked into each agent's agent.toml when created.
 # It is NOT read at runtime. Edit each agent's agent.toml directly to change settings.
 
-provider = "{provider}"
-model = "{model}"
+models = ["{provider}/{model}"]
 max_turns = 30
 # max_tokens = 16384
 server_addr = "127.0.0.1:3000"
 # reasoning_effort = "low"  # low, medium, high (for models with extended thinking)
-# compaction_model = "{model}"  # model used for conversation compaction summaries
+# compaction_model = "{provider}/{model}"  # model used for conversation compaction summaries (provider/model format)
 # followup_mode = "inject"  # inject = merge into running loop, queue = run after current loop
 
 # Provider API keys must be set in .env (e.g. ANTHROPIC_API_KEY=sk-ant-...)
@@ -293,8 +292,8 @@ mod tests {
         let val: toml::Value = toml::from_str(&config_str)
             .expect("Generated workspace config must be valid TOML");
         let table = val.as_table().unwrap();
-        assert_eq!(table["provider"].as_str(), Some("anthropic"));
-        assert_eq!(table["model"].as_str(), Some("claude-haiku-4-5"));
+        let models = table["models"].as_array().unwrap();
+        assert_eq!(models[0].as_str(), Some("anthropic/claude-haiku-4-5"));
         assert_eq!(table["max_turns"].as_integer(), Some(30));
     }
 
@@ -302,8 +301,7 @@ mod tests {
     fn workspace_config_parses_as_agent_config() {
         let config_str = generate_workspace_config();
         let config: starpod_core::AgentConfig = toml::from_str(&config_str).unwrap();
-        assert_eq!(config.provider, "anthropic");
-        assert_eq!(config.model, "claude-haiku-4-5");
+        assert_eq!(config.models, vec!["anthropic/claude-haiku-4-5"]);
         assert_eq!(config.max_turns, 30);
         assert_eq!(config.server_addr, "127.0.0.1:3000");
     }
@@ -314,8 +312,8 @@ mod tests {
         let val: toml::Value = toml::from_str(&config_str)
             .expect("Generated workspace config must be valid TOML");
         let table = val.as_table().unwrap();
-        assert_eq!(table["provider"].as_str(), Some("openai"));
-        assert_eq!(table["model"].as_str(), Some("gpt-4o"));
+        let models = table["models"].as_array().unwrap();
+        assert_eq!(models[0].as_str(), Some("openai/gpt-4o"));
     }
 
     #[test]
@@ -325,8 +323,7 @@ mod tests {
             let config_str = generate_workspace_config_with(provider, model);
             let config: starpod_core::AgentConfig = toml::from_str(&config_str)
                 .unwrap_or_else(|e| panic!("Config for provider '{}' failed to parse: {}", provider, e));
-            assert_eq!(config.provider, provider);
-            assert_eq!(config.model, model);
+            assert_eq!(config.models, vec![format!("{provider}/{model}")]);
             assert_eq!(config.max_turns, 30);
             assert_eq!(config.server_addr, "127.0.0.1:3000");
         }

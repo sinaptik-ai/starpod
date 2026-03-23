@@ -37,7 +37,7 @@ export default function FrontendTab() {
     <>
       <Card title="Welcome screen">
         <Row label="Greeting">
-          <Input value={config.greeting || ''} onChange={v => set('greeting', v)} placeholder="ready_" />
+          <Input value={config.greeting || ''} onChange={v => set('greeting', v)} placeholder="What can I help with?" />
         </Row>
         <Field label="Suggested prompts" desc="Shown as clickable chips on the welcome screen.">
           <div className="flex flex-col gap-1.5">

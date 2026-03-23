@@ -102,6 +102,9 @@ enum ClientMessage {
         channel_session_key: Option<String>,
         #[serde(default)]
         attachments: Vec<WsAttachment>,
+        /// Per-message model override in `"provider/model"` format.
+        #[serde(default)]
+        model: Option<String>,
     },
 }
 
@@ -217,6 +220,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_user: Optio
                 channel_session_key: first.channel_session_key.clone(),
                 attachments: Vec::new(),
                 triggered_by: None,
+                model: first.model.clone(),
             };
 
             let (mut stream, session_id, _followup_tx) = match state.agent.chat_stream(&chat_msg).await {
@@ -295,6 +299,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_user: Optio
                 channel_id,
                 channel_session_key,
                 attachments,
+                model,
             } => {
                 // Validate and convert attachments
                 let ws_config = state.config.read().unwrap().clone();
@@ -327,6 +332,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_user: Optio
                     channel_session_key,
                     attachments: chat_attachments,
                     triggered_by: None,
+                    model: model.clone(),
                 };
 
                 // If a stream is already active, handle according to followup_mode
@@ -467,7 +473,7 @@ async fn process_stream_with_followups(
             ws_msg = StreamExt::next(receiver) => {
                 match ws_msg {
                     Some(Ok(WsMessage::Text(text))) => {
-                        if let Ok(ClientMessage::Message { text, user_id, channel_id, channel_session_key, attachments: _ }) = serde_json::from_str::<ClientMessage>(&text) {
+                        if let Ok(ClientMessage::Message { text, user_id, channel_id, channel_session_key, attachments: _, model }) = serde_json::from_str::<ClientMessage>(&text) {
                             match followup_mode {
                                 FollowupMode::Inject => {
                                     debug!(text = %text, "Injecting followup into active agent loop");
@@ -483,6 +489,7 @@ async fn process_stream_with_followups(
                                         channel_session_key,
                                         attachments: Vec::new(),
                                         triggered_by: None,
+                                        model,
                                     });
                                 }
                             }
@@ -954,5 +961,41 @@ mod tests {
         assert_eq!(json["job_name"], "broken-job");
         assert_eq!(json["session_id"], "");
         assert_eq!(json["success"], false);
+    }
+
+    // ── ClientMessage model field ───────────────────────────────────────
+
+    #[test]
+    fn client_message_with_model() {
+        let json = r#"{"type":"message","text":"hello","model":"openai/gpt-4o"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::Message { text, model, .. } => {
+                assert_eq!(text, "hello");
+                assert_eq!(model.as_deref(), Some("openai/gpt-4o"));
+            }
+        }
+    }
+
+    #[test]
+    fn client_message_without_model() {
+        let json = r#"{"type":"message","text":"hello"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::Message { model, .. } => {
+                assert!(model.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn client_message_model_null() {
+        let json = r#"{"type":"message","text":"hello","model":null}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::Message { model, .. } => {
+                assert!(model.is_none());
+            }
+        }
     }
 }

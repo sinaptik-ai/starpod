@@ -12,6 +12,7 @@ import SkillsTab from './SkillsTab'
 import UsersTab from './UsersTab'
 import ChannelsTab from './ChannelsTab'
 import BrowserTab from './BrowserTab'
+import CompactionTab from './CompactionTab'
 import CostsTab from './CostsTab'
 
 // 14px stroke-based icons for the sidebar
@@ -27,6 +28,7 @@ const icons = {
   memory:    ico(<><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><line x1="22" y1="10" x2="2" y2="10"/></>),
   internet:  ico(<><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></>),
   cron:      ico(<><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>),
+  compaction: ico(<><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></>),
   browser:   ico(<><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></>),
   channels:  ico(<><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></>),
   skills:    ico(<><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></>),
@@ -55,9 +57,10 @@ const tabGroups = [
     label: 'System',
     tabs: [
       { id: 'memory', label: 'Memory' },
+      { id: 'compaction', label: 'Compaction' },
       { id: 'internet', label: 'Internet' },
       { id: 'cron', label: 'Cron' },
-      { id: 'browser', label: 'Browser' },
+      { id: 'browser', label: 'Browser (beta)' },
       { id: 'channels', label: 'Channels' },
       { id: 'skills', label: 'Skills' },
       { id: 'costs', label: 'Costs' },
@@ -77,6 +80,7 @@ function TabContent({ tab }) {
     case 'bootstrap': return <FileTab fileName="BOOTSTRAP.md" description="Instructions for initial instance setup." rows={20} />
     case 'frontend': return <FrontendTab />
     case 'memory': return <MemoryTab />
+    case 'compaction': return <CompactionTab />
     case 'internet': return <InternetTab />
     case 'cron': return <CronTab />
     case 'browser': return <BrowserTab />

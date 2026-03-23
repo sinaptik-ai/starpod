@@ -55,6 +55,11 @@ pub struct ChatMessage {
     /// `None` for regular user messages.
     #[serde(default)]
     pub triggered_by: Option<String>,
+
+    /// Optional model override in `"provider/model"` format.
+    /// When set, overrides the default model for this message only.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 /// Response from the Starpod agent.
@@ -162,6 +167,7 @@ mod tests {
                 data: "iVBORw0KGgo=".into(),
             }],
             triggered_by: None,
+            model: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let back: ChatMessage = serde_json::from_str(&json).unwrap();
@@ -175,5 +181,37 @@ mod tests {
         let json = r#"{"text": "hello"}"#;
         let msg: ChatMessage = serde_json::from_str(json).unwrap();
         assert!(msg.attachments.is_empty());
+        assert!(msg.model.is_none());
+    }
+
+    #[test]
+    fn chat_message_model_override_roundtrips() {
+        let msg = ChatMessage {
+            text: "test".into(),
+            user_id: None,
+            channel_id: None,
+            channel_session_key: None,
+            attachments: Vec::new(),
+            triggered_by: None,
+            model: Some("openai/gpt-4o".into()),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"model\":\"openai/gpt-4o\""));
+        let back: ChatMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.model.as_deref(), Some("openai/gpt-4o"));
+    }
+
+    #[test]
+    fn chat_message_model_absent_defaults_to_none() {
+        let json = r#"{"text": "hello", "user_id": "u1"}"#;
+        let msg: ChatMessage = serde_json::from_str(json).unwrap();
+        assert!(msg.model.is_none());
+    }
+
+    #[test]
+    fn chat_message_model_null_deserializes_as_none() {
+        let json = r#"{"text": "hello", "model": null}"#;
+        let msg: ChatMessage = serde_json::from_str(json).unwrap();
+        assert!(msg.model.is_none());
     }
 }

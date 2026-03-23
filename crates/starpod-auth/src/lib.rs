@@ -130,6 +130,7 @@ impl AuthStore {
             display_name: display_name.map(String::from),
             role,
             is_active: true,
+            filesystem_enabled: false,
             created_at: now,
             updated_at: now,
         })
@@ -138,7 +139,7 @@ impl AuthStore {
     /// Get a user by ID.
     pub async fn get_user(&self, id: &str) -> Result<Option<User>> {
         let row = sqlx::query(
-            "SELECT id, email, display_name, role, is_active, created_at, updated_at FROM users WHERE id = ?"
+            "SELECT id, email, display_name, role, is_active, filesystem_enabled, created_at, updated_at FROM users WHERE id = ?"
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -151,7 +152,7 @@ impl AuthStore {
     /// List all users.
     pub async fn list_users(&self) -> Result<Vec<User>> {
         let rows = sqlx::query(
-            "SELECT id, email, display_name, role, is_active, created_at, updated_at \
+            "SELECT id, email, display_name, role, is_active, filesystem_enabled, created_at, updated_at \
              FROM users ORDER BY created_at ASC"
         )
         .fetch_all(&self.pool)
@@ -171,27 +172,20 @@ impl AuthStore {
         email: Option<&str>,
         display_name: Option<&str>,
         role: Option<Role>,
+        filesystem_enabled: Option<bool>,
     ) -> Result<()> {
         let now = Utc::now().to_rfc3339();
 
-        if let Some(role) = role {
-            sqlx::query(
-                "UPDATE users SET email = COALESCE(?, email), display_name = COALESCE(?, display_name), \
-                 role = ?, updated_at = ? WHERE id = ?"
-            )
-            .bind(email)
-            .bind(display_name)
-            .bind(role.as_str())
-            .bind(&now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| StarpodError::Auth(format!("Failed to update user: {}", e)))?;
-        } else {
-            sqlx::query(
-                "UPDATE users SET email = COALESCE(?, email), display_name = COALESCE(?, display_name), \
-                 updated_at = ? WHERE id = ?"
-            )
+        let role_clause = role.map(|r| format!(", role = '{}'", r.as_str())).unwrap_or_default();
+        let fs_clause = filesystem_enabled.map(|v| format!(", filesystem_enabled = {}", v as i32)).unwrap_or_default();
+
+        let sql = format!(
+            "UPDATE users SET email = COALESCE(?, email), display_name = COALESCE(?, display_name){}{}, \
+             updated_at = ? WHERE id = ?",
+            role_clause, fs_clause,
+        );
+
+        sqlx::query(&sql)
             .bind(email)
             .bind(display_name)
             .bind(&now)
@@ -199,7 +193,6 @@ impl AuthStore {
             .execute(&self.pool)
             .await
             .map_err(|e| StarpodError::Auth(format!("Failed to update user: {}", e)))?;
-        }
 
         Ok(())
     }
@@ -335,7 +328,7 @@ impl AuthStore {
 
         let candidates = sqlx::query(
                 "SELECT ak.id AS ak_id, ak.key_hash, u.id, u.email, u.display_name, u.role, u.is_active, \
-                 u.created_at, u.updated_at \
+                 u.filesystem_enabled, u.created_at, u.updated_at \
                  FROM api_keys ak JOIN users u ON ak.user_id = u.id \
                  WHERE ak.prefix = ? AND ak.revoked_at IS NULL AND u.is_active = 1"
             )
@@ -362,6 +355,7 @@ impl AuthStore {
                     display_name: row.get("display_name"),
                     role: Role::from_str(row.get::<&str, _>("role")).unwrap_or(Role::User),
                     is_active: row.get::<bool, _>("is_active"),
+                    filesystem_enabled: row.get::<bool, _>("filesystem_enabled"),
                     created_at: parse_dt(row.get("created_at")),
                     updated_at: parse_dt(row.get("updated_at")),
                 }));
@@ -453,7 +447,7 @@ impl AuthStore {
     /// or `None` if unlinked or the user is deactivated.
     pub async fn authenticate_telegram(&self, telegram_id: i64) -> Result<Option<User>> {
         let row = sqlx::query(
-            "SELECT u.id, u.email, u.display_name, u.role, u.is_active, u.created_at, u.updated_at \
+            "SELECT u.id, u.email, u.display_name, u.role, u.is_active, u.filesystem_enabled, u.created_at, u.updated_at \
              FROM telegram_links tl JOIN users u ON tl.user_id = u.id \
              WHERE tl.telegram_id = ? AND u.is_active = 1"
         )
@@ -583,6 +577,9 @@ impl AuthStore {
         }
 
         let admin = self.create_user(None, Some("Admin"), Role::Admin).await?;
+        // Enable filesystem access for the bootstrap admin
+        self.update_user(&admin.id, None, None, None, Some(true)).await?;
+        let admin = self.get_user(&admin.id).await?.unwrap_or(admin);
 
         let key_str = if let Some(existing) = existing_api_key {
             self.import_api_key(&admin.id, existing, Some("Imported from STARPOD_API_KEY")).await?;
@@ -621,6 +618,7 @@ fn row_to_user(row: &sqlx::sqlite::SqliteRow) -> User {
         display_name: row.get("display_name"),
         role: Role::from_str(row.get::<&str, _>("role")).unwrap_or(Role::User),
         is_active: row.get::<bool, _>("is_active"),
+        filesystem_enabled: row.get::<bool, _>("filesystem_enabled"),
         created_at: parse_dt(row.get("created_at")),
         updated_at: parse_dt(row.get("updated_at")),
     }
@@ -691,7 +689,7 @@ mod tests {
     async fn update_user() {
         let store = test_store().await;
         let user = store.create_user(None, Some("Old"), Role::User).await.unwrap();
-        store.update_user(&user.id, Some("new@example.com"), Some("New"), None).await.unwrap();
+        store.update_user(&user.id, Some("new@example.com"), Some("New"), None, None).await.unwrap();
 
         let fetched = store.get_user(&user.id).await.unwrap().unwrap();
         assert_eq!(fetched.email.as_deref(), Some("new@example.com"));
@@ -851,7 +849,7 @@ mod tests {
     async fn update_user_role() {
         let store = test_store().await;
         let user = store.create_user(None, None, Role::User).await.unwrap();
-        store.update_user(&user.id, None, None, Some(Role::Admin)).await.unwrap();
+        store.update_user(&user.id, None, None, Some(Role::Admin), None).await.unwrap();
 
         let fetched = store.get_user(&user.id).await.unwrap().unwrap();
         assert_eq!(fetched.role, Role::Admin);
@@ -1059,6 +1057,7 @@ mod tests {
             display_name: Some("Test".into()),
             role: Role::User,
             is_active: true,
+            filesystem_enabled: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -1067,5 +1066,119 @@ mod tests {
         assert_eq!(parsed["id"], "test-id");
         assert_eq!(parsed["role"], "user");
         assert_eq!(parsed["is_active"], true);
+        assert_eq!(parsed["filesystem_enabled"], false);
+    }
+
+    // ── filesystem_enabled tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn create_user_defaults_filesystem_disabled() {
+        let store = test_store().await;
+        let user = store.create_user(None, Some("Test"), Role::User).await.unwrap();
+        assert!(!user.filesystem_enabled);
+
+        let fetched = store.get_user(&user.id).await.unwrap().unwrap();
+        assert!(!fetched.filesystem_enabled);
+    }
+
+    #[tokio::test]
+    async fn update_user_enables_filesystem() {
+        let store = test_store().await;
+        let user = store.create_user(None, Some("Test"), Role::User).await.unwrap();
+        assert!(!user.filesystem_enabled);
+
+        store.update_user(&user.id, None, None, None, Some(true)).await.unwrap();
+        let fetched = store.get_user(&user.id).await.unwrap().unwrap();
+        assert!(fetched.filesystem_enabled);
+    }
+
+    #[tokio::test]
+    async fn update_user_disables_filesystem() {
+        let store = test_store().await;
+        let user = store.create_user(None, Some("Test"), Role::User).await.unwrap();
+        store.update_user(&user.id, None, None, None, Some(true)).await.unwrap();
+
+        store.update_user(&user.id, None, None, None, Some(false)).await.unwrap();
+        let fetched = store.get_user(&user.id).await.unwrap().unwrap();
+        assert!(!fetched.filesystem_enabled);
+    }
+
+    #[tokio::test]
+    async fn update_user_none_preserves_filesystem() {
+        let store = test_store().await;
+        let user = store.create_user(None, Some("Test"), Role::User).await.unwrap();
+        store.update_user(&user.id, None, None, None, Some(true)).await.unwrap();
+
+        // Update name only — filesystem should remain enabled
+        store.update_user(&user.id, None, Some("NewName"), None, None).await.unwrap();
+        let fetched = store.get_user(&user.id).await.unwrap().unwrap();
+        assert!(fetched.filesystem_enabled);
+        assert_eq!(fetched.display_name.as_deref(), Some("NewName"));
+    }
+
+    #[tokio::test]
+    async fn list_users_includes_filesystem_field() {
+        let store = test_store().await;
+        let u1 = store.create_user(None, Some("A"), Role::User).await.unwrap();
+        store.create_user(None, Some("B"), Role::User).await.unwrap();
+        store.update_user(&u1.id, None, None, None, Some(true)).await.unwrap();
+
+        let users = store.list_users().await.unwrap();
+        assert_eq!(users.len(), 2);
+        let a = users.iter().find(|u| u.display_name.as_deref() == Some("A")).unwrap();
+        let b = users.iter().find(|u| u.display_name.as_deref() == Some("B")).unwrap();
+        assert!(a.filesystem_enabled);
+        assert!(!b.filesystem_enabled);
+    }
+
+    #[tokio::test]
+    async fn bootstrap_admin_has_filesystem_enabled() {
+        let store = test_store().await;
+        let result = store.bootstrap_admin(None).await.unwrap();
+        let (admin, _key) = result.unwrap();
+        assert!(admin.filesystem_enabled, "Bootstrap admin should have filesystem enabled");
+
+        // Verify it persists
+        let fetched = store.get_user(&admin.id).await.unwrap().unwrap();
+        assert!(fetched.filesystem_enabled);
+    }
+
+    #[tokio::test]
+    async fn api_key_auth_returns_filesystem_field() {
+        let store = test_store().await;
+        let user = store.create_user(None, None, Role::User).await.unwrap();
+        store.update_user(&user.id, None, None, None, Some(true)).await.unwrap();
+        let key = store.create_api_key(&user.id, None).await.unwrap();
+
+        let authed = store.authenticate_api_key(&key.key).await.unwrap().unwrap();
+        assert!(authed.filesystem_enabled);
+    }
+
+    #[tokio::test]
+    async fn telegram_auth_returns_filesystem_field() {
+        let store = test_store().await;
+        let user = store.create_user(None, None, Role::User).await.unwrap();
+        store.update_user(&user.id, None, None, None, Some(true)).await.unwrap();
+        store.link_telegram(&user.id, 12345, None).await.unwrap();
+
+        let authed = store.authenticate_telegram(12345).await.unwrap().unwrap();
+        assert!(authed.filesystem_enabled);
+    }
+
+    #[test]
+    fn user_serialization_includes_filesystem_enabled() {
+        let user = User {
+            id: "u1".into(),
+            email: None,
+            display_name: None,
+            role: Role::Admin,
+            is_active: true,
+            filesystem_enabled: true,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let json = serde_json::to_string(&user).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["filesystem_enabled"], true);
     }
 }

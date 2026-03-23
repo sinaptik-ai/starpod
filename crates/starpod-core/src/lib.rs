@@ -8,9 +8,10 @@ pub use config::{
     AttachmentsConfig, AuthConfig, BrowserConfig, ChannelsConfig, CompactionConfig,
     CronConfig, FollowupMode, FrontendConfig, InternetConfig, MemoryConfig, StarpodConfig,
     ProviderConfig, ProvidersConfig, ReasoningEffort, TelegramChannelConfig,
+    parse_model_spec,
 };
 pub use error::{StarpodError, Result};
-pub use instance::{EnvSource, apply_blueprint, build_standalone};
+pub use instance::{EnvSource, apply_blueprint, build_standalone, create_ephemeral_instance};
 pub use types::{Attachment, ChatMessage, ChatResponse, ChatUsage, MAX_ATTACHMENT_SIZE};
 pub use workspace::{
     AgentConfig, Mode, ResolvedPaths, UserContext, WorkspaceConfig,

@@ -18,7 +18,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent_sdk::{CustomToolDefinition, ToolResult};
-use reqwest::Client;
+use lol_html::{doc_comments, element, rewrite_str, RewriteStrSettings};
+use reqwest::{Client, Url};
 use serde_json::json;
 use tracing::debug;
 
@@ -508,10 +509,10 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
                 "required": ["url"]
             }),
         },
-        // --- Browser tools ---
+        // --- Browser tools (beta) ---
         CustomToolDefinition {
             name: "BrowserOpen".into(),
-            description: "Open a browser and navigate to a URL. Auto-launches a lightweight browser process if not already running. Returns the page title.".into(),
+            description: "[Beta] Open a browser and navigate to a URL. Auto-launches a lightweight browser process if not already running. Returns the page title. Note: works best with server-rendered pages; JavaScript-heavy SPAs (Angular, React, Vue) may not render correctly.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1652,6 +1653,7 @@ pub async fn handle_custom_tool(
                 &ctx.http_client,
                 url,
                 ctx.internet.max_fetch_bytes,
+                ctx.internet.max_text_chars,
                 ctx.internet.timeout_secs,
             )
             .await
@@ -1676,7 +1678,7 @@ pub async fn handle_custom_tool(
 
             if !ctx.browser_enabled {
                 return Some(ToolResult {
-                    content: "Browser tools are disabled. Enable them in Settings > Browser.".into(),
+                    content: "Browser tools are disabled (beta feature). Enable them in Settings > Browser.".into(),
                     is_error: true,
                     raw_content: None,
                 });
@@ -2047,18 +2049,157 @@ fn format_brave_results(body: &serde_json::Value) -> String {
     output.trim_end().to_string()
 }
 
+/// Strip invisible and non-content HTML elements using `lol_html`.
+///
+/// Removes `<script>`, `<style>`, `<noscript>`, `<svg>`, `<canvas>`, `<iframe>`,
+/// `<meta>`, `<head>`, `<link>`, `<template>`, `<object>`, `<embed>` elements,
+/// HTML comments, and elements with `hidden`, `aria-hidden="true"`, or inline
+/// `display:none` / `visibility:hidden` styles.
+///
+/// This is designed to run *before* readability extraction to shrink the HTML
+/// and remove noise that confuses content-detection heuristics.
+fn strip_invisible_html(html: &str) -> String {
+    const REMOVE_TAGS: &[&str] = &[
+        "script", "style", "noscript", "svg", "canvas", "iframe", "meta",
+        "head", "link", "template", "object", "embed",
+    ];
+
+    let result = rewrite_str(
+        html,
+        RewriteStrSettings {
+            element_content_handlers: vec![
+                // Remove entire elements for non-content tags.
+                element!(
+                    &REMOVE_TAGS
+                        .iter()
+                        .copied()
+                        .collect::<Vec<_>>()
+                        .join(","),
+                    |el| {
+                        el.remove();
+                        Ok(())
+                    }
+                ),
+                // Remove elements hidden via attributes or inline styles.
+                element!("*", |el| {
+                    // hidden attribute
+                    if el.has_attribute("hidden") {
+                        el.remove();
+                        return Ok(());
+                    }
+                    // aria-hidden="true"
+                    if el
+                        .get_attribute("aria-hidden")
+                        .map_or(false, |v| v.trim() == "true")
+                    {
+                        el.remove();
+                        return Ok(());
+                    }
+                    // inline style: display:none or visibility:hidden
+                    if let Some(style) = el.get_attribute("style") {
+                        let s = style.to_lowercase();
+                        let s = s.replace(' ', "");
+                        if s.contains("display:none") || s.contains("visibility:hidden") {
+                            el.remove();
+                            return Ok(());
+                        }
+                    }
+                    Ok(())
+                }),
+            ],
+            document_content_handlers: vec![doc_comments!(|c| {
+                c.remove();
+                Ok(())
+            })],
+            ..RewriteStrSettings::default()
+        },
+    );
+
+    result.unwrap_or_else(|_| html.to_string())
+}
+
+/// Extract readable content from HTML using readability + markdown conversion.
+///
+/// Pipeline: strip invisible elements → readability extraction → markdown
+/// conversion → blank-line collapsing. Falls back to stripped-HTML-to-markdown
+/// if readability returns fewer than 200 characters.
+fn extract_readable_content(html: &str, url: &str) -> String {
+    let stripped = strip_invisible_html(html);
+
+    // Try readability extraction on the stripped HTML.
+    let readable_text = {
+        let parsed_url = Url::parse(url)
+            .unwrap_or_else(|_| Url::parse("https://example.com").unwrap());
+        readability::extractor::extract(&mut stripped.as_bytes(), &parsed_url)
+            .ok()
+            .map(|p| p.content)
+    };
+
+    // Use readability output if substantial, otherwise fall back to stripped HTML.
+    let source_html = match &readable_text {
+        Some(content) if content.len() >= 200 => content.as_str(),
+        _ => &stripped,
+    };
+
+    // Convert to markdown and collapse blank lines.
+    let md = htmd::convert(source_html).unwrap_or_else(|_| source_html.to_string());
+    collapse_blank_lines(&md)
+}
+
+/// Collapse runs of more than 2 consecutive blank lines and trim trailing whitespace.
+fn collapse_blank_lines(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut blank_count = 0u32;
+    for line in text.lines() {
+        let trimmed = line.trim_end();
+        if trimmed.is_empty() {
+            blank_count += 1;
+            if blank_count <= 2 {
+                result.push('\n');
+            }
+        } else {
+            blank_count = 0;
+            result.push_str(trimmed);
+            result.push('\n');
+        }
+    }
+    result.trim().to_string()
+}
+
+/// Truncate a string at a char boundary, appending a marker if truncated.
+fn truncate_text(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let boundary = text
+        .char_indices()
+        .nth(max_chars)
+        .map(|(i, _)| i)
+        .unwrap_or(text.len());
+    let mut truncated = text[..boundary].to_string();
+    truncated.push_str(&format!(
+        "\n\n[Content truncated at {} characters — original was {} characters]",
+        max_chars,
+        text.chars().count()
+    ));
+    truncated
+}
+
 /// Fetch a web page and convert its content to a readable format.
 ///
-/// For HTML pages (`text/html`, `application/xhtml`), the body is converted to
-/// markdown using `htmd`, with excessive blank lines collapsed. For other content
-/// types (JSON, plain text, etc.), the raw body is returned as-is.
+/// For HTML pages (`text/html`, `application/xhtml`), the body is run through
+/// readability extraction (strip invisible elements → extract main content →
+/// convert to markdown). For other content types (JSON, plain text, etc.), the
+/// raw body is returned as-is.
 ///
-/// The response body is truncated to `max_bytes` before processing to prevent
-/// excessively large pages from blowing up the agent's context window.
+/// Two-stage truncation:
+/// 1. Raw HTTP body is capped at `max_bytes` (before parsing)
+/// 2. Extracted text is capped at `max_text_chars` (after extraction)
 async fn web_fetch(
     client: &Client,
     url: &str,
     max_bytes: usize,
+    max_text_chars: usize,
     timeout_secs: u64,
 ) -> Result<String, String> {
     let resp = client
@@ -2091,31 +2232,13 @@ async fn web_fetch(
         String::from_utf8_lossy(&body_bytes).into_owned()
     };
 
-    if content_type.contains("text/html") || content_type.contains("application/xhtml") {
-        let md = htmd::convert(&body_str).map_err(|e| format!("HTML conversion failed: {}", e))?;
-        let trimmed: String = md
-            .lines()
-            .map(|l| l.trim_end())
-            .collect::<Vec<_>>()
-            .join("\n");
-        let mut result = String::with_capacity(trimmed.len());
-        let mut blank_count = 0u32;
-        for line in trimmed.lines() {
-            if line.is_empty() {
-                blank_count += 1;
-                if blank_count <= 2 {
-                    result.push('\n');
-                }
-            } else {
-                blank_count = 0;
-                result.push_str(line);
-                result.push('\n');
-            }
-        }
-        Ok(result.trim().to_string())
+    let text = if content_type.contains("text/html") || content_type.contains("application/xhtml") {
+        extract_readable_content(&body_str, url)
     } else {
-        Ok(body_str)
-    }
+        body_str
+    };
+
+    Ok(truncate_text(&text, max_text_chars))
 }
 
 /// Check if a URL points to a private/local network address.
@@ -3163,6 +3286,170 @@ mod tests {
     fn private_url_allows_non_private_172() {
         assert!(!is_private_url("http://172.32.0.1/"));
         assert!(!is_private_url("http://172.15.0.1/"));
+    }
+
+    // ── strip_invisible_html ─────────────────────────────────────────
+
+    #[test]
+    fn strip_invisible_removes_script_and_style() {
+        let html = r#"<html><head><style>body{color:red}</style></head><body>
+            <script>alert('xss')</script><p>Hello world</p></body></html>"#;
+        let result = strip_invisible_html(html);
+        assert!(!result.contains("alert"));
+        assert!(!result.contains("color:red"));
+        assert!(result.contains("Hello world"));
+    }
+
+    #[test]
+    fn strip_invisible_removes_hidden_elements() {
+        let html = r#"<div>Visible</div>
+            <div hidden>Hidden attr</div>
+            <div aria-hidden="true">Aria hidden</div>
+            <div style="display:none">Display none</div>
+            <div style="visibility: hidden">Vis hidden</div>"#;
+        let result = strip_invisible_html(html);
+        assert!(result.contains("Visible"));
+        assert!(!result.contains("Hidden attr"));
+        assert!(!result.contains("Aria hidden"));
+        assert!(!result.contains("Display none"));
+        assert!(!result.contains("Vis hidden"));
+    }
+
+    #[test]
+    fn strip_invisible_removes_non_content_tags() {
+        let html = r#"<body>
+            <svg><circle r="50"/></svg>
+            <canvas></canvas>
+            <iframe src="ads.html"></iframe>
+            <noscript>Enable JS</noscript>
+            <p>Content</p></body>"#;
+        let result = strip_invisible_html(html);
+        assert!(!result.contains("circle"));
+        assert!(!result.contains("canvas"));
+        assert!(!result.contains("ads.html"));
+        assert!(!result.contains("Enable JS"));
+        assert!(result.contains("Content"));
+    }
+
+    #[test]
+    fn strip_invisible_removes_html_comments() {
+        let html = "<p>Before</p><!-- secret comment --><p>After</p>";
+        let result = strip_invisible_html(html);
+        assert!(!result.contains("secret comment"));
+        assert!(result.contains("Before"));
+        assert!(result.contains("After"));
+    }
+
+    #[test]
+    fn strip_invisible_preserves_clean_html() {
+        let html = "<article><h1>Title</h1><p>Paragraph text.</p></article>";
+        let result = strip_invisible_html(html);
+        assert!(result.contains("Title"));
+        assert!(result.contains("Paragraph text."));
+    }
+
+    #[test]
+    fn strip_invisible_removes_nested_hidden_elements() {
+        let html = r#"<div hidden><p>Hidden parent<span>and nested child</span></p></div>
+            <p>Visible</p>"#;
+        let result = strip_invisible_html(html);
+        assert!(!result.contains("Hidden parent"));
+        assert!(!result.contains("nested child"));
+        assert!(result.contains("Visible"));
+    }
+
+    // ── extract_readable_content ──────────────────────────────────────
+
+    #[test]
+    fn extract_readable_content_from_article_page() {
+        let html = format!(
+            r#"<html><head><title>Test</title><style>*{{margin:0}}</style></head>
+            <body>
+            <nav><a href="/">Home</a><a href="/about">About</a></nav>
+            <article><h1>Main Article</h1><p>{}</p></article>
+            <footer>Copyright 2024</footer>
+            </body></html>"#,
+            "This is the main article content. ".repeat(20)
+        );
+        let result = extract_readable_content(&html, "https://example.com/article");
+        // Readability extracts body text; the h1 may be pulled into title
+        assert!(result.contains("main article content"));
+        // Style should be stripped
+        assert!(!result.contains("margin:0"));
+        // Nav and footer should be stripped by readability
+        assert!(!result.contains("Copyright 2024"));
+    }
+
+    #[test]
+    fn extract_readable_content_fallback_on_short_readability() {
+        // Minimal HTML where readability likely returns very little
+        let html = "<html><body><p>Short.</p></body></html>";
+        let result = extract_readable_content(html, "https://example.com");
+        // Should still return something (fallback to stripped HTML)
+        assert!(result.contains("Short."));
+    }
+
+    #[test]
+    fn extract_readable_content_handles_malformed_html() {
+        // Severely broken HTML — unclosed tags, mismatched nesting
+        let html = "<div><p>Unclosed paragraph<span>broken<div>nesting</p></span>";
+        let result = extract_readable_content(html, "https://example.com");
+        // Should not panic, should return something
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn extract_readable_content_handles_invalid_url() {
+        let html = format!(
+            "<html><body><article><p>{}</p></article></body></html>",
+            "Content here. ".repeat(30)
+        );
+        // Invalid URL — should fallback to dummy URL without panicking
+        let result = extract_readable_content(&html, "not a valid url at all");
+        assert!(!result.is_empty());
+        assert!(result.contains("Content here"));
+    }
+
+    #[test]
+    fn extract_readable_content_handles_empty_html() {
+        let result = extract_readable_content("", "https://example.com");
+        // Should not panic on empty input
+        assert!(result.is_empty() || result.len() < 50);
+    }
+
+    #[test]
+    fn collapse_blank_lines_limits_to_two() {
+        let input = "Line 1\n\n\n\n\nLine 2\n\nLine 3";
+        let result = collapse_blank_lines(input);
+        assert_eq!(result, "Line 1\n\n\nLine 2\n\nLine 3");
+    }
+
+    // ── truncate_text ─────────────────────────────────────────────────
+
+    #[test]
+    fn truncate_text_no_op_when_within_limit() {
+        let text = "Hello, world!";
+        let result = truncate_text(text, 100);
+        assert_eq!(result, "Hello, world!");
+        assert!(!result.contains("[Content truncated"));
+    }
+
+    #[test]
+    fn truncate_text_truncates_at_char_boundary() {
+        let text = "a".repeat(200);
+        let result = truncate_text(&text, 50);
+        assert!(result.starts_with(&"a".repeat(50)));
+        assert!(result.contains("[Content truncated at 50 characters"));
+        assert!(result.contains("original was 200 characters"));
+    }
+
+    #[test]
+    fn truncate_text_handles_multibyte_chars() {
+        // 10 emoji, each 1 char but multiple bytes
+        let text = "🎉".repeat(10);
+        let result = truncate_text(&text, 5);
+        assert_eq!(result.chars().take(5).collect::<String>(), "🎉".repeat(5));
+        assert!(result.contains("[Content truncated at 5 characters"));
     }
 
     // ── format_brave_results ──────────────────────────────────────────

@@ -64,13 +64,11 @@ impl StarpodAgent {
             name: config.agent_name.clone(),
             skills: Vec::new(),
             server_addr: config.server_addr.clone(),
-            provider: config.provider.clone(),
-            model: config.model.clone(),
+            models: config.models.clone(),
             max_turns: config.max_turns,
             max_tokens: config.max_tokens,
             reasoning_effort: config.reasoning_effort,
             compaction_model: config.compaction_model.clone(),
-            compaction_provider: config.compaction_provider.clone(),
             agent_name: config.agent_name.clone(),
             timezone: config.timezone.clone(),
             followup_mode: config.followup_mode,
@@ -179,8 +177,8 @@ impl StarpodAgent {
         // TODO: expose set_* via interior mutability on MemoryStore.
 
         info!(
-            model = %new_config.model,
-            provider = %new_config.provider,
+            model = %new_config.model(),
+            provider = %new_config.provider(),
             agent_name = %new_config.agent_name,
             "Config reloaded",
         );
@@ -450,9 +448,9 @@ impl StarpodAgent {
         tools
     }
 
-    /// Build the LLM provider based on `config.provider`.
+    /// Build the LLM provider for the default (or given) provider.
     fn build_provider(&self, config: &StarpodConfig) -> Result<Box<dyn LlmProvider>> {
-        self.build_provider_for(&config.provider, config)
+        self.build_provider_for(config.provider(), config)
     }
 
     /// Build an LLM provider for the given provider name using config for API key / base URL.
@@ -589,7 +587,7 @@ impl StarpodAgent {
         // Agentic flush: build provider and user view for the closure
         let flush_model = config.compaction.flush_model.clone()
             .or_else(|| config.compaction_model.clone())
-            .unwrap_or_else(|| config.model.clone());
+            .unwrap_or_else(|| config.model().to_string());
 
         let provider: Arc<dyn LlmProvider> = match self.build_provider(config) {
             Ok(p) => Arc::from(p),
@@ -757,19 +755,25 @@ impl StarpodAgent {
 
         append_execution_context(&mut system_prompt, message.channel_id.as_deref(), message.user_id.as_deref());
 
-        // Step 4: Build provider and options, then run query
-        let provider = self.build_provider(&config)?;
+        // Step 4: Resolve model (may be overridden per-message) and build provider
+        let (resolved_provider, resolved_model) = config
+            .resolve_model(message.model.as_deref())
+            .map_err(|e| StarpodError::Config(e))?;
+        let provider = self.build_provider_for(&resolved_provider, &config)?;
 
         let mut builder = Options::builder()
             .allowed_tools(Self::allowed_tools())
             .system_prompt(SystemPrompt::Custom(system_prompt))
             .permission_mode(PermissionMode::BypassPermissions)
-            .model(&config.model)
+            .model(&resolved_model)
             .max_turns(config.max_turns)
             .max_tokens(config.max_tokens)
             .context_budget(config.compaction.context_budget)
             .summary_max_tokens(config.compaction.summary_max_tokens)
             .min_keep_messages(config.compaction.min_keep_messages)
+            .max_tool_result_bytes(config.compaction.max_tool_result_bytes)
+            .prune_threshold_pct(config.compaction.prune_threshold_pct)
+            .prune_tool_result_max_chars(config.compaction.prune_tool_result_max_chars)
             .external_tool_handler(self.build_tool_handler(&config, message.user_id.as_deref()).await)
             .pre_compact_handler(self.build_pre_compact_handler(&config, message.user_id.as_deref()).await)
             .custom_tools(custom_tool_definitions())
@@ -786,15 +790,16 @@ impl StarpodAgent {
             builder = builder.session_id(session_id.clone());
         }
 
+        // Compaction model: "provider/model" format
         if let Some(ref cm) = config.compaction_model {
-            builder = builder.compaction_model(cm);
-        }
-        if let Some(ref cp) = config.compaction_provider {
-            if cp != &config.provider {
-                match self.build_provider_for(cp, &config) {
-                    Ok(p) => { builder = builder.compaction_provider(p); }
-                    Err(e) => {
-                        tracing::warn!(provider = cp, error = %e, "Failed to build compaction provider, falling back to primary");
+            if let Some((cp, cm_name)) = starpod_core::parse_model_spec(cm) {
+                builder = builder.compaction_model(cm_name);
+                if cp != resolved_provider {
+                    match self.build_provider_for(cp, &config) {
+                        Ok(p) => { builder = builder.compaction_provider(p); }
+                        Err(e) => {
+                            tracing::warn!(provider = cp, error = %e, "Failed to build compaction provider, falling back to primary");
+                        }
                     }
                 }
             }
@@ -851,7 +856,7 @@ impl StarpodAgent {
                                 cache_read: u.cache_read_input_tokens,
                                 cache_write: u.cache_creation_input_tokens,
                                 cost_usd: result.total_cost_usd,
-                                model: config.model.clone(),
+                                model: resolved_model.clone(),
                                 user_id: message.user_id.clone().unwrap_or_else(|| "admin".into()),
                             },
                             result.num_turns,
@@ -984,7 +989,12 @@ impl StarpodAgent {
         }
 
         let system_prompt = self.build_system_prompt(&session_id, &config, message.user_id.as_deref(), activated_skill.as_deref()).await?;
-        let provider = self.build_provider(&config)?;
+
+        // Resolve model (may be overridden per-message)
+        let (resolved_provider, resolved_model) = config
+            .resolve_model(message.model.as_deref())
+            .map_err(|e| StarpodError::Config(e))?;
+        let provider = self.build_provider_for(&resolved_provider, &config)?;
 
         // Create the followup channel — sender goes to caller, receiver to the agent loop
         let (followup_tx, followup_rx) = mpsc::unbounded_channel::<String>();
@@ -993,12 +1003,15 @@ impl StarpodAgent {
             .allowed_tools(Self::allowed_tools())
             .system_prompt(SystemPrompt::Custom(system_prompt))
             .permission_mode(PermissionMode::BypassPermissions)
-            .model(&config.model)
+            .model(&resolved_model)
             .max_turns(config.max_turns)
             .max_tokens(config.max_tokens)
             .context_budget(config.compaction.context_budget)
             .summary_max_tokens(config.compaction.summary_max_tokens)
             .min_keep_messages(config.compaction.min_keep_messages)
+            .max_tool_result_bytes(config.compaction.max_tool_result_bytes)
+            .prune_threshold_pct(config.compaction.prune_threshold_pct)
+            .prune_tool_result_max_chars(config.compaction.prune_tool_result_max_chars)
             .external_tool_handler(self.build_tool_handler(&config, message.user_id.as_deref()).await)
             .pre_compact_handler(self.build_pre_compact_handler(&config, message.user_id.as_deref()).await)
             .custom_tools(custom_tool_definitions())
@@ -1017,15 +1030,16 @@ impl StarpodAgent {
             builder = builder.session_id(session_id.clone());
         }
 
+        // Compaction model: "provider/model" format
         if let Some(ref cm) = config.compaction_model {
-            builder = builder.compaction_model(cm);
-        }
-        if let Some(ref cp) = config.compaction_provider {
-            if cp != &config.provider {
-                match self.build_provider_for(cp, &config) {
-                    Ok(p) => { builder = builder.compaction_provider(p); }
-                    Err(e) => {
-                        tracing::warn!(provider = cp, error = %e, "Failed to build compaction provider, falling back to primary");
+            if let Some((cp, cm_name)) = starpod_core::parse_model_spec(cm) {
+                builder = builder.compaction_model(cm_name);
+                if cp != resolved_provider {
+                    match self.build_provider_for(cp, &config) {
+                        Ok(p) => { builder = builder.compaction_provider(p); }
+                        Err(e) => {
+                            tracing::warn!(provider = cp, error = %e, "Failed to build compaction provider, falling back to primary");
+                        }
                     }
                 }
             }
@@ -1069,7 +1083,7 @@ impl StarpodAgent {
                     cache_read: u.cache_read_input_tokens,
                     cache_write: u.cache_creation_input_tokens,
                     cost_usd: result.total_cost_usd,
-                    model: config.model.clone(),
+                    model: config.model().to_string(),
                     user_id: user_id.unwrap_or("admin").to_string(),
                 },
                 result.num_turns,
@@ -1257,6 +1271,7 @@ impl StarpodAgent {
                     channel_session_key: session_key,
                     attachments: Vec::new(),
                     triggered_by: Some(ctx.job_name.clone()),
+                    model: None,
                 };
                 match agent.chat(msg).await {
                     Ok(resp) => Ok(starpod_cron::JobResult {
@@ -1301,6 +1316,7 @@ async fn run_lifecycle_prompts(agent: &Arc<StarpodAgent>) {
                     channel_session_key: Some("main".into()),
                     attachments: Vec::new(),
                     triggered_by: None,
+                    model: None,
                 };
                 match agent.chat(msg).await {
                     Ok(resp) => {
@@ -1328,6 +1344,7 @@ async fn run_lifecycle_prompts(agent: &Arc<StarpodAgent>) {
                 channel_session_key: Some("main".into()),
                 attachments: Vec::new(),
                 triggered_by: None,
+                model: None,
             };
             match agent.chat(msg).await {
                 Ok(resp) => info!(response_len = resp.text.len(), "Boot completed"),
@@ -1413,6 +1430,7 @@ async fn execute_heartbeat(
         channel_session_key: Some("main".into()),
         attachments: Vec::new(),
         triggered_by: Some("__heartbeat__".into()),
+        model: None,
     };
     match agent.chat(msg).await {
         Ok(resp) => Ok(starpod_cron::JobResult {
@@ -1591,16 +1609,16 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let agent = StarpodAgent::new(test_config(&tmp)).await.unwrap();
 
-        assert_eq!(agent.config().model, "claude-haiku-4-5");
+        assert_eq!(agent.config().model(), "claude-haiku-4-5");
 
         // Reload with updated config
         let mut new_config = test_config(&tmp);
-        new_config.model = "claude-opus-4-6".to_string();
+        new_config.models = vec!["anthropic/claude-opus-4-6".to_string()];
         new_config.agent_name = "Nova".to_string();
         agent.reload_config(new_config);
 
         let snapshot = agent.config();
-        assert_eq!(snapshot.model, "claude-opus-4-6");
+        assert_eq!(snapshot.model(), "claude-opus-4-6");
         assert_eq!(snapshot.agent_name, "Nova");
     }
 
@@ -1982,14 +2000,14 @@ mod tests {
         let agent = StarpodAgent::new(test_config(&tmp)).await.unwrap();
 
         // Initial model is the default
-        assert_eq!(agent.config().model, "claude-haiku-4-5");
+        assert_eq!(agent.config().model(), "claude-haiku-4-5");
 
         // Reload with a new model
         let mut new_cfg = test_config(&tmp);
-        new_cfg.model = "claude-opus-4-6".to_string();
+        new_cfg.models = vec!["anthropic/claude-opus-4-6".to_string()];
         agent.reload_config(new_cfg);
 
-        assert_eq!(agent.config().model, "claude-opus-4-6");
+        assert_eq!(agent.config().model(), "claude-opus-4-6");
     }
 
     #[tokio::test]
@@ -2011,13 +2029,13 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let agent = StarpodAgent::new(test_config(&tmp)).await.unwrap();
 
-        assert_eq!(agent.config().provider, "anthropic");
+        assert_eq!(agent.config().provider(), "anthropic");
 
         let mut new_cfg = test_config(&tmp);
-        new_cfg.provider = "openai".to_string();
+        new_cfg.models = vec!["openai/gpt-4o".to_string()];
         agent.reload_config(new_cfg);
 
-        assert_eq!(agent.config().provider, "openai");
+        assert_eq!(agent.config().provider(), "openai");
     }
 
     #[tokio::test]
@@ -2027,14 +2045,14 @@ mod tests {
 
         // Get a snapshot
         let mut snapshot = agent.config();
-        assert_eq!(snapshot.model, "claude-haiku-4-5");
+        assert_eq!(snapshot.model(), "claude-haiku-4-5");
 
         // Mutate the snapshot
-        snapshot.model = "mutated-model".to_string();
+        snapshot.models = vec!["anthropic/mutated-model".to_string()];
 
         // The agent's config should be unaffected
         assert_eq!(
-            agent.config().model,
+            agent.config().model(),
             "claude-haiku-4-5",
             "Mutating a snapshot should not affect the agent's config"
         );

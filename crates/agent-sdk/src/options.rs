@@ -286,6 +286,19 @@ pub struct Options {
 
     /// Minimum number of messages to keep at the end during compaction.
     pub min_keep_messages: Option<usize>,
+
+    /// Maximum size in bytes for any single tool result. Results exceeding this
+    /// limit are truncated. Also strips base64 data URIs and hex blobs.
+    /// Defaults to [`sanitize::DEFAULT_MAX_TOOL_RESULT_BYTES`] (50 000) when `None`.
+    pub max_tool_result_bytes: Option<usize>,
+
+    /// Percentage of context_budget at which lightweight tool-result pruning triggers.
+    /// Defaults to [`compact::DEFAULT_PRUNE_THRESHOLD_PCT`] (70) when `None`.
+    pub prune_threshold_pct: Option<u8>,
+
+    /// Tool results longer than this (in chars) are candidates for pruning.
+    /// Defaults to [`compact::DEFAULT_PRUNE_TOOL_RESULT_MAX_CHARS`] (2 000) when `None`.
+    pub prune_tool_result_max_chars: Option<usize>,
 }
 
 /// A custom tool definition to send to the Claude API.
@@ -396,6 +409,9 @@ impl Default for Options {
             max_tokens: None,
             summary_max_tokens: None,
             min_keep_messages: None,
+            max_tool_result_bytes: None,
+            prune_threshold_pct: None,
+            prune_tool_result_max_chars: None,
         }
     }
 }
@@ -624,6 +640,21 @@ impl OptionsBuilder {
         self
     }
 
+    pub fn max_tool_result_bytes(mut self, bytes: usize) -> Self {
+        self.options.max_tool_result_bytes = Some(bytes);
+        self
+    }
+
+    pub fn prune_threshold_pct(mut self, pct: u8) -> Self {
+        self.options.prune_threshold_pct = Some(pct);
+        self
+    }
+
+    pub fn prune_tool_result_max_chars(mut self, chars: usize) -> Self {
+        self.options.prune_tool_result_max_chars = Some(chars);
+        self
+    }
+
     pub fn build(self) -> Options {
         self.options
     }
@@ -746,5 +777,55 @@ mod tests {
             .pre_compact_handler(handler)
             .build();
         assert!(opts.pre_compact_handler.is_some());
+    }
+
+    #[test]
+    fn builder_max_tool_result_bytes_sets_field() {
+        let opts = Options::builder().max_tool_result_bytes(100_000).build();
+        assert_eq!(opts.max_tool_result_bytes, Some(100_000));
+    }
+
+    #[test]
+    fn builder_max_tool_result_bytes_default_is_none() {
+        let opts = Options::builder().build();
+        assert!(opts.max_tool_result_bytes.is_none());
+    }
+
+    #[test]
+    fn builder_prune_threshold_pct_sets_field() {
+        let opts = Options::builder().prune_threshold_pct(80).build();
+        assert_eq!(opts.prune_threshold_pct, Some(80));
+    }
+
+    #[test]
+    fn builder_prune_threshold_pct_default_is_none() {
+        let opts = Options::builder().build();
+        assert!(opts.prune_threshold_pct.is_none());
+    }
+
+    #[test]
+    fn builder_prune_tool_result_max_chars_sets_field() {
+        let opts = Options::builder().prune_tool_result_max_chars(5000).build();
+        assert_eq!(opts.prune_tool_result_max_chars, Some(5000));
+    }
+
+    #[test]
+    fn builder_prune_tool_result_max_chars_default_is_none() {
+        let opts = Options::builder().build();
+        assert!(opts.prune_tool_result_max_chars.is_none());
+    }
+
+    #[test]
+    fn builder_sanitization_and_pruning_combined() {
+        let opts = Options::builder()
+            .max_tool_result_bytes(75_000)
+            .prune_threshold_pct(60)
+            .prune_tool_result_max_chars(3000)
+            .context_budget(200_000)
+            .build();
+        assert_eq!(opts.max_tool_result_bytes, Some(75_000));
+        assert_eq!(opts.prune_threshold_pct, Some(60));
+        assert_eq!(opts.prune_tool_result_max_chars, Some(3000));
+        assert_eq!(opts.context_budget, Some(200_000));
     }
 }

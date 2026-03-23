@@ -1,4 +1,4 @@
-//! Blueprint application — copy agent blueprints into runtime instances.
+//! Blueprint application and instance lifecycle.
 //!
 //! An agent **blueprint** lives in `agents/<name>/` (git-tracked) and contains
 //! configuration, personality files, and template filesystem content.
@@ -7,8 +7,20 @@
 //! the actual agent state: databases, memory, user data, and any files the
 //! agent creates at runtime.
 //!
-//! [`apply_blueprint`] copies the blueprint into the instance, creating the
-//! internal `.starpod/` directory structure:
+//! ## Functions
+//!
+//! - [`apply_blueprint`] — copies a blueprint into an instance, creating the
+//!   `.starpod/` directory structure. Idempotent: callers should check whether
+//!   the instance already exists before calling, and only re-apply when the
+//!   user explicitly requests a rebuild (e.g. `--build` flag).
+//! - [`build_standalone`] — creates a self-contained `.starpod/` for CI/CD
+//!   from explicit paths (no workspace required).
+//! - [`create_ephemeral_instance`] — creates a throwaway instance in a temp
+//!   directory for one-off commands like `starpod chat`. The returned
+//!   [`tempfile::TempDir`] guard auto-deletes on drop.
+//!
+//! ## Directory layout
+//!
 //! - `config/` — blueprint-managed files (overwritten on every build)
 //! - `skills/` — merged: blueprint skills overwrite by filename, user additions preserved
 //! - `db/`, `users/` — runtime data (never touched by build)
@@ -374,6 +386,45 @@ fn sync_files(src: &Path, dst: &Path) -> crate::Result<()> {
     }
 
     Ok(())
+}
+
+/// Create an ephemeral single-agent instance in a temp directory.
+///
+/// Returns the [`TempDir`](tempfile::TempDir) guard (caller must hold it to
+/// keep the directory alive) and [`ResolvedPaths`](crate::ResolvedPaths) for
+/// loading config and constructing an agent.
+///
+/// The instance uses all defaults from [`AgentConfig`](crate::AgentConfig)
+/// (model: `anthropic/claude-haiku-4-5`, max_turns: 30, etc.) and resolves
+/// as [`Mode::SingleAgent`](crate::Mode::SingleAgent).
+///
+/// Dropping the returned `TempDir` deletes the entire instance (databases,
+/// sessions, and all). This is intentional for one-off commands like
+/// `starpod chat` where no state needs to persist.
+pub fn create_ephemeral_instance() -> crate::Result<(tempfile::TempDir, crate::ResolvedPaths)> {
+    let tmp = tempfile::TempDir::new().map_err(StarpodError::Io)?;
+    let starpod_dir = tmp.path().join(".starpod");
+    let config_dir = starpod_dir.join("config");
+    std::fs::create_dir_all(&config_dir).map_err(StarpodError::Io)?;
+    std::fs::create_dir_all(starpod_dir.join("db")).map_err(StarpodError::Io)?;
+    std::fs::create_dir_all(starpod_dir.join("users")).map_err(StarpodError::Io)?;
+    std::fs::create_dir_all(starpod_dir.join("skills")).map_err(StarpodError::Io)?;
+
+    // Minimal agent.toml — all fields default via serde
+    std::fs::write(
+        config_dir.join("agent.toml"),
+        "agent_name = \"Starpod\"\n",
+    )
+    .map_err(StarpodError::Io)?;
+
+    // Empty SOUL.md
+    std::fs::write(config_dir.join("SOUL.md"), "").map_err(StarpodError::Io)?;
+
+    let mode = crate::Mode::SingleAgent {
+        starpod_dir: starpod_dir.clone(),
+    };
+    let paths = crate::ResolvedPaths::resolve(&mode)?;
+    Ok((tmp, paths))
 }
 
 #[cfg(test)]
@@ -1014,5 +1065,75 @@ mod tests {
         assert!(sp.join(".env").is_file());
         // NOT in config/
         assert!(!sp.join("config").join(".env").exists());
+    }
+
+    // ── create_ephemeral_instance tests ─────────────────────────────
+
+    #[test]
+    fn ephemeral_instance_creates_valid_structure() {
+        let (tmp, paths) = create_ephemeral_instance().unwrap();
+        let sp = tmp.path().join(".starpod");
+
+        // Directory structure
+        assert!(sp.join("config").is_dir());
+        assert!(sp.join("db").is_dir());
+        assert!(sp.join("users").is_dir());
+        assert!(sp.join("skills").is_dir());
+
+        // Config files
+        assert!(sp.join("config").join("agent.toml").is_file());
+        assert!(sp.join("config").join("SOUL.md").is_file());
+
+        // Paths resolve correctly
+        assert_eq!(paths.agent_toml, sp.join("config").join("agent.toml"));
+        assert_eq!(paths.config_dir, sp.join("config"));
+        assert_eq!(paths.db_dir, sp.join("db"));
+    }
+
+    #[test]
+    fn ephemeral_instance_has_default_agent_name() {
+        let (_tmp, paths) = create_ephemeral_instance().unwrap();
+        let content = std::fs::read_to_string(&paths.agent_toml).unwrap();
+        assert!(content.contains("agent_name = \"Starpod\""));
+    }
+
+    #[test]
+    fn ephemeral_instance_config_is_loadable() {
+        let (_tmp, paths) = create_ephemeral_instance().unwrap();
+        // The generated agent.toml must parse into a valid AgentConfig
+        let config = crate::load_agent_config(&paths).unwrap();
+        assert_eq!(config.agent_name, "Starpod");
+    }
+
+    #[test]
+    fn ephemeral_instance_is_single_agent_mode() {
+        let (_tmp, paths) = create_ephemeral_instance().unwrap();
+        assert!(
+            matches!(paths.mode, crate::Mode::SingleAgent { .. }),
+            "Ephemeral instance should resolve as SingleAgent mode"
+        );
+    }
+
+    #[test]
+    fn ephemeral_instance_cleanup_on_drop() {
+        let dir_path;
+        {
+            let (tmp, _paths) = create_ephemeral_instance().unwrap();
+            dir_path = tmp.path().to_path_buf();
+            assert!(dir_path.exists(), "Temp dir should exist while guard is held");
+        }
+        // TempDir dropped — directory should be cleaned up
+        assert!(!dir_path.exists(), "Temp dir should be removed after guard drops");
+    }
+
+    #[test]
+    fn ephemeral_instance_unique_per_call() {
+        let (tmp1, _) = create_ephemeral_instance().unwrap();
+        let (tmp2, _) = create_ephemeral_instance().unwrap();
+        assert_ne!(
+            tmp1.path(),
+            tmp2.path(),
+            "Each ephemeral instance should have a unique temp directory"
+        );
     }
 }

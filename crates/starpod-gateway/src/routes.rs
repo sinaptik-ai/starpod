@@ -57,6 +57,7 @@ pub fn api_routes() -> Router<Arc<AppState>> {
         .route("/api/cron/jobs", get(list_cron_jobs_handler).post(create_cron_job_handler))
         .route("/api/cron/jobs/{id}", axum::routing::put(update_cron_job_handler).delete(delete_cron_job_handler))
         .merge(crate::settings::settings_routes())
+        .merge(crate::files::files_routes())
 }
 
 // ── Auth verify endpoint ─────────────────────────────────────────────────
@@ -75,6 +76,7 @@ struct VerifyUser {
     id: String,
     display_name: Option<String>,
     role: String,
+    filesystem_enabled: bool,
 }
 
 /// Check whether the provided API key is valid.
@@ -105,6 +107,7 @@ async fn verify_handler(
                 id: u.id,
                 display_name: u.display_name,
                 role: format!("{:?}", u.role).to_lowercase(),
+                filesystem_enabled: u.filesystem_enabled,
             }),
         }),
         _ => Json(VerifyResponse { authenticated: false, auth_disabled: false, user: None }),
@@ -274,6 +277,8 @@ struct ChatRequest {
     channel_id: Option<String>,
     #[serde(default)]
     channel_session_key: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
 }
 
 /// Chat endpoint — POST /api/chat
@@ -294,6 +299,7 @@ async fn chat_handler(
         channel_session_key: req.channel_session_key,
         attachments: Vec::new(),
         triggered_by: None,
+        model: req.model,
     };
 
     match state.agent.chat(message).await {
@@ -672,13 +678,13 @@ mod tests {
         std::fs::create_dir_all(&db_dir).unwrap();
         std::fs::create_dir_all(&users_dir).unwrap();
         std::fs::create_dir_all(&skills_dir).unwrap();
-        std::fs::write(&agent_toml, "model = \"test\"\nagent_name = \"Test\"\n").unwrap();
+        std::fs::write(&agent_toml, "models = [\"anthropic/test\"]\nagent_name = \"Test\"\n").unwrap();
 
         let config = StarpodConfig {
             db_dir: db_dir.clone(),
             db_path: Some(db_dir.join("memory.db")),
             project_root: tmp.path().to_path_buf(),
-            model: "test".into(),
+            models: vec!["anthropic/test".into()],
             agent_name: "Test".into(),
             ..StarpodConfig::default()
         };

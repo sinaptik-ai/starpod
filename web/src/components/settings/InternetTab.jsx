@@ -40,8 +40,11 @@ export default function InternetTab() {
         <Row label="Timeout" sub="seconds" helpTip="Request timeout for web fetch operations.">
           <Input type="number" value={config.timeout_secs ?? ''} onChange={v => set('timeout_secs', v === '' ? null : Number(v))} placeholder="15" />
         </Row>
-        <Row label="Max fetch size" sub="bytes" helpTip="Maximum response body size in bytes for WebFetch.">
-          <Input type="number" value={config.max_fetch_bytes ?? ''} onChange={v => set('max_fetch_bytes', v === '' ? null : Number(v))} placeholder="524288" />
+        <Row label="Max fetch size" sub="bytes" helpTip="Maximum raw HTTP response size in bytes, applied before HTML processing.">
+          <Input type="number" value={config.max_fetch_bytes ?? ''} onChange={v => set('max_fetch_bytes', v === '' ? null : Number(v))} placeholder="2097152" />
+        </Row>
+        <Row label="Max text chars" sub="characters" helpTip="Maximum extracted text length after readability extraction and markdown conversion.">
+          <Input type="number" value={config.max_text_chars ?? ''} onChange={v => set('max_text_chars', v === '' ? null : Number(v))} placeholder="50000" />
         </Row>
       </Card>
 

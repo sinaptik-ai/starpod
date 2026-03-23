@@ -8,7 +8,10 @@ function parseHash() {
     return { settings: { visible: true, tab: tab || 'general' }, cronVisible: false, sessionId: null }
   }
   if (hash === '#/cron') {
-    return { settings: { visible: false, tab: 'general' }, cronVisible: true, sessionId: null }
+    return { settings: { visible: false, tab: 'general' }, cronVisible: true, filesVisible: false, sessionId: null }
+  }
+  if (hash === '#/files') {
+    return { settings: { visible: false, tab: 'general' }, cronVisible: false, filesVisible: true, sessionId: null }
   }
   if (hash.startsWith('#/chat/')) {
     const id = hash.slice('#/chat/'.length)
@@ -25,10 +28,12 @@ const initialState = {
   settingsVisible: initHash.settings.visible,
   settingsActiveTab: initHash.settings.tab,
   cronVisible: initHash.cronVisible,
+  filesVisible: initHash.filesVisible || false,
   currentSessionId: initHash.sessionId,
   currentSessionKey: generateUUID(),
   sessions: [],
   previewUrl: null,
+  selectedModel: null, // null = use default (first in models list)
 }
 
 function appReducer(state, action) {
@@ -47,7 +52,7 @@ function appReducer(state, action) {
 
     case 'SHOW_SETTINGS':
       window.history.pushState(null, '', '#/settings/' + state.settingsActiveTab)
-      return { ...state, settingsVisible: true, cronVisible: false }
+      return { ...state, settingsVisible: true, cronVisible: false, filesVisible: false }
 
     case 'HIDE_SETTINGS': {
       const chatHash = state.currentSessionId ? '#/chat/' + state.currentSessionId : '#/'
@@ -57,12 +62,22 @@ function appReducer(state, action) {
 
     case 'SHOW_CRON':
       window.history.pushState(null, '', '#/cron')
-      return { ...state, cronVisible: true, settingsVisible: false }
+      return { ...state, cronVisible: true, settingsVisible: false, filesVisible: false }
 
     case 'HIDE_CRON': {
       const chatHash2 = state.currentSessionId ? '#/chat/' + state.currentSessionId : '#/'
       window.history.pushState(null, '', chatHash2)
       return { ...state, cronVisible: false }
+    }
+
+    case 'SHOW_FILES':
+      window.history.pushState(null, '', '#/files')
+      return { ...state, filesVisible: true, settingsVisible: false, cronVisible: false }
+
+    case 'HIDE_FILES': {
+      const chatHash3 = state.currentSessionId ? '#/chat/' + state.currentSessionId : '#/'
+      window.history.pushState(null, '', chatHash3)
+      return { ...state, filesVisible: false }
     }
 
     case 'SET_SETTINGS_TAB':
@@ -99,6 +114,9 @@ function appReducer(state, action) {
           s.id === action.payload ? { ...s, is_read: true } : s
         ),
       }
+
+    case 'SET_MODEL':
+      return { ...state, selectedModel: action.payload }
 
     case 'OPEN_PREVIEW':
       return { ...state, previewUrl: action.payload }
