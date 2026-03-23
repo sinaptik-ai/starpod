@@ -1181,4 +1181,421 @@ mod tests {
         // Verify: stale.md was deleted
         assert!(!agent_dir.join("stale.md").exists());
     }
+
+    // --- parse_env_file tests ---
+
+    #[test]
+    fn parse_env_basic_key_value() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env_path = tmp.path().join(".env");
+        std::fs::write(&env_path, "KEY1=value1\nKEY2=value2\n").unwrap();
+
+        let env = parse_env_file(&env_path).unwrap();
+        assert_eq!(env.get("KEY1").unwrap(), "value1");
+        assert_eq!(env.get("KEY2").unwrap(), "value2");
+        assert_eq!(env.len(), 2);
+    }
+
+    #[test]
+    fn parse_env_strips_quotes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env_path = tmp.path().join(".env");
+        std::fs::write(&env_path, "KEY=\"quoted value\"\n").unwrap();
+
+        let env = parse_env_file(&env_path).unwrap();
+        assert_eq!(env.get("KEY").unwrap(), "quoted value");
+    }
+
+    #[test]
+    fn parse_env_skips_comments_and_empty_lines() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env_path = tmp.path().join(".env");
+        std::fs::write(&env_path, "# comment\n\nKEY=val\n  \n# another\n").unwrap();
+
+        let env = parse_env_file(&env_path).unwrap();
+        assert_eq!(env.len(), 1);
+        assert_eq!(env.get("KEY").unwrap(), "val");
+    }
+
+    #[test]
+    fn parse_env_handles_whitespace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env_path = tmp.path().join(".env");
+        std::fs::write(&env_path, "  KEY = value  \n").unwrap();
+
+        let env = parse_env_file(&env_path).unwrap();
+        assert_eq!(env.get("KEY").unwrap(), "value");
+    }
+
+    #[test]
+    fn parse_env_missing_file_errors() {
+        let result = parse_env_file(Path::new("/nonexistent/.env"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_env_value_with_equals_sign() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env_path = tmp.path().join(".env");
+        std::fs::write(&env_path, "DATABASE_URL=postgres://user:pass@host/db?opt=1\n").unwrap();
+
+        let env = parse_env_file(&env_path).unwrap();
+        assert_eq!(
+            env.get("DATABASE_URL").unwrap(),
+            "postgres://user:pass@host/db?opt=1"
+        );
+    }
+
+    // --- collect_files_recursive tests ---
+
+    #[test]
+    fn collect_files_skips_hidden_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+
+        std::fs::write(dir.join("visible.txt"), "ok").unwrap();
+        std::fs::create_dir(dir.join(".hidden")).unwrap();
+        std::fs::write(dir.join(".hidden").join("secret.txt"), "nope").unwrap();
+        std::fs::write(dir.join(".gitignore"), "nope").unwrap();
+
+        let mut files = Vec::new();
+        collect_files_recursive(dir, "", &mut files).unwrap();
+
+        let names: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
+        assert!(names.contains(&"visible.txt"));
+        assert!(!names.iter().any(|n| n.contains("hidden") || n.contains(".git")));
+    }
+
+    #[test]
+    fn collect_files_with_nested_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+
+        std::fs::write(dir.join("root.md"), "root").unwrap();
+        std::fs::create_dir(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("sub").join("nested.md"), "nested").unwrap();
+
+        let mut files = Vec::new();
+        collect_files_recursive(dir, "", &mut files).unwrap();
+
+        let names: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
+        assert!(names.contains(&"root.md"));
+        assert!(names.contains(&"sub/nested.md"));
+    }
+
+    #[test]
+    fn collect_files_with_prefix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        std::fs::write(dir.join("skill.md"), "data").unwrap();
+
+        let mut files = Vec::new();
+        collect_files_recursive(dir, "skills/", &mut files).unwrap();
+
+        assert_eq!(files[0].0, "skills/skill.md");
+    }
+
+    #[test]
+    fn collect_files_nonexistent_dir_is_ok() {
+        let mut files = Vec::new();
+        let result = collect_files_recursive(Path::new("/nonexistent"), "", &mut files);
+        assert!(result.is_ok());
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn collect_files_skips_node_modules_and_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+
+        std::fs::write(dir.join("keep.md"), "ok").unwrap();
+        std::fs::create_dir(dir.join("node_modules")).unwrap();
+        std::fs::write(dir.join("node_modules").join("pkg.js"), "skip").unwrap();
+        std::fs::create_dir(dir.join("target")).unwrap();
+        std::fs::write(dir.join("target").join("bin"), "skip").unwrap();
+
+        let mut files = Vec::new();
+        collect_files_recursive(dir, "", &mut files).unwrap();
+
+        let names: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(names, vec!["keep.md"]);
+    }
+
+    // --- get_deploy_config tests ---
+
+    #[tokio::test]
+    async fn get_deploy_config_returns_readiness() {
+        let (server, client) = setup_client().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/v1/agents/agent-123/deploy-config"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "version": 1,
+                "variables": {"MODEL": "claude-sonnet"},
+                "secrets": [
+                    {"key": "ANTHROPIC_API_KEY", "required": true, "description": "API key", "present": true, "scope": "agent", "hint": "sk-a"}
+                ],
+                "ready": true,
+                "missing_required": []
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let config = client.get_deploy_config("agent-123").await.unwrap();
+        assert!(config.is_some());
+        let config = config.unwrap();
+        assert!(config.ready);
+        assert_eq!(config.version, 1);
+        assert_eq!(config.variables.get("MODEL").unwrap(), "claude-sonnet");
+        assert_eq!(config.secrets.len(), 1);
+        assert!(config.secrets[0].present);
+        assert!(config.missing_required.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_deploy_config_returns_none_on_404() {
+        let (server, client) = setup_client().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/v1/agents/agent-123/deploy-config"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let config = client.get_deploy_config("agent-123").await.unwrap();
+        assert!(config.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_deploy_config_errors_on_500() {
+        let (server, client) = setup_client().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/v1/agents/agent-123/deploy-config"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("internal error"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let result = client.get_deploy_config("agent-123").await;
+        assert!(result.is_err());
+    }
+
+    // --- Secrets CRUD tests ---
+
+    #[tokio::test]
+    async fn list_agent_secrets_returns_list() {
+        let (server, client) = setup_client().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/v1/agents/agent-123/secrets"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"id": "s1", "key": "API_KEY", "hint": "sk-a", "agent_id": "agent-123", "created_at": "2026-01-01T00:00:00Z"},
+                {"id": "s2", "key": "DB_URL", "hint": "post", "agent_id": "agent-123", "created_at": "2026-01-01T00:00:00Z"}
+            ])))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let secrets = client.list_agent_secrets("agent-123").await.unwrap();
+        assert_eq!(secrets.len(), 2);
+        assert_eq!(secrets[0].key, "API_KEY");
+        assert_eq!(secrets[1].key, "DB_URL");
+    }
+
+    #[tokio::test]
+    async fn list_user_secrets_returns_list() {
+        let (server, client) = setup_client().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/v1/secrets"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"id": "s1", "key": "GLOBAL_KEY", "hint": "glo", "agent_id": null, "created_at": "2026-01-01T00:00:00Z"}
+            ])))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let secrets = client.list_user_secrets().await.unwrap();
+        assert_eq!(secrets.len(), 1);
+        assert_eq!(secrets[0].key, "GLOBAL_KEY");
+        assert!(secrets[0].agent_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn set_user_secret_succeeds() {
+        let (server, client) = setup_client().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/v1/secrets"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "s-new", "key": "MY_SECRET", "hint": "val", "agent_id": null, "created_at": "2026-01-01T00:00:00Z"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let secret = client.set_user_secret("MY_SECRET", "my-value").await.unwrap();
+        assert_eq!(secret.key, "MY_SECRET");
+        assert_eq!(secret.id, "s-new");
+    }
+
+    #[tokio::test]
+    async fn delete_user_secret_succeeds() {
+        let (server, client) = setup_client().await;
+
+        Mock::given(method("DELETE"))
+            .and(path("/api/v1/secrets/s-123"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        client.delete_user_secret("s-123").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn delete_agent_secret_succeeds() {
+        let (server, client) = setup_client().await;
+
+        Mock::given(method("DELETE"))
+            .and(path("/api/v1/agents/agent-123/secrets/s-456"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        client.delete_agent_secret("agent-123", "s-456").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_secrets_error_propagates() {
+        let (server, client) = setup_client().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/v1/secrets"))
+            .respond_with(ResponseTemplate::new(403).set_body_string("forbidden"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let result = client.list_user_secrets().await;
+        assert!(result.is_err());
+    }
+
+    // --- Error case tests for sync operations ---
+
+    #[tokio::test]
+    async fn sync_manifest_error_on_server_failure() {
+        let (server, client) = setup_client().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/v1/agents/agent-123/sync"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("server error"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let manifest = SyncManifestRequest { files: HashMap::new() };
+        let result = client.sync_manifest("agent-123", &manifest).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn download_file_error_on_404() {
+        let (server, client) = setup_client().await;
+
+        Mock::given(method("GET"))
+            .and(path_regex(r"/api/v1/agents/agent-123/files/.*"))
+            .respond_with(ResponseTemplate::new(404).set_body_string("not found"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let result = client.download_file("agent-123", "missing.md").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn delete_file_error_on_500() {
+        let (server, client) = setup_client().await;
+
+        Mock::given(method("DELETE"))
+            .and(path_regex(r"/api/v1/agents/agent-123/files/.*"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("internal"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let result = client.delete_file("agent-123", "bad.md").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn pull_agent_errors_when_agent_not_found() {
+        let (server, client) = setup_client().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/v1/agents"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+            .mount(&server)
+            .await;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let result = client.pull_agent("nonexistent", tmp.path()).await;
+        assert!(result.is_err());
+    }
+
+    // --- push_agent with skills dir ---
+
+    #[tokio::test]
+    async fn push_agent_includes_skills_dir() {
+        let (server, client) = setup_client().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/v1/agents"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"id": "agent-id-1", "name": "test-agent", "gcs_path": "agents/1/", "created_at": "2026-01-01T00:00:00Z"}
+            ])))
+            .mount(&server)
+            .await;
+
+        // Sync returns both agent file and skill file need upload
+        Mock::given(method("POST"))
+            .and(path("/api/v1/agents/agent-id-1/sync"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "to_upload": ["SOUL.md", "skills/greet.md"],
+                "to_download": [],
+                "to_delete_remote": [],
+                "to_delete_local": []
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/v1/agents/agent-id-1/files"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "uploaded": [{"path": "SOUL.md", "size": 5}, {"path": "skills/greet.md", "size": 6}]
+            })))
+            .mount(&server)
+            .await;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let agent_dir = tmp.path().join("agent");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        std::fs::write(agent_dir.join("SOUL.md"), "soul").unwrap();
+
+        let skills_dir = tmp.path().join("skills");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+        std::fs::write(skills_dir.join("greet.md"), "greet!").unwrap();
+
+        let summary = client
+            .push_agent("test-agent", &agent_dir, Some(&skills_dir))
+            .await
+            .unwrap();
+        assert_eq!(summary.uploaded, 2);
+        assert_eq!(summary.unchanged, 0);
+    }
 }

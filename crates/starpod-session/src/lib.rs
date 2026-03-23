@@ -1423,4 +1423,78 @@ mod tests {
         // Should not error — just a no-op UPDATE matching zero rows
         mgr.mark_read("nonexistent-id", true).await.unwrap();
     }
+
+    // --- Email channel tests ---
+
+    #[test]
+    fn test_email_channel_as_str() {
+        assert_eq!(Channel::Email.as_str(), "email");
+    }
+
+    #[test]
+    fn test_email_channel_from_str() {
+        assert_eq!(Channel::from_channel_str("email"), Channel::Email);
+    }
+
+    #[test]
+    fn test_unknown_channel_defaults_to_main() {
+        assert_eq!(Channel::from_channel_str("unknown"), Channel::Main);
+        assert_eq!(Channel::from_channel_str(""), Channel::Main);
+    }
+
+    #[tokio::test]
+    async fn test_create_email_session() {
+        let (_tmp, mgr) = setup().await;
+        let id = mgr.create_session(&Channel::Email, "user@example.com").await.unwrap();
+
+        let session = mgr.get_session(&id).await.unwrap().unwrap();
+        assert_eq!(session.channel, "email");
+        assert_eq!(session.channel_session_key.as_deref(), Some("user@example.com"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_email_session_continues_for_same_sender() {
+        let (_tmp, mgr) = setup().await;
+        let id = mgr.create_session(&Channel::Email, "sender@test.com").await.unwrap();
+        mgr.touch_session(&id).await.unwrap();
+
+        match mgr.resolve_session(&Channel::Email, "sender@test.com", None).await.unwrap() {
+            SessionDecision::Continue(sid) => assert_eq!(sid, id),
+            SessionDecision::New { .. } => panic!("Should continue recent email session"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolve_email_session_new_for_different_sender() {
+        let (_tmp, mgr) = setup().await;
+        let id = mgr.create_session(&Channel::Email, "sender-a@test.com").await.unwrap();
+        mgr.touch_session(&id).await.unwrap();
+
+        match mgr.resolve_session(&Channel::Email, "sender-b@test.com", None).await.unwrap() {
+            SessionDecision::New { .. } => {} // expected — different sender
+            SessionDecision::Continue(_) => panic!("Should not continue session for different sender"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_email_and_telegram_sessions_are_separate() {
+        let (_tmp, mgr) = setup().await;
+        let email_id = mgr.create_session(&Channel::Email, "user@test.com").await.unwrap();
+        let tg_id = mgr.create_session(&Channel::Telegram, "user@test.com").await.unwrap();
+
+        assert_ne!(email_id, tg_id);
+
+        // Each channel resolves independently
+        mgr.touch_session(&email_id).await.unwrap();
+        mgr.touch_session(&tg_id).await.unwrap();
+
+        match mgr.resolve_session(&Channel::Email, "user@test.com", None).await.unwrap() {
+            SessionDecision::Continue(sid) => assert_eq!(sid, email_id),
+            SessionDecision::New { .. } => panic!("Should continue email session"),
+        }
+        match mgr.resolve_session(&Channel::Telegram, "user@test.com", None).await.unwrap() {
+            SessionDecision::Continue(sid) => assert_eq!(sid, tg_id),
+            SessionDecision::New { .. } => panic!("Should continue telegram session"),
+        }
+    }
 }

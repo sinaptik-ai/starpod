@@ -1542,4 +1542,65 @@ mod tests {
         let config = StarpodConfig::default();
         assert!(config.internet.enabled);
     }
+
+    // ── Email channel config tests ──────────────────────────────────────
+
+    #[test]
+    fn email_channel_default_not_configured() {
+        let config: StarpodConfig = toml::from_str("").unwrap();
+        assert!(config.channels.email.is_none());
+    }
+
+    #[test]
+    fn email_channel_enabled_and_gap_defaults() {
+        let toml = r#"
+            [channels.email]
+            enabled = true
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        let email = config.channels.email.as_ref().unwrap();
+        assert!(email.enabled);
+        assert_eq!(email.gap_minutes, Some(1440)); // 24h default
+    }
+
+    #[test]
+    fn email_channel_custom_gap_minutes() {
+        let toml = r#"
+            [channels.email]
+            gap_minutes = 60
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        let email = config.channels.email.as_ref().unwrap();
+        assert_eq!(email.gap_minutes, Some(60));
+    }
+
+    #[test]
+    fn email_channel_gap_minutes_convenience() {
+        let toml = r#"
+            [channels.email]
+            gap_minutes = 720
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.channel_gap_minutes("email"), Some(720));
+    }
+
+    #[test]
+    fn channel_gap_minutes_email_none_when_not_configured() {
+        let config: StarpodConfig = toml::from_str("").unwrap();
+        assert_eq!(config.channel_gap_minutes("email"), None);
+    }
+
+    #[test]
+    fn email_and_telegram_channels_coexist() {
+        let toml = r#"
+            [channels.telegram]
+            gap_minutes = 360
+
+            [channels.email]
+            gap_minutes = 1440
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.channel_gap_minutes("telegram"), Some(360));
+        assert_eq!(config.channel_gap_minutes("email"), Some(1440));
+    }
 }
