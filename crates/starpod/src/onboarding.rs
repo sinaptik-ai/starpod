@@ -248,37 +248,6 @@ pub fn generate_env_content_full(
     out
 }
 
-/// Generate the `.env.dev` content for the selected provider.
-#[cfg(test)]
-fn generate_env_dev_content(provider: &str, api_key: Option<&str>) -> String {
-    generate_env_dev_content_full(provider, api_key, None)
-}
-
-/// Generate the `.env.dev` content including the Brave Search API key.
-pub fn generate_env_dev_content_full(
-    provider: &str,
-    api_key: Option<&str>,
-    brave_api_key: Option<&str>,
-) -> String {
-    let mut out = if let (Some(env_name), Some(key)) = (env_key_for_provider(provider), api_key) {
-        format!("# Development overrides\n{}={}\n", env_name, key)
-    } else if let Some(env_name) = env_key_for_provider(provider) {
-        format!("# Development overrides\n# {}=your-key-here\n", env_name)
-    } else {
-        "# Development overrides\n".to_string()
-    };
-
-    match brave_api_key {
-        Some(key) if !key.is_empty() => {
-            out.push_str(&format!("BRAVE_API_KEY={}\n", key));
-        }
-        _ => {
-            out.push_str("# BRAVE_API_KEY=your-brave-key-here\n");
-        }
-    }
-
-    out
-}
 
 #[cfg(test)]
 mod tests {
@@ -330,26 +299,6 @@ mod tests {
     }
 
     // ── .env generation ──────────────────────────────────────────────
-
-    #[test]
-    fn env_dev_content_with_key() {
-        let env = generate_env_dev_content("anthropic", Some("sk-ant-test123"));
-        assert!(env.contains("# Development overrides"));
-        assert!(env.contains("ANTHROPIC_API_KEY=sk-ant-test123"));
-    }
-
-    #[test]
-    fn env_dev_content_without_key() {
-        let env = generate_env_dev_content("anthropic", None);
-        assert!(env.starts_with("# Development overrides"));
-        assert!(env.contains("# ANTHROPIC_API_KEY="));
-    }
-
-    #[test]
-    fn env_dev_content_ollama() {
-        let env = generate_env_dev_content("ollama", None);
-        assert!(env.contains("# Development overrides"));
-    }
 
     #[test]
     fn env_content_with_key() {
@@ -441,13 +390,6 @@ mod tests {
         let env = generate_env_content_full("anthropic", Some("sk-ant-123"), None);
         assert!(env.contains("ANTHROPIC_API_KEY=sk-ant-123"));
         assert!(env.contains("# BRAVE_API_KEY=your-brave-key-here"));
-    }
-
-    #[test]
-    fn env_dev_content_full_with_brave_key() {
-        let env = generate_env_dev_content_full("openai", Some("sk-openai"), Some("BSA-brave"));
-        assert!(env.contains("OPENAI_API_KEY=sk-openai"));
-        assert!(env.contains("BRAVE_API_KEY=BSA-brave"));
     }
 
     // ── Provider list ────────────────────────────────────────────────

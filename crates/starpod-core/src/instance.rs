@@ -32,12 +32,12 @@ use tracing::{debug, info};
 
 use crate::error::StarpodError;
 
-/// Which `.env` file to copy from the workspace root.
+/// Legacy env source selector (no longer used — vault handles secrets).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnvSource {
-    /// Use `.env.dev` (development overrides).
+    /// Development mode.
     Dev,
-    /// Use `.env` (production secrets).
+    /// Production mode.
     Prod,
 }
 
@@ -48,7 +48,7 @@ pub enum EnvSource {
 /// ```text
 /// .instances/<name>/           ← instance_dir (agent's filesystem root)
 /// ├── .starpod/                ← internal state
-/// │   ├── .env                 ← from workspace .env.dev (Dev) or .env (Prod)
+/// │   ├── db/vault.db           ← encrypted secrets (populated at serve time from workspace .env)
 /// │   ├── config/              ← blueprint-managed (overwritten on build)
 /// │   │   ├── agent.toml
 /// │   │   ├── SOUL.md
@@ -411,9 +411,8 @@ mod tests {
             "# Soul\n\nYou are TestBot.\n",
         ).unwrap();
 
-        // .env files live at workspace root (tmp root), not in the blueprint
+        // .env lives at workspace root (tmp root), not in the blueprint
         std::fs::write(tmp.path().join(".env"), "PROD_KEY=secret\n").unwrap();
-        std::fs::write(tmp.path().join(".env.dev"), "DEV_KEY=dev_secret\n").unwrap();
 
         // Template files
         let files = blueprint.join("files");
@@ -564,7 +563,7 @@ mod tests {
         let blueprint = tmp.path().join("agents").join("bare");
         std::fs::create_dir_all(&blueprint).unwrap();
         std::fs::write(blueprint.join("agent.toml"), "").unwrap();
-        // No .env or .env.dev at workspace root
+        // No .env at workspace root
 
         let instance = tmp.path().join(".instances").join("bare");
         apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Dev).unwrap();

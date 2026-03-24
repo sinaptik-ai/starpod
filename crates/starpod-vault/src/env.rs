@@ -62,6 +62,59 @@ pub struct PopulateResult {
     pub warnings: Vec<String>,
 }
 
+/// Validate that `.env` has all required secrets declared in `deploy.toml`.
+///
+/// Dry check — no vault writes. Returns an error if required secrets are missing.
+/// Returns warnings for missing optional secrets.
+pub fn validate_env(
+    deploy_toml_path: &Path,
+    env_file: Option<&Path>,
+) -> Result<Vec<String>> {
+    let manifest = match DeployManifest::load(deploy_toml_path)? {
+        Some(m) => m,
+        None => return Ok(vec![]),
+    };
+
+    let env_map = match env_file {
+        Some(path) if path.exists() => parse_env_file(path)?,
+        _ => HashMap::new(),
+    };
+
+    let mut warnings = Vec::new();
+    let mut missing_required = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for (key, entry) in &manifest.agent.secrets {
+        if seen.insert(key.as_str()) && !env_map.contains_key(key.as_str()) {
+            if entry.required {
+                missing_required.push(format!("{} — {}", key, entry.description));
+            } else {
+                warnings.push(format!("{} (optional) — {}", key, entry.description));
+            }
+        }
+    }
+    for section in manifest.skills.values() {
+        for (key, entry) in &section.secrets {
+            if seen.insert(key.as_str()) && !env_map.contains_key(key.as_str()) {
+                if entry.required {
+                    missing_required.push(format!("{} — {}", key, entry.description));
+                } else {
+                    warnings.push(format!("{} (optional) — {}", key, entry.description));
+                }
+            }
+        }
+    }
+
+    if !missing_required.is_empty() {
+        return Err(StarpodError::Config(format!(
+            "Missing required secrets in .env:\n  {}",
+            missing_required.join("\n  ")
+        )));
+    }
+
+    Ok(warnings)
+}
+
 /// Populate the vault from `.env` values matched against `deploy.toml` declarations.
 ///
 /// For each declared secret: looks up the key in `.env`, encrypts into vault.

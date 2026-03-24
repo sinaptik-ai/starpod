@@ -1328,11 +1328,6 @@ async fn main() -> anyhow::Result<()> {
                 cwd.join(".env"),
                 onboarding::generate_env_content_full(&provider, api_key.as_deref(), brave_api_key.as_deref()),
             ).await?;
-            tokio::fs::write(
-                cwd.join(".env.dev"),
-                onboarding::generate_env_dev_content_full(&provider, api_key.as_deref(), brave_api_key.as_deref()),
-            ).await?;
-
             // Add .env and .instances/ to .gitignore if not already there
             let gitignore_path = cwd.join(".gitignore");
             let mut gitignore_content = if gitignore_path.exists() {
@@ -1722,17 +1717,11 @@ async fn main() -> anyhow::Result<()> {
             }
 
             // Apply blueprint only on first run or when --build is passed.
-            // Instance is "ready" only if both config and vault exist.
             let instance_exists = instance_dir
                 .join(".starpod")
                 .join("config")
                 .join("agent.toml")
-                .is_file()
-                && instance_dir
-                    .join(".starpod")
-                    .join("db")
-                    .join("vault.db")
-                    .is_file();
+                .is_file();
 
             if !instance_exists || build {
                 starpod_core::apply_blueprint(
@@ -1747,41 +1736,17 @@ async fn main() -> anyhow::Result<()> {
                 let skills_path = if skills_dir.exists() { Some(skills_dir.as_path()) } else { None };
                 generate_deploy_manifest(&blueprint_dir, skills_path)?;
 
-                // Populate vault from workspace .env + deploy.toml
-                let starpod_dir = instance_dir.join(".starpod");
-                let db_dir = starpod_dir.join("db");
-                let master_key = starpod_vault::derive_master_key(&db_dir)?;
-                let vault = starpod_vault::Vault::new(&db_dir.join("vault.db"), &master_key).await?;
-                // Read .env from workspace root (prefer .env.dev in dev mode)
-                let env_dev = workspace_root.join(".env.dev");
-                let env_prod = workspace_root.join(".env");
-                let env_path = if env_dev.exists() {
-                    Some(env_dev.as_path())
-                } else if env_prod.exists() {
-                    Some(env_prod.as_path())
-                } else {
-                    None
-                };
+                // Validate .env has all required secrets (dry check, no vault writes)
                 let deploy_toml = blueprint_dir.join("deploy.toml");
-
-                let vault_path = db_dir.join("vault.db");
-                match starpod_vault::env::populate_vault(&deploy_toml, env_path, &vault).await {
-                    Ok(result) => {
-                        if result.secrets_count > 0 || result.variables_count > 0 {
-                            println!(
-                                "  {} Vault: {} secret(s), {} variable(s)",
-                                "✓".green().bold(),
-                                result.secrets_count,
-                                result.variables_count,
-                            );
-                        }
-                        for w in &result.warnings {
+                let env_file = workspace_root.join(".env");
+                let env_path = if env_file.exists() { Some(env_file.as_path()) } else { None };
+                match starpod_vault::env::validate_env(&deploy_toml, env_path) {
+                    Ok(warnings) => {
+                        for w in &warnings {
                             println!("  {} {}", "⚠".yellow(), w);
                         }
                     }
                     Err(e) => {
-                        // Clean up vault so next run retries the build
-                        let _ = std::fs::remove_file(&vault_path);
                         eprintln!("  {} {}", "✗".red().bold(), e);
                         std::process::exit(1);
                     }
@@ -1801,11 +1766,14 @@ async fn main() -> anyhow::Result<()> {
             };
             let paths = starpod_core::ResolvedPaths::resolve(&instance_mode)?;
 
-            // Inject env from vault before loading config
+            // Populate vault from .env + deploy.toml, then inject into process env
             let deploy_toml = blueprint_dir.join("deploy.toml");
             if deploy_toml.exists() {
+                let env_file = workspace_root.join(".env");
+                let env_path = if env_file.exists() { Some(env_file.as_path()) } else { None };
                 let master_key = starpod_vault::derive_master_key(&paths.db_dir)?;
                 let vault = starpod_vault::Vault::new(&paths.db_dir.join("vault.db"), &master_key).await?;
+                starpod_vault::env::populate_vault(&deploy_toml, env_path, &vault).await?;
                 starpod_vault::env::inject_env_from_vault(&deploy_toml, &vault).await?;
             }
 
@@ -1844,14 +1812,18 @@ async fn main() -> anyhow::Result<()> {
 
         // ── Serve ─────────────────────────────────────────────────────
         Commands::Serve { agent: agent_name } => {
-            // Inject env from vault before resolving agent (config may need env vars)
+            // Populate vault from .env + deploy.toml, then inject into process env
             {
                 let mode = detect_mode(agent_name.as_deref())?;
                 let paths = starpod_core::ResolvedPaths::resolve(&mode)?;
                 let deploy_toml = paths.config_dir.join("deploy.toml");
-                if deploy_toml.exists() && paths.db_dir.join("vault.db").exists() {
+                if deploy_toml.exists() {
+                    // Resolve .env from project root
+                    let env_file = paths.project_root.join(".env");
+                    let env_path = if env_file.exists() { Some(env_file.as_path()) } else { None };
                     let master_key = starpod_vault::derive_master_key(&paths.db_dir)?;
                     let vault = starpod_vault::Vault::new(&paths.db_dir.join("vault.db"), &master_key).await?;
+                    starpod_vault::env::populate_vault(&deploy_toml, env_path, &vault).await?;
                     starpod_vault::env::inject_env_from_vault(&deploy_toml, &vault).await?;
                 }
             }
@@ -3266,32 +3238,16 @@ async fn main() -> anyhow::Result<()> {
             // Generate deploy.toml from skills + agent.toml
             generate_deploy_manifest(&agent_path, skills_path.as_deref())?;
 
-            // Populate vault from .env + deploy.toml
-            let db_dir = starpod_dir.join("db");
-            let master_key = starpod_vault::derive_master_key(&db_dir)?;
-            let vault = starpod_vault::Vault::new(&db_dir.join("vault.db"), &master_key).await?;
-            // Use the explicitly provided --env path (it's no longer copied into .starpod/)
-            let env_ref = env_path.as_deref();
+            // Validate .env has all required secrets (dry check, no vault)
             let deploy_toml = agent_path.join("deploy.toml");
-
-            let vault_path = db_dir.join("vault.db");
-            match starpod_vault::env::populate_vault(&deploy_toml, env_ref, &vault).await {
-                Ok(result) => {
-                    if result.secrets_count > 0 || result.variables_count > 0 {
-                        println!(
-                            "  {} Vault: {} secret(s), {} variable(s)",
-                            "✓".green().bold(),
-                            result.secrets_count,
-                            result.variables_count,
-                        );
-                    }
-                    for w in &result.warnings {
+            let env_ref = env_path.as_deref();
+            match starpod_vault::env::validate_env(&deploy_toml, env_ref) {
+                Ok(warnings) => {
+                    for w in &warnings {
                         println!("  {} {}", "⚠".yellow(), w);
                     }
                 }
                 Err(e) => {
-                    // Clean up vault so rebuild is required
-                    let _ = std::fs::remove_file(&vault_path);
                     eprintln!("  {} {}", "✗".red().bold(), e);
                     std::process::exit(1);
                 }

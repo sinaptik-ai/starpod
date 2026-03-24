@@ -17,8 +17,7 @@
 //! ```text
 //! workspace/
 //! +-- starpod.toml                    # scaffolding template (git-tracked, not read at runtime)
-//! +-- .env                            # production secrets (gitignored)
-//! +-- .env.dev                        # development overrides (gitignored)
+//! +-- .env                            # secrets (gitignored, populates vault at serve time)
 //! +-- skills/                         # shared skills (git-tracked)
 //! +-- agents/                         # BLUEPRINTS (git-tracked)
 //! |   +-- aster/
@@ -28,7 +27,7 @@
 //! +-- .instances/                     # RUNTIME (gitignored)
 //!     +-- aster/                      # agent's filesystem root
 //!         +-- .starpod/
-//!         |   +-- .env                # secrets (from workspace .env.dev or .env)
+//!         |   +-- db/vault.db          # encrypted secrets (from workspace .env)
 //!         |   +-- config/             # blueprint-managed (overwritten on build)
 //!         |   |   +-- agent.toml
 //!         |   |   +-- SOUL.md
