@@ -1724,19 +1724,12 @@ async fn main() -> anyhow::Result<()> {
                 .is_file();
 
             if !instance_exists || build {
-                starpod_core::apply_blueprint(
-                    &blueprint_dir,
-                    &instance_dir,
-                    &workspace_root,
-                    starpod_core::EnvSource::Dev,
-                )?;
-
-                // Generate deploy.toml from skills + agent.toml
+                // Generate deploy.toml BEFORE building so we can validate
                 let skills_dir = workspace_root.join("skills");
                 let skills_path = if skills_dir.exists() { Some(skills_dir.as_path()) } else { None };
                 generate_deploy_manifest(&blueprint_dir, skills_path)?;
 
-                // Validate .env has all required secrets (dry check, no vault writes)
+                // Validate .env BEFORE creating instance — fail fast, no stale .starpod/
                 let deploy_toml = blueprint_dir.join("deploy.toml");
                 let env_file = workspace_root.join(".env");
                 let env_path = if env_file.exists() { Some(env_file.as_path()) } else { None };
@@ -1751,6 +1744,14 @@ async fn main() -> anyhow::Result<()> {
                         std::process::exit(1);
                     }
                 }
+
+                // Now safe to create the instance
+                starpod_core::apply_blueprint(
+                    &blueprint_dir,
+                    &instance_dir,
+                    &workspace_root,
+                    starpod_core::EnvSource::Dev,
+                )?;
             } else {
                 println!(
                     "  {} Using existing instance. Pass {} to rebuild from blueprint.",
@@ -3225,20 +3226,9 @@ async fn main() -> anyhow::Result<()> {
             let skills_path = skills.map(std::path::PathBuf::from);
             let env_path = env_file.map(std::path::PathBuf::from);
 
-            starpod_core::build_standalone(
-                &agent_path,
-                &output_dir,
-                skills_path.as_deref(),
-                env_path.as_deref(),
-                force,
-            )?;
-
-            let starpod_dir = output_dir.join(".starpod");
-
-            // Generate deploy.toml from skills + agent.toml
+            // Generate deploy.toml and validate BEFORE building
             generate_deploy_manifest(&agent_path, skills_path.as_deref())?;
 
-            // Validate .env has all required secrets (dry check, no vault)
             let deploy_toml = agent_path.join("deploy.toml");
             let env_ref = env_path.as_deref();
             match starpod_vault::env::validate_env(&deploy_toml, env_ref) {
@@ -3252,6 +3242,16 @@ async fn main() -> anyhow::Result<()> {
                     std::process::exit(1);
                 }
             }
+
+            starpod_core::build_standalone(
+                &agent_path,
+                &output_dir,
+                skills_path.as_deref(),
+                env_path.as_deref(),
+                force,
+            )?;
+
+            let starpod_dir = output_dir.join(".starpod");
 
             println!();
             println!(
