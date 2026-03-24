@@ -33,24 +33,36 @@ function PreviewPanel() {
     setOgTitle(null)
     iframeLoadedRef.current = false
 
-    fetch('/api/frame-check?url=' + encodeURIComponent(previewUrl))
-      .then(r => r.json())
-      .then(data => {
-        if (data.frameable) {
-          setFrameable(true)
-        } else {
-          setFrameable(false)
-          if (data.ogImage) setOgImage(data.ogImage)
-          if (data.ogTitle) setOgTitle(data.ogTitle)
-          else {
-            try { setOgTitle(new URL(previewUrl).hostname) } catch {}
+    // Localhost URLs are always frameable — skip the server-side check
+    // (the gateway may not be able to reach the user's local machine)
+    let isLocal = false
+    try {
+      const h = new URL(previewUrl).hostname
+      isLocal = h === 'localhost' || h === '127.0.0.1' || h === '0.0.0.0' || h === '::1'
+    } catch {}
+
+    if (isLocal) {
+      setFrameable(true)
+    } else {
+      fetch('/api/frame-check?url=' + encodeURIComponent(previewUrl))
+        .then(r => r.json())
+        .then(data => {
+          if (data.frameable) {
+            setFrameable(true)
+          } else {
+            setFrameable(false)
+            if (data.ogImage) setOgImage(data.ogImage)
+            if (data.ogTitle) setOgTitle(data.ogTitle)
+            else {
+              try { setOgTitle(new URL(previewUrl).hostname) } catch {}
+            }
           }
-        }
-      })
-      .catch(() => {
-        // Endpoint unavailable - try iframe
-        setFrameable(true)
-      })
+        })
+        .catch(() => {
+          // Endpoint unavailable - try iframe
+          setFrameable(true)
+        })
+    }
 
     // Safety timeout
     clearTimeout(loadTimerRef.current)
