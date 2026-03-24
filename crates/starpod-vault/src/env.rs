@@ -91,35 +91,33 @@ pub async fn populate_vault(
         _ => HashMap::new(),
     };
 
-    let mut secrets_count = 0;
-    let mut variables_count = 0;
     let mut warnings = Vec::new();
     let mut missing_required = Vec::new();
 
-    // Collect all secret declarations (agent + skills)
+    // Collect all secret declarations (agent + skills), deduplicated
     let mut all_secrets: Vec<(&str, &starpod_core::deploy_manifest::SecretEntry)> = Vec::new();
+    let mut seen_secrets = std::collections::HashSet::new();
     for (key, entry) in &manifest.agent.secrets {
-        all_secrets.push((key.as_str(), entry));
-    }
-    for (_skill_name, section) in &manifest.skills {
-        for (key, entry) in &section.secrets {
+        if seen_secrets.insert(key.as_str()) {
             all_secrets.push((key.as_str(), entry));
         }
     }
-
-    // Deduplicate by key (same key from agent and skill → process once)
-    let mut seen_secrets = std::collections::HashSet::new();
-    for (key, entry) in &all_secrets {
-        if !seen_secrets.insert(*key) {
-            continue;
+    for (_skill_name, section) in &manifest.skills {
+        for (key, entry) in &section.secrets {
+            if seen_secrets.insert(key.as_str()) {
+                all_secrets.push((key.as_str(), entry));
+            }
         }
-        if let Some(value) = env_map.get(*key) {
-            vault.set(key, value).await?;
-            secrets_count += 1;
-        } else if entry.required {
-            missing_required.push(format!("{} — {}", key, entry.description));
-        } else {
-            warnings.push(format!("{} (optional) — {}", key, entry.description));
+    }
+
+    // ── Phase 1: Validate — fail fast before writing anything ────
+    for (key, entry) in &all_secrets {
+        if !env_map.contains_key(*key) {
+            if entry.required {
+                missing_required.push(format!("{} — {}", key, entry.description));
+            } else {
+                warnings.push(format!("{} (optional) — {}", key, entry.description));
+            }
         }
     }
 
@@ -130,22 +128,33 @@ pub async fn populate_vault(
         )));
     }
 
-    // Collect all variable declarations (agent + skills)
-    let mut all_variables: Vec<(&str, &starpod_core::deploy_manifest::VariableEntry)> = Vec::new();
-    for (key, entry) in &manifest.agent.variables {
-        all_variables.push((key.as_str(), entry));
-    }
-    for (_skill_name, section) in &manifest.skills {
-        for (key, entry) in &section.variables {
-            all_variables.push((key.as_str(), entry));
+    // ── Phase 2: Write — only after validation passes ────────────
+    let mut secrets_count = 0;
+    for (key, _entry) in &all_secrets {
+        if let Some(value) = env_map.get(*key) {
+            vault.set(key, value).await?;
+            secrets_count += 1;
         }
     }
 
+    // Collect all variable declarations (agent + skills), deduplicated
+    let mut all_variables: Vec<(&str, &starpod_core::deploy_manifest::VariableEntry)> = Vec::new();
     let mut seen_variables = std::collections::HashSet::new();
-    for (key, entry) in &all_variables {
-        if !seen_variables.insert(*key) {
-            continue;
+    for (key, entry) in &manifest.agent.variables {
+        if seen_variables.insert(key.as_str()) {
+            all_variables.push((key.as_str(), entry));
         }
+    }
+    for (_skill_name, section) in &manifest.skills {
+        for (key, entry) in &section.variables {
+            if seen_variables.insert(key.as_str()) {
+                all_variables.push((key.as_str(), entry));
+            }
+        }
+    }
+
+    let mut variables_count = 0;
+    for (key, entry) in &all_variables {
         // .env value takes precedence over deploy.toml default
         if let Some(value) = env_map.get(*key) {
             vault.set(key, value).await?;

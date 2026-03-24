@@ -1721,12 +1721,18 @@ async fn main() -> anyhow::Result<()> {
                 std::process::exit(1);
             }
 
-            // Apply blueprint only on first run or when --build is passed
+            // Apply blueprint only on first run or when --build is passed.
+            // Instance is "ready" only if both config and vault exist.
             let instance_exists = instance_dir
                 .join(".starpod")
                 .join("config")
                 .join("agent.toml")
-                .is_file();
+                .is_file()
+                && instance_dir
+                    .join(".starpod")
+                    .join("db")
+                    .join("vault.db")
+                    .is_file();
 
             if !instance_exists || build {
                 starpod_core::apply_blueprint(
@@ -1758,6 +1764,7 @@ async fn main() -> anyhow::Result<()> {
                 };
                 let deploy_toml = blueprint_dir.join("deploy.toml");
 
+                let vault_path = db_dir.join("vault.db");
                 match starpod_vault::env::populate_vault(&deploy_toml, env_path, &vault).await {
                     Ok(result) => {
                         if result.secrets_count > 0 || result.variables_count > 0 {
@@ -1773,6 +1780,8 @@ async fn main() -> anyhow::Result<()> {
                         }
                     }
                     Err(e) => {
+                        // Clean up vault so next run retries the build
+                        let _ = std::fs::remove_file(&vault_path);
                         eprintln!("  {} {}", "✗".red().bold(), e);
                         std::process::exit(1);
                     }
@@ -3265,6 +3274,7 @@ async fn main() -> anyhow::Result<()> {
             let env_ref = env_path.as_deref();
             let deploy_toml = agent_path.join("deploy.toml");
 
+            let vault_path = db_dir.join("vault.db");
             match starpod_vault::env::populate_vault(&deploy_toml, env_ref, &vault).await {
                 Ok(result) => {
                     if result.secrets_count > 0 || result.variables_count > 0 {
@@ -3280,6 +3290,8 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
                 Err(e) => {
+                    // Clean up vault so rebuild is required
+                    let _ = std::fs::remove_file(&vault_path);
                     eprintln!("  {} {}", "✗".red().bold(), e);
                     std::process::exit(1);
                 }
