@@ -7,6 +7,66 @@ use tracing::{debug, warn};
 
 use starpod_core::{StarpodError, Result};
 
+// ── Env declarations ────────────────────────────────────────────────────────
+//
+// Skills can declare environment requirements in their YAML frontmatter:
+//
+// ```yaml
+// env:
+//   secrets:
+//     GITHUB_TOKEN:
+//       required: true
+//       description: GitHub PAT for PR access
+//   variables:
+//     GITHUB_ORG:
+//       default: ""
+//       description: Default org to scope PRs
+// ```
+//
+// These are aggregated into deploy.toml on push/deploy for platform
+// readiness validation. Secrets pair to vault secrets; variables have
+// defaults that operators can override.
+
+/// A secret that a skill requires (e.g. an API key or token).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SecretDecl {
+    /// Whether the skill cannot function without this secret.
+    #[serde(default)]
+    pub required: bool,
+    /// Human-readable explanation of what this secret is for.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+}
+
+/// A configurable variable with an optional default value.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VariableDecl {
+    /// Default value used when the operator doesn't override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+    /// Human-readable explanation of what this variable controls.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+}
+
+/// Environment requirements for a skill (secrets + variables).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SkillEnv {
+    /// Secret keys the skill needs (API tokens, credentials).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub secrets: HashMap<String, SecretDecl>,
+    /// Configurable variables with optional defaults.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub variables: HashMap<String, VariableDecl>,
+}
+
+impl SkillEnv {
+    /// Returns `true` if there are no secrets and no variables.
+    pub fn is_empty(&self) -> bool {
+        self.secrets.is_empty() && self.variables.is_empty()
+    }
+}
+
 // ── AgentSkills-compatible SKILL.md frontmatter ─────────────────────────────
 
 /// YAML frontmatter parsed from a SKILL.md file.
@@ -25,6 +85,9 @@ pub struct SkillFrontmatter {
     /// Optional compatibility notes (e.g. "Requires git, docker").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compatibility: Option<String>,
+    /// Environment requirements (secrets + variables).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<SkillEnv>,
     /// Arbitrary key-value metadata.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub metadata: HashMap<String, String>,
@@ -54,6 +117,9 @@ pub struct Skill {
     /// Optional compatibility notes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compatibility: Option<String>,
+    /// Environment requirements (secrets + variables).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<SkillEnv>,
     /// Arbitrary metadata from frontmatter.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub metadata: HashMap<String, String>,
@@ -107,15 +173,24 @@ fn parse_skill_md(raw: &str) -> (Option<SkillFrontmatter>, String) {
 }
 
 /// Format frontmatter + body into a valid SKILL.md file.
-fn format_skill_md(name: &str, description: &str, version: Option<&str>, body: &str) -> String {
-    let version_line = match version {
-        Some(v) => format!("\nversion: {}", v),
-        None => String::new(),
-    };
-    format!(
-        "---\nname: {}\ndescription: {}{}\n---\n\n{}",
-        name, description, version_line, body
-    )
+fn format_skill_md(name: &str, description: &str, version: Option<&str>, env: Option<&SkillEnv>, body: &str) -> String {
+    let mut fm = format!("---\nname: {}\ndescription: {}", name, description);
+    if let Some(v) = version {
+        fm.push_str(&format!("\nversion: {}", v));
+    }
+    if let Some(env) = env.filter(|e| !e.is_empty()) {
+        // Serialize the env block as YAML and indent under "env:"
+        let env_yaml = serde_yaml::to_string(env).unwrap_or_default();
+        fm.push_str("\nenv:");
+        for line in env_yaml.lines() {
+            // Skip empty lines that serde_yaml may produce
+            if line.is_empty() { continue; }
+            fm.push_str(&format!("\n  {}", line));
+        }
+    }
+    fm.push_str("\n---\n\n");
+    fm.push_str(body);
+    fm
 }
 
 /// Manages skills as markdown files on disk.
@@ -148,7 +223,7 @@ fn format_skill_md(name: &str, description: &str, version: Option<&str>, body: &
 /// let store = SkillStore::new(tmp.path()).unwrap();
 ///
 /// // Create
-/// store.create("code-review", "Review code for bugs.", None, "Check error handling.").unwrap();
+/// store.create("code-review", "Review code for bugs.", None, None, "Check error handling.").unwrap();
 ///
 /// // Catalog for system prompt
 /// let catalog = store.skill_catalog().unwrap();
@@ -207,6 +282,7 @@ impl SkillStore {
                 created_at,
                 skill_dir,
                 compatibility: fm.compatibility,
+                env: fm.env.filter(|e| !e.is_empty()),
                 metadata: fm.metadata,
                 allowed_tools: fm.allowed_tools,
             }),
@@ -231,6 +307,7 @@ impl SkillStore {
                     created_at,
                     skill_dir,
                     compatibility: None,
+                    env: None,
                     metadata: HashMap::new(),
                     allowed_tools: None,
                 })
@@ -281,7 +358,7 @@ impl SkillStore {
 
     /// Create a new skill with AgentSkills-compatible frontmatter.
     /// Fails if it already exists.
-    pub fn create(&self, name: &str, description: &str, version: Option<&str>, body: &str) -> Result<()> {
+    pub fn create(&self, name: &str, description: &str, version: Option<&str>, env: Option<&SkillEnv>, body: &str) -> Result<()> {
         validate_skill_name(name)?;
         let skill_dir = self.skills_dir.join(name);
         if skill_dir.exists() {
@@ -291,14 +368,14 @@ impl SkillStore {
             )));
         }
         std::fs::create_dir_all(&skill_dir)?;
-        let content = format_skill_md(name, description, version, body);
+        let content = format_skill_md(name, description, version, env, body);
         std::fs::write(skill_dir.join("SKILL.md"), content)?;
         debug!(skill = %name, "Created skill");
         Ok(())
     }
 
     /// Update an existing skill's description and/or body.
-    pub fn update(&self, name: &str, description: &str, version: Option<&str>, body: &str) -> Result<()> {
+    pub fn update(&self, name: &str, description: &str, version: Option<&str>, env: Option<&SkillEnv>, body: &str) -> Result<()> {
         validate_skill_name(name)?;
         let skill_file = self.skills_dir.join(name).join("SKILL.md");
         if !skill_file.exists() {
@@ -307,7 +384,7 @@ impl SkillStore {
                 name
             )));
         }
-        let content = format_skill_md(name, description, version, body);
+        let content = format_skill_md(name, description, version, env, body);
         std::fs::write(&skill_file, content)?;
         debug!(skill = %name, "Updated skill");
         Ok(())
@@ -398,6 +475,19 @@ impl SkillStore {
     /// List available skill names (convenience for tool enum constraints).
     pub fn skill_names(&self) -> Result<Vec<String>> {
         self.list().map(|skills| skills.into_iter().map(|s| s.name).collect())
+    }
+
+    /// Collect env declarations from all skills that have them.
+    ///
+    /// Returns `(skill_name, env)` pairs, sorted by skill name.
+    pub fn collect_env_by_skill(&self) -> Result<Vec<(String, SkillEnv)>> {
+        let skills = self.list()?;
+        let mut result: Vec<(String, SkillEnv)> = skills
+            .into_iter()
+            .filter_map(|s| s.env.map(|e| (s.name, e)))
+            .collect();
+        result.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(result)
     }
 }
 
@@ -569,7 +659,7 @@ mod tests {
 
     #[test]
     fn test_format_skill_md() {
-        let result = format_skill_md("test", "A test skill.", None, "Do things.");
+        let result = format_skill_md("test", "A test skill.", None, None, "Do things.");
         assert!(result.starts_with("---\n"));
         assert!(result.contains("name: test"));
         assert!(result.contains("description: A test skill."));
@@ -579,13 +669,13 @@ mod tests {
 
     #[test]
     fn test_format_skill_md_with_version() {
-        let result = format_skill_md("test", "A test skill.", Some("0.1.0"), "Do things.");
+        let result = format_skill_md("test", "A test skill.", Some("0.1.0"), None, "Do things.");
         assert!(result.contains("version: 0.1.0"));
     }
 
     #[test]
     fn test_format_then_parse_roundtrip() {
-        let formatted = format_skill_md("roundtrip", "Round-trip test.", Some("1.2.3"), "Instructions here.");
+        let formatted = format_skill_md("roundtrip", "Round-trip test.", Some("1.2.3"), None, "Instructions here.");
         let (fm, body) = parse_skill_md(&formatted);
         let fm = fm.unwrap();
         assert_eq!(fm.name, "roundtrip");
@@ -596,7 +686,7 @@ mod tests {
 
     #[test]
     fn test_format_then_parse_roundtrip_no_version() {
-        let formatted = format_skill_md("noversion", "No version.", None, "Content.");
+        let formatted = format_skill_md("noversion", "No version.", None, None, "Content.");
         let (fm, body) = parse_skill_md(&formatted);
         let fm = fm.unwrap();
         assert_eq!(fm.name, "noversion");
@@ -606,7 +696,7 @@ mod tests {
 
     #[test]
     fn test_format_skill_md_empty_body() {
-        let result = format_skill_md("stub", "Stub.", Some("0.1.0"), "");
+        let result = format_skill_md("stub", "Stub.", Some("0.1.0"), None, "");
         assert!(result.contains("name: stub"));
         assert!(result.contains("version: 0.1.0"));
         // Should end with the frontmatter closing + two newlines
@@ -620,8 +710,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("summarize-pr", "Summarize pull requests.", None, "Read the diff and summarize.").unwrap();
-        store.create("code-review", "Review code for issues.", None, "Check for bugs.").unwrap();
+        store.create("summarize-pr", "Summarize pull requests.", None, None, "Read the diff and summarize.").unwrap();
+        store.create("code-review", "Review code for issues.", None, None, "Check for bugs.").unwrap();
 
         let skills = store.list().unwrap();
         assert_eq!(skills.len(), 2);
@@ -636,7 +726,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("my-skill", "A useful skill.", None, "Step 1: Do this.\nStep 2: Do that.").unwrap();
+        store.create("my-skill", "A useful skill.", None, None, "Step 1: Do this.\nStep 2: Do that.").unwrap();
 
         // Verify the file on disk is a valid AgentSkills SKILL.md
         let path = tmp.path().join("my-skill").join("SKILL.md");
@@ -652,7 +742,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("my-skill", "Does useful things.", None, "Do something useful.").unwrap();
+        store.create("my-skill", "Does useful things.", None, None, "Do something useful.").unwrap();
 
         let skill = store.get("my-skill").unwrap().unwrap();
         assert_eq!(skill.name, "my-skill");
@@ -669,8 +759,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("my-skill", "v1 desc", None, "v1 body").unwrap();
-        store.update("my-skill", "v2 desc", None, "v2 body").unwrap();
+        store.create("my-skill", "v1 desc", None, None, "v1 body").unwrap();
+        store.update("my-skill", "v2 desc", None, None, "v2 body").unwrap();
 
         let skill = store.get("my-skill").unwrap().unwrap();
         assert_eq!(skill.description, "v2 desc");
@@ -682,7 +772,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("versioned", "A versioned skill.", Some("0.1.0"), "body").unwrap();
+        store.create("versioned", "A versioned skill.", Some("0.1.0"), None, "body").unwrap();
 
         let skill = store.get("versioned").unwrap().unwrap();
         assert_eq!(skill.version.as_deref(), Some("0.1.0"));
@@ -697,7 +787,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("no-ver", "No version.", None, "body").unwrap();
+        store.create("no-ver", "No version.", None, None, "body").unwrap();
 
         let skill = store.get("no-ver").unwrap().unwrap();
         assert!(skill.version.is_none());
@@ -711,8 +801,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("my-skill", "v1", Some("0.1.0"), "body v1").unwrap();
-        store.update("my-skill", "v2", Some("0.2.0"), "body v2").unwrap();
+        store.create("my-skill", "v1", Some("0.1.0"), None, "body v1").unwrap();
+        store.update("my-skill", "v2", Some("0.2.0"), None, "body v2").unwrap();
 
         let skill = store.get("my-skill").unwrap().unwrap();
         assert_eq!(skill.version.as_deref(), Some("0.2.0"));
@@ -725,10 +815,10 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("my-skill", "d", Some("1.0.0"), "body").unwrap();
+        store.create("my-skill", "d", Some("1.0.0"), None, "body").unwrap();
         assert_eq!(store.get("my-skill").unwrap().unwrap().version.as_deref(), Some("1.0.0"));
 
-        store.update("my-skill", "d", None, "body").unwrap();
+        store.update("my-skill", "d", None, None, "body").unwrap();
         assert!(store.get("my-skill").unwrap().unwrap().version.is_none());
     }
 
@@ -787,7 +877,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("stub", "A stub skill.", Some("0.1.0"), "").unwrap();
+        store.create("stub", "A stub skill.", Some("0.1.0"), None, "").unwrap();
 
         let skill = store.get("stub").unwrap().unwrap();
         assert_eq!(skill.name, "stub");
@@ -801,7 +891,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("my-skill", "desc", None, "content").unwrap();
+        store.create("my-skill", "desc", None, None, "content").unwrap();
         store.delete("my-skill").unwrap();
 
         assert!(store.get("my-skill").unwrap().is_none());
@@ -815,8 +905,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("my-skill", "desc", None, "v1").unwrap();
-        let err = store.create("my-skill", "desc", None, "v2").unwrap_err();
+        store.create("my-skill", "desc", None, None, "v1").unwrap();
+        let err = store.create("my-skill", "desc", None, None, "v2").unwrap_err();
         assert!(err.to_string().contains("already exists"));
     }
 
@@ -825,7 +915,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        let err = store.update("nope", "desc", None, "content").unwrap_err();
+        let err = store.update("nope", "desc", None, None, "content").unwrap_err();
         assert!(err.to_string().contains("does not exist"));
     }
 
@@ -860,7 +950,7 @@ mod tests {
         // Regular file in skills dir — should be ignored
         std::fs::write(tmp.path().join("stray-file.txt"), "stray").unwrap();
 
-        store.create("real-skill", "A real skill.", None, "Content.").unwrap();
+        store.create("real-skill", "A real skill.", None, None, "Content.").unwrap();
 
         let skills = store.list().unwrap();
         assert_eq!(skills.len(), 1);
@@ -875,11 +965,11 @@ mod tests {
         let store = SkillStore::new(tmp.path()).unwrap();
 
         // All should succeed
-        store.create("a", "d", None, "c").unwrap();
-        store.create("my-skill", "d", None, "c").unwrap();
-        store.create("skill123", "d", None, "c").unwrap();
-        store.create("a1b2c3", "d", None, "c").unwrap();
-        store.create("x", "d", None, "c").unwrap();
+        store.create("a", "d", None, None, "c").unwrap();
+        store.create("my-skill", "d", None, None, "c").unwrap();
+        store.create("skill123", "d", None, None, "c").unwrap();
+        store.create("a1b2c3", "d", None, None, "c").unwrap();
+        store.create("x", "d", None, None, "c").unwrap();
         assert_eq!(store.list().unwrap().len(), 5);
     }
 
@@ -905,7 +995,7 @@ mod tests {
 
         for (name, reason) in cases {
             assert!(
-                store.create(name, "d", None, "c").is_err(),
+                store.create(name, "d", None, None, "c").is_err(),
                 "Expected '{}' to be rejected ({})",
                 name,
                 reason,
@@ -920,11 +1010,11 @@ mod tests {
 
         // 64 chars — OK
         let name_64 = "a".repeat(64);
-        store.create(&name_64, "d", None, "c").unwrap();
+        store.create(&name_64, "d", None, None, "c").unwrap();
 
         // 65 chars — too long
         let name_65 = "a".repeat(65);
-        assert!(store.create(&name_65, "d", None, "c").is_err());
+        assert!(store.create(&name_65, "d", None, None, "c").is_err());
     }
 
     // ── Progressive disclosure ─────────────────────────────────────────────
@@ -941,8 +1031,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("alpha", "Alpha does things.", None, "Alpha body.").unwrap();
-        store.create("beta", "Beta does other things.", None, "Beta body.").unwrap();
+        store.create("alpha", "Alpha does things.", None, None, "Alpha body.").unwrap();
+        store.create("beta", "Beta does other things.", None, None, "Beta body.").unwrap();
 
         let catalog = store.skill_catalog().unwrap();
         assert!(catalog.starts_with("<available_skills>"));
@@ -960,7 +1050,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("escaping", "Uses <tags> & \"quotes\".", None, "body").unwrap();
+        store.create("escaping", "Uses <tags> & \"quotes\".", None, None, "body").unwrap();
 
         let catalog = store.skill_catalog().unwrap();
         assert!(catalog.contains("&lt;tags&gt;"));
@@ -973,7 +1063,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("my-skill", "A skill.", None, "Do the thing.\nStep by step.").unwrap();
+        store.create("my-skill", "A skill.", None, None, "Do the thing.\nStep by step.").unwrap();
 
         let activated = store.activate_skill("my-skill").unwrap().unwrap();
         assert!(activated.contains("<skill_content name=\"my-skill\">"));
@@ -994,7 +1084,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("minimal", "Minimal.", None, "Just instructions.").unwrap();
+        store.create("minimal", "Minimal.", None, None, "Just instructions.").unwrap();
 
         let activated = store.activate_skill("minimal").unwrap().unwrap();
         assert!(!activated.contains("<skill_resources>"));
@@ -1005,7 +1095,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("my-skill", "A skill.", None, "Instructions.").unwrap();
+        store.create("my-skill", "A skill.", None, None, "Instructions.").unwrap();
 
         // Create resource files in all three standard directories
         let skill_dir = tmp.path().join("my-skill");
@@ -1083,8 +1173,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("beta", "B.", None, "b").unwrap();
-        store.create("alpha", "A.", None, "a").unwrap();
+        store.create("beta", "B.", None, None, "b").unwrap();
+        store.create("alpha", "A.", None, None, "a").unwrap();
 
         let names = store.skill_names().unwrap();
         assert_eq!(names, vec!["alpha", "beta"]);
@@ -1102,7 +1192,7 @@ mod tests {
     fn test_list_skill_resources_empty() {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
-        store.create("bare", "Bare skill.", None, "No resources.").unwrap();
+        store.create("bare", "Bare skill.", None, None, "No resources.").unwrap();
 
         let skill_dir = tmp.path().join("bare");
         assert!(list_skill_resources(&skill_dir).is_empty());
@@ -1115,9 +1205,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("alpha", "A.", None, "a").unwrap();
-        store.create("beta", "B.", None, "b").unwrap();
-        store.create("gamma", "G.", None, "g").unwrap();
+        store.create("alpha", "A.", None, None, "a").unwrap();
+        store.create("beta", "B.", None, None, "b").unwrap();
+        store.create("gamma", "G.", None, None, "g").unwrap();
 
         let filtered = SkillStore::new(tmp.path())
             .unwrap()
@@ -1134,8 +1224,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("alpha", "A.", None, "a").unwrap();
-        store.create("beta", "B.", None, "b").unwrap();
+        store.create("alpha", "A.", None, None, "a").unwrap();
+        store.create("beta", "B.", None, None, "b").unwrap();
 
         let filtered = SkillStore::new(tmp.path())
             .unwrap()
@@ -1151,8 +1241,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
-        store.create("alpha", "A.", None, "a").unwrap();
-        store.create("beta", "B.", None, "b").unwrap();
+        store.create("alpha", "A.", None, None, "a").unwrap();
+        store.create("beta", "B.", None, None, "b").unwrap();
 
         let filtered = SkillStore::new(tmp.path())
             .unwrap()
@@ -1169,8 +1259,8 @@ mod tests {
             .unwrap()
             .with_filter(vec![]);
 
-        store.create("alpha", "A.", None, "a").unwrap();
-        store.create("beta", "B.", None, "b").unwrap();
+        store.create("alpha", "A.", None, None, "a").unwrap();
+        store.create("beta", "B.", None, None, "b").unwrap();
 
         assert_eq!(store.list().unwrap().len(), 2);
     }
@@ -1179,7 +1269,7 @@ mod tests {
     fn test_list_skill_resources_sorted() {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
-        store.create("res", "Has resources.", None, "Content.").unwrap();
+        store.create("res", "Has resources.", None, None, "Content.").unwrap();
 
         let skill_dir = tmp.path().join("res");
         std::fs::create_dir_all(skill_dir.join("scripts")).unwrap();
@@ -1194,5 +1284,247 @@ mod tests {
             "scripts/a.py",
             "scripts/z.sh",
         ]);
+    }
+
+    // ── Env declarations ──────────────────────────────────────────────────
+
+    fn sample_env() -> SkillEnv {
+        let mut secrets = HashMap::new();
+        secrets.insert("GITHUB_TOKEN".to_string(), SecretDecl {
+            required: true,
+            description: "GitHub PAT for PR access".to_string(),
+        });
+        let mut variables = HashMap::new();
+        variables.insert("GITHUB_ORG".to_string(), VariableDecl {
+            default: Some("".to_string()),
+            description: "Default org to scope PRs".to_string(),
+        });
+        SkillEnv { secrets, variables }
+    }
+
+    #[test]
+    fn test_format_with_env_roundtrip() {
+        let env = sample_env();
+        let formatted = format_skill_md("gh-review", "Review PRs.", Some("0.1.0"), Some(&env), "Do the review.");
+        assert!(formatted.contains("env:"));
+        assert!(formatted.contains("GITHUB_TOKEN"));
+        assert!(formatted.contains("GITHUB_ORG"));
+
+        // Parse it back
+        let (fm, body) = parse_skill_md(&formatted);
+        let fm = fm.unwrap();
+        assert_eq!(fm.name, "gh-review");
+        assert_eq!(fm.version.as_deref(), Some("0.1.0"));
+        let parsed_env = fm.env.unwrap();
+        assert!(parsed_env.secrets.contains_key("GITHUB_TOKEN"));
+        assert!(parsed_env.secrets["GITHUB_TOKEN"].required);
+        assert_eq!(parsed_env.secrets["GITHUB_TOKEN"].description, "GitHub PAT for PR access");
+        assert!(parsed_env.variables.contains_key("GITHUB_ORG"));
+        assert_eq!(parsed_env.variables["GITHUB_ORG"].default.as_deref(), Some(""));
+        assert_eq!(body.trim(), "Do the review.");
+    }
+
+    #[test]
+    fn test_format_without_env_no_env_block() {
+        let formatted = format_skill_md("plain", "No env.", None, None, "Body.");
+        assert!(!formatted.contains("env:"));
+    }
+
+    #[test]
+    fn test_format_with_empty_env_no_env_block() {
+        let empty = SkillEnv::default();
+        let formatted = format_skill_md("plain", "No env.", None, Some(&empty), "Body.");
+        assert!(!formatted.contains("env:"));
+    }
+
+    #[test]
+    fn test_create_with_env() {
+        let tmp = TempDir::new().unwrap();
+        let store = SkillStore::new(tmp.path()).unwrap();
+        let env = sample_env();
+
+        store.create("gh-review", "Review PRs.", Some("0.1.0"), Some(&env), "Do review.").unwrap();
+
+        let skill = store.get("gh-review").unwrap().unwrap();
+        assert!(skill.env.is_some());
+        let skill_env = skill.env.unwrap();
+        assert!(skill_env.secrets.contains_key("GITHUB_TOKEN"));
+        assert!(skill_env.variables.contains_key("GITHUB_ORG"));
+    }
+
+    #[test]
+    fn test_existing_skills_without_env_parse_as_none() {
+        let tmp = TempDir::new().unwrap();
+        let store = SkillStore::new(tmp.path()).unwrap();
+
+        store.create("no-env", "Simple skill.", None, None, "Just do it.").unwrap();
+        let skill = store.get("no-env").unwrap().unwrap();
+        assert!(skill.env.is_none());
+    }
+
+    #[test]
+    fn test_parse_handwritten_env_frontmatter() {
+        let content = "---\nname: weather\ndescription: Check weather.\nenv:\n  secrets:\n    WEATHER_API_KEY:\n      required: true\n      description: OpenWeather key\n  variables:\n    DEFAULT_CITY:\n      default: Rome\n      description: Fallback city\n---\n\nGet the weather.";
+        let (fm, body) = parse_skill_md(content);
+        let fm = fm.unwrap();
+        let env = fm.env.unwrap();
+        assert!(env.secrets["WEATHER_API_KEY"].required);
+        assert_eq!(env.variables["DEFAULT_CITY"].default.as_deref(), Some("Rome"));
+        assert_eq!(body.trim(), "Get the weather.");
+    }
+
+    #[test]
+    fn test_collect_env_by_skill() {
+        let tmp = TempDir::new().unwrap();
+        let store = SkillStore::new(tmp.path()).unwrap();
+        let env = sample_env();
+
+        store.create("with-env", "Has env.", None, Some(&env), "body").unwrap();
+        store.create("no-env", "No env.", None, None, "body").unwrap();
+
+        let collected = store.collect_env_by_skill().unwrap();
+        assert_eq!(collected.len(), 1);
+        assert_eq!(collected[0].0, "with-env");
+        assert!(collected[0].1.secrets.contains_key("GITHUB_TOKEN"));
+    }
+
+    #[test]
+    fn test_collect_env_multiple_skills_sorted() {
+        let tmp = TempDir::new().unwrap();
+        let store = SkillStore::new(tmp.path()).unwrap();
+
+        let mut secrets_z = HashMap::new();
+        secrets_z.insert("Z_TOKEN".to_string(), SecretDecl { required: true, description: "Z".to_string() });
+        let env_z = SkillEnv { secrets: secrets_z, variables: HashMap::new() };
+
+        let mut secrets_a = HashMap::new();
+        secrets_a.insert("A_TOKEN".to_string(), SecretDecl { required: false, description: "A".to_string() });
+        let env_a = SkillEnv { secrets: secrets_a, variables: HashMap::new() };
+
+        store.create("zeta", "Z skill.", None, Some(&env_z), "z").unwrap();
+        store.create("alpha", "A skill.", None, Some(&env_a), "a").unwrap();
+        store.create("plain", "No env.", None, None, "p").unwrap();
+
+        let collected = store.collect_env_by_skill().unwrap();
+        assert_eq!(collected.len(), 2);
+        assert_eq!(collected[0].0, "alpha");
+        assert_eq!(collected[1].0, "zeta");
+    }
+
+    #[test]
+    fn test_create_with_version_and_env() {
+        let tmp = TempDir::new().unwrap();
+        let store = SkillStore::new(tmp.path()).unwrap();
+        let env = sample_env();
+
+        store.create("full", "Full skill.", Some("1.0.0"), Some(&env), "Instructions.").unwrap();
+
+        let skill = store.get("full").unwrap().unwrap();
+        assert_eq!(skill.version.as_deref(), Some("1.0.0"));
+        assert!(skill.env.is_some());
+        let skill_env = skill.env.unwrap();
+        assert!(skill_env.secrets.contains_key("GITHUB_TOKEN"));
+
+        // Verify raw file contains both version and env
+        let raw = std::fs::read_to_string(tmp.path().join("full").join("SKILL.md")).unwrap();
+        assert!(raw.contains("version: 1.0.0"));
+        assert!(raw.contains("env:"));
+        assert!(raw.contains("GITHUB_TOKEN"));
+    }
+
+    #[test]
+    fn test_update_replaces_env() {
+        let tmp = TempDir::new().unwrap();
+        let store = SkillStore::new(tmp.path()).unwrap();
+        let env = sample_env();
+
+        store.create("my-skill", "v1", None, Some(&env), "body v1").unwrap();
+
+        // Update with different env
+        let mut new_secrets = HashMap::new();
+        new_secrets.insert("NEW_TOKEN".to_string(), SecretDecl { required: false, description: "New".to_string() });
+        let new_env = SkillEnv { secrets: new_secrets, variables: HashMap::new() };
+
+        store.update("my-skill", "v2", None, Some(&new_env), "body v2").unwrap();
+
+        let skill = store.get("my-skill").unwrap().unwrap();
+        let env = skill.env.unwrap();
+        assert!(!env.secrets.contains_key("GITHUB_TOKEN")); // old key gone
+        assert!(env.secrets.contains_key("NEW_TOKEN")); // new key present
+        assert!(!env.secrets["NEW_TOKEN"].required);
+    }
+
+    #[test]
+    fn test_update_removes_env() {
+        let tmp = TempDir::new().unwrap();
+        let store = SkillStore::new(tmp.path()).unwrap();
+        let env = sample_env();
+
+        store.create("my-skill", "Has env", None, Some(&env), "body").unwrap();
+        assert!(store.get("my-skill").unwrap().unwrap().env.is_some());
+
+        // Update with None env — removes it
+        store.update("my-skill", "No env now", None, None, "body").unwrap();
+        let skill = store.get("my-skill").unwrap().unwrap();
+        assert!(skill.env.is_none());
+
+        // Verify no env block in raw file
+        let raw = std::fs::read_to_string(tmp.path().join("my-skill").join("SKILL.md")).unwrap();
+        assert!(!raw.contains("env:"));
+    }
+
+    #[test]
+    fn test_env_with_special_chars_in_description() {
+        let tmp = TempDir::new().unwrap();
+        let store = SkillStore::new(tmp.path()).unwrap();
+
+        let mut secrets = HashMap::new();
+        secrets.insert("TOKEN".to_string(), SecretDecl {
+            required: true,
+            description: "Token for \"special\" API (v2.0) — required!".to_string(),
+        });
+        let env = SkillEnv { secrets, variables: HashMap::new() };
+
+        store.create("special-chars", "Special.", None, Some(&env), "body").unwrap();
+
+        // Roundtrip: parse it back
+        let skill = store.get("special-chars").unwrap().unwrap();
+        let parsed_env = skill.env.unwrap();
+        assert!(parsed_env.secrets["TOKEN"].description.contains("special"));
+    }
+
+    #[test]
+    fn test_env_secrets_only_no_variables() {
+        let mut secrets = HashMap::new();
+        secrets.insert("KEY".to_string(), SecretDecl { required: true, description: "key".to_string() });
+        let env = SkillEnv { secrets, variables: HashMap::new() };
+
+        let formatted = format_skill_md("sec-only", "Secrets only.", None, Some(&env), "Body.");
+        assert!(formatted.contains("secrets:"));
+        assert!(!formatted.contains("variables:"));
+
+        let (fm, _) = parse_skill_md(&formatted);
+        let parsed = fm.unwrap().env.unwrap();
+        assert_eq!(parsed.secrets.len(), 1);
+        assert!(parsed.variables.is_empty());
+    }
+
+    #[test]
+    fn test_env_variables_only_no_secrets() {
+        let mut variables = HashMap::new();
+        variables.insert("TIMEOUT".to_string(), VariableDecl {
+            default: Some("30".to_string()),
+            description: "timeout".to_string(),
+        });
+        let env = SkillEnv { secrets: HashMap::new(), variables };
+
+        let formatted = format_skill_md("var-only", "Vars only.", None, Some(&env), "Body.");
+        assert!(!formatted.contains("secrets:"));
+        assert!(formatted.contains("variables:"));
+
+        let (fm, _) = parse_skill_md(&formatted);
+        let parsed = fm.unwrap().env.unwrap();
+        assert!(parsed.secrets.is_empty());
+        assert_eq!(parsed.variables.len(), 1);
     }
 }

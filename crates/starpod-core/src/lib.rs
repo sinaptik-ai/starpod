@@ -1,4 +1,5 @@
 pub mod config;
+pub mod deploy_manifest;
 pub mod error;
 pub mod instance;
 pub mod types;

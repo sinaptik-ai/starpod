@@ -1031,7 +1031,7 @@ async fn create_skill(
     }
     let store = skill_store(&state)?;
     store
-        .create(&req.name, &req.description, None, &req.body)
+        .create(&req.name, &req.description, None, None, &req.body)
         .map_err(|e| bad_request(e.to_string()))?;
     let skill = store
         .get(&req.name)
@@ -1090,7 +1090,7 @@ async fn update_skill(
     }
     let store = skill_store(&state)?;
     store
-        .update(&name, &req.description, None, &req.body)
+        .update(&name, &req.description, None, None, &req.body)
         .map_err(|e| bad_request(e.to_string()))?;
     Ok(ok_json())
 }

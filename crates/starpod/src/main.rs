@@ -14,6 +14,7 @@ use agent_sdk::{ContentBlock, Message};
 use starpod_agent::StarpodAgent;
 use starpod_core::{
     ChatMessage, StarpodConfig, ResolvedPaths,
+    deploy_manifest::{AgentConfigInput, DeployManifest, SkillEnvInput},
     detect_mode, load_agent_config,
 };
 use starpod_instances::{DeployClient, DeployOpts, InstanceClient, SecretResponse, parse_env_file};
@@ -501,10 +502,13 @@ enum CronAction {
 
 const SKILL_GEN_SYSTEM_PROMPT: &str = r#"You are a skill author for the AgentSkills open format (agentskills.io).
 
-Given a natural language request, generate a skill definition with three fields:
+Given a natural language request, generate a skill definition with these fields:
 - **name**: A concise, lowercase identifier using only letters, digits, and hyphens (max 64 chars). Must not start/end with a hyphen or contain consecutive hyphens.
 - **description**: 1-2 sentences explaining what the skill does AND when to use it. Use imperative phrasing ("Use this skill when..."). Be "pushy" — explicitly list contexts where the skill applies, including indirect mentions. Max 1024 chars.
 - **body**: Markdown instructions the agent follows when the skill is activated. Under 500 lines.
+- **env** (optional): Environment requirements. Include ONLY when the skill genuinely needs external API access or user-configurable settings. Do NOT add env for skills that only use built-in tools.
+  - `secrets`: API keys, tokens, or credentials the skill needs. Each key maps to `{required: bool, description: string}`. Use UPPER_SNAKE_CASE for key names.
+  - `variables`: Configurable settings with sensible defaults. Each key maps to `{default: string, description: string}`. Use UPPER_SNAKE_CASE for key names.
 
 ## Best practices for the body
 
@@ -523,7 +527,7 @@ Given a natural language request, generate a skill definition with three fields:
 
 ## Output
 
-Return a JSON object with exactly: `name`, `description`, `body`.
+Return a JSON object with: `name`, `description`, `body`, and optionally `env`.
 "#;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -539,12 +543,12 @@ fn strip_json_fence(raw: &str) -> &str {
     s.strip_suffix("```").unwrap_or(s).trim()
 }
 
-/// Call the LLM to generate skill description + body. Returns (description, body).
+/// Call the LLM to generate skill description + body + optional env.
 async fn generate_skill_body(
     name: &str,
     description: &Option<String>,
     prompt: &Option<String>,
-) -> anyhow::Result<(String, String)> {
+) -> anyhow::Result<(String, String, Option<starpod_skills::SkillEnv>)> {
     let mut user_prompt = format!("Create a skill named \"{}\".", name);
     if let Some(ref d) = description {
         user_prompt.push_str(&format!("\n\nThe skill description MUST be: {}", d));
@@ -563,6 +567,32 @@ async fn generate_skill_body(
             "body": {
                 "type": "string",
                 "description": "Markdown instructions for the agent to follow when the skill is activated. Should be under 500 lines / ~5000 tokens."
+            },
+            "env": {
+                "type": "object",
+                "description": "Environment requirements. Include ONLY when the skill needs external API keys or configurable variables. Omit entirely for skills that only use built-in tools.",
+                "properties": {
+                    "secrets": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                                "required": { "type": "boolean" },
+                                "description": { "type": "string" }
+                            }
+                        }
+                    },
+                    "variables": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                                "default": { "type": "string" },
+                                "description": { "type": "string" }
+                            }
+                        }
+                    }
+                }
             }
         },
         "required": ["description", "body"],
@@ -604,13 +634,73 @@ async fn generate_skill_body(
     struct SkillGen {
         description: String,
         body: String,
+        env: Option<starpod_skills::SkillEnv>,
     }
 
     let json_str = strip_json_fence(&result_text);
     let gen: SkillGen = serde_json::from_str(json_str)
         .map_err(|e| anyhow::anyhow!("Failed to parse AI response as JSON: {e}"))?;
 
-    Ok((gen.description, gen.body))
+    let env = gen.env.filter(|e| !e.is_empty());
+    Ok((gen.description, gen.body, env))
+}
+
+/// Generate deploy.toml into the agent directory by scanning agent.toml + skills.
+fn generate_deploy_manifest(
+    agent_dir: &std::path::Path,
+    skills_dir: Option<&std::path::Path>,
+) -> anyhow::Result<()> {
+    // Parse agent.toml for model/channel info
+    let agent_toml_path = agent_dir.join("agent.toml");
+    let (models, telegram_enabled) = if agent_toml_path.exists() {
+        let content = std::fs::read_to_string(&agent_toml_path)?;
+        let table: toml::Value = toml::from_str(&content)?;
+
+        let models = table.get("models")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>())
+            .or_else(|| {
+                // Fallback: provider + model fields
+                let provider = table.get("provider").and_then(|v| v.as_str()).unwrap_or("anthropic");
+                let model = table.get("model").and_then(|v| v.as_str()).unwrap_or("claude-sonnet-4-6");
+                Some(vec![format!("{}/{}", provider, model)])
+            })
+            .unwrap_or_default();
+
+        let telegram_enabled = table.get("channels")
+            .and_then(|c| c.get("telegram"))
+            .and_then(|t| t.get("enabled"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        (models, telegram_enabled)
+    } else {
+        (vec!["anthropic/claude-sonnet-4-6".to_string()], false)
+    };
+
+    // Collect skill env declarations
+    let skill_envs = if let Some(sd) = skills_dir.filter(|p| p.exists()) {
+        let store = starpod_skills::SkillStore::new(sd)?;
+        store.collect_env_by_skill()?
+            .into_iter()
+            .map(|(name, env)| SkillEnvInput {
+                name,
+                secrets: env.secrets.into_iter()
+                    .map(|(k, v)| (k, v.required, v.description))
+                    .collect(),
+                variables: env.variables.into_iter()
+                    .map(|(k, v)| (k, v.default, v.description))
+                    .collect(),
+            })
+            .collect()
+    } else {
+        vec![]
+    };
+
+    let config = AgentConfigInput { models, telegram_enabled };
+    let manifest = DeployManifest::generate(&config, skill_envs);
+    manifest.write_to(&agent_dir.join("deploy.toml"))?;
+    Ok(())
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -1469,6 +1559,9 @@ async fn main() -> anyhow::Result<()> {
                 let skills_dir = workspace_root.join("skills");
                 let skills_path = if skills_dir.exists() { Some(skills_dir.as_path()) } else { None };
 
+                // Generate deploy.toml before pushing
+                generate_deploy_manifest(&agent_dir, skills_path)?;
+
                 let client = DeployClient::new(&backend_url, &api_key)?;
 
                 if dry_run {
@@ -1975,10 +2068,10 @@ async fn main() -> anyhow::Result<()> {
                     );
 
                     // Try AI generation; fall back to a stub skill on any LLM error.
-                    let (skill_desc, skill_body) = match generate_skill_body(&name, &description, &prompt).await {
-                        Ok((desc, body)) => {
+                    let (skill_desc, skill_body, skill_env) = match generate_skill_body(&name, &description, &prompt).await {
+                        Ok((desc, body, env)) => {
                             let desc = description.unwrap_or(desc);
-                            (desc, body)
+                            (desc, body, env)
                         }
                         Err(e) => {
                             eprintln!(
@@ -1988,12 +2081,12 @@ async fn main() -> anyhow::Result<()> {
                                 "→".dimmed(),
                             );
                             let desc = description.unwrap_or_else(|| format!("Skill: {}", name));
-                            (desc, String::new())
+                            (desc, String::new(), None)
                         }
                     };
 
                     let version_opt = if version.is_empty() { None } else { Some(version.as_str()) };
-                    store.create(&name, &skill_desc, version_opt, &skill_body)?;
+                    store.create(&name, &skill_desc, version_opt, skill_env.as_ref(), &skill_body)?;
 
                     println!(
                         "  {} Created skill '{}'",
@@ -3208,6 +3301,9 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 None
             };
+
+            // Generate deploy.toml before deploying
+            generate_deploy_manifest(&agent_dir, skills_path)?;
 
             // Track last printed status so we only print on change
             let last_status = std::sync::Arc::new(std::sync::Mutex::new(String::new()));

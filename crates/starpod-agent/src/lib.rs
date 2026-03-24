@@ -385,7 +385,14 @@ impl StarpodAgent {
                  When using a skill and finding it outdated, incomplete, or wrong, update it \
                  immediately with SkillUpdate — don't wait to be asked. Skills that aren't \
                  maintained become liabilities. If a skill's instructions led you astray, \
-                 fix them so the next invocation succeeds.",
+                 fix them so the next invocation succeeds.\n\n\
+                 SKILL ENVIRONMENT DECLARATIONS:\n\
+                 When creating or updating skills that interact with external APIs, declare their \
+                 environment requirements using the `env` parameter — `secrets` for API keys/tokens \
+                 (e.g. GITHUB_TOKEN, WEATHER_API_KEY), `variables` for configurable settings with \
+                 defaults (e.g. DEFAULT_ORG, MAX_RESULTS). Use UPPER_SNAKE_CASE for key names. \
+                 Only declare env when the skill genuinely needs external access — do not add env \
+                 to skills that only use built-in tools.",
             );
         }
 

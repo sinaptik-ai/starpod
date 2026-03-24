@@ -28,7 +28,7 @@ use starpod_browser::BrowserSession;
 use starpod_cron::store::epoch_to_rfc3339;
 use starpod_cron::{CronStore, RunStatus};
 use starpod_memory::{MemoryStore, UserMemoryView};
-use starpod_skills::SkillStore;
+use starpod_skills::{SkillEnv, SkillStore};
 
 /// Shared context for custom tool handlers.
 ///
@@ -231,7 +231,7 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
         },
         CustomToolDefinition {
             name: "SkillCreate".into(),
-            description: "Create a new AgentSkills-compatible skill. Skills are SKILL.md files with YAML frontmatter (name, description) and a markdown body containing instructions.".into(),
+            description: "Create a new AgentSkills-compatible skill. Skills are SKILL.md files with YAML frontmatter (name, description, env) and a markdown body containing instructions.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -246,6 +246,34 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
                     "body": {
                         "type": "string",
                         "description": "Markdown instructions for the skill (the body after frontmatter)"
+                    },
+                    "env": {
+                        "type": "object",
+                        "description": "Environment requirements. Declare secrets (API keys/tokens) and variables (configurable settings with defaults) the skill needs. Only include when the skill needs external API access or user-configurable settings.",
+                        "properties": {
+                            "secrets": {
+                                "type": "object",
+                                "description": "Secret keys the skill needs (e.g. API tokens). Keys are env var names, values are {required: bool, description: string}.",
+                                "additionalProperties": {
+                                    "type": "object",
+                                    "properties": {
+                                        "required": { "type": "boolean", "default": true },
+                                        "description": { "type": "string" }
+                                    }
+                                }
+                            },
+                            "variables": {
+                                "type": "object",
+                                "description": "Configurable variables with optional defaults. Keys are env var names, values are {default: string, description: string}.",
+                                "additionalProperties": {
+                                    "type": "object",
+                                    "properties": {
+                                        "default": { "type": "string" },
+                                        "description": { "type": "string" }
+                                    }
+                                }
+                            }
+                        }
                     }
                 },
                 "required": ["name", "description", "body"]
@@ -253,7 +281,7 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
         },
         CustomToolDefinition {
             name: "SkillUpdate".into(),
-            description: "Update an existing skill's description and/or instructions.".into(),
+            description: "Update an existing skill's description, instructions, and/or env requirements.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -268,6 +296,32 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
                     "body": {
                         "type": "string",
                         "description": "New markdown instructions for the skill"
+                    },
+                    "env": {
+                        "type": "object",
+                        "description": "Updated environment requirements. Declare secrets and variables the skill needs.",
+                        "properties": {
+                            "secrets": {
+                                "type": "object",
+                                "additionalProperties": {
+                                    "type": "object",
+                                    "properties": {
+                                        "required": { "type": "boolean", "default": true },
+                                        "description": { "type": "string" }
+                                    }
+                                }
+                            },
+                            "variables": {
+                                "type": "object",
+                                "additionalProperties": {
+                                    "type": "object",
+                                    "properties": {
+                                        "default": { "type": "string" },
+                                        "description": { "type": "string" }
+                                    }
+                                }
+                            }
+                        }
                     }
                 },
                 "required": ["name", "description", "body"]
@@ -627,6 +681,13 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
 /// - Start with `.starpod` (defense-in-depth)
 /// - Contain `..` traversal
 /// - Are absolute paths
+/// Parse an optional `env` JSON value from a tool input into a `SkillEnv`.
+fn parse_env_from_tool_input(value: Option<&serde_json::Value>) -> Option<SkillEnv> {
+    value
+        .and_then(|v| serde_json::from_value::<SkillEnv>(v.clone()).ok())
+        .filter(|env| !env.is_empty())
+}
+
 fn validate_sandbox_path(relative: &str, home_dir: &Path) -> std::result::Result<PathBuf, String> {
     // Reject absolute paths
     if relative.starts_with('/') || relative.starts_with('\\') {
@@ -1089,10 +1150,11 @@ pub async fn handle_custom_tool(
             let name = input.get("name")?.as_str()?;
             let description = input.get("description")?.as_str()?;
             let body = input.get("body")?.as_str()?;
+            let env = parse_env_from_tool_input(input.get("env"));
 
             debug!(skill = %name, "SkillCreate");
 
-            match ctx.skills.create(name, description, None, body) {
+            match ctx.skills.create(name, description, None, env.as_ref(), body) {
                 Ok(()) => Some(ToolResult {
                     content: format!("Created skill '{}'.", name),
                     is_error: false,
@@ -1110,10 +1172,11 @@ pub async fn handle_custom_tool(
             let name = input.get("name")?.as_str()?;
             let description = input.get("description")?.as_str()?;
             let body = input.get("body")?.as_str()?;
+            let env = parse_env_from_tool_input(input.get("env"));
 
             debug!(skill = %name, "SkillUpdate");
 
-            match ctx.skills.update(name, description, None, body) {
+            match ctx.skills.update(name, description, None, env.as_ref(), body) {
                 Ok(()) => Some(ToolResult {
                     content: format!("Updated skill '{}'.", name),
                     is_error: false,
@@ -3582,5 +3645,196 @@ mod tests {
         let ctx = web_tool_context(&tmp).await;
         let result = handle_custom_tool(&ctx, "WebFetch", &json!({})).await;
         assert!(result.is_none());
+    }
+
+    // ── parse_env_from_tool_input ──────────────────────────────────
+
+    #[test]
+    fn parse_env_none_when_absent() {
+        assert!(parse_env_from_tool_input(None).is_none());
+    }
+
+    #[test]
+    fn parse_env_none_when_null() {
+        let v = json!(null);
+        assert!(parse_env_from_tool_input(Some(&v)).is_none());
+    }
+
+    #[test]
+    fn parse_env_none_when_empty_object() {
+        let v = json!({});
+        assert!(parse_env_from_tool_input(Some(&v)).is_none());
+    }
+
+    #[test]
+    fn parse_env_none_when_empty_secrets_and_variables() {
+        let v = json!({"secrets": {}, "variables": {}});
+        assert!(parse_env_from_tool_input(Some(&v)).is_none());
+    }
+
+    #[test]
+    fn parse_env_valid_secrets_only() {
+        let v = json!({
+            "secrets": {
+                "GITHUB_TOKEN": {"required": true, "description": "PAT"}
+            }
+        });
+        let env = parse_env_from_tool_input(Some(&v)).unwrap();
+        assert_eq!(env.secrets.len(), 1);
+        assert!(env.secrets["GITHUB_TOKEN"].required);
+        assert_eq!(env.secrets["GITHUB_TOKEN"].description, "PAT");
+        assert!(env.variables.is_empty());
+    }
+
+    #[test]
+    fn parse_env_valid_variables_only() {
+        let v = json!({
+            "variables": {
+                "DEFAULT_ORG": {"default": "acme", "description": "Default org"}
+            }
+        });
+        let env = parse_env_from_tool_input(Some(&v)).unwrap();
+        assert!(env.secrets.is_empty());
+        assert_eq!(env.variables.len(), 1);
+        assert_eq!(env.variables["DEFAULT_ORG"].default.as_deref(), Some("acme"));
+    }
+
+    #[test]
+    fn parse_env_mixed_secrets_and_variables() {
+        let v = json!({
+            "secrets": {
+                "API_KEY": {"required": true, "description": "key"},
+                "OPTIONAL_KEY": {"required": false, "description": "optional"}
+            },
+            "variables": {
+                "TIMEOUT": {"default": "30", "description": "timeout secs"}
+            }
+        });
+        let env = parse_env_from_tool_input(Some(&v)).unwrap();
+        assert_eq!(env.secrets.len(), 2);
+        assert_eq!(env.variables.len(), 1);
+        assert!(!env.secrets["OPTIONAL_KEY"].required);
+    }
+
+    #[test]
+    fn parse_env_ignores_invalid_json_structure() {
+        let v = json!("not an object");
+        assert!(parse_env_from_tool_input(Some(&v)).is_none());
+    }
+
+    // ── SkillCreate/SkillUpdate with env ──────────────────────────
+
+    async fn skill_tool_context(tmp: &TempDir) -> ToolContext {
+        let memory = Arc::new(
+            starpod_memory::MemoryStore::new(
+                &tmp.path().join("agent"),
+                &tmp.path().join("agent").join("config"),
+                &tmp.path().join("db"),
+            )
+            .await
+            .unwrap(),
+        );
+        let skills = Arc::new(SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let cron = Arc::new(starpod_cron::CronStore::new(&tmp.path().join("cron.db")).await.unwrap());
+
+        ToolContext {
+            memory,
+            user_view: None,
+            skills,
+            cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: false,
+            browser_cdp_url: None,
+            user_tz: None,
+            home_dir: tmp.path().to_path_buf(),
+            agent_home: tmp.path().join(".starpod"),
+            user_id: None,
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn skill_create_with_env() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = skill_tool_context(&tmp).await;
+
+        let input = json!({
+            "name": "test-skill",
+            "description": "A test skill",
+            "body": "Do the thing.",
+            "env": {
+                "secrets": {
+                    "MY_TOKEN": {"required": true, "description": "Auth token"}
+                },
+                "variables": {
+                    "MAX_ITEMS": {"default": "10", "description": "Max items to process"}
+                }
+            }
+        });
+
+        let result = handle_custom_tool(&ctx, "SkillCreate", &input).await.unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains("Created"));
+
+        // Verify env persisted
+        let skill = ctx.skills.get("test-skill").unwrap().unwrap();
+        let env = skill.env.unwrap();
+        assert!(env.secrets.contains_key("MY_TOKEN"));
+        assert!(env.secrets["MY_TOKEN"].required);
+        assert!(env.variables.contains_key("MAX_ITEMS"));
+        assert_eq!(env.variables["MAX_ITEMS"].default.as_deref(), Some("10"));
+    }
+
+    #[tokio::test]
+    async fn skill_create_without_env() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = skill_tool_context(&tmp).await;
+
+        let input = json!({
+            "name": "plain-skill",
+            "description": "No env needed",
+            "body": "Just do it."
+        });
+
+        let result = handle_custom_tool(&ctx, "SkillCreate", &input).await.unwrap();
+        assert!(!result.is_error);
+
+        let skill = ctx.skills.get("plain-skill").unwrap().unwrap();
+        assert!(skill.env.is_none());
+    }
+
+    #[tokio::test]
+    async fn skill_update_adds_env() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = skill_tool_context(&tmp).await;
+
+        // Create without env
+        let create_input = json!({
+            "name": "evolving-skill",
+            "description": "Will get env later",
+            "body": "v1"
+        });
+        handle_custom_tool(&ctx, "SkillCreate", &create_input).await.unwrap();
+        assert!(ctx.skills.get("evolving-skill").unwrap().unwrap().env.is_none());
+
+        // Update to add env
+        let update_input = json!({
+            "name": "evolving-skill",
+            "description": "Now has env",
+            "body": "v2",
+            "env": {
+                "secrets": {
+                    "NEW_KEY": {"required": true, "description": "Added later"}
+                }
+            }
+        });
+        let result = handle_custom_tool(&ctx, "SkillUpdate", &update_input).await.unwrap();
+        assert!(!result.is_error);
+
+        let skill = ctx.skills.get("evolving-skill").unwrap().unwrap();
+        assert!(skill.env.is_some());
+        assert!(skill.env.unwrap().secrets.contains_key("NEW_KEY"));
     }
 }
