@@ -6,6 +6,12 @@ fn starpod() -> Command {
     Command::cargo_bin("starpod").unwrap()
 }
 
+fn starpod_json() -> Command {
+    let mut cmd = starpod();
+    cmd.args(["--format", "json"]);
+    cmd
+}
+
 /// Create a temp workspace with a starpod.toml so `agent new` can find it.
 fn workspace() -> TempDir {
     let dir = TempDir::new().unwrap();
@@ -400,5 +406,310 @@ fn build_with_skills() {
     assert!(
         output_dir.join(".starpod/skills/greet/SKILL.md").is_file(),
         "Skills should be copied"
+    );
+}
+
+// ── P0: Renamed instance commands ─────────────────────────────────────────
+
+#[test]
+fn instance_destroy_subcommand_exists() {
+    let output = starpod()
+        .args(["instance", "destroy", "--help"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Permanently destroy") || stdout.contains("destroy"),
+        "instance destroy should exist, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn instance_stop_subcommand_exists() {
+    let output = starpod()
+        .args(["instance", "stop", "--help"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Stop") || stdout.contains("stop"),
+        "instance stop should exist, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn instance_start_subcommand_exists() {
+    let output = starpod()
+        .args(["instance", "start", "--help"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Start") || stdout.contains("start"),
+        "instance start should exist, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn instance_restart_subcommand_exists() {
+    let output = starpod()
+        .args(["instance", "restart", "--help"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Restart") || stdout.contains("restart"),
+        "instance restart should exist, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn instance_kill_removed() {
+    // `instance kill` should no longer be a valid subcommand.
+    let output = starpod()
+        .args(["instance", "kill", "abc123"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "instance kill should no longer exist"
+    );
+    assert!(
+        stderr.contains("unrecognized subcommand") || stderr.contains("invalid"),
+        "instance kill should be unrecognized, got: {stderr}"
+    );
+}
+
+#[test]
+fn instance_pause_removed() {
+    let output = starpod()
+        .args(["instance", "pause", "abc123"])
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "instance pause should no longer exist"
+    );
+}
+
+#[test]
+fn instance_destroy_has_yes_flag() {
+    let output = starpod()
+        .args(["instance", "destroy", "--help"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--yes"),
+        "instance destroy should accept --yes flag, got:\n{stdout}"
+    );
+}
+
+// ── P0: --agent flag placement (global) ──────────────────────────────────
+
+#[test]
+fn skill_agent_flag_after_subcommand() {
+    // `starpod skill list --agent mybot` should work (global arg)
+    let output = starpod()
+        .args(["skill", "list", "--agent", "mybot"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("unexpected argument"),
+        "skill --agent should work after subcommand, got: {stderr}"
+    );
+}
+
+#[test]
+fn memory_agent_flag_after_subcommand() {
+    let output = starpod()
+        .args(["memory", "search", "test", "--agent", "mybot"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("unexpected argument"),
+        "memory --agent should work after subcommand, got: {stderr}"
+    );
+}
+
+#[test]
+fn cron_agent_flag_after_subcommand() {
+    let output = starpod()
+        .args(["cron", "list", "--agent", "mybot"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("unexpected argument"),
+        "cron --agent should work after subcommand, got: {stderr}"
+    );
+}
+
+#[test]
+fn sessions_agent_flag_after_subcommand() {
+    let output = starpod()
+        .args(["sessions", "list", "--agent", "mybot"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("unexpected argument"),
+        "sessions --agent should work after subcommand, got: {stderr}"
+    );
+}
+
+// ── P1: --format json global flag ──────────────────────────────────────
+
+#[test]
+fn format_json_flag_accepted_globally() {
+    let output = starpod()
+        .args(["--format", "json", "--help"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "--format json should be accepted");
+}
+
+#[test]
+fn format_invalid_rejected() {
+    starpod()
+        .args(["--format", "yaml", "--help"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn agent_list_json_output() {
+    let ws = workspace();
+    // Create an agent so we get non-empty output
+    fs::create_dir_all(ws.path().join("agents/test-bot")).unwrap();
+    fs::write(ws.path().join("agents/test-bot/agent.toml"), "agent_name = \"Bot\"\n").unwrap();
+
+    let output = starpod_json()
+        .current_dir(ws.path())
+        .args(["agent", "list"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Should be valid JSON
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap_or_else(|e| {
+        panic!("agent list --format json should produce valid JSON, got: {stdout}\nerror: {e}");
+    });
+    assert!(parsed.is_array(), "Should be a JSON array");
+    let arr = parsed.as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["name"], "test-bot");
+    assert_eq!(arr[0]["has_config"], true);
+}
+
+#[test]
+fn agent_list_json_empty() {
+    let ws = workspace();
+    let output = starpod_json()
+        .current_dir(ws.path())
+        .args(["agent", "list"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap_or_else(|e| {
+        panic!("agent list --format json should produce valid JSON for empty list, got: {stdout}\nerror: {e}");
+    });
+    assert!(parsed.is_array());
+    assert!(parsed.as_array().unwrap().is_empty());
+}
+
+// ── P1: agent diff subcommand ──────────────────────────────────────────
+
+#[test]
+fn agent_diff_subcommand_exists() {
+    let output = starpod()
+        .args(["agent", "diff", "--help"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("diff") || stdout.contains("Diff"),
+        "agent diff should be a valid subcommand, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn agent_diff_requires_name() {
+    starpod()
+        .args(["agent", "diff"])
+        .assert()
+        .failure();
+}
+
+// ── P1: push --dry-run ────────────────────────────────────────────────
+
+#[test]
+fn agent_push_dry_run_flag_exists() {
+    let output = starpod()
+        .args(["agent", "push", "--help"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--dry-run"),
+        "agent push should accept --dry-run flag, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn agent_push_yes_flag_exists() {
+    let output = starpod()
+        .args(["agent", "push", "--help"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--yes"),
+        "agent push should accept --yes flag, got:\n{stdout}"
+    );
+}
+
+// ── P1: auth --api-key ────────────────────────────────────────────────
+
+#[test]
+fn auth_login_api_key_flag_exists() {
+    let output = starpod()
+        .args(["auth", "login", "--help"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--api-key"),
+        "auth login should accept --api-key flag, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn auth_login_email_flag_exists() {
+    let output = starpod()
+        .args(["auth", "login", "--help"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--email"),
+        "auth login should accept --email flag, got:\n{stdout}"
+    );
+}
+
+// ── P0: secret delete confirmation ────────────────────────────────────
+
+#[test]
+fn secret_delete_has_yes_flag() {
+    let output = starpod()
+        .args(["secret", "delete", "--help"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--yes"),
+        "secret delete should accept --yes flag, got:\n{stdout}"
     );
 }

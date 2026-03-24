@@ -16,13 +16,59 @@ use starpod_core::{
     ChatMessage, StarpodConfig, ResolvedPaths,
     detect_mode, load_agent_config,
 };
-use starpod_instances::{DeployClient, DeployOpts, InstanceClient, parse_env_file};
+use starpod_instances::{DeployClient, DeployOpts, InstanceClient, SecretResponse, parse_env_file};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum OutputFormat {
+    #[default]
+    Text,
+    Json,
+}
+
+impl std::str::FromStr for OutputFormat {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "text" => Ok(Self::Text),
+            "json" => Ok(Self::Json),
+            other => Err(format!("unknown format '{}' (expected 'text' or 'json')", other)),
+        }
+    }
+}
+
+impl std::fmt::Display for OutputFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Text => write!(f, "text"),
+            Self::Json => write!(f, "json"),
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "starpod", about = "Starpod — personal AI assistant platform", version)]
 struct Cli {
+    /// Output format: text (default) or json.
+    #[arg(long, global = true, default_value = "text")]
+    format: OutputFormat,
+
     #[command(subcommand)]
     command: Commands,
+}
+
+/// Prompt for confirmation. Returns true if the user confirms.
+/// Always returns true when `skip` is set (--yes flag).
+fn confirm(message: &str, skip: bool) -> bool {
+    if skip {
+        return true;
+    }
+    eprint!("  {} [y/N] ", message);
+    let mut buf = String::new();
+    if std::io::stdin().read_line(&mut buf).is_err() {
+        return false;
+    }
+    let answer = buf.trim().to_lowercase();
+    answer == "y" || answer == "yes"
 }
 
 #[derive(Subcommand)]
@@ -86,8 +132,8 @@ enum Commands {
 
     /// Memory management commands.
     Memory {
-        /// Agent name.
-        #[arg(short, long)]
+        /// Agent name (can be placed before or after the subcommand).
+        #[arg(short, long, global = true)]
         agent: Option<String>,
         #[command(subcommand)]
         action: MemoryAction,
@@ -95,8 +141,8 @@ enum Commands {
 
     /// Session management.
     Sessions {
-        /// Agent name.
-        #[arg(short, long)]
+        /// Agent name (can be placed before or after the subcommand).
+        #[arg(short, long, global = true)]
         agent: Option<String>,
         #[command(subcommand)]
         action: SessionAction,
@@ -104,8 +150,8 @@ enum Commands {
 
     /// Skill management.
     Skill {
-        /// Agent name (manages instance-level skills for this agent).
-        #[arg(short, long)]
+        /// Agent name (can be placed before or after the subcommand).
+        #[arg(short, long, global = true)]
         agent: Option<String>,
         #[command(subcommand)]
         action: SkillAction,
@@ -113,8 +159,8 @@ enum Commands {
 
     /// Cron job management.
     Cron {
-        /// Agent name.
-        #[arg(short, long)]
+        /// Agent name (can be placed before or after the subcommand).
+        #[arg(short, long, global = true)]
         agent: Option<String>,
         #[command(subcommand)]
         action: CronAction,
@@ -203,9 +249,20 @@ enum AgentCommand {
     Push {
         /// Agent name from agents/ directory.
         name: String,
+        /// Preview changes without pushing (dry run).
+        #[arg(long)]
+        dry_run: bool,
+        /// Skip confirmation prompts.
+        #[arg(long)]
+        yes: bool,
     },
     /// Pull remote agent blueprint to the local workspace.
     Pull {
+        /// Agent name from agents/ directory.
+        name: String,
+    },
+    /// Show what would change on push or pull (without modifying anything).
+    Diff {
         /// Agent name from agents/ directory.
         name: String,
     },
@@ -235,17 +292,25 @@ enum InstanceCommand {
     },
     /// List running instances.
     List,
-    /// Kill a running instance.
-    Kill {
+    /// Permanently destroy an instance and all its runtime state.
+    Destroy {
+        /// Instance ID.
+        id: String,
+        /// Skip confirmation prompt.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Stop a running instance (preserves disk).
+    Stop {
         /// Instance ID.
         id: String,
     },
-    /// Pause a running instance.
-    Pause {
+    /// Start a stopped instance.
+    Start {
         /// Instance ID.
         id: String,
     },
-    /// Restart a paused or running instance.
+    /// Restart a running or stopped instance.
     Restart {
         /// Instance ID.
         id: String,
@@ -298,6 +363,9 @@ enum SecretCommand {
         /// Delete agent-specific secret (default: user-global).
         #[arg(long)]
         agent: Option<String>,
+        /// Skip confirmation prompt.
+        #[arg(long)]
+        yes: bool,
     },
     /// Import secrets from a .env file (interactive).
     Import {
@@ -315,6 +383,12 @@ enum AuthCommand {
         /// Spawner URL (env: STARPOD_URL).
         #[arg(long)]
         url: Option<String>,
+        /// API key for non-interactive login (CI/headless).
+        #[arg(long)]
+        api_key: Option<String>,
+        /// Email to associate with the API key (used with --api-key).
+        #[arg(long)]
+        email: Option<String>,
     },
     /// Remove saved credentials.
     Logout,
@@ -1026,6 +1100,75 @@ fn setup_telegram_and_notifier(
     cron_notifier
 }
 
+// ── Sync diff display ──────────────────────────────────────────────────────
+
+fn print_sync_diff(diff: &starpod_instances::deploy::SyncManifestResponse, format: OutputFormat, context: &str) {
+    if format == OutputFormat::Json {
+        let json = serde_json::json!({
+            "to_upload": diff.to_upload,
+            "to_download": diff.to_download.iter().map(|f| &f.path).collect::<Vec<_>>(),
+            "to_delete_remote": diff.to_delete_remote,
+            "to_delete_local": diff.to_delete_local,
+        });
+        println!("{}", serde_json::to_string_pretty(&json).unwrap());
+        return;
+    }
+
+    let total_changes = diff.to_upload.len()
+        + diff.to_download.len()
+        + diff.to_delete_remote.len()
+        + diff.to_delete_local.len();
+
+    if total_changes == 0 {
+        println!("  {} Everything is in sync.", "✓".green().bold());
+        return;
+    }
+
+    if context == "push" {
+        println!("  Dry run — no files will be modified.\n");
+    }
+
+    if !diff.to_upload.is_empty() {
+        println!("  Local → Remote (would change on push):");
+        for path in &diff.to_upload {
+            println!("    {} modified  {}", "↑".bright_green(), path);
+        }
+        println!();
+    }
+
+    if !diff.to_download.is_empty() {
+        println!("  Remote → Local (would change on pull):");
+        for file in &diff.to_download {
+            println!("    {} modified  {}", "↓".bright_cyan(), file.path);
+        }
+        println!();
+    }
+
+    if !diff.to_delete_remote.is_empty() {
+        println!("  Only on local (would delete from remote on push):");
+        for path in &diff.to_delete_remote {
+            println!("    {} removed   {}", "-".bright_red(), path);
+        }
+        println!();
+    }
+
+    if !diff.to_delete_local.is_empty() {
+        println!("  Only on remote (would delete locally on pull):");
+        for path in &diff.to_delete_local {
+            println!("    {} removed   {}", "-".bright_red(), path);
+        }
+        println!();
+    }
+
+    println!(
+        "  Summary: {} to upload, {} to download, {} remote-only, {} local-only",
+        diff.to_upload.len().to_string().bright_green(),
+        diff.to_download.len().to_string().bright_cyan(),
+        diff.to_delete_remote.len().to_string().bright_red(),
+        diff.to_delete_local.len().to_string().bright_red(),
+    );
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -1037,6 +1180,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cli = Cli::parse();
+    let output_format = cli.format;
 
     match cli.command {
         // ── Init: scaffold a new workspace ────────────────────────────
@@ -1257,7 +1401,11 @@ async fn main() -> anyhow::Result<()> {
 
                 let agents_dir = root.join("agents");
                 if !agents_dir.is_dir() {
-                    println!("  No agents/ directory.");
+                    if output_format == OutputFormat::Json {
+                        println!("[]");
+                    } else {
+                        println!("  No agents/ directory.");
+                    }
                     return Ok(());
                 }
 
@@ -1270,7 +1418,16 @@ async fn main() -> anyhow::Result<()> {
                 }
                 agents.sort();
 
-                if agents.is_empty() {
+                if output_format == OutputFormat::Json {
+                    let json: Vec<serde_json::Value> = agents.iter().map(|name| {
+                        let agent_toml = agents_dir.join(name).join("agent.toml");
+                        serde_json::json!({
+                            "name": name,
+                            "has_config": agent_toml.is_file(),
+                        })
+                    }).collect();
+                    println!("{}", serde_json::to_string_pretty(&json).unwrap());
+                } else if agents.is_empty() {
                     println!("  No agents found. Run {} to create one.", "starpod agent new <name>".bright_white());
                 } else {
                     for name in &agents {
@@ -1282,7 +1439,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
 
-            AgentCommand::Push { name } => {
+            AgentCommand::Push { name, dry_run, yes } => {
                 // Resolve auth + workspace (same pattern as deploy)
                 let saved = auth::load_credentials();
                 let backend_url = std::env::var(auth::SPAWNER_URL_ENV)
@@ -1313,17 +1470,51 @@ async fn main() -> anyhow::Result<()> {
                 let skills_path = if skills_dir.exists() { Some(skills_dir.as_path()) } else { None };
 
                 let client = DeployClient::new(&backend_url, &api_key)?;
-                println!("  {} Pushing agent {}...", "⟳".bright_cyan(), name.bright_white().bold());
 
-                let summary = client.push_agent(&name, &agent_dir, skills_path).await?;
+                if dry_run {
+                    // Dry run: compute diff and display without pushing
+                    println!("  {} Computing diff for {}...", "⟳".bright_cyan(), name.bright_white().bold());
+                    let diff = client.diff_agent(&name, &agent_dir, skills_path).await?;
+                    print_sync_diff(&diff, output_format, "push");
+                } else {
+                    // Compute diff first for confirmation
+                    let diff = client.diff_agent(&name, &agent_dir, skills_path).await?;
 
-                println!("  {} Push complete:", "✓".green().bold());
-                println!("  {} {} uploaded, {} deleted, {} unchanged",
-                    "│".dimmed(),
-                    summary.uploaded.to_string().bright_green(),
-                    summary.deleted_remote.to_string().bright_red(),
-                    summary.unchanged.to_string().dimmed(),
-                );
+                    // Show and confirm if there are deletions
+                    if !diff.to_delete_remote.is_empty() && !yes {
+                        println!("\n  Changes:");
+                        if !diff.to_upload.is_empty() {
+                            println!("    {} {} file(s) to upload", "↑".bright_green(), diff.to_upload.len());
+                        }
+                        for path in &diff.to_delete_remote {
+                            println!("    {} delete  {}", "-".bright_red(), path);
+                        }
+                        if !confirm("Push these changes?", false) {
+                            eprintln!("  {} Aborted.", "✗".red());
+                            std::process::exit(0);
+                        }
+                    }
+
+                    println!("  {} Pushing agent {}...", "⟳".bright_cyan(), name.bright_white().bold());
+                    let summary = client.push_agent(&name, &agent_dir, skills_path).await?;
+
+                    if output_format == OutputFormat::Json {
+                        let json = serde_json::json!({
+                            "uploaded": summary.uploaded,
+                            "deleted_remote": summary.deleted_remote,
+                            "unchanged": summary.unchanged,
+                        });
+                        println!("{}", serde_json::to_string_pretty(&json).unwrap());
+                    } else {
+                        println!("  {} Push complete:", "✓".green().bold());
+                        println!("  {} {} uploaded, {} deleted, {} unchanged",
+                            "│".dimmed(),
+                            summary.uploaded.to_string().bright_green(),
+                            summary.deleted_remote.to_string().bright_red(),
+                            summary.unchanged.to_string().dimmed(),
+                        );
+                    }
+                }
             }
 
             AgentCommand::Pull { name } => {
@@ -1353,13 +1544,56 @@ async fn main() -> anyhow::Result<()> {
 
                 let summary = client.pull_agent(&name, &agent_dir).await?;
 
-                println!("  {} Pull complete:", "✓".green().bold());
-                println!("  {} {} downloaded, {} deleted locally, {} unchanged",
-                    "│".dimmed(),
-                    summary.downloaded.to_string().bright_green(),
-                    summary.deleted_local.to_string().bright_red(),
-                    summary.unchanged.to_string().dimmed(),
-                );
+                if output_format == OutputFormat::Json {
+                    let json = serde_json::json!({
+                        "downloaded": summary.downloaded,
+                        "deleted_local": summary.deleted_local,
+                        "unchanged": summary.unchanged,
+                    });
+                    println!("{}", serde_json::to_string_pretty(&json).unwrap());
+                } else {
+                    println!("  {} Pull complete:", "✓".green().bold());
+                    println!("  {} {} downloaded, {} deleted locally, {} unchanged",
+                        "│".dimmed(),
+                        summary.downloaded.to_string().bright_green(),
+                        summary.deleted_local.to_string().bright_red(),
+                        summary.unchanged.to_string().dimmed(),
+                    );
+                }
+            }
+
+            AgentCommand::Diff { name } => {
+                let saved = auth::load_credentials();
+                let backend_url = std::env::var(auth::SPAWNER_URL_ENV)
+                    .ok()
+                    .or_else(|| saved.as_ref().map(|c| c.backend_url.clone()))
+                    .unwrap_or_else(|| auth::DEFAULT_SPAWNER_URL.to_string());
+                let api_key = std::env::var("STARPOD_API_KEY")
+                    .ok()
+                    .or_else(|| saved.as_ref().map(|c| c.api_key.clone()));
+                let Some(api_key) = api_key else {
+                    eprintln!("  {} Authentication required. Run {}.", "✗".red().bold(), "starpod auth login".bright_white());
+                    std::process::exit(1);
+                };
+
+                let cwd = std::env::current_dir()?;
+                let workspace_root = find_workspace_root(&cwd).unwrap_or_else(|| {
+                    eprintln!("  {} Not inside a starpod workspace.", "✗".red().bold());
+                    std::process::exit(1);
+                });
+
+                let agent_dir = workspace_root.join("agents").join(&name);
+                if !agent_dir.exists() {
+                    eprintln!("  {} Agent '{}' not found in agents/ directory.", "✗".red().bold(), name);
+                    std::process::exit(1);
+                }
+
+                let skills_dir = workspace_root.join("skills");
+                let skills_path = if skills_dir.exists() { Some(skills_dir.as_path()) } else { None };
+
+                let client = DeployClient::new(&backend_url, &api_key)?;
+                let diff = client.diff_agent(&name, &agent_dir, skills_path).await?;
+                print_sync_diff(&diff, output_format, "diff");
             }
 
         },
@@ -1898,7 +2132,7 @@ async fn main() -> anyhow::Result<()> {
         // ── Auth commands ─────────────────────────────────────────────
         Commands::Auth { action } => {
             match action {
-                AuthCommand::Login { url } => {
+                AuthCommand::Login { url, api_key, email } => {
                     let spawner_url = url
                         .or_else(|| std::env::var(auth::SPAWNER_URL_ENV).ok())
                         .unwrap_or_else(|| auth::DEFAULT_SPAWNER_URL.to_string());
@@ -1917,23 +2151,45 @@ async fn main() -> anyhow::Result<()> {
                         return Ok(());
                     }
 
-                    match auth::browser_login(&spawner_url).await {
-                        Ok(creds) => {
-                            println!();
-                            println!(
-                                "  {} Authenticated as {}",
-                                "✓".green().bold(),
-                                creds.email.bright_white()
-                            );
-                            println!(
-                                "  {} Credentials saved to {}",
-                                "→".dimmed(),
-                                "~/.starpod/credentials.toml".bright_white()
-                            );
-                        }
-                        Err(e) => {
-                            eprintln!("  {} Login failed: {}", "✗".red().bold(), e);
-                            std::process::exit(1);
+                    if let Some(key) = api_key {
+                        // Non-interactive login with API key (CI/headless)
+                        let email = email.unwrap_or_else(|| "cli@starpod.local".to_string());
+                        let creds = auth::Credentials {
+                            backend_url: spawner_url.trim_end_matches('/').to_string(),
+                            api_key: key,
+                            email: email.clone(),
+                        };
+                        auth::save_credentials(&creds).map_err(|e| anyhow::anyhow!(e))?;
+                        println!(
+                            "  {} Authenticated as {} (API key)",
+                            "✓".green().bold(),
+                            email.bright_white()
+                        );
+                        println!(
+                            "  {} Credentials saved to {}",
+                            "→".dimmed(),
+                            "~/.starpod/credentials.toml".bright_white()
+                        );
+                    } else {
+                        // Interactive browser-based login
+                        match auth::browser_login(&spawner_url).await {
+                            Ok(creds) => {
+                                println!();
+                                println!(
+                                    "  {} Authenticated as {}",
+                                    "✓".green().bold(),
+                                    creds.email.bright_white()
+                                );
+                                println!(
+                                    "  {} Credentials saved to {}",
+                                    "→".dimmed(),
+                                    "~/.starpod/credentials.toml".bright_white()
+                                );
+                            }
+                            Err(e) => {
+                                eprintln!("  {} Login failed: {}", "✗".red().bold(), e);
+                                std::process::exit(1);
+                            }
                         }
                     }
                 }
@@ -1956,23 +2212,43 @@ async fn main() -> anyhow::Result<()> {
                 AuthCommand::Status => {
                     match auth::load_credentials() {
                         Some(creds) => {
-                            println!("  {} Logged in", "✓".green().bold());
-                            println!("  {} Email:   {}", "│".dimmed(), creds.email.bright_white());
-                            println!("  {} Backend: {}", "│".dimmed(), creds.backend_url);
-                            let preview = if creds.api_key.len() > 12 {
-                                format!("{}...{}", &creds.api_key[..8], &creds.api_key[creds.api_key.len()-4..])
+                            if output_format == OutputFormat::Json {
+                                let preview = if creds.api_key.len() > 12 {
+                                    format!("{}...{}", &creds.api_key[..8], &creds.api_key[creds.api_key.len()-4..])
+                                } else {
+                                    "****".to_string()
+                                };
+                                let json = serde_json::json!({
+                                    "logged_in": true,
+                                    "email": creds.email,
+                                    "backend_url": creds.backend_url,
+                                    "api_key_preview": preview,
+                                });
+                                println!("{}", serde_json::to_string_pretty(&json).unwrap());
                             } else {
-                                "****".to_string()
-                            };
-                            println!("  {} API Key: {}", "│".dimmed(), preview);
+                                println!("  {} Logged in", "✓".green().bold());
+                                println!("  {} Email:   {}", "│".dimmed(), creds.email.bright_white());
+                                println!("  {} Backend: {}", "│".dimmed(), creds.backend_url);
+                                let preview = if creds.api_key.len() > 12 {
+                                    format!("{}...{}", &creds.api_key[..8], &creds.api_key[creds.api_key.len()-4..])
+                                } else {
+                                    "****".to_string()
+                                };
+                                println!("  {} API Key: {}", "│".dimmed(), preview);
+                            }
                         }
                         None => {
-                            println!("  {} Not logged in", "✗".yellow().bold());
-                            println!(
-                                "  {} Run {} to authenticate.",
-                                "→".dimmed(),
-                                "starpod auth login".bright_white()
-                            );
+                            if output_format == OutputFormat::Json {
+                                let json = serde_json::json!({"logged_in": false});
+                                println!("{}", serde_json::to_string_pretty(&json).unwrap());
+                            } else {
+                                println!("  {} Not logged in", "✗".yellow().bold());
+                                println!(
+                                    "  {} Run {} to authenticate.",
+                                    "→".dimmed(),
+                                    "starpod auth login".bright_white()
+                                );
+                            }
                         }
                     }
                 }
@@ -2164,6 +2440,25 @@ async fn main() -> anyhow::Result<()> {
                                 println!("    {} = \"{}\"", k.dimmed(), v);
                             }
                         }
+                    } else {
+                        println!(
+                            "\n  {} No deploy configuration found for '{}'.",
+                            "⚠".yellow(),
+                            agent_name.bright_white()
+                        );
+                        println!(
+                            "  Configure secrets and variables at:\n  {}",
+                            format!("{}/agents/{}", backend_url, agent.id).bright_cyan().underline()
+                        );
+                        if !yes {
+                            eprint!("\n  Continue without deploy configuration? [y/N] ");
+                            let mut buf = String::new();
+                            std::io::stdin().read_line(&mut buf)?;
+                            let answer = buf.trim().to_lowercase();
+                            if answer != "y" && answer != "yes" {
+                                std::process::exit(0);
+                            }
+                        }
                     }
 
                     // Step 3: Parse variable overrides
@@ -2197,9 +2492,43 @@ async fn main() -> anyhow::Result<()> {
                                 "✓".green().bold(),
                                 inst.id.bright_white()
                             );
-                            println!("  {} Status: {}", "│".dimmed(), inst.status);
-                            if let Some(ref zone) = inst.zone {
-                                println!("  {} Zone: {}", "│".dimmed(), zone);
+
+                            // Wait for instance to become running (up to 15 min)
+                            let last_status = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+                            let last_status_clone = last_status.clone();
+                            let on_poll = move |inst: &starpod_instances::deploy::InstanceResponse| {
+                                let mut last = last_status_clone.lock().unwrap();
+                                if *last != inst.status {
+                                    eprint!(
+                                        "\r  {} Status: {}                    ",
+                                        "⟳".bright_cyan(),
+                                        inst.status.bright_yellow()
+                                    );
+                                    *last = inst.status.clone();
+                                }
+                            };
+
+                            match deploy_client.wait_for_instance_ready(
+                                &inst.id,
+                                std::time::Duration::from_secs(900),
+                                on_poll,
+                            ).await {
+                                Ok(ready) => {
+                                    eprint!("\r                                                \r");
+                                    println!("  {} Instance is running!", "✓".green().bold());
+                                    println!("  {} Status: {}", "│".dimmed(), ready.status.bright_green());
+                                    if let Some(ref ip) = ready.ip_address {
+                                        println!("  {} IP:     {}", "│".dimmed(), ip.bright_white().bold());
+                                    }
+                                    if let Some(ref z) = ready.zone {
+                                        println!("  {} Zone:   {}", "│".dimmed(), z);
+                                    }
+                                }
+                                Err(e) => {
+                                    eprint!("\r                                                \r");
+                                    eprintln!("  {} Instance failed to reach running state: {}", "✗".red(), e);
+                                    std::process::exit(1);
+                                }
                             }
                         }
                         Err(e) => {
@@ -2212,7 +2541,22 @@ async fn main() -> anyhow::Result<()> {
                 InstanceCommand::List => {
                     match client.list_instances().await {
                         Ok(instances) => {
-                            if instances.is_empty() {
+                            if output_format == OutputFormat::Json {
+                                let json: Vec<serde_json::Value> = instances.iter().map(|inst| {
+                                    serde_json::json!({
+                                        "id": inst.id,
+                                        "id_short": &inst.id[..8.min(inst.id.len())],
+                                        "status": format!("{}", inst.status),
+                                        "agent_id": inst.agent_id,
+                                        "zone": inst.zone,
+                                        "machine_type": inst.machine_type,
+                                        "ip": inst.ip_address,
+                                        "error": inst.error_message,
+                                        "created_at": inst.created_at,
+                                    })
+                                }).collect();
+                                println!("{}", serde_json::to_string_pretty(&json).unwrap());
+                            } else if instances.is_empty() {
                                 println!("  {} No instances found.", "ℹ".bright_cyan());
                             } else {
                                 println!();
@@ -2269,37 +2613,78 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                InstanceCommand::Kill { id } => {
-                    match client.kill_instance(&id).await {
-                        Ok(()) => println!("  {} Killed instance {}.", "✓".green().bold(), id),
+                InstanceCommand::Destroy { id, yes } => {
+                    let id = client.resolve_id(&id).await.unwrap_or_else(|e| {
+                        eprintln!("  {} {}", "✗".red(), e);
+                        std::process::exit(1);
+                    });
+                    let id_short = &id[..8.min(id.len())];
+                    if !confirm(
+                        &format!(
+                            "This will permanently destroy instance {} and all its runtime state.\n  All memory, sessions, and data will be lost. Continue?",
+                            id_short
+                        ),
+                        yes,
+                    ) {
+                        eprintln!("  {} Aborted.", "✗".red());
+                        std::process::exit(0);
+                    }
+                    match client.destroy_instance(&id).await {
+                        Ok(()) => println!("  {} Destroyed instance {}.", "✓".green().bold(), id_short),
                         Err(e) => {
-                            eprintln!("  {} Failed to kill instance {}: {}", "✗".red(), id, e);
+                            eprintln!("  {} Failed to destroy instance {}: {}", "✗".red(), id_short, e);
                             std::process::exit(1);
                         }
                     }
                 }
 
-                InstanceCommand::Pause { id } => {
-                    match client.pause_instance(&id).await {
-                        Ok(()) => println!("  {} Paused instance {}.", "✓".green().bold(), id),
+                InstanceCommand::Stop { id } => {
+                    let id = client.resolve_id(&id).await.unwrap_or_else(|e| {
+                        eprintln!("  {} {}", "✗".red(), e);
+                        std::process::exit(1);
+                    });
+                    match client.stop_instance(&id).await {
+                        Ok(()) => println!("  {} Stopped instance {}.", "✓".green().bold(), &id[..8.min(id.len())]),
                         Err(e) => {
-                            eprintln!("  {} Failed to pause instance {}: {}", "✗".red(), id, e);
+                            eprintln!("  {} Failed to stop instance: {}", "✗".red(), e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+
+                InstanceCommand::Start { id } => {
+                    let id = client.resolve_id(&id).await.unwrap_or_else(|e| {
+                        eprintln!("  {} {}", "✗".red(), e);
+                        std::process::exit(1);
+                    });
+                    match client.start_instance(&id).await {
+                        Ok(()) => println!("  {} Started instance {}.", "✓".green().bold(), &id[..8.min(id.len())]),
+                        Err(e) => {
+                            eprintln!("  {} Failed to start instance: {}", "✗".red(), e);
                             std::process::exit(1);
                         }
                     }
                 }
 
                 InstanceCommand::Restart { id } => {
+                    let id = client.resolve_id(&id).await.unwrap_or_else(|e| {
+                        eprintln!("  {} {}", "✗".red(), e);
+                        std::process::exit(1);
+                    });
                     match client.restart_instance(&id).await {
-                        Ok(()) => println!("  {} Restarted instance {}.", "✓".green().bold(), id),
+                        Ok(()) => println!("  {} Restarted instance {}.", "✓".green().bold(), &id[..8.min(id.len())]),
                         Err(e) => {
-                            eprintln!("  {} Failed to restart instance {}: {}", "✗".red(), id, e);
+                            eprintln!("  {} Failed to restart instance: {}", "✗".red(), e);
                             std::process::exit(1);
                         }
                     }
                 }
 
                 InstanceCommand::Logs { id, tail } => {
+                    let id = client.resolve_id(&id).await.unwrap_or_else(|e| {
+                        eprintln!("  {} {}", "✗".red(), e);
+                        std::process::exit(1);
+                    });
                     println!(
                         "  {} Streaming logs for {} (tail={})...\n",
                         "●".bright_green(),
@@ -2346,6 +2731,10 @@ async fn main() -> anyhow::Result<()> {
                 }
 
                 InstanceCommand::Ssh { id } => {
+                    let id = client.resolve_id(&id).await.unwrap_or_else(|e| {
+                        eprintln!("  {} {}", "✗".red(), e);
+                        std::process::exit(1);
+                    });
                     match client.get_ssh_info(&id).await {
                         Ok(ssh) => {
                             // If a private key is provided, write it to a temp file
@@ -2400,17 +2789,33 @@ async fn main() -> anyhow::Result<()> {
                 }
 
                 InstanceCommand::Health { id } => {
+                    let id = client.resolve_id(&id).await.unwrap_or_else(|e| {
+                        eprintln!("  {} {}", "✗".red(), e);
+                        std::process::exit(1);
+                    });
                     match client.get_health(&id).await {
                         Ok(health) => {
-                            println!("  {} Instance {} health:", "●".bright_green(), id.bright_white());
-                            println!("  {} CPU:       {:.1}%", "│".dimmed(), health.cpu_percent);
-                            println!("  {} Memory:    {} MB", "│".dimmed(), health.memory_mb);
-                            println!("  {} Disk:      {} MB", "│".dimmed(), health.disk_mb);
-                            println!("  {} Uptime:    {}s", "│".dimmed(), health.uptime_secs);
-                            let hb = chrono::DateTime::from_timestamp(health.last_heartbeat, 0)
-                                .map(|dt| dt.to_rfc3339())
-                                .unwrap_or_else(|| health.last_heartbeat.to_string());
-                            println!("  {} Heartbeat: {}", "│".dimmed(), hb);
+                            if output_format == OutputFormat::Json {
+                                let json = serde_json::json!({
+                                    "instance_id": id,
+                                    "cpu_percent": health.cpu_percent,
+                                    "memory_mb": health.memory_mb,
+                                    "disk_mb": health.disk_mb,
+                                    "uptime_secs": health.uptime_secs,
+                                    "last_heartbeat": health.last_heartbeat,
+                                });
+                                println!("{}", serde_json::to_string_pretty(&json).unwrap());
+                            } else {
+                                println!("  {} Instance {} health:", "●".bright_green(), id.bright_white());
+                                println!("  {} CPU:       {:.1}%", "│".dimmed(), health.cpu_percent);
+                                println!("  {} Memory:    {} MB", "│".dimmed(), health.memory_mb);
+                                println!("  {} Disk:      {} MB", "│".dimmed(), health.disk_mb);
+                                println!("  {} Uptime:    {}s", "│".dimmed(), health.uptime_secs);
+                                let hb = chrono::DateTime::from_timestamp(health.last_heartbeat, 0)
+                                    .map(|dt| dt.to_rfc3339())
+                                    .unwrap_or_else(|| health.last_heartbeat.to_string());
+                                println!("  {} Heartbeat: {}", "│".dimmed(), hb);
+                            }
                         }
                         Err(e) => {
                             eprintln!("  {} Failed to get health: {}", "✗".red(), e);
@@ -2505,33 +2910,49 @@ async fn main() -> anyhow::Result<()> {
                 }
 
                 SecretCommand::List { agent: agent_name } => {
+                    let format_secrets = |secrets: &[SecretResponse]| {
+                        if output_format == OutputFormat::Json {
+                            let json: Vec<serde_json::Value> = secrets.iter().map(|s| {
+                                serde_json::json!({
+                                    "key": s.key,
+                                    "hint": s.hint.as_deref().map(|h| format!("••••{}", h)),
+                                    "scope": if s.agent_id.is_some() { "agent" } else { "global" },
+                                    "updated_at": &s.created_at,
+                                })
+                            }).collect();
+                            println!("{}", serde_json::to_string_pretty(&json).unwrap());
+                        } else {
+                            println!(
+                                "  {:<28} {:<10} {:<12} {}",
+                                "KEY".dimmed(),
+                                "SCOPE".dimmed(),
+                                "HINT".dimmed(),
+                                "UPDATED".dimmed()
+                            );
+                            for s in secrets {
+                                let scope = if s.agent_id.is_some() { "agent" } else { "global" };
+                                let hint = s.hint.as_deref().map(|h| format!("••••{}", h)).unwrap_or_else(|| "••••••••".into());
+                                println!(
+                                    "  {:<28} {:<10} {:<12} {}",
+                                    s.key,
+                                    scope,
+                                    hint,
+                                    &s.created_at[..10]
+                                );
+                            }
+                        }
+                    };
+
                     if let Some(ref agent_name) = agent_name {
                         let agents = deploy_client.list_agents().await?;
                         let agent = agents.iter().find(|a| a.name == *agent_name);
                         match agent {
                             Some(a) => {
                                 let secrets = deploy_client.list_agent_secrets(&a.id).await?;
-                                if secrets.is_empty() {
+                                if secrets.is_empty() && output_format != OutputFormat::Json {
                                     println!("  {} No secrets for agent '{}'.", "ℹ".bright_cyan(), agent_name);
                                 } else {
-                                    println!(
-                                        "  {:<28} {:<10} {:<12} {}",
-                                        "KEY".dimmed(),
-                                        "SCOPE".dimmed(),
-                                        "HINT".dimmed(),
-                                        "UPDATED".dimmed()
-                                    );
-                                    for s in &secrets {
-                                        let scope = if s.agent_id.is_some() { "agent" } else { "global" };
-                                        let hint = s.hint.as_deref().map(|h| format!("••••{}", h)).unwrap_or_else(|| "••••••••".into());
-                                        println!(
-                                            "  {:<28} {:<10} {:<12} {}",
-                                            s.key,
-                                            scope,
-                                            hint,
-                                            &s.created_at[..10]
-                                        );
-                                    }
+                                    format_secrets(&secrets);
                                 }
                             }
                             None => {
@@ -2541,29 +2962,23 @@ async fn main() -> anyhow::Result<()> {
                         }
                     } else {
                         let secrets = deploy_client.list_user_secrets().await?;
-                        if secrets.is_empty() {
+                        if secrets.is_empty() && output_format != OutputFormat::Json {
                             println!("  {} No user-global secrets found.", "ℹ".bright_cyan());
                         } else {
-                            println!(
-                                "  {:<28} {:<12} {}",
-                                "KEY".dimmed(),
-                                "HINT".dimmed(),
-                                "UPDATED".dimmed()
-                            );
-                            for s in &secrets {
-                                let hint = s.hint.as_deref().map(|h| format!("••••{}", h)).unwrap_or_else(|| "••••••••".into());
-                                println!(
-                                    "  {:<28} {:<12} {}",
-                                    s.key,
-                                    hint,
-                                    &s.created_at[..10]
-                                );
-                            }
+                            format_secrets(&secrets);
                         }
                     }
                 }
 
-                SecretCommand::Delete { key, agent: agent_name } => {
+                SecretCommand::Delete { key, agent: agent_name, yes } => {
+                    if !confirm(
+                        &format!("Delete secret {}? Instances using this secret will fail on next restart.", key),
+                        yes,
+                    ) {
+                        eprintln!("  {} Aborted.", "✗".red());
+                        std::process::exit(0);
+                    }
+
                     if let Some(ref agent_name) = agent_name {
                         let agents = deploy_client.list_agents().await?;
                         let agent = agents.iter().find(|a| a.name == *agent_name);

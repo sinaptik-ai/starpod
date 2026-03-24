@@ -579,11 +579,11 @@ async fn delete_instance_handler(
     authenticate_request(&state, &headers).await?;
     let client = get_instance_client(&state)?;
 
-    client.kill_instance(&id).await.map(|_| StatusCode::NO_CONTENT).map_err(|e| {
+    client.destroy_instance(&id).await.map(|_| StatusCode::NO_CONTENT).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Kill instance error: {}", e),
+                error: format!("Destroy instance error: {}", e),
             }),
         )
     })
@@ -598,11 +598,11 @@ async fn pause_instance_handler(
     authenticate_request(&state, &headers).await?;
     let client = get_instance_client(&state)?;
 
-    client.pause_instance(&id).await.map(|_| Json(serde_json::json!({"status": "paused"}))).map_err(|e| {
+    client.stop_instance(&id).await.map(|_| Json(serde_json::json!({"status": "stopped"}))).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("Pause instance error: {}", e),
+                error: format!("Stop instance error: {}", e),
             }),
         )
     })

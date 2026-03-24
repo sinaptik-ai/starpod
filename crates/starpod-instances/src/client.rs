@@ -49,6 +49,33 @@ impl InstanceClient {
         }
     }
 
+    /// Resolve a (possibly short) instance ID to a full UUID.
+    ///
+    /// If `id` is already a valid full UUID it is returned as-is.  Otherwise we
+    /// list all instances and look for a unique prefix match.
+    pub async fn resolve_id(&self, id: &str) -> Result<String> {
+        // Already a full UUID?
+        if uuid::Uuid::try_parse(id).is_ok() {
+            return Ok(id.to_string());
+        }
+        let instances = self.list_instances().await?;
+        let matches: Vec<&Instance> = instances
+            .iter()
+            .filter(|inst| inst.id.starts_with(id))
+            .collect();
+        match matches.len() {
+            0 => Err(StarpodError::Channel(format!(
+                "No instance found matching prefix '{}'",
+                id
+            ))),
+            1 => Ok(matches[0].id.clone()),
+            n => Err(StarpodError::Channel(format!(
+                "Ambiguous prefix '{}' matches {} instances — be more specific",
+                id, n
+            ))),
+        }
+    }
+
     /// Create a new remote instance.
     pub async fn create_instance(&self, req: &CreateInstanceRequest) -> Result<Instance> {
         debug!(url = %self.url("/instances"), "Creating instance");
@@ -118,8 +145,8 @@ impl InstanceClient {
             .map_err(|e| StarpodError::Channel(format!("Invalid response: {}", e)))
     }
 
-    /// Kill (terminate) an instance.
-    pub async fn kill_instance(&self, id: &str) -> Result<()> {
+    /// Destroy (permanently delete) an instance and all its runtime state.
+    pub async fn destroy_instance(&self, id: &str) -> Result<()> {
         let resp = self
             .auth(
                 self.client
@@ -127,13 +154,13 @@ impl InstanceClient {
             )
             .send()
             .await
-            .map_err(|e| StarpodError::Channel(format!("Failed to kill instance: {}", e)))?;
+            .map_err(|e| StarpodError::Channel(format!("Failed to destroy instance: {}", e)))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             return Err(StarpodError::Channel(format!(
-                "Kill instance failed ({}): {}",
+                "Destroy instance failed ({}): {}",
                 status, body
             )));
         }
@@ -141,22 +168,23 @@ impl InstanceClient {
         Ok(())
     }
 
-    /// Pause a running instance.
-    pub async fn pause_instance(&self, id: &str) -> Result<()> {
+    /// Stop a running instance (preserves disk).
+    pub async fn stop_instance(&self, id: &str) -> Result<()> {
         let resp = self
             .auth(
                 self.client
-                    .post(self.url(&format!("/instances/{}/pause", id))),
+                    .post(self.url(&format!("/instances/{}/stop", id))),
             )
+            .header("content-length", "0")
             .send()
             .await
-            .map_err(|e| StarpodError::Channel(format!("Failed to pause instance: {}", e)))?;
+            .map_err(|e| StarpodError::Channel(format!("Failed to stop instance: {}", e)))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             return Err(StarpodError::Channel(format!(
-                "Pause instance failed ({}): {}",
+                "Stop instance failed ({}): {}",
                 status, body
             )));
         }
@@ -164,13 +192,38 @@ impl InstanceClient {
         Ok(())
     }
 
-    /// Restart a paused or running instance.
+    /// Start a stopped instance.
+    pub async fn start_instance(&self, id: &str) -> Result<()> {
+        let resp = self
+            .auth(
+                self.client
+                    .post(self.url(&format!("/instances/{}/start", id))),
+            )
+            .header("content-length", "0")
+            .send()
+            .await
+            .map_err(|e| StarpodError::Channel(format!("Failed to start instance: {}", e)))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(StarpodError::Channel(format!(
+                "Start instance failed ({}): {}",
+                status, body
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Restart a running or stopped instance (stop + start).
     pub async fn restart_instance(&self, id: &str) -> Result<()> {
         let resp = self
             .auth(
                 self.client
                     .post(self.url(&format!("/instances/{}/restart", id))),
             )
+            .header("content-length", "0")
             .send()
             .await
             .map_err(|e| StarpodError::Channel(format!("Failed to restart instance: {}", e)))?;
@@ -187,7 +240,11 @@ impl InstanceClient {
         Ok(())
     }
 
-    /// Stream logs from a running instance (newline-delimited JSON).
+    /// Stream logs from a running instance.
+    ///
+    /// The backend returns plain text (one log line per newline). Each line is
+    /// returned as a `LogEntry` with `level` and `timestamp` parsed from common
+    /// log formats when possible, falling back to raw text.
     pub async fn stream_logs(
         &self,
         id: &str,
@@ -195,7 +252,7 @@ impl InstanceClient {
     ) -> Result<impl Stream<Item = Result<LogEntry>>> {
         let mut url = self.url(&format!("/instances/{}/logs", id));
         if let Some(n) = tail {
-            url.push_str(&format!("?tail={}", n));
+            url.push_str(&format!("?lines={}", n));
         }
 
         let resp = self
@@ -227,13 +284,13 @@ impl InstanceClient {
                         if line.is_empty() {
                             continue;
                         }
-                        match serde_json::from_str::<LogEntry>(line) {
-                            Ok(entry) => results.push(Ok(entry)),
-                            Err(e) => results.push(Err(StarpodError::Channel(format!(
-                                "Invalid log entry: {}",
-                                e
-                            )))),
-                        }
+                        // Try JSON first, then fall back to plain text parsing
+                        let entry = if let Ok(e) = serde_json::from_str::<LogEntry>(line) {
+                            e
+                        } else {
+                            LogEntry::from_plain(line)
+                        };
+                        results.push(Ok(entry));
                     }
                     results
                 }
@@ -386,7 +443,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_kill_instance() {
+    async fn test_destroy_instance() {
         let (server, client) = setup().await;
 
         Mock::given(method("DELETE"))
@@ -395,20 +452,33 @@ mod tests {
             .mount(&server)
             .await;
 
-        client.kill_instance("a1b2c3d4").await.unwrap();
+        client.destroy_instance("a1b2c3d4").await.unwrap();
     }
 
     #[tokio::test]
-    async fn test_pause_instance() {
+    async fn test_stop_instance() {
         let (server, client) = setup().await;
 
         Mock::given(method("POST"))
-            .and(path("/api/v1/instances/a1b2c3d4/pause"))
+            .and(path("/api/v1/instances/a1b2c3d4/stop"))
             .respond_with(ResponseTemplate::new(200))
             .mount(&server)
             .await;
 
-        client.pause_instance("a1b2c3d4").await.unwrap();
+        client.stop_instance("a1b2c3d4").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_start_instance() {
+        let (server, client) = setup().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/v1/instances/a1b2c3d4/start"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        client.start_instance("a1b2c3d4").await.unwrap();
     }
 
     #[tokio::test]
@@ -575,5 +645,106 @@ mod tests {
 
         let result = client.list_instances().await.unwrap();
         assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_destroy_instance_error() {
+        let (server, client) = setup().await;
+
+        Mock::given(method("DELETE"))
+            .and(path("/api/v1/instances/bad-id"))
+            .respond_with(ResponseTemplate::new(404).set_body_string("Not Found"))
+            .mount(&server)
+            .await;
+
+        let result = client.destroy_instance("bad-id").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("404"));
+    }
+
+    #[tokio::test]
+    async fn test_stop_instance_error() {
+        let (server, client) = setup().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/v1/instances/bad-id/stop"))
+            .respond_with(ResponseTemplate::new(409).set_body_string("Cannot stop"))
+            .mount(&server)
+            .await;
+
+        let result = client.stop_instance("bad-id").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("409"));
+    }
+
+    #[tokio::test]
+    async fn test_start_instance_error() {
+        let (server, client) = setup().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/v1/instances/bad-id/start"))
+            .respond_with(ResponseTemplate::new(409).set_body_string("Cannot start"))
+            .mount(&server)
+            .await;
+
+        let result = client.start_instance("bad-id").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("409"));
+    }
+
+    #[tokio::test]
+    async fn test_restart_instance_error() {
+        let (server, client) = setup().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/v1/instances/bad-id/restart"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Internal error"))
+            .mount(&server)
+            .await;
+
+        let result = client.restart_instance("bad-id").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_id_full_uuid() {
+        let (server, client) = setup().await;
+
+        // Full UUID should be returned as-is without any API calls
+        let result = client
+            .resolve_id("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+            .await
+            .unwrap();
+        assert_eq!(result, "a1b2c3d4-e5f6-7890-abcd-ef1234567890");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_id_short_prefix() {
+        let (server, client) = setup().await;
+        let instances = vec![sample_instance()];
+
+        Mock::given(method("GET"))
+            .and(path("/api/v1/instances"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&instances))
+            .mount(&server)
+            .await;
+
+        let result = client.resolve_id("a1b2c3d4").await.unwrap();
+        assert_eq!(result, "a1b2c3d4-e5f6-7890-abcd-ef1234567890");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_id_no_match() {
+        let (server, client) = setup().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/v1/instances"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&Vec::<Instance>::new()))
+            .mount(&server)
+            .await;
+
+        let result = client.resolve_id("nonexist").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("No instance found"));
     }
 }

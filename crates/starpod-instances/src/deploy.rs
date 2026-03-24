@@ -40,7 +40,7 @@ pub struct SyncManifestRequest {
     pub files: HashMap<String, String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncManifestResponse {
     pub to_upload: Vec<String>,
     pub to_download: Vec<UploadedFile>,
@@ -744,6 +744,29 @@ impl DeployClient {
     }
 
     // ── High-level push/pull ─────────────────────────────────────────
+
+    /// Compute the diff between local and remote without modifying anything.
+    /// Returns the raw SyncManifestResponse for display.
+    pub async fn diff_agent(
+        &self,
+        agent_name: &str,
+        agent_dir: &Path,
+        skills_dir: Option<&Path>,
+    ) -> Result<SyncManifestResponse> {
+        let agent = self.find_or_create_agent(agent_name).await?;
+        let agent_id = &agent.id;
+
+        let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+        collect_files_recursive(agent_dir, "", &mut files)?;
+        if let Some(sd) = skills_dir {
+            if sd.exists() {
+                collect_files_recursive(sd, "skills/", &mut files)?;
+            }
+        }
+
+        let manifest = compute_manifest(&files);
+        self.sync_manifest(agent_id, &manifest).await
+    }
 
     /// Push local agent files to the remote, uploading only changed files.
     pub async fn push_agent(
@@ -1597,5 +1620,98 @@ mod tests {
             .unwrap();
         assert_eq!(summary.uploaded, 2);
         assert_eq!(summary.unchanged, 0);
+    }
+
+    #[tokio::test]
+    async fn diff_agent_returns_manifest_without_mutations() {
+        let (server, client) = setup_client().await;
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Create a local agent file
+        std::fs::write(tmp.path().join("agent.toml"), b"[agent]").unwrap();
+        std::fs::write(tmp.path().join("SOUL.md"), b"# Soul").unwrap();
+
+        // Mock: agent lookup
+        let agent = AgentResponse {
+            id: "agent-123".to_string(),
+            name: "test-agent".to_string(),
+            gcs_path: "agents/test-agent/".to_string(),
+            created_at: "2025-01-01T00:00:00Z".to_string(),
+        };
+        Mock::given(method("GET"))
+            .and(path("/api/v1/agents"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(vec![&agent]))
+            .mount(&server)
+            .await;
+
+        // Mock: sync manifest returns diff
+        let sync_resp = SyncManifestResponse {
+            to_upload: vec!["SOUL.md".to_string()],
+            to_download: vec![UploadedFile {
+                path: "BOOT.md".to_string(),
+                size: 100,
+                md5_hash: "abc123".to_string(),
+            }],
+            to_delete_remote: vec!["old-file.md".to_string()],
+            to_delete_local: vec![],
+        };
+        Mock::given(method("POST"))
+            .and(path("/api/v1/agents/agent-123/sync"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&sync_resp))
+            .mount(&server)
+            .await;
+
+        let diff = client.diff_agent("test-agent", tmp.path(), None).await.unwrap();
+
+        // Verify we got the diff back correctly
+        assert_eq!(diff.to_upload, vec!["SOUL.md"]);
+        assert_eq!(diff.to_download.len(), 1);
+        assert_eq!(diff.to_download[0].path, "BOOT.md");
+        assert_eq!(diff.to_delete_remote, vec!["old-file.md"]);
+        assert!(diff.to_delete_local.is_empty());
+
+        // Verify NO upload or delete requests were made
+        // (only GET /agents and POST /agents/agent-123/sync should have been called)
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 2, "diff_agent should only make 2 requests (list agents + sync)");
+    }
+
+    #[tokio::test]
+    async fn diff_agent_with_skills_dir() {
+        let (server, client) = setup_client().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let skills_dir = tmp.path().join("skills");
+
+        // Create local files
+        std::fs::write(tmp.path().join("agent.toml"), b"[agent]").unwrap();
+        std::fs::create_dir_all(&skills_dir).unwrap();
+        std::fs::write(skills_dir.join("my-skill.md"), b"# Skill").unwrap();
+
+        let agent = AgentResponse {
+            id: "agent-456".to_string(),
+            name: "skill-agent".to_string(),
+            gcs_path: "agents/skill-agent/".to_string(),
+            created_at: "2025-01-01T00:00:00Z".to_string(),
+        };
+        Mock::given(method("GET"))
+            .and(path("/api/v1/agents"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(vec![&agent]))
+            .mount(&server)
+            .await;
+
+        let sync_resp = SyncManifestResponse {
+            to_upload: vec!["skills/my-skill.md".to_string()],
+            to_download: vec![],
+            to_delete_remote: vec![],
+            to_delete_local: vec![],
+        };
+        Mock::given(method("POST"))
+            .and(path("/api/v1/agents/agent-456/sync"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&sync_resp))
+            .mount(&server)
+            .await;
+
+        let diff = client.diff_agent("skill-agent", tmp.path(), Some(&skills_dir)).await.unwrap();
+        assert_eq!(diff.to_upload, vec!["skills/my-skill.md"]);
     }
 }

@@ -6,8 +6,8 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
-/// Default Spawner backend URL (Cloud Run).
-pub const DEFAULT_SPAWNER_URL: &str = "https://spawner-74227285752.europe-west4.run.app";
+/// Default Spawner backend URL.
+pub const DEFAULT_SPAWNER_URL: &str = "https://console.starpod.sh";
 
 /// Environment variable name for the Spawner URL.
 pub const SPAWNER_URL_ENV: &str = "STARPOD_URL";
