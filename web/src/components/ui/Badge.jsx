@@ -10,7 +10,7 @@ const variants = {
 }
 
 export default function Badge({ children, variant = 'muted', className = '' }) {
-  const base = 'text-[10px] px-1.5 py-0.5 rounded font-medium uppercase tracking-wider'
+  const base = 'text-[10px] px-1.5 py-0.5 rounded-none font-medium uppercase tracking-wider'
   const color = variants[variant] || variants.muted
   return (
     <span className={`${base} ${color}${className ? ' ' + className : ''}`}>

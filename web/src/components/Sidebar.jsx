@@ -5,6 +5,7 @@ import { formatSessionDate } from '../lib/utils'
 import { markSessionRead } from '../lib/api'
 import IconButton from './ui/IconButton'
 import { ComposeIcon, CloseIcon, GearIcon, SearchIcon } from './ui/Icons'
+import { StarpodIcon } from './ui/Logo'
 
 function groupSessionsByDate(sessions) {
   const now = new Date()
@@ -111,7 +112,7 @@ function Sidebar({ onSelectSession, onNewChat }) {
     return (
       <button
         key={s.id}
-        className={`session-item px-3 py-2.5 rounded-lg cursor-pointer mb-0.5 w-full text-left${active ? ' active' : ''}`}
+        className={`session-item px-3 py-2.5 rounded-none cursor-pointer mb-0.5 w-full text-left${active ? ' active' : ''}`}
         data-sid={s.id}
         onClick={() => handleSessionClick(s)}
       >
@@ -127,112 +128,177 @@ function Sidebar({ onSelectSession, onNewChat }) {
     )
   }
 
+  function openSidebar() {
+    dispatch({ type: 'OPEN_SIDEBAR' })
+  }
+
   return (
     <>
-      {/* Header with branding and toggle */}
-      <div className="flex items-center justify-between px-4 h-12 shrink-0">
-        <span className="font-mono text-sm font-bold tracking-tight text-primary">starpod</span>
-        {!isTransient && (
-          <button
-            onClick={closeSidebar}
-            className="text-muted hover:text-primary p-1.5 rounded-lg hover:bg-elevated transition-colors cursor-pointer"
-            id="sidebar-close"
-            aria-label="Close sidebar"
-          >
-            <svg className="w-4 h-4 stroke-current fill-none stroke-2" viewBox="0 0 24 24" strokeLinecap="round">
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <line x1="9" y1="3" x2="9" y2="21" />
-            </svg>
-          </button>
-        )}
-      </div>
-
-      {/* Nav items */}
-      <div className="px-3 pb-2 flex flex-col gap-0.5">
+      {/* Rail — visible when sidebar is collapsed (desktop only) */}
+      <div className="sidebar-rail">
+        <button
+          onClick={settingsVisible ? undefined : (sidebarOpen ? closeSidebar : openSidebar)}
+          onMouseEnter={settingsVisible ? () => {
+            const el = document.getElementById('sidebar')
+            if (el) el.classList.add('peeking')
+          } : undefined}
+          className="sidebar-rail-btn"
+          data-tooltip={settingsVisible ? 'Chats' : (sidebarOpen ? 'Collapse' : 'Expand')}
+        >
+          <svg className="w-4 h-4 stroke-current fill-none stroke-2" viewBox="0 0 24 24" strokeLinecap="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <line x1="9" y1="3" x2="9" y2="21" />
+          </svg>
+        </button>
         <button
           onClick={newChat}
-          className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-secondary hover:text-primary hover:bg-elevated transition-colors cursor-pointer text-[13px] w-full text-left"
-          id="new-chat-btn"
+          className="sidebar-rail-btn"
+          data-tooltip="New Chat"
         >
           <svg className="w-4 h-4 stroke-current fill-none stroke-[1.5]" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
           </svg>
-          <span>New Chat</span>
         </button>
         <button
           onClick={handleCronClick}
-          className={`flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors cursor-pointer text-[13px] w-full text-left ${cronVisible ? 'text-accent bg-accent-muted' : 'text-secondary hover:text-primary hover:bg-elevated'}`}
+          className={`sidebar-rail-btn${cronVisible ? ' active' : ''}`}
+          data-tooltip="Cron Jobs"
         >
           <svg className="w-4 h-4 stroke-current fill-none stroke-[1.5]" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
           </svg>
-          <span>Cron Jobs</span>
         </button>
         {showFiles && (
           <button
             onClick={handleFilesClick}
-            className={`flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors cursor-pointer text-[13px] w-full text-left ${filesVisible ? 'text-accent bg-accent-muted' : 'text-secondary hover:text-primary hover:bg-elevated'}`}
+            className={`sidebar-rail-btn${filesVisible ? ' active' : ''}`}
+            data-tooltip="Files"
           >
             <svg className="w-4 h-4 stroke-current fill-none stroke-[1.5]" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
               <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
             </svg>
-            <span>Files</span>
           </button>
         )}
-      </div>
-
-      {/* Search */}
-      <div className="px-3 pb-2">
-        <div className="sidebar-search">
-          <SearchIcon className="w-3.5 h-3.5 stroke-current fill-none stroke-[1.5] shrink-0 text-dim" />
-          <input
-            type="text"
-            placeholder="Search chats..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            className="sidebar-search-input"
-          />
-        </div>
-      </div>
-
-      {/* Session list */}
-      <div className="flex-1 overflow-y-auto px-2 py-1" id="session-list">
-        {sorted.length === 0 && !searchQuery ? (
-          <div className="text-center text-dim text-xs py-8">
-            <p>No conversations yet</p>
-            <button
-              onClick={newChat}
-              className="mt-2 text-accent hover:text-accent-soft transition-colors cursor-pointer"
-            >
-              Start a new chat
-            </button>
-          </div>
-        ) : sorted.length === 0 && searchQuery ? (
-          <div className="text-center text-dim text-xs py-8">
-            No results
-          </div>
-        ) : (
-          dateGroups.map(group => (
-            <div key={group.label} className="mb-1">
-              <div className="px-3 pt-3 pb-1">
-                <span className="text-[11px] font-semibold text-dim tracking-wider uppercase">{group.label}</span>
-              </div>
-              {group.sessions.map(renderSession)}
-            </div>
-          ))
-        )}
-      </div>
-
-      {/* Footer with settings */}
-      <div className="sidebar-footer">
+        <div className="flex-1" />
         <button
-          className={`sidebar-settings-btn${settingsVisible ? ' active' : ''}`}
+          className={`sidebar-rail-btn${settingsVisible ? ' active' : ''}`}
           onClick={handleSettingsClick}
-          aria-label="Settings"
+          data-tooltip="Settings"
         >
           <GearIcon className="w-4 h-4 stroke-current fill-none stroke-[1.5]" />
-          <span>Settings</span>
         </button>
+      </div>
+
+      {/* Expanded sidebar content */}
+      <div id="sidebar-inner">
+        {/* Header with branding and toggle */}
+        <div className="flex items-center justify-between px-4 h-12 shrink-0">
+          <span className="flex items-center gap-2 font-display text-sm font-bold uppercase tracking-[0.02em] text-primary">
+            <StarpodIcon className="w-5 h-5" />
+            Starpod
+          </span>
+          {!isTransient && (
+            <button
+              onClick={closeSidebar}
+              className="text-muted hover:text-primary p-1.5 rounded-none hover:bg-elevated transition-colors cursor-pointer"
+              id="sidebar-close"
+              aria-label="Close sidebar"
+            >
+              <svg className="w-4 h-4 stroke-current fill-none stroke-2" viewBox="0 0 24 24" strokeLinecap="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <line x1="9" y1="3" x2="9" y2="21" />
+              </svg>
+            </button>
+          )}
+        </div>
+
+        {/* Nav items */}
+        <div className="px-3 pb-2 flex flex-col gap-0.5">
+          <button
+            onClick={newChat}
+            className="flex items-center gap-2.5 px-3 py-2 rounded-none text-secondary hover:text-primary hover:bg-elevated transition-colors cursor-pointer text-[13px] w-full text-left"
+            id="new-chat-btn"
+          >
+            <svg className="w-4 h-4 stroke-current fill-none stroke-[1.5]" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
+            </svg>
+            <span>New Chat</span>
+          </button>
+          <button
+            onClick={handleCronClick}
+            className={`flex items-center gap-2.5 px-3 py-2 rounded-none transition-colors cursor-pointer text-[13px] w-full text-left ${cronVisible ? 'text-accent bg-accent-muted' : 'text-secondary hover:text-primary hover:bg-elevated'}`}
+          >
+            <svg className="w-4 h-4 stroke-current fill-none stroke-[1.5]" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+            </svg>
+            <span>Cron Jobs</span>
+          </button>
+          {showFiles && (
+            <button
+              onClick={handleFilesClick}
+              className={`flex items-center gap-2.5 px-3 py-2 rounded-none transition-colors cursor-pointer text-[13px] w-full text-left ${filesVisible ? 'text-accent bg-accent-muted' : 'text-secondary hover:text-primary hover:bg-elevated'}`}
+            >
+              <svg className="w-4 h-4 stroke-current fill-none stroke-[1.5]" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+              </svg>
+              <span>Files</span>
+            </button>
+          )}
+        </div>
+
+        {/* Search */}
+        <div className="px-3 pb-2">
+          <div className="sidebar-search">
+            <SearchIcon className="w-3.5 h-3.5 stroke-current fill-none stroke-[1.5] shrink-0 text-dim" />
+            <input
+              type="text"
+              placeholder="Search chats..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="sidebar-search-input"
+            />
+          </div>
+        </div>
+
+        {/* Session list */}
+        <div className="flex-1 overflow-y-auto px-2 py-1" id="session-list">
+          {sorted.length === 0 && !searchQuery ? (
+            <div className="text-center text-dim text-xs py-8">
+              <p>No conversations yet</p>
+              <button
+                onClick={newChat}
+                className="mt-2 text-accent hover:text-accent-soft transition-colors cursor-pointer"
+              >
+                Start a new chat
+              </button>
+            </div>
+          ) : sorted.length === 0 && searchQuery ? (
+            <div className="text-center text-dim text-xs py-8">
+              No results
+            </div>
+          ) : (
+            dateGroups.map(group => (
+              <div key={group.label} className="mb-1">
+                <div className="px-3 pt-3 pb-1">
+                  <span className="text-[11px] font-semibold text-dim tracking-wider uppercase">{group.label}</span>
+                </div>
+                {group.sessions.map(renderSession)}
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Footer with settings */}
+        <div className="sidebar-footer">
+          <button
+            className={`sidebar-settings-btn${settingsVisible ? ' active' : ''}`}
+            onClick={handleSettingsClick}
+            aria-label="Settings"
+          >
+            <GearIcon className="w-4 h-4 stroke-current fill-none stroke-[1.5]" />
+            <span>Settings</span>
+          </button>
+        </div>
       </div>
     </>
   )

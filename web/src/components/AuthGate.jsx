@@ -135,7 +135,7 @@ export default function AuthGate({ children }) {
             onChange={(e) => setKey(e.target.value)}
             placeholder="sp_live_..."
             autoFocus
-            className="w-full px-3 py-2.5 rounded-lg bg-surface border border-border-main text-primary font-mono text-sm placeholder:text-dim focus:outline-none focus:border-accent transition-colors"
+            className="w-full px-3 py-2.5 rounded-none bg-surface border border-border-main text-primary font-mono text-sm placeholder:text-dim focus:outline-none focus:border-accent transition-colors"
           />
           {error && (
             <p className="mt-2 text-xs text-err font-mono">{error}</p>
@@ -143,7 +143,7 @@ export default function AuthGate({ children }) {
           <button
             type="submit"
             disabled={loading || !key.trim()}
-            className="mt-4 w-full py-2.5 rounded-lg bg-accent text-white font-mono text-sm font-medium hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+            className="mt-4 w-full py-2.5 rounded-none bg-accent text-bg font-mono text-sm font-medium hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
           >
             {loading ? 'Signing in...' : 'Sign in'}
           </button>

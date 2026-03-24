@@ -331,7 +331,7 @@ export default function UsersTab() {
                       </button>
                       <button
                         onClick={() => toggleActive(u)}
-                        className={`text-xs px-3 py-1 rounded cursor-pointer transition-colors ${
+                        className={`text-xs px-3 py-1 rounded-none cursor-pointer transition-colors ${
                           u.is_active
                             ? 'bg-err/10 text-err hover:bg-err/20'
                             : 'bg-ok/10 text-ok hover:bg-ok/20'
@@ -350,12 +350,12 @@ export default function UsersTab() {
                   {/* Features */}
                   <div className="pt-3 border-t border-border-subtle mb-4">
                     <SectionLabel className="mb-2">Features</SectionLabel>
-                    <div className="flex items-center justify-between py-1.5 px-2 rounded bg-elevated/50">
+                    <div className="flex items-center justify-between py-1.5 px-2 rounded-none bg-elevated/50">
                       <div className="flex flex-col">
                         <span className="text-xs text-primary">Filesystem Access</span>
                         <span className="text-[10px] text-dim">Browse and edit files in the instance sandbox</span>
                       </div>
-                      <label className="s-toggle-wrap">
+                      <label className="s-toggle">
                         <input
                           type="checkbox"
                           checked={u.filesystem_enabled || false}
@@ -370,9 +370,8 @@ export default function UsersTab() {
                               if (r.ok) await load()
                             } catch {}
                           }}
-                          className="s-toggle-input"
                         />
-                        <span className="s-toggle-track"><span className="s-toggle-thumb" /></span>
+                        <div className="s-toggle-track" />
                       </label>
                     </div>
                   </div>
@@ -383,10 +382,10 @@ export default function UsersTab() {
 
                     {/* Created key banner */}
                     {createdKey && (
-                      <div className="bg-ok/10 border border-ok/20 rounded p-3 mb-3">
+                      <div className="bg-ok/10 border border-ok/20 rounded-none p-3 mb-3">
                         <div className="text-xs text-ok font-medium mb-1">Key created — copy it now, it won't be shown again</div>
                         <div className="flex gap-2 items-center">
-                          <code className="text-xs font-mono text-primary bg-elevated px-2 py-1 rounded flex-1 break-all select-all">
+                          <code className="text-xs font-mono text-primary bg-elevated px-2 py-1 rounded-none flex-1 break-all select-all">
                             {createdKey}
                           </code>
                           <button
@@ -424,7 +423,7 @@ export default function UsersTab() {
                     ) : (
                       <div className="flex flex-col gap-1">
                         {apiKeys.map(k => (
-                          <div key={k.id} className="flex items-center justify-between py-1.5 px-2 rounded bg-elevated/50">
+                          <div key={k.id} className="flex items-center justify-between py-1.5 px-2 rounded-none bg-elevated/50">
                             <div className="flex items-center gap-2 min-w-0">
                               <code className="text-xs font-mono text-muted">{k.prefix}...</code>
                               {k.label && <span className="text-xs text-secondary truncate">{k.label}</span>}
@@ -461,7 +460,7 @@ export default function UsersTab() {
                       {telegramLoading ? (
                         <div className="text-dim text-xs">Loading...</div>
                       ) : telegramLink ? (
-                        <div className="flex items-center justify-between py-1.5 px-2 rounded bg-elevated/50">
+                        <div className="flex items-center justify-between py-1.5 px-2 rounded-none bg-elevated/50">
                           <div className="flex items-center gap-2">
                             <code className="text-xs font-mono text-primary">{telegramLink.telegram_id}</code>
                             {telegramLink.username && <span className="text-xs text-secondary">@{telegramLink.username}</span>}

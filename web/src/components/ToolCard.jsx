@@ -18,7 +18,7 @@ function ToolCard({ id, name, input, status, result }) {
 
   return (
     <div
-      className="my-1.5 rounded-lg overflow-hidden border border-border-subtle bg-surface transition-colors hover:border-border-main"
+      className="my-1.5 rounded-none overflow-hidden border border-border-subtle bg-surface transition-colors hover:border-border-main"
       id={id}
     >
       <button
@@ -30,7 +30,7 @@ function ToolCard({ id, name, input, status, result }) {
         <span className={`text-[8px] text-dim transition-transform duration-200 shrink-0 w-3 text-center${expanded ? ' rotate-90' : ''}`}>
           {'\u25B6'}
         </span>
-        <span className={`${toolIconClass(name)} text-[10px] w-5 h-5 flex items-center justify-center rounded-md shrink-0 font-semibold`}>
+        <span className={`${toolIconClass(name)} text-[10px] w-5 h-5 flex items-center justify-center rounded-none shrink-0 font-semibold`}>
           {toolIconSymbol(name)}
         </span>
         <span className="font-mono font-medium text-xs text-secondary">{name}</span>
@@ -44,14 +44,14 @@ function ToolCard({ id, name, input, status, result }) {
         <div className="px-3 pb-3 text-xs text-secondary">
           <div>
             <SectionLabel className="mb-1 tracking-widest font-medium">Input</SectionLabel>
-            <pre className="bg-bg border border-border-subtle rounded-md px-3 py-2.5 font-mono text-[11px] leading-normal whitespace-pre-wrap break-all text-dim max-h-60 overflow-y-auto">
+            <pre className="bg-bg border border-border-subtle rounded-none px-3 py-2.5 font-mono text-[11px] leading-normal whitespace-pre-wrap break-all text-dim max-h-60 overflow-y-auto">
               {inputJson}
             </pre>
           </div>
           {result != null && (
             <div className="mt-2">
               <SectionLabel className="mb-1 tracking-widest font-medium">Result</SectionLabel>
-              <pre className="bg-bg border border-border-subtle rounded-md px-3 py-2.5 font-mono text-[11px] leading-normal whitespace-pre-wrap break-all text-dim max-h-60 overflow-y-auto">
+              <pre className="bg-bg border border-border-subtle rounded-none px-3 py-2.5 font-mono text-[11px] leading-normal whitespace-pre-wrap break-all text-dim max-h-60 overflow-y-auto">
                 {typeof result === 'string' ? result : JSON.stringify(result, null, 2)}
               </pre>
             </div>

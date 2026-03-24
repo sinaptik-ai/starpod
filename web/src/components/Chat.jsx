@@ -27,6 +27,12 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
     scrollToBottom()
   }, [messages, streamingMessage, scrollToBottom])
 
+  // Update header title from first user message
+  useEffect(() => {
+    const first = messages.find(m => m.role === 'user')
+    dispatch({ type: 'SET_CHAT_TITLE', payload: first ? first.content : null })
+  }, [messages, dispatch])
+
   function handleStreamEvent(data) {
     switch (data.type) {
       case 'stream_start': {
@@ -288,7 +294,7 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
       id="messages-scroll"
       className="flex-1 overflow-y-auto"
     >
-      <div className="max-w-[740px] mx-auto px-5 py-4 flex flex-col" id="messages">
+      <div className="max-w-[740px] mx-auto px-3 py-4 flex flex-col" id="messages">
         {!hasContent && (
           <Welcome onSendPrompt={handleSendPrompt} />
         )}
@@ -335,13 +341,13 @@ function UserMessage({ msg }) {
                 <img
                   key={i}
                   src={`data:${att.mime_type};base64,${att.data}`}
-                  className="max-w-[200px] max-h-[200px] rounded-xl object-cover"
+                  className="max-w-[200px] max-h-[200px] rounded-none object-cover"
                   alt={att.file_name}
                 />
               )
             }
             return (
-              <div key={i} className="bg-elevated px-2.5 py-1.5 rounded-lg font-mono text-[11px] text-muted border border-border-subtle">
+              <div key={i} className="bg-elevated px-2.5 py-1.5 rounded-none font-mono text-[11px] text-muted border border-border-subtle">
                 {att.file_name}
               </div>
             )
@@ -350,7 +356,7 @@ function UserMessage({ msg }) {
       )}
       {content && (
         <div
-          className="bg-accent text-white rounded-2xl rounded-br-md px-4 py-2.5 leading-relaxed text-sm whitespace-pre-wrap break-words"
+          className="bg-[#1A1A1A] border border-[#2A2A2A] text-primary rounded-none px-4 py-2.5 leading-relaxed text-sm whitespace-pre-wrap break-words"
           dangerouslySetInnerHTML={{ __html: html }}
         />
       )}

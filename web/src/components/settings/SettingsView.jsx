@@ -1,5 +1,6 @@
 import { useApp } from '../../contexts/AppContext'
 import IconButton from '../ui/IconButton'
+import ViewHeader from '../ui/ViewHeader'
 import { BackIcon } from '../ui/Icons'
 import GeneralTab from './GeneralTab'
 import FileTab from './FileTab'
@@ -99,10 +100,10 @@ export default function SettingsView() {
   const activeGroup = tabGroups.find(g => g.tabs.some(t => t.id === settingsActiveTab))?.label
 
   return (
-    <div className="flex h-[100dvh] bg-bg">
+    <div className="flex flex-1 min-h-0">
       {/* Settings sidebar — hidden on mobile via CSS */}
       <div className="settings-sidebar w-[220px] shrink-0 border-r border-border-subtle flex flex-col">
-        <div className="flex items-center gap-3 h-12 px-4 shrink-0">
+        <div className="flex items-center gap-3 h-12 px-4 shrink-0 border-b border-border-subtle">
           <IconButton onClick={() => dispatch({ type: 'HIDE_SETTINGS' })} aria-label="Back">
             <BackIcon />
           </IconButton>
@@ -134,18 +135,15 @@ export default function SettingsView() {
 
       {/* Main content area */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Mobile header — visible only on mobile via CSS */}
-        <div className="settings-mobile-nav hidden shrink-0 border-b border-border-subtle">
-          <div className="flex items-center gap-3 h-12 px-4">
-            <IconButton onClick={() => dispatch({ type: 'HIDE_SETTINGS' })} aria-label="Back">
-              <BackIcon />
-            </IconButton>
-            <h1 className="text-primary text-sm font-semibold">Settings</h1>
-            <div className="ml-auto">
+        {/* Mobile header */}
+        <div className="settings-mobile-nav shrink-0">
+          <ViewHeader
+            title="Settings"
+            right={
               <select
                 value={settingsActiveTab}
                 onChange={e => dispatch({ type: 'SET_SETTINGS_TAB', payload: e.target.value })}
-                className="bg-elevated text-secondary text-xs rounded-md px-2 py-1.5 border border-border-main cursor-pointer"
+                className="bg-elevated text-secondary text-xs rounded-none px-2 py-1.5 border border-border-main cursor-pointer"
               >
                 {tabGroups.map(group => (
                   <optgroup key={group.label} label={group.label}>
@@ -155,17 +153,19 @@ export default function SettingsView() {
                   </optgroup>
                 ))}
               </select>
-            </div>
-          </div>
+            }
+          />
+        </div>
+
+        {/* Desktop content header */}
+        <div className="settings-desktop-header flex items-center h-12 px-6 shrink-0 border-b border-border-subtle">
+          {activeGroup && <span className="text-muted text-xs mr-2">{activeGroup} /</span>}
+          <h2 className="text-sm font-semibold text-primary tracking-tight">{activeLabel}</h2>
         </div>
 
         {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto">
           <div className="max-w-[740px] mx-auto px-6 py-6">
-            <div className="mb-6">
-              {activeGroup && <div className="text-muted text-xs mb-1">{activeGroup}</div>}
-              <h2 className="text-primary text-lg font-semibold">{activeLabel}</h2>
-            </div>
             <TabContent tab={settingsActiveTab} />
           </div>
         </div>

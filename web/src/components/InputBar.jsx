@@ -180,7 +180,7 @@ function InputBar({ onSend, disabled }) {
 
   return (
     <div className="shrink-0 pt-2 pb-4 w-full input-bar-safe">
-      <div className="max-w-[740px] mx-auto px-5">
+      <div className="max-w-[740px] mx-auto px-3">
         {/* Attachment preview */}
         {pendingAttachments.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mb-2">
@@ -189,12 +189,12 @@ function InputBar({ onSend, disabled }) {
               return (
                 <div
                   key={i}
-                  className="flex items-center gap-1.5 bg-elevated border border-border-main rounded-lg px-2 py-1 font-mono text-[11px] text-secondary max-w-[200px] transition-colors hover:border-dim"
+                  className="flex items-center gap-1.5 bg-elevated border border-border-main rounded-none px-2 py-1 font-mono text-[11px] text-secondary max-w-[200px] transition-colors hover:border-dim"
                 >
                   {isImage ? (
                     <img
                       src={`data:${att.mime_type};base64,${att.data}`}
-                      className="w-7 h-7 object-cover rounded shrink-0"
+                      className="w-7 h-7 object-cover rounded-none shrink-0"
                       alt={att.file_name}
                     />
                   ) : (

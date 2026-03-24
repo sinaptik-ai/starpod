@@ -35,7 +35,7 @@ export default function FileTab({ fileName, description, rows = 20 }) {
   return (
     <div>
       {description && <div className="text-dim text-xs mb-3 leading-relaxed">{description}</div>}
-      <div className="border border-border-subtle rounded-lg overflow-hidden">
+      <div className="border border-border-subtle rounded-none overflow-hidden">
         <div className="flex items-center justify-between px-3 py-1.5 bg-surface border-b border-border-subtle">
           <span className="font-mono text-[11px] text-dim">{fileName}</span>
         </div>
