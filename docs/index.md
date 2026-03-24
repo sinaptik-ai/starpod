@@ -10,7 +10,7 @@ hero:
       link: /getting-started/installation
     - theme: alt
       text: View on GitHub
-      link: https://github.com/gabrieleventuri/starpod-rs
+      link: https://github.com/sinaptik-ai/starpod
 features:
   - icon: 🧠
     title: Persistent Memory

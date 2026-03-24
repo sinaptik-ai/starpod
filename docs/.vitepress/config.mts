@@ -103,7 +103,7 @@ export default defineConfig({
     },
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/gabrieleventuri/starpod-rs' },
+      { icon: 'github', link: 'https://github.com/sinaptik-ai/starpod' },
     ],
 
     search: {
@@ -111,7 +111,7 @@ export default defineConfig({
     },
 
     editLink: {
-      pattern: 'https://github.com/gabrieleventuri/starpod-rs/edit/main/docs/:path',
+      pattern: 'https://github.com/sinaptik-ai/starpod/edit/main/docs/:path',
       text: 'Edit this page on GitHub',
     },
 
