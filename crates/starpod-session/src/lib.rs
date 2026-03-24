@@ -495,6 +495,39 @@ impl SessionManager {
             }
         }
 
+        // By tool (from session_messages)
+        let tool_sql = format!(
+            "SELECT json_extract(sm.content, '$.name') AS tool_name,
+                    COUNT(*) AS invocations,
+                    COALESCE(SUM(
+                      CASE WHEN tr.content IS NOT NULL
+                           AND json_extract(tr.content, '$.is_error') = 1
+                      THEN 1 ELSE 0 END
+                    ), 0) AS errors
+             FROM session_messages sm
+             LEFT JOIN session_messages tr
+               ON tr.session_id = sm.session_id
+               AND tr.role = 'tool_result'
+               AND json_extract(tr.content, '$.tool_use_id') = json_extract(sm.content, '$.id')
+             WHERE sm.role = 'tool_use'
+               {}
+             GROUP BY tool_name
+             ORDER BY invocations DESC",
+            if bind_val.is_some() { "AND sm.timestamp >= ?1" } else { "" }
+        );
+        let mut q = sqlx::query(&tool_sql);
+        if let Some(ts) = bind_val {
+            q = q.bind(ts);
+        }
+        let tool_rows = q.fetch_all(&self.pool).await
+            .map_err(|e| StarpodError::Database(format!("Cost by-tool query failed: {}", e)))?;
+
+        let by_tool: Vec<ToolUsageSummary> = tool_rows.iter().map(|r| ToolUsageSummary {
+            tool_name: r.try_get("tool_name").unwrap_or_else(|_| "unknown".to_string()),
+            invocations: r.get::<i64, _>("invocations") as u32,
+            errors: r.get::<i64, _>("errors") as u32,
+        }).collect();
+
         Ok(CostOverview {
             total_cost_usd: total_row.get::<f64, _>("cost"),
             total_input_tokens: total_row.get::<i64, _>("ti") as u64,
@@ -521,6 +554,7 @@ impl SessionManager {
                 total_turns: r.get::<i64, _>("turns") as u32,
             }).collect(),
             by_day,
+            by_tool,
         })
     }
 
@@ -706,6 +740,21 @@ pub struct DayModelCost {
     pub cost_usd: f64,
 }
 
+/// Aggregated tool invocation statistics, grouped by tool name.
+///
+/// Extracted from `session_messages` rows with `role = "tool_use"` and
+/// `role = "tool_result"`.  The error count is derived by joining each
+/// `tool_use` to its matching `tool_result` and checking the `is_error` flag.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolUsageSummary {
+    /// The tool name (e.g. `"MemorySearch"`, `"VaultGet"`).
+    pub tool_name: String,
+    /// Total number of times this tool was invoked.
+    pub invocations: u32,
+    /// How many of those invocations resulted in an error.
+    pub errors: u32,
+}
+
 /// Full cost overview with breakdowns by user and model.
 ///
 /// All `total_input_tokens` fields include cached tokens — see [`UsageSummary`]
@@ -722,6 +771,8 @@ pub struct CostOverview {
     pub by_user: Vec<UserCostSummary>,
     pub by_model: Vec<ModelCostSummary>,
     pub by_day: Vec<DayCostSummary>,
+    /// Tool invocation counts, sorted by invocations descending.
+    pub by_tool: Vec<ToolUsageSummary>,
 }
 
 #[cfg(test)]
@@ -1496,5 +1547,116 @@ mod tests {
             SessionDecision::Continue(sid) => assert_eq!(sid, tg_id),
             SessionDecision::New { .. } => panic!("Should continue telegram session"),
         }
+    }
+
+    // ── Tool usage stats tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_cost_overview_by_tool_empty() {
+        let (_tmp, mgr) = setup().await;
+
+        let overview = mgr.cost_overview(None).await.unwrap();
+        assert!(overview.by_tool.is_empty(), "No tool messages → empty by_tool");
+    }
+
+    #[tokio::test]
+    async fn test_cost_overview_by_tool_counts() {
+        let (_tmp, mgr) = setup().await;
+        let sid = mgr.create_session(&Channel::Main, "tool-test").await.unwrap();
+
+        // Simulate 3 MemorySearch invocations (all successful)
+        for i in 0..3 {
+            let tool_use = serde_json::json!({
+                "type": "tool_use",
+                "id": format!("tu_mem_{i}"),
+                "name": "MemorySearch",
+                "input": {"query": "test"}
+            });
+            mgr.save_message(&sid, "tool_use", &tool_use.to_string()).await.unwrap();
+
+            let tool_result = serde_json::json!({
+                "type": "tool_result",
+                "tool_use_id": format!("tu_mem_{i}"),
+                "content": "some result",
+                "is_error": false
+            });
+            mgr.save_message(&sid, "tool_result", &tool_result.to_string()).await.unwrap();
+        }
+
+        // Simulate 2 VaultGet invocations: 1 success, 1 error
+        let tool_use = serde_json::json!({
+            "type": "tool_use", "id": "tu_vault_0", "name": "VaultGet",
+            "input": {"key": "api_key"}
+        });
+        mgr.save_message(&sid, "tool_use", &tool_use.to_string()).await.unwrap();
+        let tool_result = serde_json::json!({
+            "type": "tool_result", "tool_use_id": "tu_vault_0",
+            "content": "secret-value", "is_error": false
+        });
+        mgr.save_message(&sid, "tool_result", &tool_result.to_string()).await.unwrap();
+
+        let tool_use = serde_json::json!({
+            "type": "tool_use", "id": "tu_vault_1", "name": "VaultGet",
+            "input": {"key": "missing"}
+        });
+        mgr.save_message(&sid, "tool_use", &tool_use.to_string()).await.unwrap();
+        let tool_result = serde_json::json!({
+            "type": "tool_result", "tool_use_id": "tu_vault_1",
+            "content": "key not found", "is_error": true
+        });
+        mgr.save_message(&sid, "tool_result", &tool_result.to_string()).await.unwrap();
+
+        let overview = mgr.cost_overview(None).await.unwrap();
+
+        // Sorted by invocations DESC: MemorySearch(3), VaultGet(2)
+        assert_eq!(overview.by_tool.len(), 2);
+        assert_eq!(overview.by_tool[0].tool_name, "MemorySearch");
+        assert_eq!(overview.by_tool[0].invocations, 3);
+        assert_eq!(overview.by_tool[0].errors, 0);
+        assert_eq!(overview.by_tool[1].tool_name, "VaultGet");
+        assert_eq!(overview.by_tool[1].invocations, 2);
+        assert_eq!(overview.by_tool[1].errors, 1);
+    }
+
+    #[tokio::test]
+    async fn test_cost_overview_by_tool_since_filter() {
+        let (_tmp, mgr) = setup().await;
+        let sid = mgr.create_session(&Channel::Main, "tool-filter").await.unwrap();
+
+        // Save a tool_use message now
+        let tool_use = serde_json::json!({
+            "type": "tool_use", "id": "tu_1", "name": "CronList", "input": {}
+        });
+        mgr.save_message(&sid, "tool_use", &tool_use.to_string()).await.unwrap();
+
+        // "Since" far in the future should exclude it
+        let future = (Utc::now() + Duration::hours(1)).to_rfc3339();
+        let overview = mgr.cost_overview(Some(&future)).await.unwrap();
+        assert!(overview.by_tool.is_empty());
+
+        // "Since" far in the past should include it
+        let past = (Utc::now() - Duration::days(365)).to_rfc3339();
+        let overview = mgr.cost_overview(Some(&past)).await.unwrap();
+        assert_eq!(overview.by_tool.len(), 1);
+        assert_eq!(overview.by_tool[0].tool_name, "CronList");
+        assert_eq!(overview.by_tool[0].invocations, 1);
+    }
+
+    #[tokio::test]
+    async fn test_cost_overview_by_tool_without_result() {
+        let (_tmp, mgr) = setup().await;
+        let sid = mgr.create_session(&Channel::Main, "tool-no-result").await.unwrap();
+
+        // tool_use without a matching tool_result (e.g. stream interrupted)
+        let tool_use = serde_json::json!({
+            "type": "tool_use", "id": "tu_orphan", "name": "SkillList", "input": {}
+        });
+        mgr.save_message(&sid, "tool_use", &tool_use.to_string()).await.unwrap();
+
+        let overview = mgr.cost_overview(None).await.unwrap();
+        assert_eq!(overview.by_tool.len(), 1);
+        assert_eq!(overview.by_tool[0].tool_name, "SkillList");
+        assert_eq!(overview.by_tool[0].invocations, 1);
+        assert_eq!(overview.by_tool[0].errors, 0, "No result means no error, not an error");
     }
 }
