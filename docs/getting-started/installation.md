@@ -8,8 +8,8 @@
 ## Install from Source
 
 ```bash
-git clone https://github.com/gabrieleventuri/starpod-rs.git
-cd starpod-rs
+git clone https://github.com/sinaptik-ai/starpod.git
+cd starpod
 cargo install --path crates/starpod --locked
 ```
 

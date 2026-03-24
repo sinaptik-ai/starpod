@@ -9,36 +9,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
-name = "agent-sdk"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-stream",
- "async-trait",
- "base64 0.22.1",
- "bytes",
- "colored",
- "futures",
- "glob",
- "pretty_assertions",
- "regex",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "starpod-hooks",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-stream",
- "tokio-test",
- "tokio-util",
- "toml",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4493,9 +4463,8 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "starpod"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
- "agent-sdk",
  "anyhow",
  "assert_cmd",
  "chrono",
@@ -4509,6 +4478,7 @@ dependencies = [
  "serde",
  "serde_json",
  "starpod-agent",
+ "starpod-agent-sdk",
  "starpod-auth",
  "starpod-core",
  "starpod-cron",
@@ -4527,9 +4497,8 @@ dependencies = [
 
 [[package]]
 name = "starpod-agent"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
- "agent-sdk",
  "base64 0.22.1",
  "chrono",
  "htmd",
@@ -4537,6 +4506,7 @@ dependencies = [
  "readability",
  "reqwest 0.12.28",
  "serde_json",
+ "starpod-agent-sdk",
  "starpod-browser",
  "starpod-core",
  "starpod-cron",
@@ -4551,8 +4521,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "starpod-agent-sdk"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "anyhow",
+ "async-stream",
+ "async-trait",
+ "base64 0.22.1",
+ "bytes",
+ "colored",
+ "futures",
+ "glob",
+ "pretty_assertions",
+ "regex",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "starpod-hooks",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "tokio-test",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "starpod-auth"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "argon2",
  "chrono",
@@ -4569,7 +4569,7 @@ dependencies = [
 
 [[package]]
 name = "starpod-browser"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-tungstenite",
  "futures-util",
@@ -4582,7 +4582,7 @@ dependencies = [
 
 [[package]]
 name = "starpod-core"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "dotenvy",
  "iana-time-zone",
@@ -4597,7 +4597,7 @@ dependencies = [
 
 [[package]]
 name = "starpod-cron"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -4614,9 +4614,8 @@ dependencies = [
 
 [[package]]
 name = "starpod-gateway"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
- "agent-sdk",
  "axum",
  "chrono",
  "futures",
@@ -4631,6 +4630,7 @@ dependencies = [
  "serde",
  "serde_json",
  "starpod-agent",
+ "starpod-agent-sdk",
  "starpod-auth",
  "starpod-core",
  "starpod-cron",
@@ -4649,7 +4649,7 @@ dependencies = [
 
 [[package]]
 name = "starpod-hooks"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "glob",
  "pretty_assertions",
@@ -4666,7 +4666,7 @@ dependencies = [
 
 [[package]]
 name = "starpod-instances"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -4687,7 +4687,7 @@ dependencies = [
 
 [[package]]
 name = "starpod-memory"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4701,10 +4701,11 @@ dependencies = [
 
 [[package]]
 name = "starpod-session"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "chrono",
  "serde",
+ "serde_json",
  "sqlx",
  "starpod-core",
  "tempfile",
@@ -4715,7 +4716,7 @@ dependencies = [
 
 [[package]]
 name = "starpod-skills"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "chrono",
  "serde",
@@ -4727,12 +4728,12 @@ dependencies = [
 
 [[package]]
 name = "starpod-telegram"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
- "agent-sdk",
  "base64 0.22.1",
  "reqwest 0.12.28",
  "starpod-agent",
+ "starpod-agent-sdk",
  "starpod-auth",
  "starpod-core",
  "teloxide",

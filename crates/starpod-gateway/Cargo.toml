@@ -1,17 +1,22 @@
 [package]
 name = "starpod-gateway"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Axum HTTP/WS gateway server for Starpod"
 
 [dependencies]
-starpod-core = { path = "../starpod-core" }
-starpod-agent = { path = "../starpod-agent" }
-starpod-cron = { path = "../starpod-cron" }
-starpod-session = { path = "../starpod-session" }
-agent-sdk = { path = "../agent-sdk" }
-starpod-instances = { path = "../starpod-instances" }
-starpod-auth = { path = "../starpod-auth" }
+starpod-core = { workspace = true }
+starpod-agent = { workspace = true }
+starpod-cron = { workspace = true }
+starpod-session = { workspace = true }
+agent-sdk = { workspace = true }
+starpod-instances = { workspace = true }
+starpod-auth = { workspace = true }
+starpod-memory = { workspace = true }
+starpod-skills = { workspace = true }
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
@@ -25,8 +30,6 @@ include_dir = "0.7"
 reqwest = { version = "0.12" }
 regex = "1"
 toml = "0.8"
-starpod-memory = { path = "../starpod-memory" }
-starpod-skills = { path = "../starpod-skills" }
 chrono = "0.4"
 notify = "7"
 notify-debouncer-mini = "0.5"

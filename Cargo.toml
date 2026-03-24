@@ -16,3 +16,25 @@ members = [
     "crates/starpod-auth",
     "crates/starpod",
 ]
+
+[workspace.package]
+version = "0.1.0-alpha.1"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/sinaptik-ai/starpod"
+homepage = "https://starpod.sh"
+
+[workspace.dependencies]
+starpod-hooks = { version = "0.1.0-alpha.1", path = "crates/starpod-hooks" }
+starpod-core = { version = "0.1.0-alpha.1", path = "crates/starpod-core" }
+starpod-memory = { version = "0.1.0-alpha.1", path = "crates/starpod-memory" }
+starpod-session = { version = "0.1.0-alpha.1", path = "crates/starpod-session" }
+starpod-skills = { version = "0.1.0-alpha.1", path = "crates/starpod-skills" }
+starpod-cron = { version = "0.1.0-alpha.1", path = "crates/starpod-cron" }
+starpod-browser = { version = "0.1.0-alpha.1", path = "crates/starpod-browser" }
+starpod-agent = { version = "0.1.0-alpha.1", path = "crates/starpod-agent" }
+starpod-gateway = { version = "0.1.0-alpha.1", path = "crates/starpod-gateway" }
+starpod-telegram = { version = "0.1.0-alpha.1", path = "crates/starpod-telegram" }
+starpod-instances = { version = "0.1.0-alpha.1", path = "crates/starpod-instances" }
+starpod-auth = { version = "0.1.0-alpha.1", path = "crates/starpod-auth" }
+agent-sdk = { version = "0.1.0-alpha.1", path = "crates/agent-sdk", package = "starpod-agent-sdk" }

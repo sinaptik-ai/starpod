@@ -3,11 +3,12 @@ import { defineConfig } from 'vitepress'
 export default defineConfig({
   title: 'Starpod',
   description: 'A local-first personal AI assistant platform built in Rust',
-  base: '/docs/',
+  base: process.env.DOCS_BASE || '/docs/',
   head: [
-    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/docs/favicon.svg' }],
-    ['meta', { name: 'theme-color', content: '#6366f1' }],
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: `${process.env.DOCS_BASE || '/docs/'}favicon.svg` }],
+    ['meta', { name: 'theme-color', content: '#0A0A0A' }],
   ],
+  appearance: 'dark',
   cleanUrls: true,
   lastUpdated: true,
   ignoreDeadLinks: [
@@ -102,7 +103,7 @@ export default defineConfig({
     },
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/gabrieleventuri/starpod-rs' },
+      { icon: 'github', link: 'https://github.com/sinaptik-ai/starpod' },
     ],
 
     search: {
@@ -110,7 +111,7 @@ export default defineConfig({
     },
 
     editLink: {
-      pattern: 'https://github.com/gabrieleventuri/starpod-rs/edit/main/docs/:path',
+      pattern: 'https://github.com/sinaptik-ai/starpod/edit/main/docs/:path',
       text: 'Edit this page on GitHub',
     },
 
