@@ -224,12 +224,13 @@ export default function CostsTab() {
       {data && (
         <>
           {/* Overview */}
-          <div className="grid grid-cols-4 gap-3 mb-4">
+          <div className="grid grid-cols-5 gap-3 mb-4">
             {[
               { label: 'Total cost', value: formatCost(data.total_cost_usd), accent: true },
               { label: 'Total tokens', value: formatTokens(data.total_input_tokens + data.total_output_tokens) },
               { label: 'Cached', value: formatTokens((data.total_cache_read || 0) + (data.total_cache_write || 0)) },
               { label: 'Turns', value: data.total_turns.toLocaleString() },
+              { label: 'Tool calls', value: (data.by_tool || []).reduce((s, t) => s + t.invocations, 0).toLocaleString() },
             ].map(s => (
               <div key={s.label} className="s-stat-card">
                 <div className="text-[11px] text-muted uppercase tracking-wider font-medium">{s.label}</div>
@@ -301,6 +302,32 @@ export default function CostsTab() {
                         <td className="text-right text-dim font-mono">{formatTokens((m.total_cache_read || 0) + (m.total_cache_write || 0))}</td>
                         <td className="text-right text-muted font-mono">{formatTokens(m.total_output_tokens)}</td>
                         <td className="text-right text-muted">{m.total_turns}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+
+          {/* By tool */}
+          {(data.by_tool || []).length > 0 && (
+            <Card title="By Tool">
+              <div className="s-table-wrap">
+                <table className="s-table">
+                  <thead>
+                    <tr>
+                      <th className="text-left">Tool</th>
+                      <th className="text-right">Invocations</th>
+                      <th className="text-right">Errors</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.by_tool.map(t => (
+                      <tr key={t.tool_name}>
+                        <td className="text-primary font-mono">{t.tool_name || 'unknown'}</td>
+                        <td className="text-right text-muted font-mono">{t.invocations.toLocaleString()}</td>
+                        <td className={`text-right font-mono ${t.errors > 0 ? 'text-err' : 'text-dim'}`}>{t.errors}</td>
                       </tr>
                     ))}
                   </tbody>
