@@ -11,6 +11,10 @@ description = "Starpod CLI - personal AI assistant"
 name = "starpod"
 path = "src/main.rs"
 
+[features]
+default = ["embeddings"]
+embeddings = ["starpod-agent/embeddings"]
+
 [dependencies]
 agent-sdk = { workspace = true }
 starpod-core = { workspace = true }

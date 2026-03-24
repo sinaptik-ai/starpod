@@ -7,10 +7,14 @@ repository.workspace = true
 homepage.workspace = true
 description = "Orchestrator for Starpod - wires agent-sdk + memory + session + vault"
 
+[features]
+default = []
+embeddings = ["starpod-memory/embeddings"]
+
 [dependencies]
 agent-sdk = { workspace = true }
 starpod-core = { workspace = true }
-starpod-memory = { workspace = true, features = ["embeddings"] }
+starpod-memory = { workspace = true }
 starpod-session = { workspace = true }
 starpod-skills = { workspace = true }
 starpod-cron = { workspace = true }

@@ -122,6 +122,7 @@ impl StarpodAgent {
         memory.set_chunk_overlap(config.memory.chunk_overlap);
         memory.set_bootstrap_file_cap(config.memory.bootstrap_file_cap);
 
+        #[cfg(feature = "embeddings")]
         if config.memory.vector_search {
             use starpod_memory::embedder::LocalEmbedder;
             memory.set_embedder(Arc::new(LocalEmbedder::new()));
