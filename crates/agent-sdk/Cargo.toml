@@ -1,9 +1,11 @@
 [package]
 name = "agent-sdk"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Claude Agent SDK port for Rust - build production AI agents with Claude"
-license = "MIT"
 
 [dependencies]
 # Async runtime
@@ -33,14 +35,13 @@ anyhow = "1"
 tracing = "0.1"
 
 # Hook system
-starpod-hooks = { path = "../starpod-hooks" }
+starpod-hooks = { workspace = true }
 
 # Regex for hook matchers
 regex = "1"
 
 # UUID for session IDs
 uuid = { version = "1", features = ["v4", "serde"] }
-
 
 # Glob patterns
 glob = "0.3"

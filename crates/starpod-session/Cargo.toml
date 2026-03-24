@@ -1,11 +1,14 @@
 [package]
 name = "starpod-session"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Session management for Starpod - metadata, time-gap analysis, usage tracking"
 
 [dependencies]
-starpod-core = { path = "../starpod-core" }
+starpod-core = { workspace = true }
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }

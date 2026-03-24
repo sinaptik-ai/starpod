@@ -1,7 +1,10 @@
 [package]
 name = "starpod"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Starpod CLI - personal AI assistant"
 
 [[bin]]
@@ -9,15 +12,15 @@ name = "starpod"
 path = "src/main.rs"
 
 [dependencies]
-agent-sdk = { path = "../agent-sdk" }
-starpod-core = { path = "../starpod-core" }
-starpod-agent = { path = "../starpod-agent" }
-starpod-gateway = { path = "../starpod-gateway" }
-starpod-telegram = { path = "../starpod-telegram" }
-starpod-skills = { path = "../starpod-skills" }
-starpod-cron = { path = "../starpod-cron" }
-starpod-instances = { path = "../starpod-instances" }
-starpod-auth = { path = "../starpod-auth" }
+agent-sdk = { workspace = true }
+starpod-core = { workspace = true }
+starpod-agent = { workspace = true }
+starpod-gateway = { workspace = true }
+starpod-telegram = { workspace = true }
+starpod-skills = { workspace = true }
+starpod-cron = { workspace = true }
+starpod-instances = { workspace = true }
+starpod-auth = { workspace = true }
 futures = "0.3"
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }

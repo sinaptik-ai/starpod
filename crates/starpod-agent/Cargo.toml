@@ -1,17 +1,20 @@
 [package]
 name = "starpod-agent"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Orchestrator for Starpod - wires agent-sdk + memory + session + vault"
 
 [dependencies]
-agent-sdk = { path = "../agent-sdk" }
-starpod-core = { path = "../starpod-core" }
-starpod-memory = { path = "../starpod-memory", features = ["embeddings"] }
-starpod-session = { path = "../starpod-session" }
-starpod-skills = { path = "../starpod-skills" }
-starpod-cron = { path = "../starpod-cron" }
-starpod-browser = { path = "../starpod-browser" }
+agent-sdk = { workspace = true }
+starpod-core = { workspace = true }
+starpod-memory = { workspace = true, features = ["embeddings"] }
+starpod-session = { workspace = true }
+starpod-skills = { workspace = true }
+starpod-cron = { workspace = true }
+starpod-browser = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }

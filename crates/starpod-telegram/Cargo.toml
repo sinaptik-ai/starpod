@@ -1,14 +1,17 @@
 [package]
 name = "starpod-telegram"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Telegram bot interface for Starpod"
 
 [dependencies]
-starpod-core = { path = "../starpod-core" }
-starpod-agent = { path = "../starpod-agent" }
-starpod-auth = { path = "../starpod-auth" }
-agent-sdk = { path = "../agent-sdk" }
+starpod-core = { workspace = true }
+starpod-agent = { workspace = true }
+starpod-auth = { workspace = true }
+agent-sdk = { workspace = true }
 teloxide = { version = "0.13", features = ["macros"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
