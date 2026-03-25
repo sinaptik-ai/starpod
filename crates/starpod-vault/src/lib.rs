@@ -149,7 +149,7 @@ impl Vault {
     }
 
     /// Append an entry to the audit log.
-    async fn audit(&self, key: &str, action: &str) -> Result<()> {
+    pub async fn audit(&self, key: &str, action: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         sqlx::query("INSERT INTO vault_audit (key, action, timestamp) VALUES (?1, ?2, ?3)")
             .bind(key)
@@ -159,6 +159,14 @@ impl Vault {
             .await
             .map_err(|e| StarpodError::Database(format!("Audit log failed: {}", e)))?;
         Ok(())
+    }
+
+    /// Log an env var access by the agent (e.g. via EnvGet tool).
+    ///
+    /// Records a `"env_read"` entry in the audit log without decrypting
+    /// anything — just tracks that the agent accessed this key.
+    pub async fn log_env_read(&self, key: &str) -> Result<()> {
+        self.audit(key, "env_read").await
     }
 }
 

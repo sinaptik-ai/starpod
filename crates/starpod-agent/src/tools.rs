@@ -57,6 +57,8 @@ pub struct ToolContext {
     /// Brave Search API key, read from the `BRAVE_API_KEY` environment variable.
     /// When `None`, WebSearch returns an error prompting the user to set it.
     pub brave_api_key: Option<String>,
+    /// Vault for auditing env var access. When `Some`, EnvGet logs reads.
+    pub vault: Option<Arc<starpod_vault::Vault>>,
 }
 
 /// Build the JSON schema definitions for all Starpod custom tools.
@@ -936,11 +938,17 @@ pub async fn handle_custom_tool(
             }
 
             match std::env::var(key) {
-                Ok(value) => Some(ToolResult {
-                    content: value,
-                    is_error: false,
-                    raw_content: None,
-                }),
+                Ok(value) => {
+                    // Audit the read if vault is available
+                    if let Some(ref vault) = ctx.vault {
+                        let _ = vault.log_env_read(key).await;
+                    }
+                    Some(ToolResult {
+                        content: value,
+                        is_error: false,
+                        raw_content: None,
+                    })
+                },
                 Err(_) => Some(ToolResult {
                     content: format!("Environment variable '{}' is not set.", key),
                     is_error: false,
@@ -2417,6 +2425,7 @@ mod tests {
             http_client: Client::new(),
             internet: InternetConfig::default(),
             brave_api_key: None,
+            vault: None,
         };
 
         std::env::set_var("STARPOD_ENVGET_TEST_VAR", "test_value_42");
@@ -2454,6 +2463,7 @@ mod tests {
             http_client: Client::new(),
             internet: InternetConfig::default(),
             brave_api_key: None,
+            vault: None,
         };
 
         let result = handle_custom_tool(
@@ -2489,6 +2499,7 @@ mod tests {
             http_client: Client::new(),
             internet: InternetConfig::default(),
             brave_api_key: None,
+            vault: None,
         };
 
         // All of these should be blocked
@@ -2541,6 +2552,7 @@ mod tests {
             http_client: Client::new(),
             internet: InternetConfig::default(),
             brave_api_key: None,
+            vault: None,
         };
 
         // Write a file
@@ -2587,6 +2599,7 @@ mod tests {
             http_client: Client::new(),
             internet: InternetConfig::default(),
             brave_api_key: None,
+            vault: None,
         };
 
         let result = handle_custom_tool(
@@ -2625,6 +2638,7 @@ mod tests {
             http_client: Client::new(),
             internet: InternetConfig::default(),
             brave_api_key: None,
+            vault: None,
         };
 
         let result = handle_custom_tool(
@@ -2663,6 +2677,7 @@ mod tests {
             http_client: Client::new(),
             internet: InternetConfig::default(),
             brave_api_key: None,
+            vault: None,
         };
 
         let result = handle_custom_tool(
@@ -2698,6 +2713,7 @@ mod tests {
             http_client: Client::new(),
             internet: InternetConfig::default(),
             brave_api_key: None,
+            vault: None,
         };
 
         let result = handle_custom_tool(
@@ -2747,6 +2763,7 @@ mod tests {
             http_client: Client::new(),
             internet: InternetConfig::default(),
             brave_api_key: None,
+            vault: None,
         }
     }
 
@@ -3079,6 +3096,7 @@ mod tests {
             http_client: Client::new(),
             internet: InternetConfig::default(),
             brave_api_key: None,
+            vault: None,
         }
     }
 
@@ -3226,6 +3244,7 @@ mod tests {
             http_client: Client::new(),
             internet: InternetConfig::default(),
             brave_api_key: None,
+            vault: None,
         }
     }
 
@@ -3586,6 +3605,7 @@ mod tests {
             http_client: Client::new(),
             internet: InternetConfig::default(),
             brave_api_key: None,
+            vault: None,
         }
     }
 
@@ -3752,6 +3772,7 @@ mod tests {
             http_client: Client::new(),
             internet: InternetConfig::default(),
             brave_api_key: None,
+            vault: None,
         }
     }
 

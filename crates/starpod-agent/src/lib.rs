@@ -50,6 +50,7 @@ pub struct StarpodAgent {
     session_mgr: Arc<SessionManager>,
     skills: Arc<SkillStore>,
     cron: Arc<CronStore>,
+    vault: Option<Arc<starpod_vault::Vault>>,
     paths: ResolvedPaths,
     config: RwLock<StarpodConfig>,
 }
@@ -146,11 +147,24 @@ impl StarpodAgent {
         cron.set_default_max_retries(config.cron.default_max_retries);
         cron.set_default_timeout_secs(config.cron.default_timeout_secs);
 
+        // Open vault if the key file exists (created at serve time by vault env populate)
+        let vault = {
+            let vault_key_path = paths.db_dir.join(".vault_key");
+            if vault_key_path.exists() {
+                let master_key = starpod_vault::derive_master_key(&paths.db_dir)?;
+                let v = starpod_vault::Vault::new(&paths.db_dir.join("vault.db"), &master_key).await?;
+                Some(Arc::new(v))
+            } else {
+                None
+            }
+        };
+
         Ok(Self {
             memory: Arc::new(memory),
             session_mgr: Arc::new(session_mgr),
             skills: Arc::new(skills),
             cron: Arc::new(cron),
+            vault,
             paths,
             config: RwLock::new(config),
         })
@@ -699,6 +713,7 @@ impl StarpodAgent {
             http_client: reqwest::Client::new(),
             internet: config.internet.clone(),
             brave_api_key,
+            vault: self.vault.clone(),
         });
 
         Box::new(move |tool_name, input| {
@@ -1695,6 +1710,7 @@ mod tests {
             http_client: reqwest::Client::new(),
             internet: starpod_core::InternetConfig::default(),
             brave_api_key: None,
+            vault: None,
         };
 
         // Test MemorySearch
