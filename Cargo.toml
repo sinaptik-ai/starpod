@@ -20,25 +20,25 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/sinaptik-ai/starpod"
 homepage = "https://starpod.sh"
 
 [workspace.dependencies]
-starpod-hooks = { version = "0.1.1", path = "crates/starpod-hooks" }
-starpod-core = { version = "0.1.1", path = "crates/starpod-core" }
-starpod-memory = { version = "0.1.1", path = "crates/starpod-memory" }
-starpod-session = { version = "0.1.1", path = "crates/starpod-session" }
-starpod-skills = { version = "0.1.1", path = "crates/starpod-skills" }
-starpod-cron = { version = "0.1.1", path = "crates/starpod-cron" }
-starpod-browser = { version = "0.1.1", path = "crates/starpod-browser" }
-starpod-agent = { version = "0.1.1", path = "crates/starpod-agent" }
-starpod-gateway = { version = "0.1.1", path = "crates/starpod-gateway" }
-starpod-telegram = { version = "0.1.1", path = "crates/starpod-telegram" }
-starpod-instances = { version = "0.1.1", path = "crates/starpod-instances" }
-starpod-vault = { version = "0.1.1", path = "crates/starpod-vault" }
-starpod-auth = { version = "0.1.1", path = "crates/starpod-auth" }
-starpod-db = { version = "0.1.1", path = "crates/starpod-db" }
-agent-sdk = { version = "0.1.1", path = "crates/agent-sdk", package = "starpod-agent-sdk" }
+starpod-hooks = { version = "0.1.2", path = "crates/starpod-hooks" }
+starpod-core = { version = "0.1.2", path = "crates/starpod-core" }
+starpod-memory = { version = "0.1.2", path = "crates/starpod-memory" }
+starpod-session = { version = "0.1.2", path = "crates/starpod-session" }
+starpod-skills = { version = "0.1.2", path = "crates/starpod-skills" }
+starpod-cron = { version = "0.1.2", path = "crates/starpod-cron" }
+starpod-browser = { version = "0.1.2", path = "crates/starpod-browser" }
+starpod-agent = { version = "0.1.2", path = "crates/starpod-agent" }
+starpod-gateway = { version = "0.1.2", path = "crates/starpod-gateway" }
+starpod-telegram = { version = "0.1.2", path = "crates/starpod-telegram" }
+starpod-instances = { version = "0.1.2", path = "crates/starpod-instances" }
+starpod-vault = { version = "0.1.2", path = "crates/starpod-vault" }
+starpod-auth = { version = "0.1.2", path = "crates/starpod-auth" }
+starpod-db = { version = "0.1.2", path = "crates/starpod-db" }
+agent-sdk = { version = "0.1.2", path = "crates/agent-sdk", package = "starpod-agent-sdk" }
