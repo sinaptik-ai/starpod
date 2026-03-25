@@ -42,6 +42,10 @@ pub struct Instance {
     #[serde(default)]
     pub organization_id: Option<String>,
     #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
     pub gcp_instance_name: Option<String>,
     #[serde(default)]
     pub zone: Option<String>,
@@ -177,6 +181,10 @@ pub struct SshInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateInstanceRequest {
     pub agent_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub zone: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

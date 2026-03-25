@@ -77,6 +77,10 @@ pub struct InstanceResponse {
     pub id: String,
     pub agent_id: String,
     pub status: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
     pub zone: Option<String>,
     pub machine_type: Option<String>,
     pub ip_address: Option<String>,
@@ -98,6 +102,10 @@ pub struct CreateSecretRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateInstanceRequest {
     pub agent_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub zone: Option<String>,
     pub machine_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -179,6 +187,8 @@ pub struct DeployOpts<'a> {
     pub skills_dir: Option<&'a Path>,
     pub env_vars: HashMap<String, String>,
     pub create_instance: bool,
+    pub instance_name: Option<&'a str>,
+    pub instance_description: Option<&'a str>,
     pub zone: Option<&'a str>,
     pub machine_type: Option<&'a str>,
     /// Callback invoked during instance provisioning polling (status updates).
@@ -504,6 +514,8 @@ impl DeployClient {
     pub async fn create_instance(
         &self,
         agent_id: &str,
+        name: Option<&str>,
+        description: Option<&str>,
         zone: Option<&str>,
         machine_type: Option<&str>,
     ) -> Result<InstanceResponse> {
@@ -512,6 +524,8 @@ impl DeployClient {
             .auth(self.client.post(self.url("/instances")))
             .json(&CreateInstanceRequest {
                 agent_id: agent_id.to_string(),
+                name: name.map(String::from),
+                description: description.map(String::from),
                 zone: zone.map(String::from),
                 machine_type: machine_type.map(String::from),
                 variable_overrides: None,
@@ -651,7 +665,7 @@ impl DeployClient {
         // Step 5: Optionally create instance and wait for it to become ready
         let instance = if opts.create_instance {
             let created = self
-                .create_instance(agent_id, opts.zone, opts.machine_type)
+                .create_instance(agent_id, opts.instance_name, opts.instance_description, opts.zone, opts.machine_type)
                 .await?;
 
             let on_poll = opts.on_instance_poll.unwrap_or_else(|| Box::new(|_| {}));

@@ -376,6 +376,8 @@ mod tests {
             status: InstanceStatus::Running,
             agent_id: "f0e1d2c3-b4a5-6789-0fed-cba987654321".to_string(),
             organization_id: None,
+            name: None,
+            description: None,
             gcp_instance_name: Some("agent-a1b2c3d4".to_string()),
             zone: Some("europe-west4-a".to_string()),
             machine_type: Some("e2-medium".to_string()),
@@ -402,6 +404,8 @@ mod tests {
 
         let req = CreateInstanceRequest {
             agent_id: "f0e1d2c3-b4a5-6789-0fed-cba987654321".into(),
+            name: None,
+            description: None,
             zone: None,
             machine_type: None,
         };
@@ -551,6 +555,8 @@ mod tests {
 
         let req = CreateInstanceRequest {
             agent_id: "test-agent".into(),
+            name: None,
+            description: None,
             zone: None,
             machine_type: None,
         };

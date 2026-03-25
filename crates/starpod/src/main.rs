@@ -278,9 +278,12 @@ enum InstanceCommand {
         /// Agent name from agents/ directory.
         #[arg(short, long)]
         agent: Option<String>,
-        /// Instance name.
+        /// Instance name (optional, for display purposes).
         #[arg(short, long)]
         name: Option<String>,
+        /// Instance description (optional).
+        #[arg(short, long)]
+        description: Option<String>,
         /// Cloud region.
         #[arg(short, long)]
         region: Option<String>,
@@ -2425,7 +2428,7 @@ async fn main() -> anyhow::Result<()> {
             let client = InstanceClient::new_with_timeout(&backend_url, api_key, 30)?;
 
             match action {
-                InstanceCommand::New { agent: agent_name, name: _, region, var_overrides, yes } => {
+                InstanceCommand::New { agent: agent_name, name, description, region, var_overrides, yes } => {
                     // Need the DeployClient for the deploy-config API
                     let api_key_str = std::env::var("STARPOD_API_KEY")
                         .ok()
@@ -2676,6 +2679,8 @@ async fn main() -> anyhow::Result<()> {
 
                     match deploy_client.create_instance(
                         &agent.id,
+                        name.as_deref(),
+                        description.as_deref(),
                         region.as_deref(),
                         None, // machine_type
                     ).await {
@@ -2739,6 +2744,8 @@ async fn main() -> anyhow::Result<()> {
                                     serde_json::json!({
                                         "id": inst.id,
                                         "id_short": &inst.id[..8.min(inst.id.len())],
+                                        "name": inst.name,
+                                        "description": inst.description,
                                         "status": format!("{}", inst.status),
                                         "agent_id": inst.agent_id,
                                         "zone": inst.zone,
@@ -2764,11 +2771,20 @@ async fn main() -> anyhow::Result<()> {
                                         "error" => status_str.bright_red(),
                                         _ => status_str.normal(),
                                     };
-                                    println!(
-                                        "  {}  {}",
-                                        id_short.bright_white().bold(),
-                                        status_colored,
-                                    );
+                                    if let Some(ref name) = inst.name {
+                                        println!(
+                                            "  {}  {}  {}",
+                                            id_short.bright_white().bold(),
+                                            name.bright_white(),
+                                            status_colored,
+                                        );
+                                    } else {
+                                        println!(
+                                            "  {}  {}",
+                                            id_short.bright_white().bold(),
+                                            status_colored,
+                                        );
+                                    }
                                     println!(
                                         "  {}  Agent   {}",
                                         "│".dimmed(),
@@ -3497,6 +3513,8 @@ async fn main() -> anyhow::Result<()> {
                     skills_dir: skills_path,
                     env_vars,
                     create_instance: !no_instance,
+                    instance_name: None,
+                    instance_description: None,
                     zone: zone.as_deref(),
                     machine_type: machine_type.as_deref(),
                     on_instance_poll: on_poll,
