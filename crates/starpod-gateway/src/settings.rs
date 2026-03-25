@@ -352,6 +352,9 @@ pub fn settings_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/api/settings/auth/api-keys/{id}/revoke", axum::routing::post(revoke_auth_api_key))
         // Compaction
         .route("/api/settings/compaction", get(get_compaction).put(put_compaction))
+        // Vault
+        .route("/api/settings/vault", get(get_vault))
+        .route("/api/settings/vault/{key}", axum::routing::put(put_vault).delete(delete_vault))
         // Internet
         .route("/api/settings/internet", get(get_internet).put(put_internet))
         // Channels
@@ -1536,6 +1539,81 @@ fn set_or_remove_string(table: &mut toml::map::Map<String, toml::Value>, key: &s
         Some(v) if !v.is_empty() => { table.insert(key.into(), toml::Value::String(v)); }
         _ => { table.remove(key); }
     }
+}
+
+// ── Vault ────────────────────────────────────────────────────────────────
+//
+// Admin CRUD for the encrypted vault (AES-256-GCM, backed by vault.db).
+//
+// - GET  /api/settings/vault        → list all keys (never exposes values)
+// - PUT  /api/settings/vault/{key}  → set or update a key
+// - DELETE /api/settings/vault/{key} → delete a key
+//
+// System keys (ANTHROPIC_API_KEY, etc.) are flagged in the response and
+// kept in sync with the process environment when written or deleted.
+
+#[derive(Serialize)]
+struct VaultEntry {
+    key: String,
+    has_value: bool,
+    is_system: bool,
+}
+
+#[derive(Serialize)]
+struct VaultListResponse {
+    entries: Vec<VaultEntry>,
+}
+
+#[derive(Deserialize)]
+struct VaultPutBody {
+    value: String,
+}
+
+async fn get_vault(
+    State(state): State<Arc<AppState>>,
+) -> ApiResult<VaultListResponse> {
+    let vault = state.vault.as_ref().ok_or_else(|| internal("vault not available"))?;
+    let keys = vault.list_keys().await.map_err(|e| internal(format!("vault list: {e}")))?;
+    let entries = keys.into_iter().map(|key| {
+        let is_system = starpod_vault::is_system_key(&key);
+        VaultEntry { key, has_value: true, is_system }
+    }).collect();
+    Ok(Json(VaultListResponse { entries }))
+}
+
+async fn put_vault(
+    State(state): State<Arc<AppState>>,
+    Path(key): Path<String>,
+    Json(body): Json<VaultPutBody>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    if key.is_empty() {
+        return Err(bad_request("key cannot be empty"));
+    }
+    if body.value.is_empty() {
+        return Err(bad_request("value cannot be empty"));
+    }
+    let vault = state.vault.as_ref().ok_or_else(|| internal("vault not available"))?;
+    vault.set(&key, &body.value, None).await
+        .map_err(|e| internal(format!("vault set {key}: {e}")))?;
+    // Keep process env in sync for system keys
+    if starpod_vault::is_system_key(&key) {
+        std::env::set_var(&key, &body.value);
+    }
+    Ok(StatusCode::OK)
+}
+
+async fn delete_vault(
+    State(state): State<Arc<AppState>>,
+    Path(key): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    let vault = state.vault.as_ref().ok_or_else(|| internal("vault not available"))?;
+    vault.delete(&key, None).await
+        .map_err(|e| internal(format!("vault delete {key}: {e}")))?;
+    // Keep process env in sync for system keys
+    if starpod_vault::is_system_key(&key) {
+        std::env::remove_var(&key);
+    }
+    Ok(StatusCode::OK)
 }
 
 /// Read a system key from the vault, falling back to the process environment.
@@ -3170,6 +3248,111 @@ mod tests {
         // GET should return it
         let (_, json) = get_json(state, "/api/settings/internet").await;
         assert_eq!(json["brave_api_key"], "BSA-test-key");
+    }
+
+    /// Make a DELETE request (unauthenticated) and return the status code.
+    async fn delete_json(state: Arc<AppState>, path: &str) -> StatusCode {
+        let app = build_router(state);
+        let req = Request::builder()
+            .method("DELETE")
+            .uri(path)
+            .body(Body::empty())
+            .unwrap();
+        app.oneshot(req).await.unwrap().status()
+    }
+
+    // ── Vault CRUD endpoints ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn get_vault_empty() {
+        let (_tmp, state) = test_app_state_with_vault().await;
+        let (status, json) = get_json(state, "/api/settings/vault").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(json["entries"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn vault_crud_lifecycle() {
+        let (_tmp, state) = test_app_state_with_vault().await;
+
+        // PUT a custom key
+        let (status, _) = put_json(
+            Arc::clone(&state),
+            "/api/settings/vault/MY_SECRET",
+            serde_json::json!({ "value": "hunter2" }),
+        ).await;
+        assert_eq!(status, StatusCode::OK);
+
+        // GET should list it
+        let (_, json) = get_json(Arc::clone(&state), "/api/settings/vault").await;
+        let entries = json["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["key"], "MY_SECRET");
+        assert_eq!(entries[0]["has_value"], true);
+        assert_eq!(entries[0]["is_system"], false);
+        // Value should NOT be returned
+        assert!(entries[0].get("value").is_none());
+
+        // UPDATE the key
+        let (status, _) = put_json(
+            Arc::clone(&state),
+            "/api/settings/vault/MY_SECRET",
+            serde_json::json!({ "value": "new_secret" }),
+        ).await;
+        assert_eq!(status, StatusCode::OK);
+
+        // DELETE the key
+        let status = delete_json(Arc::clone(&state), "/api/settings/vault/MY_SECRET").await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Should be gone
+        let (_, json) = get_json(state, "/api/settings/vault").await;
+        assert!(json["entries"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn vault_system_key_flagged() {
+        let (_tmp, state) = test_app_state_with_vault().await;
+
+        // Store a system key via the vault endpoint
+        let (status, _) = put_json(
+            Arc::clone(&state),
+            "/api/settings/vault/ANTHROPIC_API_KEY",
+            serde_json::json!({ "value": "sk-ant-test" }),
+        ).await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Should be flagged as system
+        let (_, json) = get_json(Arc::clone(&state), "/api/settings/vault").await;
+        let entries = json["entries"].as_array().unwrap();
+        let entry = entries.iter().find(|e| e["key"] == "ANTHROPIC_API_KEY").unwrap();
+        assert_eq!(entry["is_system"], true);
+
+        // System key should sync to process env
+        assert_eq!(std::env::var("ANTHROPIC_API_KEY").ok().as_deref(), Some("sk-ant-test"));
+
+        // Clean up env
+        let status = delete_json(state, "/api/settings/vault/ANTHROPIC_API_KEY").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(std::env::var("ANTHROPIC_API_KEY").is_err());
+    }
+
+    #[tokio::test]
+    async fn vault_put_rejects_empty_value() {
+        let (_tmp, state) = test_app_state_with_vault().await;
+        let (status, _) = put_json(
+            state,
+            "/api/settings/vault/SOME_KEY",
+            serde_json::json!({ "value": "" }),
+        ).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn vault_get_fails_without_vault() {
+        let (_tmp, state) = test_app_state().await;
+        let (status, _) = get_json(state, "/api/settings/vault").await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[tokio::test]
