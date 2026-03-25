@@ -116,13 +116,27 @@ pub struct SecretStatusInfo {
     pub present: bool,
     pub scope: Option<String>,
     pub hint: Option<String>,
+    #[serde(default)]
+    pub resolved_from: Option<String>,
+}
+
+/// Variable declaration status from deploy.toml readiness check.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VariableStatusInfo {
+    pub key: String,
+    #[serde(default)]
+    pub default: Option<String>,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub scope: String,
 }
 
 /// Deploy readiness response from `GET /agents/{id}/deploy-config`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeployReadiness {
     pub version: u32,
-    pub variables: HashMap<String, String>,
+    pub variables: Vec<VariableStatusInfo>,
     pub secrets: Vec<SecretStatusInfo>,
     pub ready: bool,
     pub missing_required: Vec<String>,
@@ -1354,7 +1368,9 @@ mod tests {
             .and(path("/api/v1/agents/agent-123/deploy-config"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "version": 1,
-                "variables": {"MODEL": "claude-sonnet"},
+                "variables": [
+                    {"key": "MODEL", "default": "claude-sonnet", "description": "Model to use", "scope": "agent"}
+                ],
                 "secrets": [
                     {"key": "ANTHROPIC_API_KEY", "required": true, "description": "API key", "present": true, "scope": "agent", "hint": "sk-a"}
                 ],
@@ -1370,7 +1386,9 @@ mod tests {
         let config = config.unwrap();
         assert!(config.ready);
         assert_eq!(config.version, 1);
-        assert_eq!(config.variables.get("MODEL").unwrap(), "claude-sonnet");
+        assert_eq!(config.variables.len(), 1);
+        assert_eq!(config.variables[0].key, "MODEL");
+        assert_eq!(config.variables[0].default.as_deref(), Some("claude-sonnet"));
         assert_eq!(config.secrets.len(), 1);
         assert!(config.secrets[0].present);
         assert!(config.missing_required.is_empty());

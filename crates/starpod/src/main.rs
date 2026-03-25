@@ -2578,8 +2578,9 @@ async fn main() -> anyhow::Result<()> {
                         // Show variables
                         if !config.variables.is_empty() {
                             println!("\n  Variables (from deploy.toml):");
-                            for (k, v) in &config.variables {
-                                println!("    {} = \"{}\"", k.dimmed(), v);
+                            for var in &config.variables {
+                                let val = var.default.as_deref().unwrap_or("");
+                                println!("    {} = \"{}\"", var.key.dimmed(), val);
                             }
                         }
                     } else {
