@@ -56,7 +56,7 @@ pub use mcp::{McpServerConfig, McpStdioServerConfig, McpHttpServerConfig, McpSse
 pub use options::{CustomToolDefinition, ExternalToolHandlerFn, Options, OptionsBuilder, PermissionMode, PreCompactHandlerFn, QueryAttachment};
 pub use models::{ModelRegistry, PricingRegistry};
 pub use provider::{CostRates, LlmProvider, ProviderCapabilities};
-pub use providers::{AnthropicProvider, GeminiProvider, OpenAiProvider};
+pub use providers::{AnthropicProvider, GeminiProvider, OllamaDiscovery, OpenAiProvider};
 pub use query::{query, Query};
 pub use session::{Session, SessionInfo};
 pub use types::agent::{AgentDefinition, AgentInput};

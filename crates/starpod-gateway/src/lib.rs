@@ -20,6 +20,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{info, warn, debug};
 
 use agent_sdk::models::ModelRegistry;
+use agent_sdk::OllamaDiscovery;
 use starpod_agent::StarpodAgent;
 use starpod_auth::{AuthStore, RateLimiter};
 use starpod_core::{StarpodConfig, ResolvedPaths, reload_agent_config};
@@ -331,7 +332,7 @@ pub async fn serve_with_agent(
         std::time::Duration::from_secs(config.auth.rate_limit_window_secs),
     ));
 
-    // Load model registry: embedded defaults + optional config override.
+    // Load model registry: embedded defaults + optional config override + Ollama discovery.
     let mut model_registry = ModelRegistry::with_defaults();
     let models_path = paths.config_dir.join("models.toml");
     if models_path.exists() {
@@ -347,6 +348,23 @@ pub async fn serve_with_agent(
             },
             Err(e) => {
                 warn!(path = %models_path.display(), error = %e, "failed to read models.toml");
+            }
+        }
+    }
+
+    // Ollama auto-discovery: populate the registry with locally-available models.
+    if let Some(base_url) = config.resolved_provider_base_url("ollama") {
+        let discovery = OllamaDiscovery::new(&base_url);
+        match discovery.discover_all().await {
+            Ok(ollama_registry) => {
+                let count = ollama_registry.len();
+                model_registry.merge(ollama_registry);
+                if count > 0 {
+                    debug!(count, "discovered ollama models");
+                }
+            }
+            Err(e) => {
+                debug!(error = %e, "ollama discovery unavailable, using static catalog only");
             }
         }
     }

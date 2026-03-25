@@ -322,13 +322,8 @@ context_window = 128000
 
 # ── Ollama ─────────────────────────────────────────────────────────────
 # Local models — no API key, free.
+# Individual models are NOT listed here — they are auto-discovered at
+# runtime by querying the Ollama API (/api/tags + /api/show).
 
 [ollama]
 default_model = "qwen3.5:9b"
-
-[ollama.models."qwen3.5:9b"]
-input = 0.0
-output = 0.0
-context_window = 131072
-supports_vision = true
-supports_tool_use = true

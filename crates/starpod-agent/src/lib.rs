@@ -8,7 +8,7 @@ use chrono::Local;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
 
-use agent_sdk::{ExternalToolHandlerFn, LlmProvider, Message, ModelRegistry, Options, PermissionMode, Query, QueryAttachment};
+use agent_sdk::{ExternalToolHandlerFn, LlmProvider, Message, ModelRegistry, OllamaDiscovery, Options, PermissionMode, Query, QueryAttachment};
 use agent_sdk::{AnthropicProvider, GeminiProvider, OpenAiProvider};
 use agent_sdk::options::{SystemPrompt, ThinkingConfig};
 use starpod_core::{FollowupMode, ReasoningEffort};
@@ -55,6 +55,8 @@ pub struct StarpodAgent {
     core_db: Arc<CoreDb>,
     paths: ResolvedPaths,
     config: RwLock<StarpodConfig>,
+    /// Cached model registry (populated lazily with Ollama discovery).
+    model_registry: tokio::sync::RwLock<Option<Arc<ModelRegistry>>>,
 }
 
 impl StarpodAgent {
@@ -168,6 +170,7 @@ impl StarpodAgent {
             core_db,
             paths,
             config: RwLock::new(config),
+            model_registry: tokio::sync::RwLock::new(None),
         })
     }
 
@@ -523,12 +526,12 @@ impl StarpodAgent {
     }
 
     /// Build the LLM provider for the default (or given) provider.
-    fn build_provider(&self, config: &StarpodConfig) -> Result<Box<dyn LlmProvider>> {
-        self.build_provider_for(config.provider(), config)
+    async fn build_provider(&self, config: &StarpodConfig) -> Result<Box<dyn LlmProvider>> {
+        self.build_provider_for(config.provider(), config).await
     }
 
     /// Build an LLM provider for the given provider name using config for API key / base URL.
-    fn build_provider_for(&self, provider_name: &str, config: &StarpodConfig) -> Result<Box<dyn LlmProvider>> {
+    async fn build_provider_for(&self, provider_name: &str, config: &StarpodConfig) -> Result<Box<dyn LlmProvider>> {
         let api_key = config.resolved_provider_api_key(provider_name)
             .ok_or_else(|| StarpodError::Config(format!(
                 "No API key found for provider '{}'. Set it in config.toml or via environment variable.",
@@ -540,7 +543,7 @@ impl StarpodAgent {
                 provider_name
             )))?;
 
-        let pricing = self.load_model_registry();
+        let pricing = self.load_model_registry().await;
 
         let provider: Box<dyn LlmProvider> = match provider_name {
             "anthropic" => Box::new(
@@ -566,10 +569,23 @@ impl StarpodAgent {
         Ok(provider)
     }
 
-    /// Load the pricing registry: embedded defaults + optional config override.
-    fn load_model_registry(&self) -> Arc<ModelRegistry> {
+    /// Load the model registry: embedded defaults + optional config override + Ollama discovery.
+    ///
+    /// The registry is cached after first load. Ollama models are discovered
+    /// asynchronously on first call — if Ollama isn't running, this falls back
+    /// gracefully to the static catalog.
+    async fn load_model_registry(&self) -> Arc<ModelRegistry> {
+        // Return cached if available.
+        {
+            let cached = self.model_registry.read().await;
+            if let Some(ref reg) = *cached {
+                return Arc::clone(reg);
+            }
+        }
+
         let mut registry = ModelRegistry::with_defaults();
 
+        // Layer 1: user overrides from config/models.toml.
         let pricing_path = self.paths.config_dir.join("models.toml");
         if pricing_path.exists() {
             match std::fs::read_to_string(&pricing_path) {
@@ -579,16 +595,38 @@ impl StarpodAgent {
                         registry.merge(overrides);
                     }
                     Err(e) => {
-                        warn!(path = %pricing_path.display(), error = %e, "failed to parse pricing.toml, using defaults");
+                        warn!(path = %pricing_path.display(), error = %e, "failed to parse models.toml, using defaults");
                     }
                 },
                 Err(e) => {
-                    warn!(path = %pricing_path.display(), error = %e, "failed to read pricing.toml, using defaults");
+                    warn!(path = %pricing_path.display(), error = %e, "failed to read models.toml, using defaults");
                 }
             }
         }
 
-        Arc::new(registry)
+        // Layer 2: Ollama auto-discovery.
+        let config = self.config.read().unwrap().clone();
+        if let Some(base_url) = config.resolved_provider_base_url("ollama") {
+            let discovery = OllamaDiscovery::new(&base_url);
+            match discovery.discover_all().await {
+                Ok(ollama_models) => {
+                    debug!(count = ollama_models.len(), "discovered ollama models");
+                    registry.merge(ollama_models);
+                }
+                Err(e) => {
+                    debug!(error = %e, "ollama discovery unavailable, using static catalog only");
+                }
+            }
+        }
+
+        let result = Arc::new(registry);
+        *self.model_registry.write().await = Some(Arc::clone(&result));
+        result
+    }
+
+    /// Invalidate the cached model registry (e.g. after config change).
+    pub async fn invalidate_model_registry(&self) {
+        *self.model_registry.write().await = None;
     }
 
     /// Build the pre-compaction handler that saves key facts before context is discarded.
@@ -663,7 +701,7 @@ impl StarpodAgent {
             .or_else(|| config.compaction_model.clone())
             .unwrap_or_else(|| config.model().to_string());
 
-        let provider: Arc<dyn LlmProvider> = match self.build_provider(config) {
+        let provider: Arc<dyn LlmProvider> = match self.build_provider(config).await {
             Ok(p) => Arc::from(p),
             Err(e) => {
                 warn!(error = %e, "Failed to build provider for memory flush, falling back to dumb dump");
@@ -834,7 +872,7 @@ impl StarpodAgent {
         let (resolved_provider, resolved_model) = config
             .resolve_model(message.model.as_deref())
             .map_err(|e| StarpodError::Config(e))?;
-        let provider = self.build_provider_for(&resolved_provider, &config)?;
+        let provider = self.build_provider_for(&resolved_provider, &config).await?;
 
         let mut builder = Options::builder()
             .allowed_tools(Self::allowed_tools())
@@ -871,7 +909,7 @@ impl StarpodAgent {
             if let Some((cp, cm_name)) = starpod_core::parse_model_spec(cm) {
                 builder = builder.compaction_model(cm_name);
                 if cp != resolved_provider {
-                    match self.build_provider_for(cp, &config) {
+                    match self.build_provider_for(cp, &config).await {
                         Ok(p) => { builder = builder.compaction_provider(p); }
                         Err(e) => {
                             tracing::warn!(provider = cp, error = %e, "Failed to build compaction provider, falling back to primary");
@@ -1070,7 +1108,7 @@ impl StarpodAgent {
         let (resolved_provider, resolved_model) = config
             .resolve_model(message.model.as_deref())
             .map_err(|e| StarpodError::Config(e))?;
-        let provider = self.build_provider_for(&resolved_provider, &config)?;
+        let provider = self.build_provider_for(&resolved_provider, &config).await?;
 
         // Create the followup channel — sender goes to caller, receiver to the agent loop
         let (followup_tx, followup_rx) = mpsc::unbounded_channel::<String>();
@@ -1112,7 +1150,7 @@ impl StarpodAgent {
             if let Some((cp, cm_name)) = starpod_core::parse_model_spec(cm) {
                 builder = builder.compaction_model(cm_name);
                 if cp != resolved_provider {
-                    match self.build_provider_for(cp, &config) {
+                    match self.build_provider_for(cp, &config).await {
                         Ok(p) => { builder = builder.compaction_provider(p); }
                         Err(e) => {
                             tracing::warn!(provider = cp, error = %e, "Failed to build compaction provider, falling back to primary");

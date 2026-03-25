@@ -345,7 +345,7 @@ mod tests {
     fn default_models_are_set() {
         assert_eq!(default_model("anthropic"), "claude-haiku-4-5");
         assert_eq!(default_model("openai"), "gpt-4o");
-        assert_eq!(default_model("ollama"), "llama3.3");
+        assert_eq!(default_model("ollama"), "qwen3.5:9b");
     }
 
     #[test]

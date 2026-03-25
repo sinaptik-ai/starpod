@@ -206,6 +206,13 @@ impl ModelRegistry {
         }
     }
 
+    // ── Dynamic registration ─────────────────────────────────────────
+
+    /// Register a single model dynamically (e.g. from Ollama discovery).
+    pub fn register(&mut self, provider: &str, model_id: &str, info: ModelInfo) {
+        self.models.insert(make_key(provider, model_id), info);
+    }
+
     // ── Model lookups ─────────────────────────────────────────────────
 
     /// Exact-match lookup.
@@ -500,7 +507,7 @@ cache_read_multiplier = 0.05
         assert_eq!(reg.default_model("gemini"), Some("gemini-2.5-pro"));
         assert_eq!(reg.default_model("groq"), Some("llama-3.3-70b-versatile"));
         assert_eq!(reg.default_model("deepseek"), Some("deepseek-chat"));
-        assert_eq!(reg.default_model("ollama"), Some("llama3.3"));
+        assert_eq!(reg.default_model("ollama"), Some("qwen3.5:9b"));
     }
 
     #[test]
@@ -554,5 +561,73 @@ cache_read_multiplier = 0.05
         let gpt41 = reg.get("openai", "gpt-4.1").unwrap();
         assert!(gpt41.supports_tool_use);
         assert!(!gpt41.supports_vision);
+    }
+
+    // ── Dynamic registration ─────────────────────────────────────────
+
+    #[test]
+    fn register_makes_model_visible_via_get() {
+        let mut reg = ModelRegistry::new();
+        reg.register("ollama", "qwen3.5:9b", ModelInfo {
+            id: "qwen3.5:9b".into(),
+            provider: "ollama".into(),
+            pricing: CostRates {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_multiplier: None,
+                cache_creation_multiplier: None,
+            },
+            context_window: Some(262_144),
+            supports_tool_use: true,
+            supports_vision: true,
+        });
+        let info = reg.get("ollama", "qwen3.5:9b").unwrap();
+        assert_eq!(info.context_window, Some(262_144));
+        assert!(info.supports_vision);
+    }
+
+    #[test]
+    fn register_appears_in_models_for_provider() {
+        let mut reg = ModelRegistry::with_defaults();
+        assert!(reg.models_for_provider("ollama").is_empty());
+
+        reg.register("ollama", "llama3:8b", ModelInfo {
+            id: "llama3:8b".into(),
+            provider: "ollama".into(),
+            pricing: CostRates {
+                input_per_million: 0.0,
+                output_per_million: 0.0,
+                cache_read_multiplier: None,
+                cache_creation_multiplier: None,
+            },
+            context_window: Some(131_072),
+            supports_tool_use: true,
+            supports_vision: false,
+        });
+        let models = reg.models_for_provider("ollama");
+        assert_eq!(models, vec!["llama3:8b"]);
+    }
+
+    #[test]
+    fn register_overrides_existing() {
+        let mut reg = ModelRegistry::with_defaults();
+        let original = reg.get("anthropic", "claude-haiku-4-5").unwrap();
+        assert!(original.pricing.input_per_million > 0.0);
+
+        reg.register("anthropic", "claude-haiku-4-5", ModelInfo {
+            id: "claude-haiku-4-5".into(),
+            provider: "anthropic".into(),
+            pricing: CostRates {
+                input_per_million: 99.0,
+                output_per_million: 99.0,
+                cache_read_multiplier: None,
+                cache_creation_multiplier: None,
+            },
+            context_window: Some(200_000),
+            supports_tool_use: true,
+            supports_vision: true,
+        });
+        let updated = reg.get("anthropic", "claude-haiku-4-5").unwrap();
+        assert!((updated.pricing.input_per_million - 99.0).abs() < 1e-9);
     }
 }
