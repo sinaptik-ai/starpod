@@ -5,6 +5,12 @@
 - **Rust 1.87+** — install via [rustup](https://rustup.rs/)
 - **An Anthropic API key** — get one at [console.anthropic.com](https://console.anthropic.com/)
 
+## Install from crates.io
+
+```bash
+cargo install starpod
+```
+
 ## Install from Source
 
 ```bash
@@ -13,7 +19,7 @@ cd starpod
 cargo install --path crates/starpod --locked
 ```
 
-This installs the `starpod` binary to your Cargo bin directory (usually `~/.cargo/bin/`).
+Both methods install the `starpod` binary to your Cargo bin directory (usually `~/.cargo/bin/`).
 
 ## Verify
 

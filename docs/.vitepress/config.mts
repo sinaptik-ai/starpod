@@ -104,6 +104,7 @@ export default defineConfig({
 
     socialLinks: [
       { icon: 'github', link: 'https://github.com/sinaptik-ai/starpod' },
+      { icon: 'discord', link: 'https://discord.com/invite/KYKj9F2FRH' },
     ],
 
     search: {

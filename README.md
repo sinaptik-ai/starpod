@@ -1,90 +1,145 @@
-# Starpod RS
+<p align="center">
+  <img src="docs/public/logo.svg" alt="Starpod" width="80" height="80">
+</p>
 
-A local-first personal AI assistant platform built in Rust, powered by Claude. Each project gets its own `.starpod/` directory with config, memory, credentials, skills, and scheduled tasks — no global state.
+<h1 align="center">Starpod</h1>
+
+<p align="center">
+  <strong>Kubernetes for AI agents. Minus the pain.</strong>
+</p>
+
+<p align="center">
+  <a href="https://starpod.sh">Website</a> · <a href="https://docs.starpod.sh">Docs</a> · <a href="https://console.starpod.sh">Console</a> · <a href="https://discord.com/invite/KYKj9F2FRH">Discord</a>
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-C0C0C0.svg?style=flat-square" alt="MIT License"></a>
+  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-1.87+-C0C0C0.svg?style=flat-square&logo=rust&logoColor=white" alt="Rust 1.87+"></a>
+  <img src="https://img.shields.io/badge/tests-1316-C0C0C0.svg?style=flat-square" alt="1316 tests">
+  <img src="https://img.shields.io/badge/crates-16-C0C0C0.svg?style=flat-square" alt="16 crates">
+  <a href="https://discord.com/invite/KYKj9F2FRH"><img src="https://img.shields.io/discord/1102146545580785686?label=Discord&logo=discord&logoColor=white&color=5865F2&style=flat-square" alt="Discord"></a>
+</p>
+
+---
+
+Starpod is an open-source AI agent runtime built in Rust. Define an agent once — skills, config, tools — then deploy isolated instances for every user, team, or client. Each instance gets its own memory, vault, filesystem, and sessions. No cross-contamination. Scale from 1 to 10,000.
+
+```
+          Starpod UI · Telegram · Slack · Email · API
+                          │
+                          ▼
+               ┌─────────────────────┐
+               │       AGENT         │  Define once
+               │  skills · config    │
+               │  tools · personality│
+               └────────┬────────────┘
+                        │  starpod deploy
+          ┌─────────────┼─────────────┐
+          ▼             ▼             ▼
+    ┌───────────┐ ┌───────────┐ ┌───────────┐
+    │ Instance A│ │ Instance B│ │ Instance C│  Isolated per tenant
+    │ memory    │ │ memory    │ │ memory    │
+    │ vault     │ │ vault     │ │ vault     │
+    │ files     │ │ files     │ │ files     │
+    └───────────┘ └───────────┘ └───────────┘
+```
+
+## Install
+
+```bash
+cargo install starpod
+```
+
+Or from source:
+
+```bash
+git clone https://github.com/sinaptik-ai/starpod.git
+cd starpod
+cargo install --path crates/starpod --locked
+```
+
+## Quick start
+
+```bash
+# Initialize a workspace
+starpod init
+
+# Create an agent
+starpod agent new my-agent
+
+# Run locally
+starpod dev my-agent
+```
+
+```
+  Starpod is running
+
+  Frontend  http://127.0.0.1:3000
+  API       http://127.0.0.1:3000/api
+  WS        ws://127.0.0.1:3000/ws
+  Telegram  connected
+  Model     claude-haiku-4-5
+```
+
+Or deploy to [Starpod Console](https://console.starpod.sh) — one-click deploy, real-time logs, secrets vault, usage analytics. Managed cloud or your own (AWS, GCP, Azure).
+
+## Highlights
+
+- **One agent, infinite instances** — define skills and config once, deploy isolated instances per user, team, or client. Each gets its own memory, vault, and filesystem.
+- **Multi-channel** — Starpod UI, Telegram, Slack, Email, HTTP API, WebSocket streaming. Same agent, every surface.
+- **Persistent memory** — markdown files + SQLite FTS5. Per-user memory spaces. The agent remembers across sessions.
+- **Self-extending skills** — the agent creates, edits, and deletes its own skill files at runtime. `/skill` and it executes.
+- **Encrypted vault** — AES-256-GCM credential storage per instance. API keys never touch disk in plaintext.
+- **Cron scheduling** — interval, cron expressions, one-shot. Runs through the full agent loop, records history.
+- **Channel-aware sessions** — explicit sessions for web/API, time-gap sessions for Telegram. Per-user scoping.
+- **Streaming** — real-time text deltas and tool-use events over WebSocket.
+- **Built in Rust** — 16 crates, 1,316 tests, zero warnings.
 
 ## Architecture
 
 ```
 crates/
 ├── agent-sdk/            Claude API client + agent loop
-├── starpod-hooks/        Lifecycle hook system (events, callbacks, permissions)
-├── starpod-core/         Shared types, config, error handling
-├── starpod-memory/       SQLite FTS5 full-text search + per-user memory
-├── starpod-session/      Channel-aware session lifecycle (per-user)
-├── starpod-skills/       Self-extension skill system (markdown-based)
-├── starpod-cron/         Cron scheduling (interval, cron expr, one-shot)
+├── starpod-hooks/        Lifecycle hooks, events, permissions
+├── starpod-core/         Config, shared types, errors
+├── starpod-db/           Unified SQLite (core.db)
+├── starpod-memory/       FTS5 full-text search + per-user memory
+├── starpod-vault/        AES-256-GCM encrypted credentials
+├── starpod-session/      Channel-aware session lifecycle
+├── starpod-skills/       Markdown-based self-extension
+├── starpod-cron/         Scheduling (interval, cron, one-shot)
 ├── starpod-agent/        Orchestrator wiring everything together
 ├── starpod-gateway/      Axum HTTP/WS server + embedded web UI
-├── starpod-telegram/     Telegram bot interface (teloxide)
-├── starpod-instances/    Remote instance management client
+├── starpod-telegram/     Telegram bot (teloxide)
+├── starpod-instances/    Remote instance management
 └── starpod/              CLI binary
 ```
 
-## Quick Start
+## Instance layout
 
-### Prerequisites
-
-- Rust 1.87+
-- An Anthropic API key
-
-### Install
-
-```bash
-cargo install --path crates/starpod --locked
-```
-
-### Initialize a Workspace
-
-```bash
-cd your-project
-starpod init
-```
-
-The interactive wizard walks you through provider selection (Anthropic, OpenAI, Gemini, Groq, DeepSeek, OpenRouter, Ollama), model, API key (saved to `.env`), and optionally creating your first agent.
-
-To skip the wizard and use defaults (Anthropic / `claude-haiku-4-5`):
-
-```bash
-starpod init --default
-```
-
-### Create an Agent
-
-If you didn't create one during init:
-
-```bash
-starpod agent new my-agent
-```
-
-### Run
-
-```bash
-# Start in dev mode (applies blueprint, creates .instances/, serves)
-starpod dev my-agent
-
-# One-shot chat
-starpod chat -a my-agent "What files are in this directory?"
-
-# Interactive REPL
-starpod repl -a my-agent
-```
-
-When you run `starpod dev`, you'll see:
+Each instance gets its own isolated `.starpod/` directory:
 
 ```
-  Starpod is running
-
-  Frontend http://127.0.0.1:3000
-  API      http://127.0.0.1:3000/api
-  WS       ws://127.0.0.1:3000/ws
-  Telegram not configured
-  Model    claude-haiku-4-5
-  Project  /path/to/your-project
+.starpod/
+├── .env                    Secrets (never overwritten by deploy)
+├── config/
+│   ├── agent.toml          Agent configuration
+│   ├── SOUL.md             Personality
+│   └── BOOT.md             Bootstrap prompt
+├── skills/                 Skill files (merged on build)
+├── db/
+│   ├── core.db             Sessions + cron + auth
+│   ├── memory.db           FTS5 + vectors
+│   └── vault.db            Encrypted credentials
+└── users/<id>/
+    ├── USER.md             User profile
+    ├── MEMORY.md           Memory index
+    └── memory/             Daily logs
 ```
 
-### Configure
+## Configuration
 
-**Workspace config** (`starpod.toml`) — shared defaults for all agents:
+**Workspace** (`starpod.toml`) — shared defaults for all agents:
 
 ```toml
 provider = "anthropic"
@@ -92,242 +147,105 @@ model = "claude-haiku-4-5"
 max_turns = 30
 ```
 
-**Agent config** (`agents/<name>/agent.toml`) — per-agent overrides:
+**Agent** (`agents/<name>/agent.toml`) — per-agent overrides:
 
 ```toml
 agent_name = "Aster"
 model = "claude-haiku-4-5"
-# reasoning_effort = "medium"
-# timezone = "Europe/Rome"
-
-[providers.anthropic]
-# base_url = "https://custom.example.com"  # Optional override
 
 [channels.telegram]
-# gap_minutes = 360
-# allowed_users = [123456789, "alice"]
+allowed_users = [123456789]
 ```
 
-**Secrets** go in `.env` at the workspace root (never in config):
-- `ANTHROPIC_API_KEY`, `TELEGRAM_BOT_TOKEN`, `BRAVE_API_KEY`, etc.
-- Populated into an encrypted vault at serve time
-
-**Personality** is defined in `agents/<name>/SOUL.md`, not in config.
-
-## CLI Reference
+**Secrets** in `.env` — never in config:
 
 ```
-starpod init                              Initialize workspace (interactive wizard)
-starpod init --default                    Initialize with defaults (no wizard)
-starpod agent new <name>                  Create a new agent blueprint
-starpod agent list                        List agents in workspace
-starpod dev <agent> [--port N]            Apply blueprint + start dev server
-starpod serve                             Start production server (single-agent mode)
-starpod chat -a <agent> "<message>"       Send a one-shot message
-starpod repl -a <agent>                   Interactive REPL session
-
-starpod memory search "<query>" [-l 5]    Full-text search over memory
-starpod memory reindex                    Rebuild the FTS5 index
-starpod sessions list [-l 10]             List recent sessions
-
-starpod skill list                        List all skills
-starpod skill show <name>                 Show a skill's content
-starpod skill new <name> -d "..." -b "..."  Create a skill
-starpod skill delete <name>               Delete a skill
-
-starpod cron list                         List all cron jobs
-starpod cron remove <name>                Remove a cron job
-starpod cron runs <name> [-l 10]          Show recent runs for a job
-starpod cron run <name>                   Trigger a job immediately
-starpod cron edit <name> [--prompt ...] [--schedule ...] [--enabled true/false] [--max-retries N] [--timeout-secs N] [--session-mode ...]
+ANTHROPIC_API_KEY=sk-ant-...
+TELEGRAM_BOT_TOKEN=123456789:ABC...
 ```
 
-## Web UI
+**Personality** in `SOUL.md` — not in config.
 
-The embedded web UI is served at `http://localhost:3000/` when running `starpod dev`.
-
-- Minimal dark theme
-- Streaming responses via WebSocket with live text deltas
-- Collapsible tool cards — click to expand input JSON and results
-- Clickable URLs in responses
-- Usage stats after each response (turns, cost, tokens)
-- Auto-reconnect with exponential backoff
-
-API key authentication: set `STARPOD_API_KEY` env var on the server, then `localStorage.setItem('starpod_api_key', 'your-key')` in the browser.
-
-## Telegram Bot
-
-### Setup (step by step)
-
-1. **Create a bot with BotFather**
-   - Open Telegram and search for `@BotFather`
-   - Send `/newbot`
-   - Choose a name (e.g. "My Starpod Assistant")
-   - Choose a username (must end in `bot`, e.g. `my_starpod_bot`)
-   - BotFather will reply with a token like `123456789:ABCdefGHIjklMNOpqrsTUVwxyz`
-
-2. **Add the token to your `.env`**
-
-   Add to your workspace `.env`:
-   ```
-   TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
-   ```
-
-3. **Restrict access (recommended)**
-
-   Send `/start` to your bot — it will reply with your user ID and username. Add to `agents/<name>/agent.toml`:
-   ```toml
-   [channels.telegram]
-   allowed_users = [123456789]
-   ```
-   You can mix user IDs and usernames (without `@`): `allowed_users = [123456789, "alice", 987654321]`
-
-   The bot won't respond to anyone until you add at least one entry. `/start` is the only command that works without being whitelisted (so you can discover your ID and username).
-
-4. **Start the server**
-   ```bash
-   starpod dev <agent-name>
-   ```
-   You should see `Telegram  connected` in the startup banner. The bot is now running.
-
-5. **Chat with your bot**
-   - Open Telegram and search for your bot's username (e.g. `@my_starpod_bot`)
-   - Send `/start` to begin
-   - Send any message — the bot uses the same agent as the web UI and API
-
-### Optional: customize your bot in BotFather
-
-- `/setdescription` — set what users see before starting a chat
-- `/setabouttext` — set the bio shown on the bot's profile
-- `/setuserpic` — set the bot's profile picture
-- `/setcommands` — register `/start` as a command with a description
-
-### Features
-
-- Shares the same `StarpodAgent` instance with the web UI and API
-- Shows typing indicator while the agent is thinking
-- Splits long responses at line boundaries (Telegram's 4096-char limit)
-- Sends as HTML (`ParseMode::Html`), falls back to plain text on parse failure
-
-## Gateway API
-
-### Authentication
-
-Set the `STARPOD_API_KEY` environment variable to require API key auth. Clients include it in the `X-API-Key` header (HTTP) or `?token=` query param (WebSocket).
-
-### HTTP Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/chat` | Send a chat message |
-| `GET` | `/api/frame-check?url=...` | Check if a URL allows framing |
-| `GET` | `/api/sessions?limit=20` | List recent sessions |
-| `GET` | `/api/sessions/:id` | Get a specific session |
-| `GET` | `/api/sessions/:id/messages` | Get session messages |
-| `GET` | `/api/memory/search?q=...&limit=10` | Full-text search |
-| `POST` | `/api/memory/reindex` | Rebuild FTS index |
-| `GET` | `/api/instances` | List remote instances |
-| `POST` | `/api/instances` | Create a remote instance |
-| `GET` | `/api/instances/:id` | Get instance details |
-| `DELETE` | `/api/instances/:id` | Delete an instance |
-| `POST` | `/api/instances/:id/pause` | Pause an instance |
-| `POST` | `/api/instances/:id/restart` | Restart an instance |
-| `GET` | `/api/instances/:id/health` | Instance health check |
-| `GET` | `/api/health` | Health check |
-
-### WebSocket Streaming
-
-Connect to `ws://localhost:3000/ws` (or `ws://localhost:3000/ws?token=KEY`).
-
-**Client sends:**
-```json
-{"type": "message", "text": "Hello!", "channel_id": "main", "channel_session_key": "conv-uuid-here"}
-```
-
-**Server streams:**
-```json
-{"type": "stream_start", "session_id": "..."}
-{"type": "text_delta", "text": "Hi "}
-{"type": "text_delta", "text": "there!"}
-{"type": "tool_use", "id": "toolu_abc123", "name": "Read", "input": {"file_path": "/tmp/foo.txt"}}
-{"type": "tool_result", "tool_use_id": "toolu_abc123", "content": "file contents...", "is_error": false}
-{"type": "stream_end", "session_id": "...", "num_turns": 1, "cost_usd": 0.004, "input_tokens": 1200, "output_tokens": 45, "is_error": false, "errors": []}
-```
-
-## Agent Tools
-
-The agent has access to built-in tools from the SDK plus 20 custom tools:
+## Agent tools
 
 | Category | Tools |
 |----------|-------|
 | Built-in | `Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep` |
 | Memory | `MemorySearch`, `MemoryWrite`, `MemoryAppendDaily` |
 | Environment | `EnvGet` |
-| File Sandbox | `FileRead`, `FileWrite`, `FileList`, `FileDelete` |
+| File sandbox | `FileRead`, `FileWrite`, `FileList`, `FileDelete` |
 | Skills | `SkillActivate`, `SkillCreate`, `SkillUpdate`, `SkillDelete`, `SkillList` |
 | Cron | `CronAdd`, `CronList`, `CronRemove`, `CronRuns`, `CronRun`, `CronUpdate`, `HeartbeatWake` |
 
-The Bash tool supports `run_in_background: true` for long-running processes (servers, etc.) that should not block the agent.
+## API
 
-## Crate Details
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/chat` | Send a message |
+| `GET` | `/api/sessions` | List sessions |
+| `GET` | `/api/sessions/:id` | Get session |
+| `GET` | `/api/sessions/:id/messages` | Session messages |
+| `GET` | `/api/memory/search?q=...` | Full-text search |
+| `POST` | `/api/memory/reindex` | Rebuild FTS index |
+| `GET` | `/api/health` | Health check |
 
-### agent-sdk
+WebSocket at `ws://localhost:3000/ws`. Auth via `X-API-Key` header or `?token=` param.
 
-Rust port of the Claude Agent SDK. Provides `query()` which drives the agentic loop: prompt → Claude API → tool execution → feed results → repeat.
-
-```rust
-use agent_sdk::{query, Options, Message};
-use tokio_stream::StreamExt;
-
-let mut stream = query(
-    "What files are in this directory?",
-    Options::builder()
-        .allowed_tools(vec!["Bash".into(), "Glob".into()])
-        .build(),
-);
-
-while let Some(msg) = stream.next().await {
-    let msg = msg?;
-    if let Message::Result(result) = &msg {
-        println!("{}", result.result.as_deref().unwrap_or(""));
-    }
-}
+```json
+← {"type": "message", "text": "Hello"}
+→ {"type": "stream_start", "session_id": "..."}
+→ {"type": "text_delta", "text": "Hi "}
+→ {"type": "text_delta", "text": "there!"}
+→ {"type": "tool_use", "name": "Read", "input": {...}}
+→ {"type": "tool_result", "content": "..."}
+→ {"type": "stream_end", "cost_usd": 0.004}
 ```
 
-### starpod-memory
+## Telegram
 
-Persistent memory: markdown files on disk + SQLite FTS5 index. Text is chunked into ~400-token segments with 80-token overlap at line boundaries. `bootstrap_context()` returns SOUL.md (agent-level), while `UserMemoryView` assembles per-user context: USER.md, MEMORY.md, and recent daily logs. Each user gets their own memory space under `.starpod/users/<id>/`.
+1. Create a bot with [@BotFather](https://t.me/BotFather)
+2. Add `TELEGRAM_BOT_TOKEN=...` to `.env`
+3. Add `allowed_users` to `agent.toml`
+4. `starpod dev <agent>` — look for `Telegram connected`
 
-### starpod-session
+The bot shares the same agent as web and API. Typing indicators, smart message splitting, HTML rendering with plain-text fallback.
 
-Channel-aware session management with per-channel strategies and per-user scoping:
+## CLI
 
-- **`main`** (web, REPL, CLI): Explicit sessions — the client provides a `channel_session_key` (e.g. a conversation UUID) and the session continues until closed. Multiple concurrent sessions are supported.
-- **`telegram`**: Time-gap sessions — messages within 6 hours continue the same session (keyed by chat ID), otherwise a new session starts and the old one is auto-closed.
+```
+starpod init                          Initialize workspace
+starpod agent new <name>              Create agent
+starpod agent list                    List agents
+starpod dev <agent>                   Dev server (blueprint + serve)
+starpod serve                         Production server
+starpod chat -a <agent> "..."         One-shot message
+starpod repl -a <agent>               Interactive REPL
 
-Tracks token usage and cost per turn. The scheduler creates standalone `main` sessions (one per cron run) and delivers results via the configured notification channel.
+starpod memory search "..." [-l 5]    Search memory
+starpod memory reindex                Rebuild FTS5 index
+starpod sessions list [-l 10]         List sessions
 
-### starpod-skills
+starpod skill list                    List skills
+starpod skill new <name> -d "..."     Create skill
+starpod skill delete <name>           Delete skill
 
-Markdown-based skill files at `.starpod/skills/<name>/SKILL.md`. Skills are injected into the system prompt on every turn. The agent can create, update, and delete skills at runtime.
-
-### starpod-cron
-
-Scheduling system supporting interval (`every_ms`), cron expressions, and one-shot (`at`) schedules. Cron expressions are evaluated in the user's local timezone when `timezone` is configured in agent.toml. A background scheduler (30s tick) runs jobs through `StarpodAgent::chat()` and records run history.
+starpod cron list                     List cron jobs
+starpod cron remove <name>            Remove cron job
+starpod cron runs <name>              Show run history
+starpod cron run <name>               Trigger immediately
+```
 
 ## Development
-
-### Run Tests
-
-```bash
-cargo test
-```
-
-407 tests across all crates, zero warnings.
 
 ```bash
 cargo test --workspace
 ```
+
+## Community
+
+- [Discord](https://discord.com/invite/KYKj9F2FRH) — questions, feedback, show & tell
+- [GitHub Issues](https://github.com/sinaptik-ai/starpod/issues) — bug reports and feature requests
+- [Docs](https://docs.starpod.sh) — full documentation
 
 ## License
 

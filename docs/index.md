@@ -11,6 +11,9 @@ hero:
     - theme: alt
       text: View on GitHub
       link: https://github.com/sinaptik-ai/starpod
+    - theme: alt
+      text: Join Discord
+      link: https://discord.com/invite/KYKj9F2FRH
 features:
   - icon: 🧠
     title: Persistent Memory
