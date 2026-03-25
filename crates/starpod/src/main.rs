@@ -659,12 +659,6 @@ fn generate_deploy_manifest(
         let models = table.get("models")
             .and_then(|v| v.as_array())
             .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>())
-            .or_else(|| {
-                // Fallback: provider + model fields
-                let provider = table.get("provider").and_then(|v| v.as_str()).unwrap_or("anthropic");
-                let model = table.get("model").and_then(|v| v.as_str()).unwrap_or("claude-sonnet-4-6");
-                Some(vec![format!("{}/{}", provider, model)])
-            })
             .unwrap_or_default();
 
         let telegram_enabled = table.get("channels")
@@ -1015,25 +1009,39 @@ async fn scaffold_agent_blueprint(
     };
 
     // Bake workspace defaults into agent.toml (self-contained)
-    let effective_provider = ws_str("provider", provider);
-    let effective_model = ws_str("model", model);
+    // Read models array from workspace config, falling back to provider/model args
+    let effective_models: Vec<String> = ws_config
+        .as_ref()
+        .and_then(|v| v.get("models"))
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_else(|| vec![format!("{provider}/{model}")]);
     let effective_max_turns = ws_int("max_turns", 30);
     let effective_server_addr = ws_str("server_addr", "127.0.0.1:3000");
+
+    // Format models array as TOML inline array
+    let models_toml = format!(
+        "[{}]",
+        effective_models
+            .iter()
+            .map(|m| format!("\"{}\"", m))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
 
     let agent_toml = format!(
         r#"# Agent configuration for {name}
 # This file is self-contained — all settings are here (not inherited from starpod.toml).
 
 agent_name = "{display_name}"
-provider = "{provider}"
-model = "{model}"
+models = {models}
 max_turns = {max_turns}
 server_addr = "{server_addr}"
 # skills = []  # empty = all workspace skills
 
 # max_tokens = 16384
 # reasoning_effort = "low"  # low, medium, high
-# compaction_model = "{model}"
+# compaction_model = "{compaction_model}"
 # timezone = "Europe/Rome"  # IANA format, used for cron scheduling
 # followup_mode = "inject"  # inject or queue
 
@@ -1069,10 +1077,10 @@ server_addr = "{server_addr}"
 "#,
         name = name,
         display_name = display_name,
-        provider = effective_provider,
-        model = effective_model,
+        models = models_toml,
         max_turns = effective_max_turns,
         server_addr = effective_server_addr,
+        compaction_model = effective_models.first().map(|s| s.as_str()).unwrap_or("anthropic/claude-haiku-4-5"),
     );
     tokio::fs::write(agent_dir.join("agent.toml"), agent_toml).await?;
 

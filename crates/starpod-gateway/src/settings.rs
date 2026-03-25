@@ -412,8 +412,6 @@ async fn put_general(
 
     let models_arr: Vec<toml::Value> = settings.models.into_iter().map(toml::Value::String).collect();
     table.insert("models".into(), toml::Value::Array(models_arr));
-    table.remove("provider"); // clean up legacy fields if present
-    table.remove("model");
     table.insert("max_turns".into(), toml::Value::Integer(settings.max_turns as i64));
     table.insert("max_tokens".into(), toml::Value::Integer(settings.max_tokens as i64));
     table.insert("agent_name".into(), toml::Value::String(settings.agent_name));
