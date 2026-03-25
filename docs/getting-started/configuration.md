@@ -58,6 +58,9 @@ agent_name = "Aster"              # Agent display name (personality in SOUL.md)
 
 [providers.ollama]
 # base_url = "http://localhost:11434/v1/chat/completions"  # No API key needed
+# [providers.ollama.options]
+# keep_alive = "5m"              # Keep model loaded for KV cache reuse (default: "5m")
+# num_ctx = 32768                # Context window size override
 
 # ─── Memory ───────────────────────────────────────────
 [memory]
@@ -142,6 +145,25 @@ Each provider uses its conventional env var name (e.g. `ANTHROPIC_API_KEY`, `OPE
 ::: warning
 Never commit API keys to version control. Use the Settings UI or `.env` files (gitignored, dev only).
 :::
+
+## Provider Options
+
+Each provider supports an optional `[providers.<name>.options]` table for provider-specific fields that are merged into every API request body. This is most useful for Ollama, which accepts extra parameters to control model loading and context size.
+
+| Key | Provider | Default | Description |
+|-----|----------|---------|-------------|
+| `keep_alive` | Ollama | `"5m"` | How long to keep the model loaded after a request. Ensures KV cache reuse between agentic loop turns. Set to `"-1"` for indefinite. |
+| `num_ctx` | Ollama | model default | Context window size override. Larger values use more VRAM but allow longer conversations. |
+
+Starpod automatically sets `keep_alive = "5m"` for Ollama if not explicitly configured, ensuring the model stays loaded and its KV cache is reused across consecutive agentic turns.
+
+```toml
+[providers.ollama.options]
+keep_alive = "30m"
+num_ctx = 32768
+```
+
+Options are passed through as-is — any field accepted by the provider's API can be set here.
 
 ## Telegram Settings
 

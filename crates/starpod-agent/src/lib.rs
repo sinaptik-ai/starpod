@@ -554,8 +554,15 @@ impl StarpodAgent {
             ),
             // OpenAI-compatible providers
             "openai" | "groq" | "deepseek" | "openrouter" | "ollama" => {
+                let mut opts = config.provider_options(provider_name).clone();
+                // Ollama: default keep_alive to ensure KV cache reuse between agentic turns
+                if provider_name == "ollama" && !opts.contains_key("keep_alive") {
+                    opts.insert("keep_alive".into(), serde_json::json!("5m"));
+                }
                 Box::new(
-                    OpenAiProvider::with_base_url(api_key, base_url, provider_name).with_pricing(pricing)
+                    OpenAiProvider::with_base_url(api_key, base_url, provider_name)
+                        .with_pricing(pricing)
+                        .with_extra_body(opts)
                 )
             }
             other => {

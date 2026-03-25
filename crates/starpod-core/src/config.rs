@@ -97,6 +97,11 @@ pub struct ProviderConfig {
     /// Preferred models shown first.
     #[serde(default)]
     pub models: Vec<String>,
+    /// Provider-specific options merged into every request body.
+    ///
+    /// For Ollama: `keep_alive`, `num_ctx`, etc.
+    #[serde(default)]
+    pub options: serde_json::Map<String, serde_json::Value>,
 }
 
 fn default_true() -> bool {
@@ -833,6 +838,25 @@ impl StarpodConfig {
             };
             Some(default_url.to_string())
         })
+    }
+
+    /// Return provider-specific options (empty map if none configured).
+    pub fn provider_options(&self, provider: &str) -> &serde_json::Map<String, serde_json::Value> {
+        static EMPTY: std::sync::LazyLock<serde_json::Map<String, serde_json::Value>> =
+            std::sync::LazyLock::new(serde_json::Map::new);
+
+        let cfg = match provider {
+            "anthropic" => self.providers.anthropic.as_ref(),
+            "openai" => self.providers.openai.as_ref(),
+            "gemini" => self.providers.gemini.as_ref(),
+            "groq" => self.providers.groq.as_ref(),
+            "deepseek" => self.providers.deepseek.as_ref(),
+            "openrouter" => self.providers.openrouter.as_ref(),
+            "ollama" => self.providers.ollama.as_ref(),
+            _ => None,
+        };
+
+        cfg.map(|c| &c.options).unwrap_or(&EMPTY)
     }
 
 }
@@ -1863,5 +1887,60 @@ mod tests {
     fn models_default_when_absent() {
         let config: StarpodConfig = toml::from_str("").unwrap();
         assert_eq!(config.models, vec!["anthropic/claude-haiku-4-5"]);
+    }
+
+    // ── Provider options tests ──────────────────────────────────────────
+
+    #[test]
+    fn provider_options_empty_by_default() {
+        let config = StarpodConfig::default();
+        assert!(config.provider_options("ollama").is_empty());
+        assert!(config.provider_options("openai").is_empty());
+    }
+
+    #[test]
+    fn provider_options_unknown_provider_returns_empty() {
+        let config = StarpodConfig::default();
+        assert!(config.provider_options("nonexistent").is_empty());
+    }
+
+    #[test]
+    fn provider_options_parsed_from_toml() {
+        let toml = r#"
+            [providers.ollama.options]
+            keep_alive = "30m"
+            num_ctx = 32768
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        let opts = config.provider_options("ollama");
+        assert_eq!(opts["keep_alive"], "30m");
+        assert_eq!(opts["num_ctx"], 32768);
+    }
+
+    #[test]
+    fn provider_options_empty_when_section_present_but_no_options() {
+        let toml = r#"
+            [providers.ollama]
+            base_url = "http://localhost:11434/v1/chat/completions"
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert!(config.provider_options("ollama").is_empty());
+    }
+
+    #[test]
+    fn provider_options_per_provider_isolation() {
+        let toml = r#"
+            [providers.ollama.options]
+            keep_alive = "5m"
+
+            [providers.openai.options]
+            seed = 42
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.provider_options("ollama").len(), 1);
+        assert_eq!(config.provider_options("ollama")["keep_alive"], "5m");
+        assert_eq!(config.provider_options("openai").len(), 1);
+        assert_eq!(config.provider_options("openai")["seed"], 42);
+        assert!(config.provider_options("anthropic").is_empty());
     }
 }
