@@ -285,4 +285,48 @@ mod tests {
             .unwrap();
         assert_eq!(count.0, 3); // set + get + delete
     }
+
+    // ── derive_master_key tests ───────────────────────────────────
+
+    #[test]
+    fn test_derive_master_key_creates_new() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let db_dir = tmp.path().join("db");
+        // db_dir doesn't exist yet — derive_master_key should create it
+        let key = derive_master_key(&db_dir).unwrap();
+        assert_eq!(key.len(), 32);
+        assert!(db_dir.join(".vault_key").exists());
+    }
+
+    #[test]
+    fn test_derive_master_key_reads_existing() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let db_dir = tmp.path().join("db");
+
+        let key1 = derive_master_key(&db_dir).unwrap();
+        let key2 = derive_master_key(&db_dir).unwrap();
+        // Same key on second call
+        assert_eq!(key1, key2);
+    }
+
+    #[test]
+    fn test_derive_master_key_rejects_wrong_length() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let db_dir = tmp.path().join("db");
+        std::fs::create_dir_all(&db_dir).unwrap();
+        // Write a key with wrong length
+        std::fs::write(db_dir.join(".vault_key"), &[0u8; 16]).unwrap();
+
+        let result = derive_master_key(&db_dir);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("invalid length"));
+    }
+
+    #[test]
+    fn test_derive_master_key_different_dirs_different_keys() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let key1 = derive_master_key(&tmp.path().join("a")).unwrap();
+        let key2 = derive_master_key(&tmp.path().join("b")).unwrap();
+        assert_ne!(key1, key2);
+    }
 }

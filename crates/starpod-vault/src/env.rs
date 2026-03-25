@@ -1,12 +1,20 @@
 //! Deploy.toml ↔ vault env resolution.
 //!
-//! At **build time**, [`populate_vault`] reads `.env` + `deploy.toml` declarations
-//! and encrypts all secrets and variables into the instance vault. It validates
-//! that all required secrets are present.
+//! # Flow
 //!
-//! At **serve time**, [`inject_env_from_vault`] decrypts vault entries and injects
-//! them into the process environment so the agent and its tools can read them
-//! via `std::env::var()`.
+//! ```text
+//! .env (workspace root, user-managed)
+//!   ↓ validate_env() at build time — fail fast if required secrets missing
+//!   ↓ populate_vault() at serve time — encrypt into vault.db
+//!   ↓ inject_env_from_vault() at serve time — decrypt into process env
+//! agent starts with all declared env vars available
+//! ```
+//!
+//! # Functions
+//!
+//! - [`validate_env`] — dry check at build time, no writes, fails on missing required secrets
+//! - [`populate_vault`] — reads `.env` + `deploy.toml`, writes to vault (serve time)
+//! - [`inject_env_from_vault`] — reads vault, sets `std::env` vars (serve time)
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -574,5 +582,167 @@ description = "City"
         std::env::remove_var("RT_API_KEY");
         std::env::remove_var("RT_TIMEOUT");
         std::env::remove_var("RT_CITY");
+    }
+
+    // ── validate_env tests ────────────────────────────────────────
+
+    #[test]
+    fn test_validate_env_no_deploy_toml() {
+        let tmp = TempDir::new().unwrap();
+        let warnings = validate_env(&tmp.path().join("nope.toml"), None).unwrap();
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_validate_env_all_present() {
+        let tmp = TempDir::new().unwrap();
+        let env_path = write_env(tmp.path(), "KEY_A=val\nKEY_B=val\n");
+        let deploy_path = write_deploy_toml(tmp.path(), r#"
+version = 1
+
+[agent.secrets.KEY_A]
+secret = "KEY_A"
+required = true
+description = "A"
+
+[skills.s.secrets.KEY_B]
+secret = "KEY_B"
+required = true
+description = "B"
+"#);
+        let warnings = validate_env(&deploy_path, Some(&env_path)).unwrap();
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_validate_env_missing_required_fails() {
+        let tmp = TempDir::new().unwrap();
+        let env_path = write_env(tmp.path(), ""); // empty
+        let deploy_path = write_deploy_toml(tmp.path(), r#"
+version = 1
+
+[agent.secrets.MISSING_KEY]
+secret = "MISSING_KEY"
+required = true
+description = "Required key"
+"#);
+        let result = validate_env(&deploy_path, Some(&env_path));
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("MISSING_KEY"));
+    }
+
+    #[test]
+    fn test_validate_env_missing_optional_warns() {
+        let tmp = TempDir::new().unwrap();
+        let env_path = write_env(tmp.path(), "");
+        let deploy_path = write_deploy_toml(tmp.path(), r#"
+version = 1
+
+[agent.secrets.OPT_KEY]
+secret = "OPT_KEY"
+required = false
+description = "Optional"
+"#);
+        let warnings = validate_env(&deploy_path, Some(&env_path)).unwrap();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("OPT_KEY"));
+    }
+
+    #[test]
+    fn test_validate_env_deduplicates_across_skills() {
+        let tmp = TempDir::new().unwrap();
+        let env_path = write_env(tmp.path(), ""); // missing
+        let deploy_path = write_deploy_toml(tmp.path(), r#"
+version = 1
+
+[skills.a.secrets.SHARED]
+secret = "SHARED"
+required = false
+description = "In skill A"
+
+[skills.b.secrets.SHARED]
+secret = "SHARED"
+required = false
+description = "In skill B"
+"#);
+        let warnings = validate_env(&deploy_path, Some(&env_path)).unwrap();
+        // Deduplicated: only one warning for SHARED
+        assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn test_validate_env_no_env_file() {
+        let tmp = TempDir::new().unwrap();
+        let deploy_path = write_deploy_toml(tmp.path(), r#"
+version = 1
+
+[agent.secrets.KEY]
+secret = "KEY"
+required = true
+description = "Needed"
+"#);
+        // No .env file at all
+        let result = validate_env(&deploy_path, None);
+        assert!(result.is_err());
+    }
+
+    // ── parse_env_file edge cases ─────────────────────────────────
+
+    #[test]
+    fn test_parse_env_comments_and_empty_lines() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join(".env");
+        std::fs::write(&path, "# comment\n\nKEY=value\n\n# another\nKEY2=val2\n").unwrap();
+        let map = parse_env_file(&path).unwrap();
+        assert_eq!(map.len(), 2);
+        assert_eq!(map["KEY"], "value");
+        assert_eq!(map["KEY2"], "val2");
+    }
+
+    #[test]
+    fn test_parse_env_quoted_values() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join(".env");
+        std::fs::write(&path, "KEY=\"hello world\"\nKEY2=unquoted\n").unwrap();
+        let map = parse_env_file(&path).unwrap();
+        assert_eq!(map["KEY"], "hello world");
+        assert_eq!(map["KEY2"], "unquoted");
+    }
+
+    #[test]
+    fn test_parse_env_empty_value() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join(".env");
+        std::fs::write(&path, "KEY=\n").unwrap();
+        let map = parse_env_file(&path).unwrap();
+        assert_eq!(map["KEY"], "");
+    }
+
+    #[test]
+    fn test_parse_env_value_with_equals() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join(".env");
+        std::fs::write(&path, "KEY=abc=def=ghi\n").unwrap();
+        let map = parse_env_file(&path).unwrap();
+        assert_eq!(map["KEY"], "abc=def=ghi");
+    }
+
+    #[test]
+    fn test_parse_env_whitespace_trimmed() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join(".env");
+        std::fs::write(&path, "  KEY  =  value  \n").unwrap();
+        let map = parse_env_file(&path).unwrap();
+        assert_eq!(map["KEY"], "value");
+    }
+
+    #[test]
+    fn test_parse_env_empty_file() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join(".env");
+        std::fs::write(&path, "").unwrap();
+        let map = parse_env_file(&path).unwrap();
+        assert!(map.is_empty());
     }
 }
