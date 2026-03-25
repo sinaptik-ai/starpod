@@ -24,7 +24,7 @@ use tracing::{debug, warn};
 use starpod_core::deploy_manifest::DeployManifest;
 use starpod_core::{Result, StarpodError};
 
-use crate::Vault;
+use crate::{Vault, SYSTEM_KEYS};
 
 // ── .env parser ─────────────────────────────────────────────────────────────
 
@@ -172,12 +172,18 @@ pub async fn populate_vault(
     }
 
     // ── Phase 1: Validate — fail fast before writing anything ────
+    // A secret is satisfied if it appears in .env OR is already sealed in the
+    // vault (from a prior `starpod build`).  This allows `starpod serve` to
+    // run without a .env file on disk when the vault was pre-populated.
     for (key, entry) in &all_secrets {
         if !env_map.contains_key(*key) {
-            if entry.required {
-                missing_required.push(format!("{} — {}", key, entry.description));
-            } else {
-                warnings.push(format!("{} (optional) — {}", key, entry.description));
+            let in_vault = vault.get(key, None).await?.is_some();
+            if !in_vault {
+                if entry.required {
+                    missing_required.push(format!("{} — {}", key, entry.description));
+                } else {
+                    warnings.push(format!("{} (optional) — {}", key, entry.description));
+                }
             }
         }
     }
@@ -227,6 +233,19 @@ pub async fn populate_vault(
         // No .env value and no default → skip silently
     }
 
+    // ── Phase 3: Seal system keys not already declared in deploy.toml ──
+    // Platform keys (STARPOD_API_KEY, etc.) may appear in .env without
+    // being declared in deploy.toml.  Seal them so `inject_env_from_vault`
+    // can restore them at serve time.
+    for &sys_key in SYSTEM_KEYS {
+        if !seen_secrets.contains(sys_key) && !seen_variables.contains(sys_key) {
+            if let Some(value) = env_map.get(sys_key) {
+                vault.set(sys_key, value, None).await?;
+                secrets_count += 1;
+            }
+        }
+    }
+
     Ok(PopulateResult {
         secrets_count,
         variables_count,
@@ -273,6 +292,14 @@ pub async fn inject_env_from_vault(
         }
     }
 
+    // Also inject system keys (STARPOD_API_KEY, etc.) that may have been
+    // sealed without a deploy.toml declaration.
+    for &sys_key in SYSTEM_KEYS {
+        if !all_keys.contains(sys_key) {
+            all_keys.insert(sys_key);
+        }
+    }
+
     for key in all_keys {
         match vault.get(key, None).await? {
             Some(value) => {
@@ -285,7 +312,10 @@ pub async fn inject_env_from_vault(
                 count += 1;
             }
             None => {
-                warn!(key = %key, "Declared env var not found in vault — was build run?");
+                // System keys are best-effort; only warn for deploy.toml-declared keys
+                if !SYSTEM_KEYS.contains(&key) {
+                    warn!(key = %key, "Declared env var not found in vault — was build run?");
+                }
             }
         }
     }
@@ -582,6 +612,105 @@ description = "City"
         std::env::remove_var("RT_API_KEY");
         std::env::remove_var("RT_TIMEOUT");
         std::env::remove_var("RT_CITY");
+    }
+
+    #[tokio::test]
+    async fn test_system_keys_sealed_and_injected_without_deploy_toml_declaration() {
+        let tmp = TempDir::new().unwrap();
+        let vault = test_vault(&tmp).await;
+
+        // .env has TELEGRAM_BOT_TOKEN (a system key) but deploy.toml doesn't declare it
+        let env_path = write_env(tmp.path(), "TELEGRAM_BOT_TOKEN=bot123:abc\nANTHROPIC_API_KEY=sk-ant-xxx\n");
+        let deploy_path = write_deploy_toml(tmp.path(), r#"
+version = 1
+
+[agent.secrets.ANTHROPIC_API_KEY]
+secret = "ANTHROPIC_API_KEY"
+required = true
+description = "Anthropic key"
+"#);
+
+        // Build: populate vault
+        let result = populate_vault(&deploy_path, Some(&env_path), &vault).await.unwrap();
+        // ANTHROPIC_API_KEY (declared) + TELEGRAM_BOT_TOKEN (system key)
+        assert_eq!(result.secrets_count, 2);
+        assert_eq!(vault.get("TELEGRAM_BOT_TOKEN", None).await.unwrap().as_deref(), Some("bot123:abc"));
+
+        // Serve: inject from vault (no .env on disk)
+        let count = inject_env_from_vault(&deploy_path, &vault).await.unwrap();
+        assert!(count >= 2);
+        assert_eq!(std::env::var("TELEGRAM_BOT_TOKEN").unwrap(), "bot123:abc");
+        assert_eq!(std::env::var("ANTHROPIC_API_KEY").unwrap(), "sk-ant-xxx");
+
+        // Cleanup
+        std::env::remove_var("TELEGRAM_BOT_TOKEN");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+
+    #[tokio::test]
+    async fn test_populate_succeeds_when_vault_has_secret_but_no_env() {
+        let tmp = TempDir::new().unwrap();
+        let vault = test_vault(&tmp).await;
+
+        // Pre-populate vault (simulating a prior `starpod build`)
+        vault.set("ANTHROPIC_API_KEY", "sk-ant-sealed", None).await.unwrap();
+
+        let deploy_path = write_deploy_toml(tmp.path(), r#"
+version = 1
+
+[agent.secrets.ANTHROPIC_API_KEY]
+secret = "ANTHROPIC_API_KEY"
+required = true
+description = "Anthropic key"
+"#);
+
+        // No .env file — vault already has the secret, should not fail
+        let result = populate_vault(&deploy_path, None, &vault).await.unwrap();
+        assert_eq!(result.secrets_count, 0); // nothing new written
+        assert!(result.warnings.is_empty());
+        // Value is still in the vault
+        assert_eq!(vault.get("ANTHROPIC_API_KEY", None).await.unwrap().as_deref(), Some("sk-ant-sealed"));
+    }
+
+    #[tokio::test]
+    async fn test_populate_fails_when_neither_env_nor_vault_has_required_secret() {
+        let tmp = TempDir::new().unwrap();
+        let vault = test_vault(&tmp).await;
+        // Vault is empty, no .env
+
+        let deploy_path = write_deploy_toml(tmp.path(), r#"
+version = 1
+
+[agent.secrets.ANTHROPIC_API_KEY]
+secret = "ANTHROPIC_API_KEY"
+required = true
+description = "Anthropic key"
+"#);
+
+        let result = populate_vault(&deploy_path, None, &vault).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("ANTHROPIC_API_KEY"));
+    }
+
+    #[tokio::test]
+    async fn test_populate_skips_optional_warning_when_vault_has_it() {
+        let tmp = TempDir::new().unwrap();
+        let vault = test_vault(&tmp).await;
+
+        // Pre-populate vault with optional secret
+        vault.set("BRAVE_API_KEY", "brave-sealed", None).await.unwrap();
+
+        let deploy_path = write_deploy_toml(tmp.path(), r#"
+version = 1
+
+[agent.secrets.BRAVE_API_KEY]
+secret = "BRAVE_API_KEY"
+required = false
+description = "Brave Search API key"
+"#);
+
+        let result = populate_vault(&deploy_path, None, &vault).await.unwrap();
+        assert!(result.warnings.is_empty(), "should not warn for secrets already in vault");
     }
 
     // ── validate_env tests ────────────────────────────────────────

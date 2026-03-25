@@ -29,7 +29,9 @@ use starpod_core::{StarpodError, Result};
 /// |----------|------|
 /// | LLM providers | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY` |
 /// | Services | `BRAVE_API_KEY`, `TELEGRAM_BOT_TOKEN` |
-/// | Platform | `STARPOD_API_KEY` |
+///
+/// Note: `STARPOD_API_KEY` is NOT a vault secret — it is pre-seeded into the
+/// auth database (`core.db`) at build time via `bootstrap_admin()`.
 pub const SYSTEM_KEYS: &[&str] = &[
     // LLM providers
     "ANTHROPIC_API_KEY",
@@ -41,8 +43,6 @@ pub const SYSTEM_KEYS: &[&str] = &[
     // Services
     "BRAVE_API_KEY",
     "TELEGRAM_BOT_TOKEN",
-    // Platform
-    "STARPOD_API_KEY",
 ];
 
 /// Returns `true` if `key` is a system-managed secret that the agent

@@ -3238,6 +3238,52 @@ async fn main() -> anyhow::Result<()> {
 
             let starpod_dir = output_dir.join(".starpod");
 
+            let db_dir = starpod_dir.join("db");
+
+            // Seal secrets from .env into vault.db so `starpod serve` can
+            // inject them without needing the .env file on disk.
+            let deploy_toml_built = starpod_dir.join("config").join("deploy.toml");
+            if deploy_toml_built.exists() {
+                let master_key = starpod_vault::derive_master_key(&db_dir)?;
+                let vault = starpod_vault::Vault::new(&db_dir.join("vault.db"), &master_key).await?;
+                let result = starpod_vault::env::populate_vault(
+                    &deploy_toml_built,
+                    env_path.as_deref(),
+                    &vault,
+                ).await?;
+                if result.secrets_count > 0 || result.variables_count > 0 {
+                    println!(
+                        "  {} Sealed {} secret(s) and {} variable(s) into vault",
+                        "✓".green().bold(),
+                        result.secrets_count,
+                        result.variables_count,
+                    );
+                }
+                for w in &result.warnings {
+                    println!("  {} {}", "⚠".yellow(), w);
+                }
+            }
+
+            // Pre-seed the admin user with STARPOD_API_KEY from .env so that
+            // `starpod serve` finds the admin already bootstrapped and uses
+            // the known key instead of generating a random one.
+            if let Some(ref env_p) = env_path {
+                if env_p.exists() {
+                    let env_map = parse_env_file(env_p)?;
+                    if let Some(api_key) = env_map.get("STARPOD_API_KEY") {
+                        let core_db = starpod_db::CoreDb::new(&db_dir).await?;
+                        let auth = starpod_auth::AuthStore::from_pool(core_db.pool().clone());
+                        if let Some((admin, _)) = auth.bootstrap_admin(Some(api_key)).await? {
+                            println!(
+                                "  {} Admin user pre-seeded (id: {})",
+                                "✓".green().bold(),
+                                &admin.id[..8],
+                            );
+                        }
+                    }
+                }
+            }
+
             println!();
             println!(
                 "  {} Built standalone agent at {}",

@@ -4574,6 +4574,7 @@ dependencies = [
  "starpod-auth",
  "starpod-core",
  "starpod-cron",
+ "starpod-db",
  "starpod-gateway",
  "starpod-instances",
  "starpod-skills",

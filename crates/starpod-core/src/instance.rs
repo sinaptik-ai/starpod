@@ -177,7 +177,9 @@ pub fn apply_blueprint(
 /// - `blueprint_dir`: path to agent blueprint folder (must contain `agent.toml`)
 /// - `output_dir`: where to create the `.starpod/` directory
 /// - `skills_dir`: optional path to skills folder to include
-/// - `env_file`: optional path to `.env` file to include
+/// - `env_file`: optional path to `.env` file — not copied to the output;
+///   the caller (CLI) is responsible for populating `vault.db` from this file
+///   after `build_standalone` returns.
 pub fn build_standalone(
     blueprint_dir: &Path,
     output_dir: &Path,
@@ -249,8 +251,18 @@ pub fn build_standalone(
         debug!("Copied SOUL.md from blueprint");
     }
 
-    // 3. .env is NOT copied into the instance — secrets are populated into
-    //    vault.db at build time. The vault is the sealed source of truth.
+    // deploy.toml (always refresh — needed by serve for vault population)
+    let src_deploy = blueprint_dir.join("deploy.toml");
+    if src_deploy.is_file() {
+        std::fs::copy(&src_deploy, config_dir.join("deploy.toml"))
+            .map_err(|e| StarpodError::Config(format!(
+                "Failed to copy deploy.toml: {}", e
+            )))?;
+        debug!("Copied deploy.toml from blueprint");
+    }
+
+    // 3. .env is NOT copied into the instance — secrets are sealed into
+    //    vault.db at build time by the CLI. The vault is the source of truth.
 
     // 4. Sync files/ → home/ directory
     let files_dir = blueprint_dir.join("files");
@@ -682,6 +694,31 @@ mod tests {
     }
 
     // ── build_standalone tests ──────────────────────────────────────────
+
+    #[test]
+    fn build_standalone_copies_deploy_toml() {
+        let tmp = TempDir::new().unwrap();
+        let blueprint = tmp.path().join("my-agent");
+        std::fs::create_dir_all(&blueprint).unwrap();
+        std::fs::write(
+            blueprint.join("agent.toml"),
+            "agent_name = \"TestBot\"\nmodel = \"claude-haiku-4-5\"\n",
+        ).unwrap();
+        std::fs::write(
+            blueprint.join("deploy.toml"),
+            "version = 1\n\n[agent.secrets.ANTHROPIC_API_KEY]\nrequired = true\ndescription = \"key\"\n",
+        ).unwrap();
+
+        let output = tmp.path().join("deploy");
+        std::fs::create_dir_all(&output).unwrap();
+
+        build_standalone(&blueprint, &output, None, None, false).unwrap();
+
+        let deployed = output.join(".starpod").join("config").join("deploy.toml");
+        assert!(deployed.is_file(), "deploy.toml should be copied to .starpod/config/");
+        let content = std::fs::read_to_string(&deployed).unwrap();
+        assert!(content.contains("ANTHROPIC_API_KEY"));
+    }
 
     #[test]
     fn build_standalone_creates_structure() {
