@@ -724,6 +724,54 @@ async fn run_agent_loop(
         num_turns += 1;
         let mut tool_results: Vec<ApiContentBlock> = Vec::new();
 
+        // Phase 0: Reject hallucinated tool names immediately with a helpful error.
+        // Collect known tool names from the definitions we sent to the model.
+        let known_tool_names: std::collections::HashSet<&str> =
+            tool_defs.iter().map(|td| td.name.as_str()).collect();
+
+        let mut valid_tool_uses: Vec<&(String, String, serde_json::Value)> = Vec::new();
+        for tu in &tool_uses {
+            let (tool_use_id, tool_name, _tool_input) = tu;
+            if known_tool_names.contains(tool_name.as_str()) {
+                valid_tool_uses.push(tu);
+            } else {
+                warn!(tool = %tool_name, "model invoked unknown tool, returning error");
+                let available: Vec<&str> = tool_defs.iter().map(|td| td.name.as_str()).collect();
+                let error_msg = format!(
+                    "Error: '{}' is not a valid tool. You MUST use one of the following tools: {}",
+                    tool_name,
+                    available.join(", ")
+                );
+                let api_block = ApiContentBlock::ToolResult {
+                    tool_use_id: tool_use_id.clone(),
+                    content: json!(error_msg),
+                    is_error: Some(true),
+                    cache_control: None,
+                    name: Some(tool_name.clone()),
+                };
+
+                // Stream the error to the frontend
+                let result_msg = Message::User(UserMessage {
+                    uuid: Some(Uuid::new_v4()),
+                    session_id: session_id.clone(),
+                    content: vec![api_block_to_content_block(&api_block)],
+                    parent_tool_use_id: None,
+                    is_synthetic: true,
+                    tool_use_result: None,
+                });
+                if options.persist_session {
+                    let _ = session
+                        .append_message(&serde_json::to_value(&result_msg).unwrap_or_default())
+                        .await;
+                }
+                if tx.send(Ok(result_msg)).is_err() {
+                    return Ok(());
+                }
+
+                tool_results.push(api_block);
+            }
+        }
+
         // Phase 1: Evaluate permissions sequentially (may involve user interaction)
         struct PermittedTool {
             tool_use_id: String,
@@ -732,7 +780,7 @@ async fn run_agent_loop(
         }
         let mut permitted_tools: Vec<PermittedTool> = Vec::new();
 
-        for (tool_use_id, tool_name, tool_input) in &tool_uses {
+        for (tool_use_id, tool_name, tool_input) in valid_tool_uses.iter().map(|t| &**t) {
             let verdict = permission_eval
                 .evaluate(tool_name, tool_input, tool_use_id, &session_id, &cwd)
                 .await?;
@@ -1066,10 +1114,17 @@ async fn accumulate_stream(
                     ApiContentBlock::Text { .. } => {
                         block_types[index] = "text".to_string();
                     }
-                    ApiContentBlock::ToolUse { id, name, .. } => {
+                    ApiContentBlock::ToolUse { id, name, input } => {
                         block_types[index] = "tool_use".to_string();
                         block_tool_ids[index] = id.clone();
                         block_tool_names[index] = name.clone();
+                        // OpenAI/Ollama streaming delivers the complete input
+                        // in ContentBlockStart (not via InputJsonDelta like
+                        // Anthropic). Store it so ContentBlockStop can parse it.
+                        let input_str = input.to_string();
+                        if input_str != "{}" {
+                            block_texts[index] = input_str;
+                        }
                     }
                     ApiContentBlock::Thinking { .. } => {
                         block_types[index] = "thinking".to_string();
@@ -1965,5 +2020,63 @@ mod tests {
             panic!("expected ToolUse block at index 1");
         }
         assert_eq!(response.stop_reason, Some("tool_use".into()));
+    }
+
+    /// OpenAI/Ollama streaming delivers the complete tool input inside
+    /// `ContentBlockStart` (no `InputJsonDelta` follows). Verify that
+    /// `accumulate_stream` preserves that input instead of defaulting to `{}`.
+    #[tokio::test]
+    async fn accumulate_stream_preserves_openai_tool_input() {
+        use crate::client::{ApiContentBlock, ApiUsage, StreamEvent as SE};
+
+        let events: Vec<Result<SE>> = vec![
+            Ok(SE::MessageStart {
+                message: MessageResponse {
+                    id: "msg_oai".into(),
+                    role: "assistant".into(),
+                    content: vec![],
+                    model: "qwen3:8b".into(),
+                    stop_reason: None,
+                    usage: ApiUsage::default(),
+                },
+            }),
+            // Tool use with full input in ContentBlockStart (OpenAI/Ollama pattern)
+            Ok(SE::ContentBlockStart {
+                index: 0,
+                content_block: ApiContentBlock::ToolUse {
+                    id: "call_123".into(),
+                    name: "Bash".into(),
+                    input: serde_json::json!({"command": "ls -la", "timeout": 5000}),
+                },
+            }),
+            // No InputJsonDelta — OpenAI/Ollama doesn't send one
+            Ok(SE::ContentBlockStop { index: 0 }),
+            Ok(SE::MessageDelta {
+                delta: crate::client::MessageDelta {
+                    stop_reason: Some("tool_use".into()),
+                },
+                usage: ApiUsage { input_tokens: 0, output_tokens: 10, ..Default::default() },
+            }),
+            Ok(SE::MessageStop),
+        ];
+
+        let stream = futures::stream::iter(events);
+        let mut boxed_stream: std::pin::Pin<Box<dyn futures::Stream<Item = Result<SE>> + Send>> =
+            Box::pin(stream);
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let response = accumulate_stream(&mut boxed_stream, &tx, "test-session")
+            .await
+            .expect("should succeed");
+
+        assert_eq!(response.content.len(), 1);
+        if let ApiContentBlock::ToolUse { id, name, input } = &response.content[0] {
+            assert_eq!(id, "call_123");
+            assert_eq!(name, "Bash");
+            assert_eq!(input["command"], "ls -la");
+            assert_eq!(input["timeout"], 5000);
+        } else {
+            panic!("expected ToolUse block");
+        }
     }
 }

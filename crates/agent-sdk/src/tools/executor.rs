@@ -249,7 +249,7 @@ impl ToolExecutor {
                 self.execute_grep(&params).await
             }
             _ => Err(AgentError::ToolExecution(format!(
-                "unsupported built-in tool: {tool_name}"
+                "unsupported built-in tool: {tool_name}. Supported built-in tools: Read, Write, Edit, Bash, Glob, Grep"
             ))),
         }
     }
