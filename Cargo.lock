@@ -4707,6 +4707,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "starpod-db"
+version = "0.1.0-alpha.3"
+dependencies = [
+ "sqlx",
+ "starpod-core",
+ "tracing",
+]
+
+[[package]]
 name = "starpod-gateway"
 version = "0.1.0-alpha.3"
 dependencies = [

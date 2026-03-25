@@ -15,6 +15,7 @@ members = [
     "crates/starpod-instances",
     "crates/starpod-vault",
     "crates/starpod-auth",
+    "crates/starpod-db",
     "crates/starpod",
 ]
 
@@ -39,4 +40,5 @@ starpod-telegram = { version = "0.1.0-alpha.3", path = "crates/starpod-telegram"
 starpod-instances = { version = "0.1.0-alpha.3", path = "crates/starpod-instances" }
 starpod-vault = { version = "0.1.0-alpha.3", path = "crates/starpod-vault" }
 starpod-auth = { version = "0.1.0-alpha.3", path = "crates/starpod-auth" }
+starpod-db = { version = "0.1.0-alpha.3", path = "crates/starpod-db" }
 agent-sdk = { version = "0.1.0-alpha.3", path = "crates/agent-sdk", package = "starpod-agent-sdk" }

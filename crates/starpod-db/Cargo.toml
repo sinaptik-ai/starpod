@@ -1,0 +1,13 @@
+[package]
+name = "starpod-db"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Unified SQLite database (core.db) for Starpod — sessions, cron, auth"
+
+[dependencies]
+starpod-core = { workspace = true }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+tracing = "0.1"
