@@ -80,6 +80,9 @@ pub struct ToolExecutor {
     /// directories. This helps the model stay within the intended working
     /// area — it is NOT an OS-level security sandbox (Bash is not restricted).
     boundary: Option<PathBoundary>,
+    /// Environment variable names to strip from child processes (Bash).
+    /// Prevents the agent from reading sensitive keys via shell commands.
+    env_blocklist: Vec<String>,
 }
 
 /// Guides file-based tools to stay within a set of allowed directory trees.
@@ -195,6 +198,7 @@ impl ToolExecutor {
         Self {
             cwd,
             boundary: None,
+            env_blocklist: Vec::new(),
         }
     }
 
@@ -205,7 +209,14 @@ impl ToolExecutor {
         Self {
             cwd,
             boundary: Some(boundary),
+            env_blocklist: Vec::new(),
         }
+    }
+
+    /// Set environment variable names to strip from child processes.
+    pub fn with_env_blocklist(mut self, blocklist: Vec<String>) -> Self {
+        self.env_blocklist = blocklist;
+        self
     }
 
     /// Dispatch a tool call by name, deserializing `input` into the appropriate typed input.
@@ -471,14 +482,17 @@ impl ToolExecutor {
     async fn execute_bash(&self, input: &BashInput) -> Result<ToolResult> {
         // Background mode: spawn and return immediately with the PID.
         if input.run_in_background == Some(true) {
-            let child = Command::new("/bin/bash")
-                .arg("-c")
+            let mut cmd = Command::new("/bin/bash");
+            cmd.arg("-c")
                 .arg(&input.command)
                 .current_dir(&self.cwd)
                 .env("HOME", &self.cwd)
                 .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn();
+                .stderr(std::process::Stdio::null());
+            for key in &self.env_blocklist {
+                cmd.env_remove(key);
+            }
+            let child = cmd.spawn();
 
             return match child {
                 Ok(child) => {
@@ -496,14 +510,17 @@ impl ToolExecutor {
         let timeout_ms = input.timeout.unwrap_or(120_000);
         let timeout_dur = Duration::from_millis(timeout_ms);
 
-        let child = Command::new("/bin/bash")
-            .arg("-c")
+        let mut cmd = Command::new("/bin/bash");
+        cmd.arg("-c")
             .arg(&input.command)
             .current_dir(&self.cwd)
             .env("HOME", &self.cwd)
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn();
+            .stderr(std::process::Stdio::piped());
+        for key in &self.env_blocklist {
+            cmd.env_remove(key);
+        }
+        let child = cmd.spawn();
 
         let mut child = match child {
             Ok(c) => c,
@@ -1348,5 +1365,47 @@ mod tests {
             .unwrap();
         assert!(!result.is_error, "Should read file via ~: {}", result.content);
         assert!(result.content.contains("found"), "~ should resolve to cwd");
+    }
+
+    #[tokio::test]
+    async fn bash_env_blocklist_strips_vars() {
+        let tmp = TempDir::new().unwrap();
+        // Set a test env var in the process
+        unsafe { std::env::set_var("STARPOD_TEST_SECRET", "leaked"); }
+
+        let executor = ToolExecutor::new(tmp.path().to_path_buf())
+            .with_env_blocklist(vec!["STARPOD_TEST_SECRET".to_string()]);
+
+        let result = executor
+            .execute("Bash", json!({ "command": "echo \"val=${STARPOD_TEST_SECRET}\"" }))
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert_eq!(result.content.trim(), "val=", "Blocked env var should not be visible to child process");
+
+        // Cleanup
+        std::env::remove_var("STARPOD_TEST_SECRET");
+    }
+
+    #[tokio::test]
+    async fn bash_env_blocklist_does_not_affect_other_vars() {
+        let tmp = TempDir::new().unwrap();
+        unsafe {
+            std::env::set_var("STARPOD_TEST_ALLOWED", "visible");
+            std::env::set_var("STARPOD_TEST_BLOCKED", "hidden");
+        }
+
+        let executor = ToolExecutor::new(tmp.path().to_path_buf())
+            .with_env_blocklist(vec!["STARPOD_TEST_BLOCKED".to_string()]);
+
+        let result = executor
+            .execute("Bash", json!({ "command": "echo $STARPOD_TEST_ALLOWED" }))
+            .await
+            .unwrap();
+        assert!(result.content.contains("visible"), "Non-blocked vars should still be inherited");
+
+        // Cleanup
+        std::env::remove_var("STARPOD_TEST_ALLOWED");
+        std::env::remove_var("STARPOD_TEST_BLOCKED");
     }
 }

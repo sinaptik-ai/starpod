@@ -2526,6 +2526,87 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn env_get_with_vault_logs_audit() {
+        let tmp = TempDir::new().unwrap();
+        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("agent").join("config"), &tmp.path().join("db")).await.unwrap());
+        let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let core_db = starpod_db::CoreDb::new(tmp.path()).await.unwrap();
+        let cron = Arc::new(starpod_cron::CronStore::from_pool(core_db.pool().clone()));
+
+        // Create a real vault so the audit logging code path is exercised
+        let master_key = [0xAB; 32];
+        let vault = starpod_vault::Vault::new(&tmp.path().join("vault.db"), &master_key).await.unwrap();
+
+        let ctx = ToolContext {
+            memory,
+            user_view: None,
+            skills,
+            cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: true,
+            browser_cdp_url: None,
+            user_tz: None,
+            home_dir: tmp.path().to_path_buf(),
+            agent_home: tmp.path().join(".starpod"),
+            user_id: Some("test_user".into()),
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
+            vault: Some(Arc::new(vault)),
+        };
+
+        // Set an env var and read it via EnvGet — exercises the vault audit path
+        unsafe { std::env::set_var("STARPOD_AUDIT_TEST", "audited_value"); }
+        let result = handle_custom_tool(
+            &ctx,
+            "EnvGet",
+            &serde_json::json!({"key": "STARPOD_AUDIT_TEST"}),
+        ).await.unwrap();
+        std::env::remove_var("STARPOD_AUDIT_TEST");
+
+        assert!(!result.is_error);
+        assert_eq!(result.content, "audited_value");
+    }
+
+    #[tokio::test]
+    async fn env_get_blocked_key_not_audited() {
+        let tmp = TempDir::new().unwrap();
+        let memory = Arc::new(starpod_memory::MemoryStore::new(&tmp.path().join("agent"), &tmp.path().join("agent").join("config"), &tmp.path().join("db")).await.unwrap());
+        let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let core_db = starpod_db::CoreDb::new(tmp.path()).await.unwrap();
+        let cron = Arc::new(starpod_cron::CronStore::from_pool(core_db.pool().clone()));
+        let master_key = [0xAB; 32];
+        let vault = starpod_vault::Vault::new(&tmp.path().join("vault.db"), &master_key).await.unwrap();
+
+        let ctx = ToolContext {
+            memory,
+            user_view: None,
+            skills,
+            cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: true,
+            browser_cdp_url: None,
+            user_tz: None,
+            home_dir: tmp.path().to_path_buf(),
+            agent_home: tmp.path().join(".starpod"),
+            user_id: Some("admin".into()),
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
+            vault: Some(Arc::new(vault)),
+        };
+
+        // System key should be blocked before reaching the audit code
+        let result = handle_custom_tool(
+            &ctx,
+            "EnvGet",
+            &serde_json::json!({"key": "ANTHROPIC_API_KEY"}),
+        ).await.unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("restricted"));
+    }
+
     // ── File tool handlers ──────────────────────────────────────────
 
     #[tokio::test]

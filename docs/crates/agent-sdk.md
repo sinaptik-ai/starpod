@@ -103,6 +103,7 @@ Options::builder()
 | `.context_budget()` | Token threshold for conversation compaction |
 | `.compaction_model()` | Model for generating compaction summaries |
 | `.provider()` | LLM provider (default: Anthropic) |
+| `.env_blocklist()` | Env var names to strip from Bash child processes |
 
 ## Message Types
 

@@ -35,6 +35,8 @@ The `Bash` tool supports `run_in_background: true` for long-running processes (s
 |------|-------|-------------|
 | `EnvGet` | `key` | Look up an environment variable by key |
 
+Environment variables from the vault are injected into the process at serve time, making them available both through `EnvGet` and as real env vars in Bash/SSH commands. The system prompt lists which vars are available. System keys (LLM provider keys, service tokens) are blocked by `EnvGet` and stripped from Bash child processes.
+
 ### Files
 
 | Tool | Input | Description |

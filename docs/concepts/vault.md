@@ -6,13 +6,28 @@ The vault provides **AES-256-GCM encrypted credential storage** with audit loggi
 
 - Credentials are encrypted with AES-256-GCM before being stored in SQLite
 - A master key (derived from your API key) encrypts/decrypts values
-- All access is audit-logged
+- All access is audit-logged (with optional `user_id` tracking)
 
-## Agent Tools
+## Environment Variable Flow
 
-The `VaultGet` and `VaultSet` tools have been removed from the agent's tool set. Environment variables are now accessed via the `EnvGet` tool instead (see [Tools](/concepts/tools)).
+Secrets flow through a three-stage pipeline:
 
-The Vault crate still exists for **programmatic use** from Rust code (e.g., storing credentials during onboarding or via the CLI), but the agent no longer has direct tool access to the vault during conversations.
+1. **Build time** — `.env` values are validated against `deploy.toml` declarations, then encrypted into the vault via `populate_vault()`
+2. **Serve time** — `inject_env_from_vault()` decrypts declared secrets and calls `std::env::set_var()` to load them into the process environment
+3. **Runtime** — The agent accesses them two ways:
+   - **`EnvGet` tool** — reads `std::env::var()`, blocks system keys, audit-logs each read
+   - **Bash/SSH commands** — child processes inherit the process environment automatically
+
+The system prompt dynamically lists which non-system env vars are available, so the agent knows what credentials it can use.
+
+## System Keys
+
+System-managed secrets (LLM provider keys, service tokens, platform secrets) are protected at two layers:
+
+- **`EnvGet` tool** — `is_system_key()` blocks reads and returns an error
+- **Bash tool** — system keys are stripped from child process environments via `env_remove()`, preventing `echo $ANTHROPIC_API_KEY` or `env | grep API` from leaking them
+
+See the [starpod-vault crate docs](/crates/starpod-vault) for the full list of system keys.
 
 ## Programmatic Use
 

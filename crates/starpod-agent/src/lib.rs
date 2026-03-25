@@ -344,6 +344,47 @@ impl StarpodAgent {
         let date_str = Local::now().format("%A, %B %d, %Y at %H:%M").to_string();
         let tz_str = config.resolved_timezone().unwrap_or_else(|| "UTC".to_string());
 
+        // ── Enumerate available (non-system) env vars from the vault ────
+        // Only list keys that are actually in the process environment (injected
+        // from deploy.toml at serve time). Vault-only keys that weren't declared
+        // in deploy.toml are excluded to avoid advertising unreachable vars.
+        let env_vars_section = if let Some(ref vault) = self.vault {
+            match vault.list_keys().await {
+                Ok(keys) => {
+                    let user_keys: Vec<&str> = keys.iter()
+                        .map(|k| k.as_str())
+                        .filter(|k| !starpod_vault::is_system_key(k) && std::env::var(k).is_ok())
+                        .collect();
+                    if user_keys.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            "\n\n--- ENVIRONMENT VARIABLES ---\n\
+                             You have the following environment variables available: {}\n\
+                             These are pre-configured credentials and settings. You can:\n\
+                             • Read them with the EnvGet tool (e.g. EnvGet({{\"key\": \"{}\"}})).\n\
+                             • Use them directly in Bash/SSH commands — they are real process environment \
+                             variables, so any shell command, script, or program you run inherits them \
+                             automatically (e.g. `${}` in a shell, `os.environ[\"{}\"]` in Python, \
+                             `process.env.{}` in Node).\n\
+                             Do NOT hardcode these values — always reference them as environment variables.",
+                            user_keys.join(", "),
+                            user_keys[0],
+                            user_keys[0],
+                            user_keys[0],
+                            user_keys[0],
+                        )
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to list vault keys for system prompt: {}", e);
+                    String::new()
+                }
+            }
+        } else {
+            String::new()
+        };
+
         let mut prompt = format!(
             "You are {agent_name}, a personal AI assistant.\n\n{bootstrap}\n\n---\n\
              Current date/time: {date_str}\nTimezone: {tz_str}\nSession ID: {session_id}\n\
@@ -373,6 +414,11 @@ impl StarpodAgent {
              Do not read, write, or execute anything outside this boundary.\n\
              IMPORTANT: Always create files and run commands within ~/, never in /tmp or other external directories.",
         );
+
+        // ── Environment variables (vault) ────────────────────────────
+        if !env_vars_section.is_empty() {
+            prompt.push_str(&env_vars_section);
+        }
 
         // ── Memory nudging ────────────────────────────────────────────
         prompt.push_str(
@@ -810,6 +856,7 @@ impl StarpodAgent {
             .provider(provider)
             .cwd(config.project_root.to_string_lossy().to_string())
             .additional_directories(vec![])
+            .env_blocklist(starpod_vault::SYSTEM_KEYS.iter().map(|k| k.to_string()).collect())
             .hook_dirs(vec![config.db_dir.join("hooks")]);
 
         // Resume existing session to load conversation history, or set ID for new ones
@@ -1049,6 +1096,7 @@ impl StarpodAgent {
             .provider(provider)
             .cwd(config.project_root.to_string_lossy().to_string())
             .additional_directories(vec![])
+            .env_blocklist(starpod_vault::SYSTEM_KEYS.iter().map(|k| k.to_string()).collect())
             .hook_dirs(vec![config.db_dir.join("hooks")])
             .include_partial_messages(true);
 

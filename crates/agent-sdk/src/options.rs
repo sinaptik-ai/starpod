@@ -232,6 +232,11 @@ pub struct Options {
     /// Additional directories Claude can access.
     pub additional_directories: Vec<String>,
 
+    /// Environment variable names to strip from child processes (e.g. Bash).
+    /// These keys will be removed via `env_remove` when spawning subprocesses,
+    /// preventing the agent from reading them through shell commands.
+    pub env_blocklist: Vec<String>,
+
     /// Structured output schema.
     pub output_format: Option<serde_json::Value>,
 
@@ -394,6 +399,7 @@ impl Default for Options {
             enable_file_checkpointing: false,
             env: HashMap::new(),
             additional_directories: Vec::new(),
+            env_blocklist: Vec::new(),
             output_format: None,
             sandbox: None,
             tool_config: None,
@@ -452,6 +458,11 @@ impl OptionsBuilder {
 
     pub fn additional_directories(mut self, dirs: Vec<String>) -> Self {
         self.options.additional_directories = dirs;
+        self
+    }
+
+    pub fn env_blocklist(mut self, keys: Vec<String>) -> Self {
+        self.options.env_blocklist = keys;
         self
     }
 

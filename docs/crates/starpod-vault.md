@@ -27,8 +27,9 @@ system-managed secrets (LLM provider keys, service tokens, platform secrets).
 The `is_system_key(key)` helper performs a case-insensitive check against this
 list.
 
-The `EnvGet` agent tool uses `is_system_key()` to block the agent from reading
-these values at runtime.
+System keys are protected at two layers:
+- The `EnvGet` agent tool uses `is_system_key()` to block reads and return an error.
+- The `ToolExecutor` Bash runner uses `env_blocklist` (populated from `SYSTEM_KEYS`) to strip them from child process environments via `env_remove()`.
 
 | Category | Keys |
 |----------|------|
