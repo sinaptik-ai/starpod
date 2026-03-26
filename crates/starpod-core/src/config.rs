@@ -114,6 +114,7 @@ fn default_true() -> bool {
 pub struct ProvidersConfig {
     pub anthropic: Option<ProviderConfig>,
     pub bedrock: Option<ProviderConfig>,
+    pub vertex: Option<ProviderConfig>,
     pub openai: Option<ProviderConfig>,
     pub gemini: Option<ProviderConfig>,
     pub groq: Option<ProviderConfig>,
@@ -801,6 +802,8 @@ impl StarpodConfig {
             "anthropic" => "ANTHROPIC_API_KEY",
             // Bedrock uses AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY (handled by the provider)
             "bedrock" => "AWS_ACCESS_KEY_ID",
+            // Vertex uses Google ADC / service account (handled by the provider)
+            "vertex" => "GOOGLE_APPLICATION_CREDENTIALS",
             "openai" => "OPENAI_API_KEY",
             "gemini" => "GEMINI_API_KEY",
             "groq" => "GROQ_API_KEY",
@@ -820,6 +823,7 @@ impl StarpodConfig {
         let cfg = match provider {
             "anthropic" => self.providers.anthropic.as_ref(),
             "bedrock" => self.providers.bedrock.as_ref(),
+            "vertex" => self.providers.vertex.as_ref(),
             "openai" => self.providers.openai.as_ref(),
             "gemini" => self.providers.gemini.as_ref(),
             "groq" => self.providers.groq.as_ref(),
@@ -834,6 +838,8 @@ impl StarpodConfig {
                 "anthropic" => "https://api.anthropic.com/v1/messages",
                 // Bedrock URL is constructed per-model by the provider; this is a sentinel
                 "bedrock" => "https://bedrock-runtime.us-east-1.amazonaws.com",
+                // Vertex URL is constructed per-model by the provider; this is a sentinel
+                "vertex" => "https://us-central1-aiplatform.googleapis.com",
                 "openai" => "https://api.openai.com/v1/chat/completions",
                 "gemini" => "https://generativelanguage.googleapis.com/v1beta",
                 "groq" => "https://api.groq.com/openai/v1/chat/completions",
@@ -854,6 +860,7 @@ impl StarpodConfig {
         let cfg = match provider {
             "anthropic" => self.providers.anthropic.as_ref(),
             "bedrock" => self.providers.bedrock.as_ref(),
+            "vertex" => self.providers.vertex.as_ref(),
             "openai" => self.providers.openai.as_ref(),
             "gemini" => self.providers.gemini.as_ref(),
             "groq" => self.providers.groq.as_ref(),
@@ -2010,5 +2017,70 @@ mod tests {
         let bedrock = config.providers.bedrock.as_ref().unwrap();
         assert!(bedrock.enabled);
         assert_eq!(bedrock.options["region"], "us-east-1");
+    }
+
+    // ── Vertex AI provider tests ────────────────────────────────────────
+
+    #[test]
+    fn resolved_provider_api_key_vertex_from_env() {
+        std::env::set_var("GOOGLE_APPLICATION_CREDENTIALS", "/path/to/sa.json");
+        let config = StarpodConfig::default();
+        assert_eq!(
+            config.resolved_provider_api_key("vertex"),
+            Some("/path/to/sa.json".to_string())
+        );
+        std::env::remove_var("GOOGLE_APPLICATION_CREDENTIALS");
+    }
+
+    #[test]
+    fn resolved_provider_base_url_vertex_default() {
+        let config = StarpodConfig::default();
+        assert_eq!(
+            config.resolved_provider_base_url("vertex"),
+            Some("https://us-central1-aiplatform.googleapis.com".to_string())
+        );
+    }
+
+    #[test]
+    fn resolved_provider_base_url_vertex_config_override() {
+        let toml = r#"
+            [providers.vertex]
+            base_url = "https://europe-west1-aiplatform.googleapis.com"
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.resolved_provider_base_url("vertex"),
+            Some("https://europe-west1-aiplatform.googleapis.com".to_string())
+        );
+    }
+
+    #[test]
+    fn provider_options_vertex_project_and_region() {
+        let toml = r#"
+            [providers.vertex.options]
+            project_id = "my-gcp-project"
+            region = "europe-west1"
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        let opts = config.provider_options("vertex");
+        assert_eq!(opts.len(), 2);
+        assert_eq!(opts["project_id"], "my-gcp-project");
+        assert_eq!(opts["region"], "europe-west1");
+    }
+
+    #[test]
+    fn vertex_provider_config_deserialization() {
+        let toml = r#"
+            [providers.vertex]
+            enabled = true
+            [providers.vertex.options]
+            project_id = "test-project"
+            region = "us-east1"
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        let vertex = config.providers.vertex.as_ref().unwrap();
+        assert!(vertex.enabled);
+        assert_eq!(vertex.options["project_id"], "test-project");
+        assert_eq!(vertex.options["region"], "us-east1");
     }
 }

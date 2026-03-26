@@ -113,6 +113,44 @@ output = 5.0
 context_window = 200000
 supports_vision = true
 
+# ── Google Cloud Vertex AI ────────────────────────────────────────────
+# Source: https://cloud.google.com/vertex-ai/generative-ai/pricing
+# Pricing matches Anthropic direct. Vertex uses Google OAuth2 authentication.
+# Cache: same as Anthropic (5-min write = 1.25x, read/hit = 0.1x)
+#
+# Model IDs: claude-{variant}-{version} with optional @date suffix.
+# Latest models (4.6) have no date suffix; older models use @YYYYMMDD.
+# Endpoint: {region}-aiplatform.googleapis.com, "global" for auto-routing.
+
+[vertex]
+default_model = "claude-sonnet-4-6"
+cache_read_multiplier = 0.1
+cache_creation_multiplier = 1.25
+
+# --- Sonnet 4.6 ---
+
+[vertex.models.claude-sonnet-4-6]
+input = 3.0
+output = 15.0
+context_window = 1000000
+supports_vision = true
+
+# --- Opus 4.6 ---
+
+[vertex.models.claude-opus-4-6]
+input = 5.0
+output = 25.0
+context_window = 1000000
+supports_vision = true
+
+# --- Haiku 4.5 ---
+
+[vertex.models."claude-haiku-4-5@20251001"]
+input = 1.0
+output = 5.0
+context_window = 200000
+supports_vision = true
+
 # ── OpenAI ─────────────────────────────────────────────────────────────
 # Source: https://developers.openai.com/api/docs/pricing
 # Cache: automatic, read = 0.1x, write = 1.0x (no surcharge)

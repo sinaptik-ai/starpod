@@ -46,6 +46,12 @@ agent_name = "Aster"              # Agent display name (personality in SOUL.md)
 # [providers.bedrock.options]
 # region = "us-east-1"             # AWS region for Bedrock API calls
 
+[providers.vertex]
+# enabled = true
+# [providers.vertex.options]
+# project_id = "my-gcp-project"   # Google Cloud project ID (or set GOOGLE_CLOUD_PROJECT)
+# region = "us-central1"          # Vertex AI region (or "global" for auto-routing)
+
 [providers.openai]
 # base_url = "https://api.openai.com/v1/chat/completions"
 
@@ -145,7 +151,7 @@ Edit these files directly to customize agent behavior or update user info. The a
 
 API keys are stored in the **encrypted vault** and managed via the Settings UI. There is no `api_key` field in config files — any `api_key` found in a config file is ignored and triggers a warning.
 
-Each provider uses its conventional env var name (e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`). AWS Bedrock uses `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` instead of a single API key, plus an optional `AWS_SESSION_TOKEN` for temporary credentials. For local development, keys can be placed in `.env` — they are populated into the vault at startup. Ollama requires no API key by default.
+Each provider uses its conventional env var name (e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`). AWS Bedrock uses `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` instead of a single API key, plus an optional `AWS_SESSION_TOKEN` for temporary credentials. Google Vertex AI uses Application Default Credentials (ADC) — set `GOOGLE_APPLICATION_CREDENTIALS` to point to a service account JSON file, or run `gcloud auth application-default login` for local development. For local development, keys can be placed in `.env` — they are populated into the vault at startup. Ollama requires no API key by default.
 
 ::: warning
 Never commit API keys to version control. Use the Settings UI or `.env` files (gitignored, dev only).
@@ -158,6 +164,8 @@ Each provider supports an optional `[providers.<name>.options]` table for provid
 | Key | Provider | Default | Description |
 |-----|----------|---------|-------------|
 | `region` | Bedrock | `AWS_REGION` env | AWS region for Bedrock API calls (e.g. `eu-west-1`, `us-east-1`). Falls back to `AWS_REGION` env var. |
+| `project_id` | Vertex | `GOOGLE_CLOUD_PROJECT` env | Google Cloud project ID. Falls back to `GOOGLE_CLOUD_PROJECT` or `GCP_PROJECT_ID` env var. **Required.** |
+| `region` | Vertex | `us-central1` | Vertex AI region (e.g. `us-east1`, `europe-west1`, `global`). Falls back to `GOOGLE_CLOUD_LOCATION` or `GCP_REGION` env var. |
 | `keep_alive` | Ollama | `"5m"` | How long to keep the model loaded after a request. Ensures KV cache reuse between agentic loop turns. Set to `"-1"` for indefinite. |
 | `num_ctx` | Ollama | model default | Context window size override. Larger values use more VRAM but allow longer conversations. |
 

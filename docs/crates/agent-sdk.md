@@ -33,6 +33,7 @@ The SDK supports multiple LLM providers via the `LlmProvider` trait. Each provid
 |----------|--------|-------------|
 | Anthropic | `AnthropicProvider` | — |
 | AWS Bedrock | `BedrockProvider` | — |
+| Google Vertex AI | `VertexProvider` | — |
 | OpenAI | `OpenAiProvider` | Groq, DeepSeek, OpenRouter, Ollama |
 | Gemini | `GeminiProvider` | — |
 
@@ -70,6 +71,25 @@ let stream = query(
 ```
 
 Bedrock uses AWS SigV4 authentication and the AWS Event Stream binary protocol for streaming. Model IDs use cross-region inference profiles (e.g. `eu.anthropic.claude-sonnet-4-6`, `us.anthropic.claude-opus-4-6-v1`).
+
+### Using Google Vertex AI
+
+```rust
+use agent_sdk::{Options, VertexProvider};
+
+// Uses Application Default Credentials (ADC) for auth
+let provider = VertexProvider::new("my-gcp-project", "us-central1").await?;
+
+let stream = query(
+    "Hello!",
+    Options::builder()
+        .provider(Box::new(provider))
+        .model("claude-sonnet-4-6")
+        .build(),
+);
+```
+
+Vertex AI uses Google OAuth2 authentication and standard SSE streaming (same as Anthropic). Credentials are discovered via Application Default Credentials: service account JSON (`GOOGLE_APPLICATION_CREDENTIALS`), `gcloud auth application-default login`, or GCE metadata. Model IDs are `claude-sonnet-4-6`, `claude-opus-4-6`, `claude-haiku-4-5@20251001`.
 
 If no provider is set, defaults to `AnthropicProvider::from_env()`.
 

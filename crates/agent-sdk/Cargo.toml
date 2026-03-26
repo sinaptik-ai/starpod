@@ -64,6 +64,9 @@ hex = "0.4"
 # HTTP types for SigV4 signing
 http = "1"
 
+# Google Cloud auth (Vertex AI provider)
+gcp_auth = "0.12"
+
 # Temporary directories
 tempfile = "3"
 
