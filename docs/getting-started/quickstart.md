@@ -15,6 +15,21 @@ starpod init --default
 export ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
+Or use an alternative provider:
+
+```bash
+# AWS Bedrock
+export AWS_ACCESS_KEY_ID="AKIA..."
+export AWS_SECRET_ACCESS_KEY="..."
+export AWS_REGION="us-east-1"
+
+# Google Vertex AI (uses Application Default Credentials)
+export GOOGLE_CLOUD_PROJECT="my-project"
+gcloud auth application-default login
+```
+
+Set `provider = "bedrock"` or `provider = "vertex"` in your config — see [Configuration](/getting-started/configuration) for details.
+
 ## 3. Start the server
 
 ```bash

@@ -163,6 +163,8 @@ The provider is selected at runtime from `config.provider`:
 | Provider | Struct | Default Endpoint |
 |----------|--------|-----------------|
 | `anthropic` | `AnthropicProvider` | `api.anthropic.com/v1/messages` |
+| `bedrock` | `BedrockProvider` | `bedrock-runtime.<region>.amazonaws.com` |
+| `vertex` | `VertexProvider` | `<region>-aiplatform.googleapis.com` |
 | `openai` | `OpenAiProvider` | `api.openai.com/v1/chat/completions` |
 | `gemini` | `GeminiProvider` | `generativelanguage.googleapis.com/v1beta` |
 | `groq` | `OpenAiProvider` | `api.groq.com/openai/v1/chat/completions` |
@@ -170,7 +172,7 @@ The provider is selected at runtime from `config.provider`:
 | `openrouter` | `OpenAiProvider` | `openrouter.ai/api/v1/chat/completions` |
 | `ollama` | `OpenAiProvider` | `localhost:11434/v1/chat/completions` |
 
-Each provider translates between the canonical Anthropic types (`CreateMessageRequest`, `MessageResponse`, `StreamEvent`) and its own wire format internally.
+Bedrock uses AWS SigV4 authentication and the AWS Event Stream binary protocol for streaming. Vertex AI uses Google OAuth2 (Application Default Credentials) and standard SSE streaming. All other providers translate between the canonical Anthropic types (`CreateMessageRequest`, `MessageResponse`, `StreamEvent`) and their own wire format internally.
 
 The agent has access to file I/O, web search, memory, environment, file sandbox, skills, and cron tools.
 

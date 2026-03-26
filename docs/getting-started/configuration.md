@@ -330,6 +330,13 @@ This file is read on every page load — changes take effect on the next browser
 | Variable | Purpose |
 |----------|---------|
 | `ANTHROPIC_API_KEY` | Anthropic API key |
+| `AWS_ACCESS_KEY_ID` | AWS access key for Bedrock |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret key for Bedrock |
+| `AWS_SESSION_TOKEN` | AWS session token for Bedrock (optional, for temporary credentials) |
+| `AWS_REGION` | AWS region for Bedrock (default: `us-east-1`) |
+| `GOOGLE_CLOUD_PROJECT` | Google Cloud project ID for Vertex AI (or `GCP_PROJECT_ID`) |
+| `GOOGLE_CLOUD_LOCATION` | Vertex AI region (or `GCP_REGION`, default: `us-central1`) |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Path to GCP service account JSON for Vertex AI (optional if using ADC) |
 | `OPENAI_API_KEY` | OpenAI API key |
 | `GEMINI_API_KEY` | Gemini API key |
 | `GROQ_API_KEY` | Groq API key |

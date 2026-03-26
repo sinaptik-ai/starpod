@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - **Rust 1.87+** — install via [rustup](https://rustup.rs/)
-- **An Anthropic API key** — get one at [console.anthropic.com](https://console.anthropic.com/)
+- **An LLM provider** — Anthropic API key ([console.anthropic.com](https://console.anthropic.com/)), AWS Bedrock credentials, Google Vertex AI project, or any other [supported provider](/getting-started/configuration#provider-options)
 
 ## Install from crates.io
 
@@ -33,7 +33,20 @@ starpod --help
 export ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
-Or add it to your project `.env` file after [initialization](/getting-started/initialization):
+Or use an alternative provider:
+
+```bash
+# AWS Bedrock
+export AWS_ACCESS_KEY_ID="AKIA..."
+export AWS_SECRET_ACCESS_KEY="..."
+export AWS_REGION="us-east-1"
+
+# Google Vertex AI
+export GOOGLE_CLOUD_PROJECT="my-project"
+gcloud auth application-default login
+```
+
+Or add keys to your project `.env` file after [initialization](/getting-started/initialization):
 
 ```bash
 # .env
