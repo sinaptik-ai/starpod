@@ -193,6 +193,11 @@ async fn send_msg(
 ///   followup channel and integrated into the next agent loop iteration.
 /// - **Queue**: Messages are buffered and dispatched as new agent loops after
 ///   the current stream finishes.
+///
+/// On exit (client disconnect, error, or channel close), sends a WebSocket Close
+/// frame and flushes the sink to ensure the underlying TCP connection is properly
+/// torn down. Without this, abrupt disconnects ("Connection reset by peer") can
+/// leave sockets lingering in the kernel, eventually exhausting file descriptors.
 async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_user: Option<starpod_auth::User>) {
     let (mut sender, mut receiver) = socket.split();
     let followup_mode = state.config.read().unwrap().followup_mode;
@@ -397,6 +402,14 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_user: Optio
             }
         }
     }
+
+    // Gracefully close the WebSocket: send a Close frame, then flush/close the
+    // sink so the underlying TCP socket is properly shut down with a FIN.
+    // Both calls may fail if the peer is already gone — that's fine.
+    debug!("Closing WebSocket connection");
+    let _ = sender.send(WsMessage::Close(None)).await;
+    let _ = sender.close().await;
+    // `receiver` is dropped here, releasing the read half of the socket.
 }
 
 /// Process a stream to completion, concurrently accepting new WS messages
