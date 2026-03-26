@@ -143,6 +143,13 @@ impl DeployManifest {
                             required: true,
                             description: "AWS secret access key for Bedrock".to_string(),
                         });
+                    } else if provider == "vertex" {
+                        // Vertex uses Google service account credentials
+                        agent.secrets.insert("GOOGLE_APPLICATION_CREDENTIALS".to_string(), SecretEntry {
+                            secret: "GOOGLE_APPLICATION_CREDENTIALS".to_string(),
+                            required: true,
+                            description: "Path to Google service account JSON for Vertex AI".to_string(),
+                        });
                     } else {
                         let key = format!("{}_API_KEY", provider.to_uppercase());
                         let desc = format!("{} API key", provider);
@@ -1019,5 +1026,69 @@ mod tests {
         assert!(toml.contains("[agent.secrets.AWS_ACCESS_KEY_ID]"));
         assert!(toml.contains("[agent.secrets.AWS_SECRET_ACCESS_KEY]"));
         assert!(!toml.contains("BEDROCK_API_KEY"));
+    }
+
+    // ── Vertex AI provider tests ────────────────────────────────────────
+
+    #[test]
+    fn test_vertex_provider_generates_gcp_credentials() {
+        let config = AgentConfigInput {
+            models: vec!["vertex/claude-sonnet-4-6".to_string()],
+            telegram_enabled: false,
+            internet_enabled: false,
+        };
+        let manifest = DeployManifest::generate(&config, vec![]);
+        assert!(manifest.agent.secrets.contains_key("GOOGLE_APPLICATION_CREDENTIALS"));
+        assert!(manifest.agent.secrets["GOOGLE_APPLICATION_CREDENTIALS"].required);
+        // Should NOT contain a VERTEX_API_KEY
+        assert!(!manifest.agent.secrets.contains_key("VERTEX_API_KEY"));
+    }
+
+    #[test]
+    fn test_vertex_provider_no_duplicate_gcp_keys() {
+        let config = AgentConfigInput {
+            models: vec![
+                "vertex/claude-sonnet-4-6".to_string(),
+                "vertex/claude-opus-4-6".to_string(),
+            ],
+            telegram_enabled: false,
+            internet_enabled: false,
+        };
+        let manifest = DeployManifest::generate(&config, vec![]);
+        // Only 1 secret (GOOGLE_APPLICATION_CREDENTIALS), not duplicated
+        assert_eq!(manifest.agent.secrets.len(), 1);
+        assert!(manifest.agent.secrets.contains_key("GOOGLE_APPLICATION_CREDENTIALS"));
+    }
+
+    #[test]
+    fn test_vertex_mixed_with_other_providers() {
+        let config = AgentConfigInput {
+            models: vec![
+                "vertex/claude-sonnet-4-6".to_string(),
+                "anthropic/claude-haiku-4-5".to_string(),
+                "bedrock/eu.anthropic.claude-sonnet-4-6".to_string(),
+            ],
+            telegram_enabled: false,
+            internet_enabled: false,
+        };
+        let manifest = DeployManifest::generate(&config, vec![]);
+        assert!(manifest.agent.secrets.contains_key("GOOGLE_APPLICATION_CREDENTIALS"));
+        assert!(manifest.agent.secrets.contains_key("ANTHROPIC_API_KEY"));
+        assert!(manifest.agent.secrets.contains_key("AWS_ACCESS_KEY_ID"));
+        assert!(manifest.agent.secrets.contains_key("AWS_SECRET_ACCESS_KEY"));
+        assert_eq!(manifest.agent.secrets.len(), 4);
+    }
+
+    #[test]
+    fn test_vertex_toml_output_contains_gcp_keys() {
+        let config = AgentConfigInput {
+            models: vec!["vertex/claude-sonnet-4-6".to_string()],
+            telegram_enabled: false,
+            internet_enabled: false,
+        };
+        let manifest = DeployManifest::generate(&config, vec![]);
+        let toml = manifest.to_toml().unwrap();
+        assert!(toml.contains("[agent.secrets.GOOGLE_APPLICATION_CREDENTIALS]"));
+        assert!(!toml.contains("VERTEX_API_KEY"));
     }
 }
