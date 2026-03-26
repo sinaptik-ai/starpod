@@ -110,11 +110,11 @@ impl AnthropicProvider {
         Duration::from_secs_f64(secs.min(max_secs))
     }
 
-    fn is_retryable(status: StatusCode) -> bool {
+    pub(crate) fn is_retryable(status: StatusCode) -> bool {
         status == StatusCode::TOO_MANY_REQUESTS || status.as_u16() == 529
     }
 
-    fn status_to_error(status: StatusCode, body: &str) -> AgentError {
+    pub(crate) fn status_to_error(status: StatusCode, body: &str) -> AgentError {
         let detail = serde_json::from_str::<ApiErrorResponse>(body)
             .map(|e| e.error.message)
             .unwrap_or_else(|_| body.to_string());
@@ -286,10 +286,10 @@ impl LlmProvider for AnthropicProvider {
 }
 
 // ---------------------------------------------------------------------------
-// SSE parser (Anthropic format)
+// SSE parser (Anthropic format) — shared with Bedrock provider
 // ---------------------------------------------------------------------------
 
-fn sse_stream(
+pub(crate) fn sse_stream(
     byte_stream: impl Stream<Item = std::result::Result<bytes::Bytes, reqwest::Error>> + Send + 'static,
 ) -> impl Stream<Item = Result<StreamEvent>> + Send + 'static {
     async_stream::stream! {
@@ -437,7 +437,7 @@ fn parse_stream_event(event_type: &str, data: &str) -> Result<StreamEvent> {
 /// The Anthropic API does not accept `name` on `tool_result` content blocks
 /// (it's only needed by Gemini's `functionResponse`). Sending it causes
 /// "Extra inputs are not permitted" validation errors.
-fn strip_tool_result_names(req: &mut CreateMessageRequest) {
+pub(crate) fn strip_tool_result_names(req: &mut CreateMessageRequest) {
     for msg in &mut req.messages {
         for block in &mut msg.content {
             if let ApiContentBlock::ToolResult { name, .. } = block {

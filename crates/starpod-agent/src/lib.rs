@@ -9,7 +9,7 @@ use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
 
 use agent_sdk::{ExternalToolHandlerFn, LlmProvider, Message, ModelRegistry, OllamaDiscovery, Options, PermissionMode, Query, QueryAttachment};
-use agent_sdk::{AnthropicProvider, GeminiProvider, OpenAiProvider};
+use agent_sdk::{AnthropicProvider, BedrockProvider, GeminiProvider, OpenAiProvider};
 use agent_sdk::options::{SystemPrompt, ThinkingConfig};
 use starpod_core::{FollowupMode, ReasoningEffort};
 use tokio::sync::mpsc;
@@ -549,6 +549,19 @@ impl StarpodAgent {
             "anthropic" => Box::new(
                 AnthropicProvider::new(api_key, base_url).with_pricing(pricing)
             ),
+            "bedrock" => {
+                // Bedrock handles its own auth via AWS SigV4 — region from config options or env
+                let opts = config.provider_options("bedrock");
+                let region = opts.get("region")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .or_else(|| std::env::var("AWS_REGION").ok())
+                    .or_else(|| std::env::var("AWS_DEFAULT_REGION").ok())
+                    .unwrap_or_else(|| "us-east-1".to_string());
+                let provider = BedrockProvider::with_region(region)
+                    .map_err(|e| StarpodError::Config(format!("Bedrock provider error: {e}")))?;
+                Box::new(provider.with_pricing(pricing))
+            }
             "gemini" => Box::new(
                 GeminiProvider::with_base_url(api_key, base_url).with_pricing(pricing)
             ),
@@ -567,7 +580,7 @@ impl StarpodAgent {
             }
             other => {
                 return Err(StarpodError::Config(format!(
-                    "Unsupported provider: '{}'. Supported: anthropic, openai, gemini, groq, deepseek, openrouter, ollama",
+                    "Unsupported provider: '{}'. Supported: anthropic, bedrock, openai, gemini, groq, deepseek, openrouter, ollama",
                     other
                 )));
             }

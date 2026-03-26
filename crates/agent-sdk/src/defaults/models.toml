@@ -57,6 +57,62 @@ output = 5.0
 context_window = 200000
 supports_vision = true
 
+# ── AWS Bedrock ───────────────────────────────────────────────────────
+# Source: https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html
+# Pricing matches Anthropic direct; Bedrock uses cross-region inference profile IDs.
+# Cache: same as Anthropic (5-min write = 1.25x, read/hit = 0.1x)
+#
+# Model IDs use cross-region inference profiles: {region}.anthropic.claude-...
+# Region prefixes: us (US), eu (Europe). Users must enable models in their
+# AWS Bedrock console.
+
+[bedrock]
+default_model = "us.anthropic.claude-sonnet-4-6"
+cache_read_multiplier = 0.1
+cache_creation_multiplier = 1.25
+
+# --- Sonnet 4.6 ---
+
+[bedrock.models."us.anthropic.claude-sonnet-4-6"]
+input = 3.0
+output = 15.0
+context_window = 1000000
+supports_vision = true
+
+[bedrock.models."eu.anthropic.claude-sonnet-4-6"]
+input = 3.0
+output = 15.0
+context_window = 1000000
+supports_vision = true
+
+# --- Opus 4.6 ---
+
+[bedrock.models."us.anthropic.claude-opus-4-6-v1"]
+input = 5.0
+output = 25.0
+context_window = 1000000
+supports_vision = true
+
+[bedrock.models."eu.anthropic.claude-opus-4-6-v1"]
+input = 5.0
+output = 25.0
+context_window = 1000000
+supports_vision = true
+
+# --- Haiku 4.5 ---
+
+[bedrock.models."us.anthropic.claude-haiku-4-5-20251001-v1:0"]
+input = 1.0
+output = 5.0
+context_window = 200000
+supports_vision = true
+
+[bedrock.models."eu.anthropic.claude-haiku-4-5-20251001-v1:0"]
+input = 1.0
+output = 5.0
+context_window = 200000
+supports_vision = true
+
 # ── OpenAI ─────────────────────────────────────────────────────────────
 # Source: https://developers.openai.com/api/docs/pricing
 # Cache: automatic, read = 0.1x, write = 1.0x (no surcharge)

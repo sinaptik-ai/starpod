@@ -130,13 +130,28 @@ impl DeployManifest {
             if let Some(provider) = model_spec.split('/').next() {
                 if providers_seen.insert(provider.to_string()) {
                     let is_local = LOCAL_PROVIDERS.contains(&provider);
-                    let key = format!("{}_API_KEY", provider.to_uppercase());
-                    let desc = format!("{} API key", provider);
-                    agent.secrets.insert(key.clone(), SecretEntry {
-                        secret: key,
-                        required: !is_local,
-                        description: desc,
-                    });
+
+                    // Bedrock uses AWS credentials (access key + secret key), not a single API key
+                    if provider == "bedrock" {
+                        agent.secrets.insert("AWS_ACCESS_KEY_ID".to_string(), SecretEntry {
+                            secret: "AWS_ACCESS_KEY_ID".to_string(),
+                            required: true,
+                            description: "AWS access key ID for Bedrock".to_string(),
+                        });
+                        agent.secrets.insert("AWS_SECRET_ACCESS_KEY".to_string(), SecretEntry {
+                            secret: "AWS_SECRET_ACCESS_KEY".to_string(),
+                            required: true,
+                            description: "AWS secret access key for Bedrock".to_string(),
+                        });
+                    } else {
+                        let key = format!("{}_API_KEY", provider.to_uppercase());
+                        let desc = format!("{} API key", provider);
+                        agent.secrets.insert(key.clone(), SecretEntry {
+                            secret: key,
+                            required: !is_local,
+                            description: desc,
+                        });
+                    }
                 }
             }
         }

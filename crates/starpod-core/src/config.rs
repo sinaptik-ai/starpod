@@ -113,6 +113,7 @@ fn default_true() -> bool {
 #[serde(default)]
 pub struct ProvidersConfig {
     pub anthropic: Option<ProviderConfig>,
+    pub bedrock: Option<ProviderConfig>,
     pub openai: Option<ProviderConfig>,
     pub gemini: Option<ProviderConfig>,
     pub groq: Option<ProviderConfig>,
@@ -798,6 +799,8 @@ impl StarpodConfig {
     pub fn resolved_provider_api_key(&self, provider: &str) -> Option<String> {
         let env_var = match provider {
             "anthropic" => "ANTHROPIC_API_KEY",
+            // Bedrock uses AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY (handled by the provider)
+            "bedrock" => "AWS_ACCESS_KEY_ID",
             "openai" => "OPENAI_API_KEY",
             "gemini" => "GEMINI_API_KEY",
             "groq" => "GROQ_API_KEY",
@@ -816,6 +819,7 @@ impl StarpodConfig {
     pub fn resolved_provider_base_url(&self, provider: &str) -> Option<String> {
         let cfg = match provider {
             "anthropic" => self.providers.anthropic.as_ref(),
+            "bedrock" => self.providers.bedrock.as_ref(),
             "openai" => self.providers.openai.as_ref(),
             "gemini" => self.providers.gemini.as_ref(),
             "groq" => self.providers.groq.as_ref(),
@@ -828,6 +832,8 @@ impl StarpodConfig {
         cfg.and_then(|c| c.base_url.clone()).or_else(|| {
             let default_url = match provider {
                 "anthropic" => "https://api.anthropic.com/v1/messages",
+                // Bedrock URL is constructed per-model by the provider; this is a sentinel
+                "bedrock" => "https://bedrock-runtime.us-east-1.amazonaws.com",
                 "openai" => "https://api.openai.com/v1/chat/completions",
                 "gemini" => "https://generativelanguage.googleapis.com/v1beta",
                 "groq" => "https://api.groq.com/openai/v1/chat/completions",
@@ -847,6 +853,7 @@ impl StarpodConfig {
 
         let cfg = match provider {
             "anthropic" => self.providers.anthropic.as_ref(),
+            "bedrock" => self.providers.bedrock.as_ref(),
             "openai" => self.providers.openai.as_ref(),
             "gemini" => self.providers.gemini.as_ref(),
             "groq" => self.providers.groq.as_ref(),
