@@ -6,7 +6,7 @@ Persistent memory system: markdown files on disk + SQLite FTS5 full-text search 
 
 ```
 .starpod/
-├── config/            # Blueprint-managed files
+├── config/            # Agent configuration files
 │   ├── SOUL.md        # Agent personality
 │   ├── HEARTBEAT.md   # Periodic tasks
 │   ├── BOOT.md        # Startup instructions
@@ -20,7 +20,7 @@ Persistent memory system: markdown files on disk + SQLite FTS5 full-text search 
         └── YYYY-MM-DD.md  # Daily logs (per-user, temporal decay)
 ```
 
-- **MemoryStore** manages blueprint files (from `config_dir`) and runtime files (from `agent_home`) with the FTS5 index.
+- **MemoryStore** manages config files (from `config_dir`) and runtime files (from `agent_home`) with the FTS5 index.
 - **UserMemoryView** overlays per-user files on top of the shared agent store.
 
 ## API

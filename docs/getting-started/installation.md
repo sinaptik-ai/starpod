@@ -29,32 +29,16 @@ starpod --help
 
 ## Set Your API Key
 
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-```
-
-Or use an alternative provider:
+Seed your API key into the vault during initialization:
 
 ```bash
-# AWS Bedrock
-export AWS_ACCESS_KEY_ID="AKIA..."
-export AWS_SECRET_ACCESS_KEY="..."
-export AWS_REGION="us-east-1"
-
-# Google Vertex AI
-export GOOGLE_CLOUD_PROJECT="my-project"
-gcloud auth application-default login
+starpod init --env ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
-Or add keys to your project `.env` file after [initialization](/getting-started/initialization):
-
-```bash
-# .env
-ANTHROPIC_API_KEY=sk-ant-...
-```
+Or manage it later via the web UI Settings page after running `starpod dev`.
 
 ::: tip
-API keys must be set via environment variables or `.env` files — they cannot be placed in config files. Any `api_key` found in a config file is ignored and triggers a warning.
+API keys are stored in the encrypted vault — never in config files or `.env` files. The vault injects them into the process environment at startup.
 :::
 
 ## Next Steps

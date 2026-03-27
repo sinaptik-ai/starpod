@@ -1,14 +1,16 @@
 # Architecture
 
-Starpod is a Rust workspace with 12 crates, each responsible for a single concern.
+Starpod is a Rust workspace with 16 crates, each responsible for a single concern.
 
 ```
 crates/
 ├── agent-sdk/            Claude API client + agent loop
 ├── starpod-hooks/        Lifecycle hook system (events, callbacks, permissions)
 ├── starpod-core/         Shared types, config, error handling
+├── starpod-db/           Unified SQLite (core.db)
 ├── starpod-memory/       SQLite FTS5 full-text search + markdown files
-├── starpod-session/      Channel-aware session lifecycle (per-user)
+├── starpod-vault/        AES-256-GCM encrypted credentials
+├── starpod-session/      Channel-aware session lifecycle
 ├── starpod-skills/       Self-extension skill system (markdown-based)
 ├── starpod-cron/         Cron scheduling (interval, cron expr, one-shot)
 ├── starpod-agent/        Orchestrator wiring everything together
@@ -18,85 +20,38 @@ crates/
 └── starpod/              CLI binary
 ```
 
-## Blueprints vs Instances
+## Agent Layout
 
-An **agent** in Starpod has two halves: a **blueprint** (what you design) and an **instance** (what actually runs).
-
-### Blueprint — the source of truth
-
-A blueprint is a folder under `agents/<name>/` in your workspace. It's git-tracked and contains everything that defines *what* the agent is:
+An agent is bootstrapped with `starpod init` and lives entirely in a `.starpod/` directory. There is no separate blueprint/instance distinction — the agent IS the instance.
 
 ```
-agents/aster/
-├── agent.toml       # Config: model, provider, max_turns, channels
-├── SOUL.md          # Personality and instructions
-├── BOOT.md          # Startup prompt (optional)
-├── HEARTBEAT.md     # Background prompt (optional)
-├── BOOTSTRAP.md     # First-run prompt (optional)
-└── files/           # Template files synced to the instance root
+my-agent/                           # project root
+├── .starpod/
+│   ├── config/                     # agent configuration
+│   │   ├── agent.toml             # main config (models, server_addr, etc.)
+│   │   ├── SOUL.md                # personality
+│   │   ├── HEARTBEAT.md           # periodic self-reflection
+│   │   ├── BOOT.md                # boot instructions
+│   │   ├── BOOTSTRAP.md           # first-run instructions
+│   │   └── frontend.toml          # web UI config
+│   ├── skills/                     # agent skills
+│   ├── db/                         # SQLite databases (runtime)
+│   │   ├── core.db                # sessions, cron, auth
+│   │   ├── memory.db              # FTS5 + vector memory
+│   │   └── vault.db               # encrypted secrets (AES-256-GCM)
+│   └── users/<id>/                 # per-user data
+│       ├── USER.md
+│       ├── MEMORY.md
+│       └── memory/                 # daily logs
+├── home/                           # agent's sandboxed filesystem
+│   ├── desktop/
+│   ├── documents/
+│   ├── projects/
+│   └── downloads/
+└── .gitignore                      # excludes .starpod/db/ and home/
 ```
 
-Think of it like a Dockerfile — it describes the agent, but nothing runs here. No databases, no memory, no user data.
-
-### Instance — the running agent
-
-An instance is the runtime environment created from a blueprint. It lives in `.instances/<name>/` (gitignored) and contains everything the agent accumulates while running:
-
-```
-.instances/aster/                   # Agent's filesystem sandbox
-├── .starpod/                       # Internal state
-│   ├── .env                        # Secrets (environment-specific)
-│   ├── config/                     # ← Copied from blueprint (overwritten on rebuild)
-│   │   ├── agent.toml
-│   │   ├── SOUL.md
-│   │   ├── BOOT.md
-│   │   ├── HEARTBEAT.md
-│   │   └── BOOTSTRAP.md
-│   ├── skills/                     # ← Merged from blueprint (user additions preserved)
-│   ├── db/                         # SQLite databases (created on first serve)
-│   │   ├── memory.db
-│   │   ├── session.db
-│   │   └── cron.db
-│   └── users/
-│       ├── admin/                  # Per-user data (auto-created)
-│       │   ├── USER.md
-│       │   ├── MEMORY.md
-│       │   └── memory/             # Daily logs
-│       └── user/                   # Default non-admin user (auto-created)
-│           ├── USER.md
-│           ├── MEMORY.md
-│           └── memory/
-└── home/                           # Agent's visible filesystem (sandbox)
-    ├── desktop/
-    ├── documents/
-    ├── projects/
-    └── downloads/
-```
-
-### What goes where
-
-| | Blueprint (`agents/`) | Instance (`.instances/`) |
-|---|---|---|
-| **Tracked in git** | Yes | No (gitignored) |
-| **Contains** | Config, personality, templates | Databases, memory, user data, `home/` sandbox |
-| **Editable by** | Developer | Agent + users at runtime |
-| **On `starpod dev`** | Read-only source | Created/updated from blueprint |
-| **On rebuild** | Source of truth | `config/` overwritten, `db/` + `users/` preserved |
-
-### The three ownership zones inside `.starpod/`
-
-| Directory | Owned by | On rebuild |
-|---|---|---|
-| `config/` | Blueprint | **Always overwritten** — you're shipping a new version of the agent |
-| `skills/` | Both | **Merged** — blueprint skills overwrite by filename, agent-created skills preserved |
-| `.env` | Environment | **Not overwritten** — secrets are deployment-specific |
-| `db/`, `users/` | Runtime | **Never touched** — this is the agent's accumulated state |
-
-### How they connect
-
-`starpod dev <agent>` copies the blueprint into an instance via `apply_blueprint()`, then serves it. Re-running `starpod dev` refreshes the config but preserves runtime data — so you can iterate on the agent's personality without losing its memory.
-
-For standalone deployments without a workspace, `starpod build --agent <path>` creates a self-contained `.starpod/` via `build_standalone()`, ready for `starpod serve`. If a `.starpod/` already exists, the command will error — use `--force` to overwrite the blueprint files while preserving runtime data.
+All secrets live in the vault (`vault.db`), seeded via `starpod init --env KEY=VAL` or the web UI Settings page. At startup, vault contents are injected into process environment variables.
 
 ## Dependency Graph
 
@@ -158,7 +113,7 @@ prompt → drain followups → LLM provider → tool calls → execute → feed 
 
 At each iteration boundary (before calling the API), any followup messages that arrived via the `followup_rx` channel are drained and appended as user messages. This allows the agent to incorporate rapid user messages without interrupting the current loop. The behavior is configurable via `followup_mode` (`"inject"` or `"queue"`).
 
-The provider is selected at runtime from `config.provider`:
+The provider is selected at runtime from the `models` field in `agent.toml` (e.g. `"anthropic/claude-haiku-4-5"`):
 
 | Provider | Struct | Default Endpoint |
 |----------|--------|-----------------|
@@ -197,73 +152,8 @@ All subsystems are wrapped in `Arc` for thread-safe sharing across async tasks:
 
 SQLite connections are wrapped in `Mutex<Connection>` for safe concurrent access.
 
-## Directory Layouts
+## Mode Detection
 
-### Workspace (development)
+Starpod auto-detects the agent by walking up from the current directory looking for `.starpod/config/agent.toml` (or the legacy `.starpod/agent.toml`). This means `starpod dev`, `starpod serve`, `starpod chat`, etc. work from any subdirectory — they walk up to find the nearest `.starpod/`.
 
-```
-workspace/
-├── starpod.toml                    # workspace defaults (git-tracked)
-├── .env                            # secrets (gitignored, populates vault at serve time)
-├── skills/                         # shared skills (git-tracked)
-├── agents/                         # BLUEPRINTS (git-tracked)
-│   └── aster/
-│       ├── agent.toml              # config + default permissions
-│       ├── SOUL.md                 # personality
-│       └── files/                  # template filesystem
-└── .instances/                     # RUNTIME (gitignored)
-    └── aster/                      # agent's filesystem root
-        ├── .starpod/               # internal (like .git/)
-        │   ├── db/vault.db          # encrypted secrets (from workspace .env)
-        │   ├── config/             # blueprint-managed (overwritten on build)
-        │   │   ├── agent.toml
-        │   │   ├── SOUL.md
-        │   │   ├── HEARTBEAT.md
-        │   │   ├── BOOT.md
-        │   │   └── BOOTSTRAP.md
-        │   ├── skills/             # merged on build
-        │   ├── db/                 # SQLite DBs (runtime)
-        │   └── users/
-        │       ├── admin/          # auto-created (runtime)
-        │       │   ├── USER.md
-        │       │   ├── MEMORY.md
-        │       │   └── memory/
-        │       └── user/           # auto-created (runtime)
-        │           ├── USER.md
-        │           ├── MEMORY.md
-        │           └── memory/
-        └── home/                   # agent's visible filesystem (sandbox)
-            ├── desktop/
-            ├── documents/
-            ├── projects/
-            └── downloads/
-```
-
-### Single-agent (production)
-
-```
-/srv/aster/                         # agent's filesystem root
-├── .starpod/
-│   ├── .env                        # secrets
-│   ├── config/                     # blueprint-managed
-│   │   ├── agent.toml
-│   │   ├── SOUL.md
-│   │   ├── HEARTBEAT.md
-│   │   ├── BOOT.md
-│   │   └── BOOTSTRAP.md
-│   ├── skills/                     # merged on build
-│   ├── users/{admin,user}/          # runtime (auto-created)
-│   └── db/                         # runtime
-└── home/                           # agent's visible filesystem (sandbox)
-    ├── desktop/
-    ├── documents/
-    ├── projects/
-    └── downloads/
-```
-
-Starpod auto-detects the mode by walking up from the current directory:
-- `.starpod/config/agent.toml` found (in CWD or any parent) → **SingleAgent** mode
-- Inside `.instances/<name>/` with `starpod.toml` sibling → **Instance** mode
-- `starpod.toml` found → **Workspace** mode
-
-This means `starpod serve`, `starpod chat`, etc. work from any subdirectory — they walk up to find the nearest `.starpod/`.
+If no `.starpod/` is found, commands like `starpod chat` create an ephemeral instance for the message.

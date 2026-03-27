@@ -12,598 +12,337 @@ fn starpod_json() -> Command {
     cmd
 }
 
-/// Create a temp workspace with a starpod.toml so `agent new` can find it.
-fn workspace() -> TempDir {
-    let dir = TempDir::new().unwrap();
-    fs::write(dir.path().join("starpod.toml"), "# workspace\n").unwrap();
-    dir
-}
-
-// ── skill new command ─────────────────────────────────────────────────────
+// ── init command ────────────────────────────────────────────────────────
 
 #[test]
-fn skill_new_subcommand_exists() {
-    // `skill new` should be recognized (will fail because no API key / no .starpod dir,
-    // but the error should NOT be about an unrecognized subcommand).
-    let output = starpod()
-        .args(["skill", "new", "pr-review"])
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("unrecognized subcommand"),
-        "skill new should be a valid subcommand, got: {stderr}"
-    );
-}
+fn init_creates_starpod_directory() {
+    let tmp = TempDir::new().unwrap();
 
-#[test]
-fn skill_new_requires_name() {
-    // `skill new` without a name should fail with a usage error.
-    starpod().args(["skill", "new"]).assert().failure();
-}
-
-#[test]
-fn skill_new_accepts_description_flag() {
-    let output = starpod()
-        .args([
-            "skill",
-            "new",
-            "pr-review",
-            "--description",
-            "Review PRs for security",
-        ])
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("unexpected argument"),
-        "skill new should accept --description, got: {stderr}"
-    );
-}
-
-#[test]
-fn skill_new_accepts_prompt_flag() {
-    let output = starpod()
-        .args([
-            "skill",
-            "new",
-            "pr-review",
-            "--prompt",
-            "Focus on OWASP top 10",
-        ])
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("unexpected argument"),
-        "skill new should accept --prompt, got: {stderr}"
-    );
-}
-
-#[test]
-fn skill_new_accepts_description_and_prompt_flags() {
-    let output = starpod()
-        .args([
-            "skill",
-            "new",
-            "pr-review",
-            "--description",
-            "Review PRs for security",
-            "--prompt",
-            "Focus on OWASP top 10",
-        ])
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("unrecognized subcommand") && !stderr.contains("unexpected argument"),
-        "skill new should accept --description and --prompt flags, got: {stderr}"
-    );
-}
-
-#[test]
-fn skill_new_accepts_short_flags() {
-    let output = starpod()
-        .args([
-            "skill",
-            "new",
-            "pr-review",
-            "-d",
-            "Review PRs",
-            "-p",
-            "Focus on security",
-        ])
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("unexpected argument"),
-        "skill new should accept -d and -p short flags, got: {stderr}"
-    );
-}
-
-#[test]
-fn skill_new_rejects_old_body_flag() {
-    // The old --body flag should no longer be accepted.
     starpod()
-        .args(["skill", "new", "pr-review", "--body", "some body"])
-        .assert()
-        .failure();
-}
-
-#[test]
-fn skill_new_rejects_old_file_flag() {
-    // The old --file flag should no longer be accepted.
-    starpod()
-        .args(["skill", "new", "pr-review", "--file", "some-file.md"])
-        .assert()
-        .failure();
-}
-
-#[test]
-fn skill_create_subcommand_removed() {
-    // `skill create` should not exist as a subcommand.
-    let output = starpod()
-        .args(["skill", "create", "test-skill"])
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("unrecognized subcommand") || !output.status.success(),
-        "skill create should not be a valid subcommand, got: {stderr}"
-    );
-}
-
-#[test]
-fn skill_new_mirrors_agent_new_pattern() {
-    // Both `agent new` and `skill new` take a positional name argument.
-    // This test verifies they follow the same CLI pattern.
-    let agent_output = starpod().args(["agent", "new", "--help"]).output().unwrap();
-    let agent_help = String::from_utf8_lossy(&agent_output.stdout);
-
-    let skill_output = starpod().args(["skill", "new", "--help"]).output().unwrap();
-    let skill_help = String::from_utf8_lossy(&skill_output.stdout);
-
-    // Both should show NAME as a positional argument in usage
-    // (required <NAME> or optional [NAME]).
-    assert!(
-        agent_help.contains("<NAME>")
-            || agent_help.contains("<name>")
-            || agent_help.contains("[NAME]")
-            || agent_help.contains("[name]"),
-        "agent new should have a positional NAME arg, got:\n{agent_help}"
-    );
-    assert!(
-        skill_help.contains("<NAME>")
-            || skill_help.contains("<name>")
-            || skill_help.contains("[NAME]")
-            || skill_help.contains("[name]"),
-        "skill new should have a positional NAME arg, got:\n{skill_help}"
-    );
-}
-
-#[test]
-fn skill_new_help_mentions_ai() {
-    let output = starpod().args(["skill", "new", "--help"]).output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("AI") || stdout.contains("generat"),
-        "skill new help should mention AI generation, got:\n{stdout}"
-    );
-}
-
-#[test]
-fn skill_parent_accepts_agent_flag() {
-    // `starpod skill --agent mybot list` should be recognized.
-    let output = starpod()
-        .args(["skill", "--agent", "mybot", "list"])
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("unexpected argument"),
-        "skill should accept --agent flag, got: {stderr}"
-    );
-}
-
-// ── skill list / show / delete ────────────────────────────────────────────
-
-#[test]
-fn skill_list_subcommand_exists() {
-    let output = starpod().args(["skill", "list"]).output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("unrecognized subcommand"),
-        "skill list should be a valid subcommand, got: {stderr}"
-    );
-}
-
-#[test]
-fn skill_show_requires_name() {
-    starpod().args(["skill", "show"]).assert().failure();
-}
-
-#[test]
-fn skill_delete_requires_name() {
-    starpod().args(["skill", "delete"]).assert().failure();
-}
-
-#[test]
-fn agent_new_uses_name_as_display_name() {
-    let ws = workspace();
-    starpod()
-        .current_dir(ws.path())
-        .args(["agent", "new", "mybot", "--default"])
+        .current_dir(tmp.path())
+        .args(["init"])
         .assert()
         .success();
 
-    let agent_toml = fs::read_to_string(ws.path().join("agents/mybot/agent.toml")).unwrap();
-    assert!(
-        agent_toml.contains(r#"agent_name = "mybot""#),
-        "agent_name should default to the positional name arg, got:\n{agent_toml}"
-    );
-
-    let soul = fs::read_to_string(ws.path().join("agents/mybot/SOUL.md")).unwrap();
-    assert!(
-        soul.contains("You are mybot"),
-        "SOUL.md should use the name as the agent identity, got:\n{soul}"
-    );
-
-    // Lifecycle files should be scaffolded
-    for name in &["HEARTBEAT.md", "BOOT.md", "BOOTSTRAP.md"] {
-        assert!(
-            ws.path().join("agents/mybot").join(name).exists(),
-            "{name} should be created by agent new"
-        );
-    }
-
-    // frontend.toml should be scaffolded with defaults
-    let frontend_path = ws.path().join("agents/mybot/frontend.toml");
-    assert!(
-        frontend_path.exists(),
-        "frontend.toml should be created by agent new"
-    );
-    let frontend_content = fs::read_to_string(&frontend_path).unwrap();
-    assert!(
-        frontend_content.contains("prompts"),
-        "frontend.toml should contain default prompts"
-    );
-
-    // Blueprint should NOT contain a users/ directory (users live in the instance, not the template)
-    assert!(
-        !ws.path().join("agents/mybot/users").exists(),
-        "Blueprint should not scaffold a users/ directory"
-    );
+    let sp = tmp.path().join(".starpod");
+    let cfg = sp.join("config");
+    assert!(cfg.join("agent.toml").is_file(), ".starpod/config/agent.toml should exist");
+    assert!(cfg.join("SOUL.md").is_file(), ".starpod/config/SOUL.md should exist");
+    assert!(cfg.join("frontend.toml").is_file(), ".starpod/config/frontend.toml should exist");
+    assert!(cfg.join("HEARTBEAT.md").is_file(), "HEARTBEAT.md should exist");
+    assert!(cfg.join("BOOT.md").is_file(), "BOOT.md should exist");
+    assert!(cfg.join("BOOTSTRAP.md").is_file(), "BOOTSTRAP.md should exist");
+    assert!(sp.join("db").is_dir(), ".starpod/db/ should exist");
+    assert!(sp.join("skills").is_dir(), ".starpod/skills/ should exist");
+    assert!(sp.join("users").is_dir(), ".starpod/users/ should exist");
+    assert!(tmp.path().join("home").is_dir(), "home/ should exist");
 }
 
 #[test]
-fn agent_new_agent_name_flag_overrides() {
-    let ws = workspace();
+fn init_with_name_flag() {
+    let tmp = TempDir::new().unwrap();
+
     starpod()
-        .current_dir(ws.path())
-        .args([
-            "agent",
-            "new",
-            "mybot",
-            "--default",
-            "--agent-name",
-            "Jarvis",
-        ])
+        .current_dir(tmp.path())
+        .args(["init", "--name", "Jarvis"])
         .assert()
         .success();
 
-    let agent_toml = fs::read_to_string(ws.path().join("agents/mybot/agent.toml")).unwrap();
+    let agent_toml = fs::read_to_string(
+        tmp.path().join(".starpod/config/agent.toml"),
+    ).unwrap();
     assert!(
         agent_toml.contains(r#"agent_name = "Jarvis""#),
-        "--agent-name should override the default, got:\n{agent_toml}"
+        "agent_name should be Jarvis, got:\n{agent_toml}"
     );
 
-    let soul = fs::read_to_string(ws.path().join("agents/mybot/SOUL.md")).unwrap();
+    let soul = fs::read_to_string(
+        tmp.path().join(".starpod/config/SOUL.md"),
+    ).unwrap();
     assert!(
         soul.contains("You are Jarvis"),
-        "SOUL.md should use the --agent-name value, got:\n{soul}"
+        "SOUL.md should reference Jarvis, got:\n{soul}"
     );
 }
 
-// ── build command ────────────────────────────────────────────────────────
-
 #[test]
-fn build_creates_starpod_directory() {
+fn init_with_model_flag() {
     let tmp = TempDir::new().unwrap();
 
-    // Create a minimal agent blueprint
-    let agent_dir = tmp.path().join("my-agent");
-    fs::create_dir_all(&agent_dir).unwrap();
-    fs::write(
-        agent_dir.join("agent.toml"),
-        "agent_name = \"TestBot\"\nmodel = \"claude-haiku-4-5\"\n",
-    )
-    .unwrap();
-    fs::write(agent_dir.join("SOUL.md"), "# Soul\n\nYou are TestBot.\n").unwrap();
-
-    // Provide .env with required secrets so build validation passes
-    let env_file = tmp.path().join("test.env");
-    fs::write(&env_file, "ANTHROPIC_API_KEY=sk-test-dummy\n").unwrap();
-
-    let output_dir = tmp.path().join("deploy");
-    fs::create_dir_all(&output_dir).unwrap();
-
     starpod()
-        .args([
-            "build",
-            "--agent",
-            agent_dir.to_str().unwrap(),
-            "--output",
-            output_dir.to_str().unwrap(),
-            "--env",
-            env_file.to_str().unwrap(),
-        ])
+        .current_dir(tmp.path())
+        .args(["init", "--model", "openai/gpt-4o"])
         .assert()
         .success();
 
-    let sp = output_dir.join(".starpod");
-    let cfg = sp.join("config");
+    let agent_toml = fs::read_to_string(
+        tmp.path().join(".starpod/config/agent.toml"),
+    ).unwrap();
     assert!(
-        cfg.join("agent.toml").is_file(),
-        ".starpod/config/agent.toml should exist"
+        agent_toml.contains("openai/gpt-4o"),
+        "model should be openai/gpt-4o, got:\n{agent_toml}"
     );
-    assert!(
-        cfg.join("SOUL.md").is_file(),
-        ".starpod/config/SOUL.md should exist"
-    );
-    assert!(sp.join("db").is_dir(), ".starpod/db/ should exist");
-    assert!(sp.join("users").is_dir(), ".starpod/users/ should exist");
 }
 
 #[test]
-fn build_fails_without_agent_toml() {
+fn init_default_values() {
     let tmp = TempDir::new().unwrap();
 
-    let agent_dir = tmp.path().join("bad-agent");
-    fs::create_dir_all(&agent_dir).unwrap();
-    // No agent.toml
-
     starpod()
-        .args(["build", "--agent", agent_dir.to_str().unwrap()])
+        .current_dir(tmp.path())
+        .args(["init"])
+        .assert()
+        .success();
+
+    let agent_toml = fs::read_to_string(
+        tmp.path().join(".starpod/config/agent.toml"),
+    ).unwrap();
+    assert!(
+        agent_toml.contains(r#"agent_name = "Aster""#),
+        "default agent_name should be Aster, got:\n{agent_toml}"
+    );
+    assert!(
+        agent_toml.contains("anthropic/claude-haiku-4-5"),
+        "default model should be anthropic/claude-haiku-4-5, got:\n{agent_toml}"
+    );
+}
+
+#[test]
+fn init_fails_if_already_initialized() {
+    let tmp = TempDir::new().unwrap();
+
+    // First init succeeds
+    starpod()
+        .current_dir(tmp.path())
+        .args(["init"])
+        .assert()
+        .success();
+
+    // Second init fails
+    starpod()
+        .current_dir(tmp.path())
+        .args(["init"])
         .assert()
         .failure();
 }
 
 #[test]
-fn build_with_env_file() {
+fn init_creates_gitignore() {
     let tmp = TempDir::new().unwrap();
 
-    let agent_dir = tmp.path().join("my-agent");
-    fs::create_dir_all(&agent_dir).unwrap();
-    fs::write(agent_dir.join("agent.toml"), "agent_name = \"Bot\"\n").unwrap();
+    starpod()
+        .current_dir(tmp.path())
+        .args(["init"])
+        .assert()
+        .success();
 
-    // Include required ANTHROPIC_API_KEY alongside custom vars
-    let env_file = tmp.path().join("prod.env");
-    fs::write(
-        &env_file,
-        "ANTHROPIC_API_KEY=sk-test-dummy\nAPI_KEY=secret123\n",
-    )
-    .unwrap();
+    let gitignore = fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+    assert!(gitignore.contains(".starpod/db/"), ".gitignore should contain .starpod/db/");
+    assert!(gitignore.contains("home/"), ".gitignore should contain home/");
+}
 
-    let output_dir = tmp.path().join("deploy");
-    fs::create_dir_all(&output_dir).unwrap();
+#[test]
+fn init_with_env_flag() {
+    let tmp = TempDir::new().unwrap();
 
     starpod()
+        .current_dir(tmp.path())
+        .args(["init", "--env", "TEST_KEY=test_value"])
+        .assert()
+        .success();
+
+    // Vault should exist after seeding env vars
+    assert!(
+        tmp.path().join(".starpod/db/vault.db").is_file(),
+        "vault.db should be created when --env is used"
+    );
+}
+
+// ── init: combined flags and edge cases ───────────────────────────────
+
+#[test]
+fn init_with_name_and_model() {
+    let tmp = TempDir::new().unwrap();
+
+    starpod()
+        .current_dir(tmp.path())
+        .args(["init", "--name", "Ada", "--model", "openai/gpt-4o"])
+        .assert()
+        .success();
+
+    let agent_toml = fs::read_to_string(
+        tmp.path().join(".starpod/config/agent.toml"),
+    ).unwrap();
+    assert!(
+        agent_toml.contains(r#"agent_name = "Ada""#),
+        "agent_name should be Ada, got:\n{agent_toml}"
+    );
+    assert!(
+        agent_toml.contains("openai/gpt-4o"),
+        "model should be openai/gpt-4o, got:\n{agent_toml}"
+    );
+
+    let soul = fs::read_to_string(
+        tmp.path().join(".starpod/config/SOUL.md"),
+    ).unwrap();
+    assert!(
+        soul.contains("You are Ada"),
+        "SOUL.md should reference Ada, got:\n{soul}"
+    );
+}
+
+#[test]
+fn init_with_multiple_env_flags() {
+    let tmp = TempDir::new().unwrap();
+
+    starpod()
+        .current_dir(tmp.path())
         .args([
-            "build",
-            "--agent",
-            agent_dir.to_str().unwrap(),
-            "--output",
-            output_dir.to_str().unwrap(),
-            "--env",
-            env_file.to_str().unwrap(),
+            "init",
+            "--env", "KEY_A=val_a",
+            "--env", "KEY_B=val_b",
         ])
         .assert()
         .success();
 
-    // .env is NOT copied into the instance (secrets go into vault at serve time).
-    // Verify the build succeeded by checking the output structure exists.
-    assert!(output_dir.join(".starpod/config/agent.toml").is_file());
-    assert!(output_dir.join(".starpod/db").is_dir());
+    assert!(
+        tmp.path().join(".starpod/db/vault.db").is_file(),
+        "vault.db should be created with multiple --env flags"
+    );
 }
 
 #[test]
-fn build_with_skills() {
+fn init_creates_home_subdirectories() {
     let tmp = TempDir::new().unwrap();
 
-    let agent_dir = tmp.path().join("my-agent");
-    fs::create_dir_all(&agent_dir).unwrap();
-    fs::write(agent_dir.join("agent.toml"), "agent_name = \"Bot\"\n").unwrap();
-
-    // Provide .env with required secrets so build validation passes
-    let env_file = tmp.path().join("test.env");
-    fs::write(&env_file, "ANTHROPIC_API_KEY=sk-test-dummy\n").unwrap();
-
-    let skills_dir = tmp.path().join("skills");
-    fs::create_dir_all(skills_dir.join("greet")).unwrap();
-    fs::write(
-        skills_dir.join("greet").join("SKILL.md"),
-        "---\nname: greet\ndescription: Greet users.\n---\nSay hello.",
-    )
-    .unwrap();
-
-    let output_dir = tmp.path().join("deploy");
-    fs::create_dir_all(&output_dir).unwrap();
-
     starpod()
-        .args([
-            "build",
-            "--agent",
-            agent_dir.to_str().unwrap(),
-            "--skills",
-            skills_dir.to_str().unwrap(),
-            "--output",
-            output_dir.to_str().unwrap(),
-            "--env",
-            env_file.to_str().unwrap(),
-        ])
+        .current_dir(tmp.path())
+        .args(["init"])
         .assert()
         .success();
 
+    for dir in &["desktop", "documents", "projects", "downloads"] {
+        assert!(
+            tmp.path().join("home").join(dir).is_dir(),
+            "home/{dir} should exist"
+        );
+    }
+}
+
+#[test]
+fn init_appends_to_existing_gitignore() {
+    let tmp = TempDir::new().unwrap();
+
+    // Pre-existing .gitignore
+    fs::write(tmp.path().join(".gitignore"), "node_modules/\n").unwrap();
+
+    starpod()
+        .current_dir(tmp.path())
+        .args(["init"])
+        .assert()
+        .success();
+
+    let gitignore = fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+    assert!(gitignore.contains("node_modules/"), "should preserve existing entries");
+    assert!(gitignore.contains(".starpod/db/"), "should add .starpod/db/");
+    assert!(gitignore.contains("home/"), "should add home/");
+}
+
+#[test]
+fn init_frontend_toml_references_agent_name() {
+    let tmp = TempDir::new().unwrap();
+
+    starpod()
+        .current_dir(tmp.path())
+        .args(["init", "--name", "Jarvis"])
+        .assert()
+        .success();
+
+    let frontend = fs::read_to_string(
+        tmp.path().join(".starpod/config/frontend.toml"),
+    ).unwrap();
     assert!(
-        output_dir.join(".starpod/skills/greet/SKILL.md").is_file(),
-        "Skills should be copied"
+        frontend.contains("Jarvis"),
+        "frontend.toml should reference the agent name, got:\n{frontend}"
     );
 }
 
-// ── P0: Renamed instance commands ─────────────────────────────────────────
+#[test]
+fn init_lifecycle_files_are_empty() {
+    let tmp = TempDir::new().unwrap();
+
+    starpod()
+        .current_dir(tmp.path())
+        .args(["init"])
+        .assert()
+        .success();
+
+    let cfg = tmp.path().join(".starpod/config");
+    for file in &["HEARTBEAT.md", "BOOT.md", "BOOTSTRAP.md"] {
+        let content = fs::read_to_string(cfg.join(file)).unwrap();
+        assert!(content.is_empty(), "{file} should be empty, got: {content:?}");
+    }
+}
+
+// ── deploy stub ───────────────────────────────────────────────────────
 
 #[test]
-fn instance_destroy_subcommand_exists() {
+fn deploy_prints_coming_soon() {
     let output = starpod()
-        .args(["instance", "destroy", "--help"])
+        .args(["deploy"])
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("Permanently destroy") || stdout.contains("destroy"),
-        "instance destroy should exist, got:\n{stdout}"
+        stdout.contains("coming soon") || stdout.contains("Coming soon"),
+        "deploy should print coming soon, got:\n{stdout}"
     );
 }
 
+// ── subcommand help text ──────────────────────────────────────────────
+
 #[test]
-fn instance_stop_subcommand_exists() {
+fn dev_help_shows_port_flag() {
     let output = starpod()
-        .args(["instance", "stop", "--help"])
+        .args(["dev", "--help"])
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("Stop") || stdout.contains("stop"),
-        "instance stop should exist, got:\n{stdout}"
+        stdout.contains("--port"),
+        "dev --help should list --port flag, got:\n{stdout}"
     );
 }
 
 #[test]
-fn instance_start_subcommand_exists() {
+fn chat_help_shows_message_arg() {
     let output = starpod()
-        .args(["instance", "start", "--help"])
+        .args(["chat", "--help"])
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("Start") || stdout.contains("start"),
-        "instance start should exist, got:\n{stdout}"
+        stdout.contains("message") || stdout.contains("MESSAGE"),
+        "chat --help should describe the message argument, got:\n{stdout}"
     );
 }
 
 #[test]
-fn instance_restart_subcommand_exists() {
+fn init_help_shows_all_flags() {
     let output = starpod()
-        .args(["instance", "restart", "--help"])
+        .args(["init", "--help"])
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("Restart") || stdout.contains("restart"),
-        "instance restart should exist, got:\n{stdout}"
-    );
+    for flag in &["--name", "--model", "--env"] {
+        assert!(
+            stdout.contains(flag),
+            "init --help should list '{flag}' flag, got:\n{stdout}"
+        );
+    }
 }
 
-#[test]
-fn instance_kill_removed() {
-    // `instance kill` should no longer be a valid subcommand.
-    let output = starpod()
-        .args(["instance", "kill", "abc123"])
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !output.status.success(),
-        "instance kill should no longer exist"
-    );
-    assert!(
-        stderr.contains("unrecognized subcommand") || stderr.contains("invalid"),
-        "instance kill should be unrecognized, got: {stderr}"
-    );
-}
-
-#[test]
-fn instance_pause_removed() {
-    let output = starpod()
-        .args(["instance", "pause", "abc123"])
-        .output()
-        .unwrap();
-    assert!(
-        !output.status.success(),
-        "instance pause should no longer exist"
-    );
-}
-
-#[test]
-fn instance_destroy_has_yes_flag() {
-    let output = starpod()
-        .args(["instance", "destroy", "--help"])
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("--yes"),
-        "instance destroy should accept --yes flag, got:\n{stdout}"
-    );
-}
-
-// ── P0: --agent flag placement (global) ──────────────────────────────────
-
-#[test]
-fn skill_agent_flag_after_subcommand() {
-    // `starpod skill list --agent mybot` should work (global arg)
-    let output = starpod()
-        .args(["skill", "list", "--agent", "mybot"])
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("unexpected argument"),
-        "skill --agent should work after subcommand, got: {stderr}"
-    );
-}
-
-#[test]
-fn memory_agent_flag_after_subcommand() {
-    let output = starpod()
-        .args(["memory", "search", "test", "--agent", "mybot"])
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("unexpected argument"),
-        "memory --agent should work after subcommand, got: {stderr}"
-    );
-}
-
-#[test]
-fn cron_agent_flag_after_subcommand() {
-    let output = starpod()
-        .args(["cron", "list", "--agent", "mybot"])
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("unexpected argument"),
-        "cron --agent should work after subcommand, got: {stderr}"
-    );
-}
-
-#[test]
-fn sessions_agent_flag_after_subcommand() {
-    let output = starpod()
-        .args(["sessions", "list", "--agent", "mybot"])
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("unexpected argument"),
-        "sessions --agent should work after subcommand, got: {stderr}"
-    );
-}
-
-// ── P1: --format json global flag ──────────────────────────────────────
+// ── --format json global flag ──────────────────────────────────────────
 
 #[test]
 fn format_json_flag_accepted_globally() {
@@ -622,99 +361,7 @@ fn format_invalid_rejected() {
         .failure();
 }
 
-#[test]
-fn agent_list_json_output() {
-    let ws = workspace();
-    // Create an agent so we get non-empty output
-    fs::create_dir_all(ws.path().join("agents/test-bot")).unwrap();
-    fs::write(
-        ws.path().join("agents/test-bot/agent.toml"),
-        "agent_name = \"Bot\"\n",
-    )
-    .unwrap();
-
-    let output = starpod_json()
-        .current_dir(ws.path())
-        .args(["agent", "list"])
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // Should be valid JSON
-    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap_or_else(|e| {
-        panic!("agent list --format json should produce valid JSON, got: {stdout}\nerror: {e}");
-    });
-    assert!(parsed.is_array(), "Should be a JSON array");
-    let arr = parsed.as_array().unwrap();
-    assert_eq!(arr.len(), 1);
-    assert_eq!(arr[0]["name"], "test-bot");
-    assert_eq!(arr[0]["has_config"], true);
-}
-
-#[test]
-fn agent_list_json_empty() {
-    let ws = workspace();
-    let output = starpod_json()
-        .current_dir(ws.path())
-        .args(["agent", "list"])
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap_or_else(|e| {
-        panic!("agent list --format json should produce valid JSON for empty list, got: {stdout}\nerror: {e}");
-    });
-    assert!(parsed.is_array());
-    assert!(parsed.as_array().unwrap().is_empty());
-}
-
-// ── P1: agent diff subcommand ──────────────────────────────────────────
-
-#[test]
-fn agent_diff_subcommand_exists() {
-    let output = starpod()
-        .args(["agent", "diff", "--help"])
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("diff") || stdout.contains("Diff"),
-        "agent diff should be a valid subcommand, got:\n{stdout}"
-    );
-}
-
-#[test]
-fn agent_diff_requires_name() {
-    starpod().args(["agent", "diff"]).assert().failure();
-}
-
-// ── P1: push --dry-run ────────────────────────────────────────────────
-
-#[test]
-fn agent_push_dry_run_flag_exists() {
-    let output = starpod()
-        .args(["agent", "push", "--help"])
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("--dry-run"),
-        "agent push should accept --dry-run flag, got:\n{stdout}"
-    );
-}
-
-#[test]
-fn agent_push_yes_flag_exists() {
-    let output = starpod()
-        .args(["agent", "push", "--help"])
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("--yes"),
-        "agent push should accept --yes flag, got:\n{stdout}"
-    );
-}
-
-// ── P1: auth --api-key ────────────────────────────────────────────────
+// ── auth commands ──────────────────────────────────────────────────────
 
 #[test]
 fn auth_login_api_key_flag_exists() {
@@ -742,17 +389,52 @@ fn auth_login_email_flag_exists() {
     );
 }
 
-// ── P0: secret delete confirmation ────────────────────────────────────
-
 #[test]
-fn secret_delete_has_yes_flag() {
-    let output = starpod()
-        .args(["secret", "delete", "--help"])
+fn auth_status_produces_json() {
+    let output = starpod_json()
+        .args(["auth", "status"])
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap_or_else(|e| {
+        panic!("auth status --format json should produce valid JSON, got: {stdout}\nerror: {e}");
+    });
+    // Should have a logged_in field (value depends on environment)
     assert!(
-        stdout.contains("--yes"),
-        "secret delete should accept --yes flag, got:\n{stdout}"
+        parsed.get("logged_in").is_some(),
+        "auth status JSON should contain logged_in field, got: {parsed}"
     );
+}
+
+// ── help output ────────────────────────────────────────────────────────
+
+#[test]
+fn help_shows_all_commands() {
+    let output = starpod()
+        .args(["--help"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    for cmd in &["init", "dev", "serve", "deploy", "repl", "chat", "auth"] {
+        assert!(
+            stdout.contains(cmd),
+            "help should list '{cmd}' command, got:\n{stdout}"
+        );
+    }
+}
+
+#[test]
+fn old_commands_removed() {
+    // These commands should no longer exist
+    for cmd in &["agent", "instance", "secret", "build", "memory", "sessions", "skill", "cron"] {
+        let output = starpod()
+            .args([cmd, "--help"])
+            .output()
+            .unwrap();
+        assert!(
+            !output.status.success(),
+            "'{cmd}' should no longer be a valid command"
+        );
+    }
 }

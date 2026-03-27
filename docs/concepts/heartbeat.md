@@ -1,6 +1,6 @@
 # Lifecycle Prompts
 
-Starpod has three **lifecycle prompt files** that let the agent act autonomously at key moments — without being prompted by a user. All three live in `.starpod/config/` (blueprint-managed) and are **disabled by default** (empty on init). Add instructions to activate them.
+Starpod has three **lifecycle prompt files** that let the agent act autonomously at key moments — without being prompted by a user. All three live in `.starpod/config/` and are **disabled by default** (empty on init). Add instructions to activate them.
 
 | File | When it runs | How often | Session |
 |------|-------------|-----------|---------|

@@ -4,17 +4,15 @@ Shared types, configuration loading, and error handling for all Starpod crates.
 
 ## StarpodConfig
 
-The central configuration type. Config is loaded via workspace-aware functions that operate on `ResolvedPaths`:
+The central configuration type. Config is loaded from the `.starpod/config/agent.toml` file via `ResolvedPaths`:
 
 ```rust
-use starpod_core::{load_agent_config, reload_agent_config, ResolvedPaths};
+use starpod_core::{detect_mode, load_agent_config, ResolvedPaths};
 
-// Load config from resolved paths (workspace or single-agent)
+let mode = detect_mode(None)?;
+let paths = ResolvedPaths::resolve(&mode)?;
 let agent_config = load_agent_config(&paths)?;
 let starpod_config = agent_config.into_starpod_config(&paths);
-
-// Reload for hot-reload (called by file watcher)
-let agent_config = reload_agent_config(&paths)?;
 ```
 
 ### Public Fields
@@ -48,34 +46,6 @@ config.resolved_provider_base_url("openai")   // config || default endpoint
 ```
 
 Provider API key env vars: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`. Ollama requires no key.
-
-## Blueprint Functions
-
-### `apply_blueprint`
-
-Copy a workspace blueprint into an instance directory (used by `starpod dev`):
-
-```rust
-use starpod_core::{apply_blueprint, EnvSource};
-
-apply_blueprint(&blueprint_dir, &instance_dir, &workspace_dir, EnvSource::Dev)?;
-```
-
-### `build_standalone`
-
-Build a self-contained `.starpod/` from an agent blueprint without a workspace (used by `starpod build`):
-
-```rust
-use starpod_core::build_standalone;
-
-build_standalone(
-    &blueprint_dir,           // must contain agent.toml
-    &output_dir,              // .starpod/ created here
-    Some(&skills_dir),        // optional skills to include
-    Some(&env_file),          // optional .env to include
-    false,                    // force: overwrite existing .starpod/
-)?;
-```
 
 ## AttachmentsConfig
 

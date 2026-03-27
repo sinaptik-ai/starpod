@@ -6,48 +6,31 @@ Get Starpod running in under 2 minutes.
 
 ```bash
 cd your-project
-starpod init --default
+starpod init
 ```
 
-## 2. Set your API key
+Or with an API key:
 
 ```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
+starpod init --env ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
-Or use an alternative provider:
+## 2. Start the server
 
 ```bash
-# AWS Bedrock
-export AWS_ACCESS_KEY_ID="AKIA..."
-export AWS_SECRET_ACCESS_KEY="..."
-export AWS_REGION="us-east-1"
-
-# Google Vertex AI (uses Application Default Credentials)
-export GOOGLE_CLOUD_PROJECT="my-project"
-gcloud auth application-default login
-```
-
-Set `provider = "bedrock"` or `provider = "vertex"` in your config — see [Configuration](/getting-started/configuration) for details.
-
-## 3. Start the server
-
-```bash
-starpod serve
+starpod dev
 ```
 
 ```
-  Starpod is running
+  ╭──────────────────────────────────────────╮
+  │       Nova  ·  AI Assistant              │
+  ╰──────────────────────────────────────────╯
 
-  Frontend http://127.0.0.1:3000
-  API      http://127.0.0.1:3000/api
-  WS       ws://127.0.0.1:3000/ws
-  Telegram not configured
-  Model    claude-haiku-4-5
-  Project  /path/to/your-project
+  Server 127.0.0.1:3000
+  API Key sp-abc123...
 ```
 
-Open [http://localhost:3000](http://localhost:3000) for the web UI.
+Your browser opens automatically. Start chatting.
 
 ## Alternative: CLI
 

@@ -87,21 +87,10 @@ let shutdown = monitor.start();  // Not async — returns watch::Sender<()> dire
 let _ = shutdown.send(());  // Stop monitoring
 ```
 
-## CLI
+## API
 
-```bash
-starpod instance new --agent my-agent            # Create a new instance
-starpod instance new -a my-agent --name "my-bot" --region "us-east-1"
-starpod instance list                           # List all instances
-starpod instance destroy <id>                   # Permanently destroy an instance
-starpod instance stop <id>                      # Stop an instance (preserves disk)
-starpod instance start <id>                     # Start a stopped instance
-starpod instance restart <id>                   # Restart an instance
-starpod instance logs <id> [--tail N]           # Stream logs (default: 50 lines)
-starpod instance ssh <id>                       # SSH into an instance
-starpod instance health <id>                    # Check instance health
-```
+Remote instance management is available via the `starpod-instances` crate and the gateway HTTP API. See the [API Reference](/api-reference/instances) for full details.
 
-## Gateway API
-
-The gateway exposes instance management over HTTP. See the [API Reference](/api-reference/instances) for full details.
+::: info
+Direct CLI commands for instance management (`starpod instance ...`) have been removed. Use `starpod deploy` (coming soon) or the API/SDK for remote instance management.
+:::

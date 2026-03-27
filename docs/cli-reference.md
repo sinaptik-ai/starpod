@@ -1,162 +1,104 @@
 # CLI Reference
 
-The `starpod` binary provides commands for all major features.
+The `starpod` binary provides commands for managing and running your AI agent.
 
-## Workspace
+## Global Flags
 
-### `starpod init`
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--format` | Output format: `text` or `json` | `text` |
 
-Initialize a new workspace in the current directory.
+## `starpod init`
 
-```bash
-starpod init                        # Interactive wizard
-starpod init --default              # Skip wizard, use defaults
-```
-
-The interactive wizard prompts for:
-- **Provider** — Anthropic, OpenAI, Gemini, Groq, DeepSeek, OpenRouter, or Ollama
-- **Model** — pre-filled with the provider's default
-- **API key** — saved to `.env` (skipped if already in environment or not needed)
-- **First agent** — optionally create an agent immediately
-
-| Flag | Description |
-|------|-------------|
-| `--default` | Skip the wizard, use Anthropic / `claude-haiku-4-5` |
-
-Creates: `starpod.toml`, `agents/`, `skills/`, `.env`, `.gitignore`.
-
-## Agent
-
-### `starpod agent new <name>`
-
-Create a new agent in the workspace.
+Bootstrap a new agent in the current directory. Creates `.starpod/` with config, database, and skill directories, plus a `home/` sandbox.
 
 ```bash
-starpod agent new my-agent
-starpod agent new my-agent --agent-name "Jarvis" --model "claude-opus-4-6"
+starpod init
+starpod init --name "Jarvis" --model openai/gpt-4o
+starpod init --env ANTHROPIC_API_KEY=sk-ant-... --env BRAVE_API_KEY=...
 ```
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--agent-name` | Agent's display name | `Aster` |
-| `--soul` | Personality/instructions | Generic helpful assistant |
-| `--model` | LLM model | `claude-haiku-4-5` |
-| `--default` | Skip interactive prompts | — |
+| `--name` | Agent display name | `Aster` |
+| `--model` | Model in `provider/model` format | `anthropic/claude-haiku-4-5` |
+| `--env KEY=VAL` | Seed a secret into the vault (repeatable) | — |
 
-### `starpod agent list`
+Creates:
+- `.starpod/config/` — `agent.toml`, `SOUL.md`, `frontend.toml`, `HEARTBEAT.md`, `BOOT.md`, `BOOTSTRAP.md`
+- `.starpod/db/` — database directory (vault.db created if `--env` is used)
+- `.starpod/skills/` — agent skills
+- `.starpod/users/` — per-user data
+- `home/` — agent's sandboxed filesystem (desktop, documents, projects, downloads)
+- `.gitignore` — adds `.starpod/db/` and `home/`
 
-List all agents in the workspace.
+Fails if `.starpod/` already exists in the current directory.
 
-### `starpod agent push <name>`
+## `starpod dev`
 
-Push a local agent blueprint to the remote (Spawner). Uploads the agent's config, personality, and skill files.
-
-```bash
-starpod agent push my-agent
-```
-
-### `starpod agent pull <name>`
-
-Pull a remote agent blueprint to the local workspace. Downloads any changes made on the platform.
+Start the agent in development mode. Opens the browser with auto-login, displays the API key, and serves the web UI + REST API + WebSocket + Telegram (if configured).
 
 ```bash
-starpod agent pull my-agent
-```
-
-### `starpod agent diff <name>`
-
-Show what would change on push or pull, without modifying anything.
-
-```bash
-starpod agent diff my-agent
-```
-
-### `starpod dev`
-
-Apply blueprint and start agent in dev mode (workspace only).
-
-```bash
-starpod dev my-agent
-starpod dev my-agent --port 8080
+starpod dev
+starpod dev --port 8080
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--port`, `-p` | Port to serve on (overrides config) |
+| `--port`, `-p` | Port to serve on (overrides `server_addr` in config) |
 
-### `starpod serve`
+At startup, vault secrets are injected into the process environment so the agent can use them.
 
-Start the HTTP/WS server with optional Telegram bot.
+## `starpod serve`
+
+Start the agent in production mode. Same as `dev` but without opening the browser or displaying the API key.
 
 ```bash
 starpod serve
-starpod serve -a my-agent
 ```
 
-| Flag | Description |
-|------|-------------|
-| `--agent`, `-a` | Agent name (required in workspace mode, optional in single-agent) |
+## `starpod deploy`
 
-In single-agent mode, walks up from the current directory to find the nearest `.starpod/config/agent.toml`. Serves the web UI, REST API, WebSocket endpoint, and (if configured) Telegram bot. All share the same agent instance.
+Deploy the agent to a remote instance. Currently a stub — coming soon.
 
-### `starpod chat`
+```bash
+starpod deploy
+```
 
-Send a one-shot message.
+## `starpod chat`
+
+Send a one-shot message, print the response, and exit. If no `.starpod/` is found, creates an ephemeral instance for the message.
 
 ```bash
 starpod chat "What files are in this directory?"
-starpod chat -a my-agent "What files are in this directory?"
 ```
 
-| Flag | Description |
-|------|-------------|
-| `--agent`, `-a` | Agent name |
+## `starpod repl`
 
-### `starpod repl`
-
-Start an interactive REPL with readline support and history.
+Start an interactive REPL session with readline support and history. Type `exit` or `quit` to end.
 
 ```bash
 starpod repl
-starpod repl -a my-agent
+```
+
+## Auth
+
+Authentication for the Starpod platform (used for `starpod deploy`).
+
+### `starpod auth login`
+
+Authenticate with the Starpod platform. Opens a browser for login, or use `--api-key` for non-interactive (CI/headless) login.
+
+```bash
+starpod auth login
+starpod auth login --api-key sk-... --email user@example.com
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--agent`, `-a` | Agent name |
-
-### `starpod build`
-
-Build a standalone `.starpod/` from an agent blueprint. Used for creating deployment-ready agent instances without a workspace.
-
-```bash
-starpod build --agent agents/my-agent
-starpod build --agent agents/my-agent --skills skills/ --output /srv/my-agent --env .env
-```
-
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--agent` | Path to agent blueprint folder (must contain `agent.toml`) | Required |
-| `--skills` | Path to skills folder to include | — |
-| `--output` | Where to create the `.starpod/` directory | Current directory |
-| `--env` | Path to `.env` file to include | — |
-| `--force` | Overwrite existing `.starpod/` blueprint files | — |
-
-Creates a self-contained `.starpod/` at the output directory, ready for `starpod serve`.
-
-### `starpod deploy`
-
-Deploy stub (future). Currently, use `starpod agent push` + `starpod instance create` instead.
-
-## Auth
-
-### `starpod auth login`
-
-Authenticate with the Starpod platform. Opens a browser for login.
-
-```bash
-starpod auth login
-```
+| `--url` | Backend URL (env: `STARPOD_URL`) |
+| `--api-key` | API key for non-interactive login |
+| `--email` | Email to associate with the API key |
 
 ### `starpod auth logout`
 
@@ -168,255 +110,9 @@ starpod auth logout
 
 ### `starpod auth status`
 
-Show current authentication status.
+Show current authentication status. Supports `--format json`.
 
 ```bash
 starpod auth status
-```
-
-## Memory
-
-### `starpod memory search`
-
-Full-text search across memory files.
-
-```bash
-starpod memory search "database migrations"
-starpod memory search "rust patterns" --limit 10
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--agent`, `-a` | — | Agent name |
-| `--limit`, `-l` | `5` | Maximum results |
-
-### `starpod memory reindex`
-
-Rebuild the FTS5 search index.
-
-```bash
-starpod memory reindex
-```
-
-## Sessions
-
-### `starpod sessions list`
-
-List recent sessions.
-
-```bash
-starpod sessions list
-starpod sessions list --limit 20
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--agent`, `-a` | — | Agent name |
-| `--limit`, `-l` | `10` | Maximum sessions |
-
-## Skills
-
-Skills follow the [AgentSkills](https://agentskills.io) open format. All skill commands accept an optional `--agent` / `-a` flag to target a specific agent's skills in workspace mode.
-
-```bash
-starpod skill list                          # auto-detect
-starpod skill --agent my-agent list         # target specific agent
-```
-
-### `starpod skill list`
-
-List all skills with their descriptions.
-
-```bash
-starpod skill list
-```
-
-### `starpod skill show`
-
-Show a skill's metadata and full instructions.
-
-```bash
-starpod skill show code-review
-```
-
-### `starpod skill new`
-
-Generate a new AgentSkills-compatible skill using AI. The name is required; description and body are AI-generated from the name (and optional extra context).
-
-```bash
-# Name only — AI generates description and instructions
-starpod skill new code-review
-
-# With explicit description
-starpod skill new code-review \
-  --description "Review code for bugs, security issues, and style."
-
-# With extra context for the AI generator
-starpod skill new code-review \
-  --prompt "Focus on OWASP top 10 and always check error handling"
-
-# Both
-starpod skill new code-review \
-  --description "Review code for bugs and security." \
-  --prompt "Focus on OWASP top 10, always check error handling"
-```
-
-| Flag | Description |
-|------|-------------|
-| `--description`, `-d` | What the skill does and when to use it (overrides AI) |
-| `--prompt`, `-p` | Extra instructions or context for the AI generator |
-
-### `starpod skill delete`
-
-Delete a skill and its directory.
-
-```bash
-starpod skill delete code-review
-```
-
-## Cron
-
-### `starpod cron list`
-
-List all scheduled jobs.
-
-```bash
-starpod cron list
-```
-
-### `starpod cron remove`
-
-Remove a job by name.
-
-```bash
-starpod cron remove "morning-reminder"
-```
-
-### `starpod cron runs`
-
-Show recent executions for a job.
-
-```bash
-starpod cron runs "morning-reminder"
-starpod cron runs "morning-reminder" --limit 20
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--limit`, `-l` | `10` | Maximum runs |
-
-### `starpod cron run`
-
-Trigger a cron job immediately.
-
-```bash
-starpod cron run "morning-reminder"
-```
-
-### `starpod cron edit`
-
-Edit a cron job's properties.
-
-```bash
-starpod cron edit "morning-reminder" --prompt "New prompt text"
-starpod cron edit "morning-reminder" --schedule "0 9 * * *" --enabled false
-```
-
-| Flag | Description |
-|------|-------------|
-| `--prompt` | New prompt text |
-| `--schedule` | New cron schedule expression |
-| `--enabled` | Enable or disable the job (`true`/`false`) |
-| `--max-retries` | Max retries on failure |
-| `--timeout-secs` | Timeout in seconds |
-| `--session-mode` | Session mode: `isolated` or `main` |
-
-## Instances
-
-Manage remote cloud instances. Requires `STARPOD_INSTANCE_BACKEND_URL` env var.
-
-### `starpod instance new`
-
-Create a new remote instance from a pushed agent blueprint.
-
-```bash
-starpod instance new --agent my-agent
-starpod instance new --agent my-agent --name "my-bot" --region "us-east-1"
-starpod instance new --agent my-agent --var "OPENAI_KEY=sk-..." --var "DEBUG=true"
-```
-
-| Flag | Description |
-|------|-------------|
-| `--agent`, `-a` | Agent name from `agents/` directory |
-| `--name`, `-n` | Display name for the instance |
-| `--region`, `-r` | Deployment region |
-| `--var` | Variable overrides (`KEY=VALUE`), can be used multiple times |
-
-### `starpod instance list`
-
-List all instances with status and region.
-
-```bash
-starpod instance list
-```
-
-### `starpod instance destroy`
-
-Permanently destroy an instance and all its runtime state.
-
-```bash
-starpod instance destroy <id>
-```
-
-### `starpod instance stop`
-
-Stop a running instance (preserves disk).
-
-```bash
-starpod instance stop <id>
-```
-
-### `starpod instance start`
-
-Start a stopped instance.
-
-```bash
-starpod instance start <id>
-```
-
-### `starpod instance restart`
-
-Restart a running or stopped instance.
-
-```bash
-starpod instance restart <id>
-```
-
-### `starpod instance logs`
-
-Stream logs from a running instance. Output is colored by log level (error=red, warn=yellow, info=green, debug=dim).
-
-```bash
-starpod instance logs <id>
-starpod instance logs <id> --tail 100
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--tail`, `-t` | `50` | Number of recent log lines to stream |
-
-### `starpod instance ssh`
-
-Open an SSH session to a running instance. Fetches connection info from the backend and spawns a native `ssh` process. Ephemeral keys are written to a temp file and cleaned up after the session.
-
-```bash
-starpod instance ssh <id>
-```
-
-### `starpod instance health`
-
-Display health metrics for an instance: CPU%, memory, disk, uptime, and last heartbeat.
-
-```bash
-starpod instance health <id>
+starpod --format json auth status
 ```

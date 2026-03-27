@@ -1,76 +1,47 @@
-//! Multi-agent workspace detection, path resolution, and config loading.
+//! Agent detection, path resolution, and config loading.
 //!
-//! Starpod supports three operating modes, detected automatically:
+//! Starpod uses a single operating mode: **SingleAgent**. The agent is
+//! bootstrapped directly in the current directory via `starpod init`, which
+//! creates a `.starpod/` directory with all configuration and runtime data.
 //!
-//! - **Workspace** (dev): `starpod.toml` in CWD or parent walk-up, multiple
-//!   agents under `agents/<name>/`, skills in `skills/` (copied to instances).
-//!   `starpod.toml` is **scaffolding only** — it provides defaults when
-//!   creating new agents (`starpod agent new`), but is NOT read at runtime.
-//!   Each `agent.toml` is self-contained.
-//! - **Instance** (dev runtime): CWD inside `.instances/<name>/`, workspace
-//!   root identified by sibling `starpod.toml`.
-//! - **SingleAgent** (prod): `.starpod/agent.toml` in CWD, everything self-contained.
+//! Detection walks up from CWD looking for `.starpod/config/agent.toml`
+//! (or the legacy `.starpod/agent.toml`). If not found, an error directs
+//! the user to run `starpod init`.
 //!
-//! # Directory layouts
+//! # Directory layout
 //!
-//! **Workspace mode (blueprints):**
 //! ```text
-//! workspace/
-//! +-- starpod.toml                    # scaffolding template (git-tracked, not read at runtime)
-//! +-- .env                            # secrets (gitignored, populates vault at serve time)
-//! +-- skills/                         # shared skills (git-tracked)
-//! +-- agents/                         # BLUEPRINTS (git-tracked)
-//! |   +-- aster/
-//! |       +-- agent.toml
-//! |       +-- SOUL.md
-//! |       +-- files/                  # template filesystem
-//! +-- .instances/                     # RUNTIME (gitignored)
-//!     +-- aster/                      # agent's filesystem root
-//!         +-- .starpod/
-//!         |   +-- db/vault.db          # encrypted secrets (from workspace .env)
-//!         |   +-- config/             # blueprint-managed (overwritten on build)
-//!         |   |   +-- agent.toml
-//!         |   |   +-- SOUL.md
-//!         |   |   +-- HEARTBEAT.md
-//!         |   |   +-- BOOT.md
-//!         |   |   +-- BOOTSTRAP.md
-//!         |   +-- skills/             # merged on build (blueprint overrides, user additions preserved)
-//!         |   +-- db/                 # SQLite databases (runtime, never touched by build)
-//!         |   +-- users/{admin,user}/  # per-user data (runtime)
-//!         +-- home/                   # agent's visible filesystem (sandbox)
-//!             +-- desktop/
-//!             +-- documents/
-//!             +-- projects/
-//!             +-- downloads/
-//! ```
-//!
-//! **Single-agent mode (prod):**
-//! ```text
-//! /srv/aster/                         # agent's filesystem root
+//! my-agent/                           # project root
 //! +-- .starpod/
-//! |   +-- .env                        # secrets (environment-specific)
-//! |   +-- config/                     # blueprint-managed (overwritten on build)
-//! |   |   +-- agent.toml
-//! |   |   +-- SOUL.md
-//! |   |   +-- HEARTBEAT.md
-//! |   |   +-- BOOT.md
-//! |   |   +-- BOOTSTRAP.md
-//! |   +-- skills/                     # merged on build
+//! |   +-- config/                     # agent configuration
+//! |   |   +-- agent.toml             # main config (models, server_addr, etc.)
+//! |   |   +-- SOUL.md                # agent personality
+//! |   |   +-- HEARTBEAT.md           # periodic self-reflection
+//! |   |   +-- BOOT.md                # boot instructions
+//! |   |   +-- BOOTSTRAP.md           # first-run instructions
+//! |   |   +-- frontend.toml          # web UI config
+//! |   +-- skills/                     # agent skills
 //! |   +-- db/                         # SQLite databases (runtime)
-//! |   +-- users/{admin,user}/          # per-user data (runtime)
-//! +-- home/                           # agent's visible filesystem (sandbox)
+//! |   |   +-- core.db                # sessions, cron, auth
+//! |   |   +-- memory.db              # FTS5 + vector memory
+//! |   |   +-- vault.db               # encrypted secrets (AES-256-GCM)
+//! |   +-- users/<id>/                 # per-user data
+//! +-- home/                           # agent's sandboxed filesystem
 //!     +-- desktop/
 //!     +-- documents/
 //!     +-- projects/
 //!     +-- downloads/
 //! ```
 //!
+//! All secrets live in the vault (`vault.db`), never in `.env` files.
+//! At startup, vault contents are injected into process environment variables.
+//!
 //! # Usage
 //!
 //! ```no_run
 //! use starpod_core::{detect_mode, ResolvedPaths, load_agent_config};
 //!
-//! let mode = detect_mode(Some("my-agent")).unwrap();
+//! let mode = detect_mode(None).unwrap();
 //! let paths = ResolvedPaths::resolve(&mode).unwrap();
 //! let config = load_agent_config(&paths).unwrap();
 //! ```
@@ -89,25 +60,24 @@ use crate::error::StarpodError;
 // ── Mode detection ──────────────────────────────────────────────────────────
 
 /// How Starpod was invoked.
+///
+/// Currently only `SingleAgent` mode is used. The `Workspace` and `Instance`
+/// variants are retained for backward compatibility with other crates.
 #[derive(Debug, Clone)]
 pub enum Mode {
-    /// Production single-agent: `.starpod/agent.toml` in CWD.
+    /// Self-contained agent: `.starpod/config/agent.toml` found by walking up from CWD.
     SingleAgent { starpod_dir: PathBuf },
-    /// Dev workspace: `starpod.toml` found via walk-up.
+    /// Legacy: dev workspace with `starpod.toml` (no longer detected).
     Workspace { root: PathBuf, agent_name: String },
-    /// Instance mode: CWD is inside `.instances/<name>/`.
-    Instance {
-        instance_root: PathBuf,
-        agent_name: String,
-    },
+    /// Legacy: instance inside `.instances/<name>/` (no longer detected).
+    Instance { instance_root: PathBuf, agent_name: String },
 }
 
 /// Detect the operating mode from the current directory.
 ///
-/// - CWD has `.starpod/agent.toml` -> `SingleAgent`
-/// - CWD inside `.instances/<name>/` with `starpod.toml` sibling -> `Instance`
-/// - Walk up for `starpod.toml` -> `Workspace` (requires `agent_name`)
-/// - Neither -> error
+/// Walks up from CWD looking for `.starpod/config/agent.toml` (or legacy
+/// `.starpod/agent.toml`). Returns `SingleAgent` if found, or an error
+/// directing the user to run `starpod init`.
 pub fn detect_mode(agent_name: Option<&str>) -> crate::Result<Mode> {
     let cwd = std::env::current_dir()
         .map_err(|e| StarpodError::Config(format!("Failed to get current directory: {}", e)))?;
@@ -115,7 +85,7 @@ pub fn detect_mode(agent_name: Option<&str>) -> crate::Result<Mode> {
 }
 
 /// Like `detect_mode` but starting from a given directory instead of CWD.
-pub fn detect_mode_from(agent_name: Option<&str>, start_dir: &Path) -> crate::Result<Mode> {
+pub fn detect_mode_from(_agent_name: Option<&str>, start_dir: &Path) -> crate::Result<Mode> {
     // Check single-agent mode: walk up looking for .starpod/config/agent.toml (new)
     // or .starpod/agent.toml (old layout)
     {
@@ -136,54 +106,25 @@ pub fn detect_mode_from(agent_name: Option<&str>, start_dir: &Path) -> crate::Re
         }
     }
 
-    // Check instance mode: walk up looking for `.instances/` parent with `starpod.toml` sibling
-    if let Some(instance_mode) = detect_instance_mode(start_dir) {
-        return Ok(instance_mode);
-    }
-
-    // Walk up looking for starpod.toml (workspace mode)
-    let mut dir = start_dir.to_path_buf();
-    loop {
-        if dir.join("starpod.toml").is_file() {
-            let name = agent_name
-                .map(|s| s.to_string())
-                .or_else(|| infer_agent_name_from_cwd(start_dir, &dir))
-                .ok_or_else(|| {
-                    StarpodError::Config(
-                        "Workspace detected but no agent name provided. \
-                         Use --agent <name> or cd into agents/<name>/."
-                            .to_string(),
-                    )
-                })?;
-            return Ok(Mode::Workspace {
-                root: dir,
-                agent_name: name,
-            });
-        }
-        if !dir.pop() {
-            break;
-        }
-    }
-
     // Also check old-style .starpod/ for helpful error message
     let starpod_dir = start_dir.join(".starpod");
     if starpod_dir.is_dir() {
         return Err(StarpodError::Config(
             "Found .starpod/ but no agent.toml inside. \
-             Create .starpod/agent.toml to use single-agent mode."
+             Run `starpod init` to set up an agent."
                 .to_string(),
         ));
     }
 
     Err(StarpodError::Config(
-        "No starpod.toml or .starpod/ found. \
-         Run `starpod init` to create a workspace or `starpod agent init` in a deployment directory."
+        "No .starpod/ found. Run `starpod init` to set up an agent."
             .to_string(),
     ))
 }
 
 /// Detect Instance mode by walking up from `start_dir` looking for a `.instances/`
 /// parent directory that has a sibling `starpod.toml` (i.e. the workspace root).
+#[allow(dead_code)]
 fn detect_instance_mode(start_dir: &Path) -> Option<Mode> {
     let mut dir = start_dir.to_path_buf();
     loop {
@@ -220,6 +161,7 @@ fn detect_instance_mode(start_dir: &Path) -> Option<Mode> {
 }
 
 /// If CWD is inside `<workspace>/agents/<name>/`, infer the agent name.
+#[allow(dead_code)]
 fn infer_agent_name_from_cwd(cwd: &Path, workspace_root: &Path) -> Option<String> {
     let relative = cwd.strip_prefix(workspace_root).ok()?;
     let mut components = relative.components();
@@ -243,13 +185,13 @@ pub struct ResolvedPaths {
     pub agent_toml: PathBuf,
     /// Agent home directory (.starpod/ dir — internal state).
     pub agent_home: PathBuf,
-    /// Config directory (.starpod/config/) — blueprint-managed files.
+    /// Config directory (.starpod/config/) — agent configuration files.
     pub config_dir: PathBuf,
     /// Database directory for SQLite DBs (agent_home/db/).
     pub db_dir: PathBuf,
-    /// Skills directory (.starpod/skills/ — merged on build).
+    /// Skills directory (.starpod/skills/).
     pub skills_dir: PathBuf,
-    /// Project/workspace root.
+    /// Project root (parent of .starpod/).
     pub project_root: PathBuf,
     /// Agent's filesystem sandbox root (parent of .starpod/ and home/).
     pub instance_root: PathBuf,
@@ -257,7 +199,7 @@ pub struct ResolvedPaths {
     pub home_dir: PathBuf,
     /// Per-user data directory (.starpod/users/).
     pub users_dir: PathBuf,
-    /// .env file path (if it exists).
+    /// Legacy .env file path (if it exists). Secrets should use the vault instead.
     pub env_file: Option<PathBuf>,
 }
 
@@ -751,99 +693,10 @@ mod tests {
     }
 
     #[test]
-    fn detect_workspace_mode() {
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path().to_path_buf();
-        std::fs::write(root.join("starpod.toml"), "").unwrap();
-        let agent_dir = root.join("agents").join("test-bot");
-        std::fs::create_dir_all(&agent_dir).unwrap();
-
-        let mode = detect_mode_from(None, &agent_dir).unwrap();
-        match mode {
-            Mode::Workspace {
-                root: detected_root,
-                agent_name,
-            } => {
-                assert_eq!(detected_root, root);
-                assert_eq!(agent_name, "test-bot");
-            }
-            _ => panic!("Expected Workspace mode"),
-        }
-    }
-
-    #[test]
-    fn detect_workspace_with_explicit_name() {
-        let tmp = TempDir::new().unwrap();
-        std::fs::write(tmp.path().join("starpod.toml"), "").unwrap();
-
-        let mode = detect_mode_from(Some("sales-rep"), tmp.path()).unwrap();
-        match mode {
-            Mode::Workspace { agent_name, .. } => {
-                assert_eq!(agent_name, "sales-rep");
-            }
-            _ => panic!("Expected Workspace mode"),
-        }
-    }
-
-    #[test]
-    fn detect_workspace_requires_agent_name() {
-        let tmp = TempDir::new().unwrap();
-        std::fs::write(tmp.path().join("starpod.toml"), "").unwrap();
-
-        let err = detect_mode_from(None, tmp.path()).unwrap_err();
-        assert!(err.to_string().contains("no agent name"));
-    }
-
-    #[test]
     fn detect_no_project_errors() {
         let tmp = TempDir::new().unwrap();
         let err = detect_mode_from(None, tmp.path()).unwrap_err();
-        assert!(err.to_string().contains("No starpod.toml"));
-    }
-
-    #[test]
-    fn detect_instance_mode() {
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path();
-        std::fs::write(root.join("starpod.toml"), "").unwrap();
-        let instance_dir = root.join(".instances").join("aster");
-        let starpod_dir = instance_dir.join(".starpod");
-        std::fs::create_dir_all(&starpod_dir).unwrap();
-
-        let mode = detect_mode_from(None, &instance_dir).unwrap();
-        match mode {
-            Mode::Instance {
-                instance_root,
-                agent_name,
-            } => {
-                assert_eq!(instance_root, instance_dir);
-                assert_eq!(agent_name, "aster");
-            }
-            _ => panic!("Expected Instance mode, got {:?}", mode),
-        }
-    }
-
-    #[test]
-    fn detect_instance_mode_from_subdirectory() {
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path();
-        std::fs::write(root.join("starpod.toml"), "").unwrap();
-        let instance_dir = root.join(".instances").join("aster");
-        std::fs::create_dir_all(&instance_dir).unwrap();
-        let subdir = instance_dir.join("reports").join("weekly");
-        std::fs::create_dir_all(&subdir).unwrap();
-
-        let mode = detect_mode_from(None, &subdir).unwrap();
-        match mode {
-            Mode::Instance {
-                instance_root,
-                agent_name,
-            } => {
-                assert_eq!(instance_root, instance_dir);
-                assert_eq!(agent_name, "aster");
-            }
-            _ => panic!("Expected Instance mode from subdirectory"),
-        }
+        assert!(err.to_string().contains("No .starpod/ found"));
     }
 
     // ── ResolvedPaths ───────────────────────────────────────────────────
