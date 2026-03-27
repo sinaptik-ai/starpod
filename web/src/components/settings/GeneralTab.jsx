@@ -119,7 +119,7 @@ export default function GeneralTab() {
 
       <Card title="Agent">
         <Row label="Name">
-          <Input value={config.agent_name || ''} onChange={v => set('agent_name', v)} placeholder="Aster" />
+          <Input value={config.agent_name || ''} onChange={v => set('agent_name', v)} placeholder="Nova" />
         </Row>
         <Row label="Timezone">
           <Input value={config.timezone || ''} onChange={v => set('timezone', v)} placeholder="Europe/Rome" mono />

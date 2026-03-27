@@ -254,7 +254,7 @@ The welcome screen of the web UI is configured via `frontend.toml` in `.starpod/
 
 ```toml
 # Custom greeting shown below the logo (default: "ready_")
-greeting = "Hi! I'm Aster."
+greeting = "Hi! I'm Nova."
 
 # Suggested prompts shown as clickable chips on the welcome screen
 prompts = [

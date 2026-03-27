@@ -9,7 +9,7 @@ cd your-project
 starpod init
 ```
 
-This creates a ready-to-run agent with default settings (Anthropic / `claude-haiku-4-5`, agent name "Aster").
+This creates a ready-to-run agent with default settings (Anthropic / `claude-haiku-4-5`, agent name "Nova").
 
 ## Customize with Flags
 
@@ -28,7 +28,7 @@ starpod init --name "Ada" --model anthropic/claude-haiku-4-5 --env ANTHROPIC_API
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--name` | Agent display name | `Aster` |
+| `--name` | Agent display name | `Nova` |
 | `--model` | Model in `provider/model` format | `anthropic/claude-haiku-4-5` |
 | `--env KEY=VAL` | Seed a secret into the vault (repeatable) | — |
 

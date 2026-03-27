@@ -23,7 +23,7 @@ Config fields are public (not getter methods):
 config.model          // String — "claude-haiku-4-5"
 config.max_turns      // u32 — 30
 config.server_addr    // String — "127.0.0.1:3000"
-config.agent_name     // String — "Aster"
+config.agent_name     // String — "Nova"
 config.provider       // String — "anthropic"
 config.timezone       // Option<String>
 config.max_tokens     // Option<u32>

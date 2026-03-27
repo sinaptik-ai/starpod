@@ -763,7 +763,7 @@ mod tests {
 
         // Should be readable via read_file (routes to config_dir)
         let soul = store.read_file("SOUL.md").unwrap();
-        assert!(soul.contains("Aster"));
+        assert!(soul.contains("Nova"));
     }
 
     #[tokio::test]
@@ -815,7 +815,7 @@ mod tests {
 
         let ctx = store.bootstrap_context().unwrap();
         assert!(ctx.contains("SOUL.md"));
-        assert!(ctx.contains("Aster"));
+        assert!(ctx.contains("Nova"));
         // User files should NOT be in agent bootstrap
         assert!(!ctx.contains("USER.md"));
         assert!(!ctx.contains("MEMORY.md"));

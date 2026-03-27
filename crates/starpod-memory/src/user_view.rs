@@ -245,9 +245,9 @@ mod tests {
         std::fs::write(user_dir.join("USER.md"), "# User\nAlice is a developer.\n").unwrap();
 
         let ctx = view.bootstrap_context(20_000).unwrap();
-        // Should have SOUL.md from agent (contains "Aster")
+        // Should have SOUL.md from agent (contains "Nova")
         assert!(ctx.contains("SOUL.md"));
-        assert!(ctx.contains("Aster"));
+        assert!(ctx.contains("Nova"));
         // Should have USER.md from user
         assert!(ctx.contains("Alice is a developer"));
     }
@@ -303,7 +303,7 @@ mod tests {
 
         // Read SOUL.md from agent store
         let content = view.read_file("SOUL.md").unwrap();
-        assert!(content.contains("Aster"));
+        assert!(content.contains("Nova"));
     }
 
     #[tokio::test]

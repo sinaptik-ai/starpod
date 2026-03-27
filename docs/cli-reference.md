@@ -20,7 +20,7 @@ starpod init --env ANTHROPIC_API_KEY=sk-ant-... --env BRAVE_API_KEY=...
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--name` | Agent display name | `Aster` |
+| `--name` | Agent display name | `Nova` |
 | `--model` | Model in `provider/model` format | `anthropic/claude-haiku-4-5` |
 | `--env KEY=VAL` | Seed a secret into the vault (repeatable) | — |
 

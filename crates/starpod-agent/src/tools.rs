@@ -3479,7 +3479,7 @@ mod tests {
                 .unwrap();
         assert!(!result.is_error);
         assert!(
-            result.content.contains("Aster"),
+            result.content.contains("Nova"),
             "SOUL.md should come from agent store"
         );
     }

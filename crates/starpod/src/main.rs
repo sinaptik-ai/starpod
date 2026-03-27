@@ -69,7 +69,7 @@ struct Cli {
 enum Commands {
     /// Bootstrap a new agent in the current directory.
     Init {
-        /// Agent display name (default: "Aster").
+        /// Agent display name (default: "Nova").
         #[arg(long)]
         name: Option<String>,
         /// Model in provider/model format (default: "anthropic/claude-haiku-4-5").
@@ -467,7 +467,7 @@ async fn main() -> anyhow::Result<()> {
                 std::process::exit(1);
             }
 
-            let agent_name = name.as_deref().unwrap_or("Aster");
+            let agent_name = name.as_deref().unwrap_or("Nova");
             let model_spec = model.as_deref().unwrap_or("anthropic/claude-haiku-4-5");
 
             // Parse provider/model

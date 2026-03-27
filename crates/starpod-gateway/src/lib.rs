@@ -386,7 +386,32 @@ pub async fn serve_with_agent(
         }
     }
 
-    let vault = agent.vault().cloned();
+    // Ensure vault is always available — lazily create if the agent didn't have one
+    // (e.g. fresh install where .vault_key didn't exist when agent was constructed).
+    let vault = match agent.vault().cloned() {
+        Some(v) => Some(v),
+        None => {
+            match starpod_vault::derive_master_key(&paths.db_dir) {
+                Ok(master_key) => {
+                    let vault_db = paths.db_dir.join("vault.db");
+                    match starpod_vault::Vault::new(&vault_db, &master_key).await {
+                        Ok(v) => {
+                            debug!("lazily created vault for settings API");
+                            Some(Arc::new(v))
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "failed to create vault");
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(error = %e, "failed to derive vault master key");
+                    None
+                }
+            }
+        }
+    };
     let state = Arc::new(AppState {
         agent,
         auth,

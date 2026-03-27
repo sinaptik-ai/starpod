@@ -98,8 +98,8 @@ fn init_default_values() {
         tmp.path().join(".starpod/config/agent.toml"),
     ).unwrap();
     assert!(
-        agent_toml.contains(r#"agent_name = "Aster""#),
-        "default agent_name should be Aster, got:\n{agent_toml}"
+        agent_toml.contains(r#"agent_name = "Nova""#),
+        "default agent_name should be Nova, got:\n{agent_toml}"
     );
     assert!(
         agent_toml.contains("anthropic/claude-haiku-4-5"),

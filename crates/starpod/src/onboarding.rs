@@ -125,19 +125,19 @@ mod tests {
 
     #[test]
     fn agent_toml_is_valid_toml() {
-        let config_str = generate_agent_toml("Aster", "anthropic", "claude-haiku-4-5");
+        let config_str = generate_agent_toml("Nova", "anthropic", "claude-haiku-4-5");
         let val: toml::Value = toml::from_str(&config_str)
             .expect("Generated agent config must be valid TOML");
         let table = val.as_table().unwrap();
         let models = table["models"].as_array().unwrap();
         assert_eq!(models[0].as_str(), Some("anthropic/claude-haiku-4-5"));
         assert_eq!(table["max_turns"].as_integer(), Some(30));
-        assert_eq!(table["agent_name"].as_str(), Some("Aster"));
+        assert_eq!(table["agent_name"].as_str(), Some("Nova"));
     }
 
     #[test]
     fn agent_toml_parses_as_agent_config() {
-        let config_str = generate_agent_toml("Aster", "anthropic", "claude-haiku-4-5");
+        let config_str = generate_agent_toml("Nova", "anthropic", "claude-haiku-4-5");
         let config: starpod_core::AgentConfig = toml::from_str(&config_str).unwrap();
         assert_eq!(config.models, vec!["anthropic/claude-haiku-4-5"]);
         assert_eq!(config.max_turns, 30);
@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn frontend_toml_is_valid_toml() {
-        let content = generate_frontend_toml("Aster");
+        let content = generate_frontend_toml("Nova");
         let val: toml::Value = toml::from_str(&content)
             .expect("Generated frontend.toml must be valid TOML");
         let table = val.as_table().unwrap();
@@ -238,7 +238,7 @@ mod tests {
 
     #[test]
     fn soul_structure_has_sections() {
-        let soul = generate_soul("Aster");
+        let soul = generate_soul("Nova");
         assert!(soul.contains("# Soul"));
         assert!(soul.contains("## Core Traits"));
         assert!(soul.contains("## Communication Style"));

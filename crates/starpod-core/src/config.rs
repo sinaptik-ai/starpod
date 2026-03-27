@@ -593,7 +593,7 @@ pub struct StarpodConfig {
     #[serde(default)]
     pub compaction_model: Option<String>,
 
-    /// Agent display name (default: "Aster").
+    /// Agent display name (default: "Nova").
     /// Used in CLI headers, daily logs, and Telegram display.
     /// Personality and soul live in SOUL.md; user profile in USER.md.
     #[serde(default = "default_agent_name")]
@@ -669,7 +669,7 @@ pub struct StarpodConfig {
 /// # Example
 ///
 /// ```toml
-/// greeting = "Hi! I'm Aster."
+/// greeting = "Hi! I'm Nova."
 ///
 /// prompts = [
 ///     "What can you help me with?",
@@ -719,7 +719,7 @@ fn default_max_tokens() -> u32 {
 }
 
 fn default_agent_name() -> String {
-    "Aster".to_string()
+    "Nova".to_string()
 }
 
 impl Default for StarpodConfig {
@@ -1582,7 +1582,7 @@ mod tests {
     #[test]
     fn agent_name_default() {
         let config: StarpodConfig = toml::from_str("").unwrap();
-        assert_eq!(config.agent_name, "Aster");
+        assert_eq!(config.agent_name, "Nova");
     }
 
     #[test]
@@ -1680,7 +1680,7 @@ mod tests {
         let mut base: toml::Value = toml::from_str(
             r#"
             models = ["anthropic/haiku"]
-            agent_name = "Aster"
+            agent_name = "Nova"
         "#,
         )
         .unwrap();
@@ -1688,7 +1688,7 @@ mod tests {
         deep_merge(&mut base, overlay);
         let config: StarpodConfig = base.try_into().unwrap();
         assert_eq!(config.models, vec!["anthropic/haiku"]);
-        assert_eq!(config.agent_name, "Aster");
+        assert_eq!(config.agent_name, "Nova");
     }
 
     #[test]
@@ -1697,7 +1697,7 @@ mod tests {
             r#"
             models = ["anthropic/haiku"]
             max_turns = 30
-            agent_name = "Aster"
+            agent_name = "Nova"
         "#,
         )
         .unwrap();
@@ -1713,7 +1713,7 @@ mod tests {
         let config: StarpodConfig = base.try_into().unwrap();
         assert_eq!(config.models, vec!["anthropic/sonnet"]); // overridden
         assert_eq!(config.max_turns, 30); // preserved
-        assert_eq!(config.agent_name, "Aster"); // preserved
+        assert_eq!(config.agent_name, "Nova"); // preserved
         let tg = config.channels.telegram.unwrap();
         assert_eq!(tg.gap_minutes, Some(120)); // added
     }
@@ -1723,11 +1723,11 @@ mod tests {
     #[test]
     fn frontend_config_full() {
         let toml = r#"
-            greeting = "Hi! I'm Aster."
+            greeting = "Hi! I'm Nova."
             prompts = ["What can you do?", "Tell me a joke"]
         "#;
         let config: FrontendConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.greeting.as_deref(), Some("Hi! I'm Aster."));
+        assert_eq!(config.greeting.as_deref(), Some("Hi! I'm Nova."));
         assert_eq!(config.prompts, vec!["What can you do?", "Tell me a joke"]);
     }
 

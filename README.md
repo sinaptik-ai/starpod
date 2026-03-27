@@ -128,7 +128,7 @@ Each agent is self-contained in a `.starpod/` directory:
 All configuration lives in a single `agent.toml`:
 
 ```toml
-agent_name = "Aster"
+agent_name = "Nova"
 models = ["anthropic/claude-haiku-4-5"]
 max_turns = 30
 server_addr = "127.0.0.1:3000"

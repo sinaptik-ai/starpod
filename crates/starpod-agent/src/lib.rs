@@ -1997,7 +1997,7 @@ mod tests {
 
         // Memory should be initialized
         let ctx = agent.memory().bootstrap_context().unwrap();
-        assert!(ctx.contains("Aster"));
+        assert!(ctx.contains("Nova"));
 
         // Vault should work
         // Skills dir should exist
@@ -2048,7 +2048,7 @@ mod tests {
 
         // Memory uses agent_home
         let ctx = agent.memory().bootstrap_context().unwrap();
-        assert!(ctx.contains("TestBot") || ctx.contains("Aster"));
+        assert!(ctx.contains("TestBot") || ctx.contains("Nova"));
 
         // DB dir should have core.db (unified sessions + cron + auth)
         assert!(db_dir.join("core.db").exists());
@@ -2199,7 +2199,7 @@ mod tests {
         let result = handle_custom_tool(
             &ctx,
             "MemorySearch",
-            &serde_json::json!({"query": "Aster", "limit": 3}),
+            &serde_json::json!({"query": "Nova", "limit": 3}),
         )
         .await;
         assert!(result.is_some());
@@ -2493,13 +2493,13 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let agent = StarpodAgent::new(test_config(&tmp)).await.unwrap();
 
-        assert_eq!(agent.config().agent_name, "Aster");
+        assert_eq!(agent.config().agent_name, "Nova");
 
         let mut new_cfg = test_config(&tmp);
-        new_cfg.agent_name = "Nova".to_string();
+        new_cfg.agent_name = "Renamed".to_string();
         agent.reload_config(new_cfg);
 
-        assert_eq!(agent.config().agent_name, "Nova");
+        assert_eq!(agent.config().agent_name, "Renamed");
     }
 
     #[tokio::test]

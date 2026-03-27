@@ -4,6 +4,7 @@ import { AppProvider, useApp, isMobile } from './contexts/AppContext'
 import { generateUUID } from './lib/utils'
 import { markSessionRead } from './lib/api'
 import AuthGate, { useUser } from './components/AuthGate'
+import OnboardingGate from './components/OnboardingGate'
 import Header from './components/Header'
 import Sidebar from './components/Sidebar'
 import Chat from './components/Chat'
@@ -274,9 +275,11 @@ function AppInner() {
 export default function App() {
   return (
     <AuthGate>
-      <AppProvider>
-        <AppInner />
-      </AppProvider>
+      <OnboardingGate>
+        <AppProvider>
+          <AppInner />
+        </AppProvider>
+      </OnboardingGate>
     </AuthGate>
   )
 }

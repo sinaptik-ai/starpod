@@ -45,7 +45,7 @@ The web UI is a single HTML file embedded in the `starpod-gateway` binary. It co
 The welcome screen greeting and suggested prompts are configured via `.starpod/config/frontend.toml`:
 
 ```toml
-greeting = "Hi! I'm Aster."
+greeting = "Hi! I'm Nova."
 
 prompts = [
     "What can you help me with?",

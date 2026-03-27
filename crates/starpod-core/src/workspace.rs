@@ -482,7 +482,7 @@ pub struct AgentConfig {
 }
 
 fn default_agent_name() -> String {
-    "Aster".to_string()
+    "Nova".to_string()
 }
 fn default_server_addr() -> String {
     "127.0.0.1:3000".to_string()
@@ -645,13 +645,13 @@ pub fn load_agent_config(paths: &ResolvedPaths) -> crate::Result<AgentConfig> {
         .map_err(|e| StarpodError::Config(format!("Invalid agent.toml: {}", e)))?;
 
     // Use agent_name as name if name wasn't explicitly set
-    if config.name == "Aster" && config.agent_name != "Aster" {
+    if config.name == "Nova" && config.agent_name != "Nova" {
         config.name = config.agent_name.clone();
     }
 
     // For Instance mode, set name from the agent_name in the mode
     if let Mode::Instance { agent_name, .. } = &paths.mode {
-        if config.name == "Aster" {
+        if config.name == "Nova" {
             config.name = agent_name.clone();
         }
     }
@@ -781,13 +781,13 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         std::fs::write(root.join("starpod.toml"), "").unwrap();
-        let instance_dir = root.join(".instances").join("aster");
+        let instance_dir = root.join(".instances").join("nova");
         let starpod_dir = instance_dir.join(".starpod");
         std::fs::create_dir_all(&starpod_dir).unwrap();
 
         let mode = Mode::Instance {
             instance_root: instance_dir.clone(),
-            agent_name: "aster".to_string(),
+            agent_name: "nova".to_string(),
         };
         let paths = ResolvedPaths::resolve(&mode).unwrap();
 
@@ -1169,7 +1169,7 @@ max_turns = 30
     #[test]
     fn agent_config_defaults_are_sane() {
         let config = AgentConfig::default();
-        assert_eq!(config.name, "Aster");
+        assert_eq!(config.name, "Nova");
         assert_eq!(config.models, vec!["anthropic/claude-haiku-4-5"]);
         assert_eq!(config.max_turns, 30);
         assert_eq!(config.max_tokens, 16384);
@@ -1318,13 +1318,13 @@ models = ["anthropic/claude-haiku-4-5"]
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         std::fs::write(root.join("starpod.toml"), "").unwrap();
-        let instance_dir = root.join(".instances").join("aster");
+        let instance_dir = root.join(".instances").join("nova");
         let config_dir = instance_dir.join(".starpod").join("config");
         std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::write(
             config_dir.join("agent.toml"),
             r#"
-agent_name = "Aster"
+agent_name = "Nova"
 models = ["anthropic/claude-haiku-4-5"]
 "#,
         )
@@ -1332,13 +1332,13 @@ models = ["anthropic/claude-haiku-4-5"]
 
         let mode = Mode::Instance {
             instance_root: instance_dir,
-            agent_name: "aster".to_string(),
+            agent_name: "nova".to_string(),
         };
         let paths = ResolvedPaths::resolve(&mode).unwrap();
         let config = load_agent_config(&paths).unwrap();
 
         assert_eq!(config.models, vec!["anthropic/claude-haiku-4-5"]);
-        assert_eq!(config.name, "aster");
+        assert_eq!(config.name, "nova");
     }
 
     // ── load_env hierarchical ───────────────────────────────────────
