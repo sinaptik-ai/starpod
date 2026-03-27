@@ -85,6 +85,12 @@ pub struct InstanceResponse {
     pub machine_type: Option<String>,
     pub ip_address: Option<String>,
     pub error_message: Option<String>,
+    #[serde(default)]
+    pub starpod_api_key: Option<String>,
+    #[serde(default)]
+    pub web_url: Option<String>,
+    #[serde(default)]
+    pub direct_url: Option<String>,
     pub created_at: String,
 }
 

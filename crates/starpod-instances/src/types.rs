@@ -60,6 +60,10 @@ pub struct Instance {
     #[serde(default)]
     pub starpod_api_key: Option<String>,
     #[serde(default)]
+    pub web_url: Option<String>,
+    #[serde(default)]
+    pub direct_url: Option<String>,
+    #[serde(default)]
     pub secret_overrides: Option<serde_json::Value>,
     pub created_at: String,
 }

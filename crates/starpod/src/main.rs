@@ -2721,6 +2721,16 @@ async fn main() -> anyhow::Result<()> {
                                     if let Some(ref z) = ready.zone {
                                         println!("  {} Zone:   {}", "│".dimmed(), z);
                                     }
+                                    if let Some(ref url) = ready.web_url {
+                                        println!("  {} Web UI: {}", "│".dimmed(), url.bright_cyan().underline());
+                                    }
+                                    if let Some(ref key) = ready.starpod_api_key {
+                                        println!("  {} Key:    {}", "│".dimmed(), key.dimmed());
+                                    }
+                                    if let Some(ref url) = ready.direct_url {
+                                        println!();
+                                        println!("  {} Open directly: {}", "→".bright_cyan().bold(), url.bright_cyan().underline());
+                                    }
                                 }
                                 Err(e) => {
                                     eprint!("\r                                                \r");
@@ -2751,6 +2761,9 @@ async fn main() -> anyhow::Result<()> {
                                         "zone": inst.zone,
                                         "machine_type": inst.machine_type,
                                         "ip": inst.ip_address,
+                                        "web_url": inst.web_url,
+                                        "direct_url": inst.direct_url,
+                                        "starpod_api_key": inst.starpod_api_key,
                                         "error": inst.error_message,
                                         "created_at": inst.created_at,
                                     })
@@ -2802,6 +2815,13 @@ async fn main() -> anyhow::Result<()> {
                                             "  {}  IP      {}",
                                             "│".dimmed(),
                                             ip,
+                                        );
+                                    }
+                                    if let Some(ref url) = inst.direct_url {
+                                        println!(
+                                            "  {}  Web UI  {}",
+                                            "│".dimmed(),
+                                            url.bright_cyan().underline(),
                                         );
                                     }
                                     if let Some(ref err) = inst.error_message {
