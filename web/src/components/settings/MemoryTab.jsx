@@ -57,6 +57,15 @@ export default function MemoryTab() {
         <Toggle label="Export sessions" checked={config.export_sessions ?? false} onChange={v => set('export_sessions', v)} helpTip="Save closed session transcripts for long-term search." />
       </Card>
 
+      <Card title="Background review">
+        <Row label="Nudge interval" sub="messages" helpTip="Every N user messages, a background LLM call reviews the conversation and saves important info to memory. 0 = disabled.">
+          <Input type="number" value={config.nudge_interval ?? ''} onChange={v => set('nudge_interval', v === '' ? null : Number(v))} placeholder="10" />
+        </Row>
+        <Row label="Nudge model" helpTip="Model for background reviews. Leave empty to use the flush/compaction/primary model." mono>
+          <Input value={config.nudge_model ?? ''} onChange={v => set('nudge_model', v === '' ? null : v)} placeholder="e.g. anthropic/claude-haiku-4-5-20251001" mono />
+        </Row>
+      </Card>
+
       <SaveBar onSave={save} saving={saving} status={status} />
     </>
   )

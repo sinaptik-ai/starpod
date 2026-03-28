@@ -291,6 +291,16 @@ pub struct MemoryConfig {
     /// Soft character limit for MEMORY.md (default: 8000).
     #[serde(default = "default_memory_md_limit")]
     pub memory_md_limit: usize,
+    /// Run a background memory review every N user messages (default: 10, 0 = disabled).
+    ///
+    /// When enabled, a lightweight LLM call reviews the recent conversation every
+    /// `nudge_interval` user messages and persists important information to memory
+    /// (USER.md, MEMORY.md, or daily logs) without interrupting the main chat flow.
+    #[serde(default = "default_nudge_interval")]
+    pub nudge_interval: u32,
+    /// Model to use for background memory nudges. Falls back to `compaction.flush_model`,
+    /// then `compaction_model`, then the primary model.
+    pub nudge_model: Option<String>,
 }
 
 fn default_chunk_size() -> usize {
@@ -308,6 +318,9 @@ fn default_user_md_limit() -> usize {
 fn default_memory_md_limit() -> usize {
     8_000
 }
+fn default_nudge_interval() -> u32 {
+    10
+}
 
 impl Default for MemoryConfig {
     fn default() -> Self {
@@ -322,6 +335,8 @@ impl Default for MemoryConfig {
             auto_log: false,
             user_md_limit: default_user_md_limit(),
             memory_md_limit: default_memory_md_limit(),
+            nudge_interval: default_nudge_interval(),
+            nudge_model: None,
         }
     }
 }
@@ -1280,6 +1295,75 @@ mod tests {
         "#;
         let config_true: StarpodConfig = toml::from_str(toml_true).unwrap();
         assert!(config_true.memory.export_sessions);
+    }
+
+    // ── nudge_interval tests ────────────────────────────────────────────
+
+    #[test]
+    fn nudge_interval_defaults_to_10() {
+        let cfg = MemoryConfig::default();
+        assert_eq!(cfg.nudge_interval, 10);
+        assert!(cfg.nudge_model.is_none());
+    }
+
+    #[test]
+    fn nudge_interval_from_toml() {
+        let toml = r#"
+            [memory]
+            nudge_interval = 5
+            nudge_model = "anthropic/claude-haiku-4-5-20251001"
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.memory.nudge_interval, 5);
+        assert_eq!(
+            config.memory.nudge_model.as_deref(),
+            Some("anthropic/claude-haiku-4-5-20251001")
+        );
+    }
+
+    #[test]
+    fn nudge_interval_zero_disables() {
+        let toml = r#"
+            [memory]
+            nudge_interval = 0
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.memory.nudge_interval, 0);
+    }
+
+    #[test]
+    fn nudge_interval_defaults_when_missing_from_toml() {
+        let toml = r#"
+            [memory]
+            half_life_days = 14.0
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.memory.nudge_interval, 10, "nudge_interval should default to 10");
+        assert!(config.memory.nudge_model.is_none(), "nudge_model should default to None");
+    }
+
+    #[test]
+    fn nudge_model_none_when_absent_from_toml() {
+        let toml = r#"
+            [memory]
+            nudge_interval = 5
+        "#;
+        let config: StarpodConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.memory.nudge_interval, 5);
+        assert!(config.memory.nudge_model.is_none(), "nudge_model should be None when not in TOML");
+    }
+
+    #[test]
+    fn nudge_config_serialization_round_trip() {
+        let cfg = MemoryConfig {
+            nudge_interval: 20,
+            nudge_model: Some("anthropic/claude-haiku-4-5-20251001".into()),
+            ..MemoryConfig::default()
+        };
+        let serialized = toml::to_string(&cfg).unwrap();
+        let deserialized: MemoryConfig = toml::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.nudge_interval, 20);
+        assert_eq!(deserialized.nudge_model.as_deref(), Some("anthropic/claude-haiku-4-5-20251001"));
     }
 
     // ── Channel gap_minutes tests ──────────────────────────────────────

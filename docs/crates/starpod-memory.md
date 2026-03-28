@@ -77,6 +77,16 @@ All chunking parameters are configurable in `agent.toml` under the `[memory]` se
 
 The per-file character cap is configurable via `[memory] bootstrap_file_cap` in `agent.toml` (default: 20000).
 
+## Background Persistence
+
+In addition to agent-initiated writes during conversation, the `starpod-agent` crate runs a **background memory nudge** every N user messages (configurable via `memory.nudge_interval`). This uses a single LLM call to review the session transcript and route information to the correct files:
+
+- User details → `USER.md` (via `MemoryWrite`)
+- Knowledge and decisions → `MEMORY.md` (via `MemoryWrite` with `append=true`)
+- Time-specific notes → daily log (via `MemoryAppendDaily`)
+
+See the [memory concept doc](../concepts/memory.md#background-memory-nudge) for full details and configuration.
+
 ## Tests
 
 30+ unit tests covering seeding, search, chunking, temporal decay, vector search, hybrid search, path validation, content size limits, and user view routing.

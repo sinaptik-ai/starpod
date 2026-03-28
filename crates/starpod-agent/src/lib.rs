@@ -1,4 +1,5 @@
 pub mod flush;
+pub mod nudge;
 pub mod tools;
 
 use std::collections::HashMap;
@@ -95,6 +96,12 @@ pub struct StarpodAgent {
     /// Mid-session `MemoryWrite` calls still update files on disk, but the
     /// snapshot is only refreshed when a new session begins.
     bootstrap_cache: tokio::sync::RwLock<HashMap<String, String>>,
+    /// Per-session user message counter for memory nudge scheduling.
+    ///
+    /// Tracks how many user messages have been processed in each session.
+    /// When the count reaches `config.memory.nudge_interval`, a background
+    /// LLM call reviews the conversation and persists important information.
+    nudge_counters: tokio::sync::RwLock<HashMap<String, u32>>,
 }
 
 impl StarpodAgent {
@@ -215,6 +222,7 @@ impl StarpodAgent {
             config: RwLock::new(config),
             model_registry: tokio::sync::RwLock::new(None),
             bootstrap_cache: tokio::sync::RwLock::new(HashMap::new()),
+            nudge_counters: tokio::sync::RwLock::new(HashMap::new()),
         })
     }
 
@@ -1217,6 +1225,9 @@ impl StarpodAgent {
                 .await;
         }
 
+        // Step 7: Background memory nudge (every N user messages)
+        self.maybe_nudge_memory(&session_id, message.user_id.as_deref(), &config).await;
+
         let attachments = out_attachments.lock().await.drain(..).collect();
 
         Ok(ChatResponse {
@@ -1474,6 +1485,81 @@ impl StarpodAgent {
             );
             let _ = self.append_daily_for_user(user_id, &entry).await;
         }
+
+        // Background memory nudge (every N user messages)
+        self.maybe_nudge_memory(session_id, user_id, &config).await;
+    }
+
+    /// Increment the nudge counter for a session and spawn a background memory
+    /// review if the interval has been reached.
+    ///
+    /// Returns immediately — the nudge runs in a detached `tokio::spawn` task.
+    async fn maybe_nudge_memory(
+        &self,
+        session_id: &str,
+        user_id: Option<&str>,
+        config: &StarpodConfig,
+    ) {
+        let interval = config.memory.nudge_interval;
+        if interval == 0 {
+            return;
+        }
+
+        let count = {
+            let mut counters = self.nudge_counters.write().await;
+            let count = counters.entry(session_id.to_string()).or_insert(0);
+            *count += 1;
+            *count
+        };
+
+        if count % interval != 0 {
+            return;
+        }
+
+        // Time for a nudge — gather what we need and spawn in background
+        let messages = match self.session_mgr.get_messages(session_id).await {
+            Ok(msgs) if !msgs.is_empty() => msgs,
+            _ => return,
+        };
+
+        // Resolve the model: nudge_model → flush_model → compaction_model → primary
+        let nudge_model = config.memory.nudge_model.clone()
+            .or_else(|| config.compaction.flush_model.clone())
+            .or_else(|| config.compaction_model.clone())
+            .unwrap_or_else(|| config.model().to_string());
+
+        let provider: Arc<dyn agent_sdk::LlmProvider> = match self.build_provider(config).await {
+            Ok(p) => Arc::from(p),
+            Err(e) => {
+                warn!(error = %e, "Failed to build provider for memory nudge");
+                return;
+            }
+        };
+
+        let memory = Arc::clone(&self.memory);
+        let user_view: Option<Arc<UserMemoryView>> = match user_id {
+            Some(uid) => {
+                let user_dir = self.paths.users_dir.join(uid);
+                match UserMemoryView::new(Arc::clone(&memory), user_dir).await {
+                    Ok(uv) => Some(Arc::new(uv)),
+                    Err(_) => None,
+                }
+            }
+            None => None,
+        };
+
+        info!(session_id, count, "Spawning background memory nudge");
+
+        tokio::spawn(async move {
+            nudge::run_memory_nudge(
+                provider,
+                &nudge_model,
+                &messages,
+                &memory,
+                user_view.as_deref(),
+            )
+            .await;
+        });
     }
 
     /// Append to daily log via user view when a user_id is present, falling back to agent-level store.
@@ -1499,6 +1585,7 @@ impl StarpodAgent {
         // Always evict the frozen bootstrap snapshot when a session closes,
         // regardless of whether the transcript export is enabled.
         self.bootstrap_cache.write().await.remove(session_id);
+        self.nudge_counters.write().await.remove(session_id);
 
         let config = self.snapshot_config();
         if !config.memory.export_sessions {

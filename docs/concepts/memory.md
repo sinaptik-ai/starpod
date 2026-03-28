@@ -106,6 +106,51 @@ Append to today's daily log:
 }
 ```
 
+## Background Memory Nudge
+
+Starpod can automatically review conversations and persist important information to memory — without the agent needing to decide inline during the conversation.
+
+Every **N user messages** (configurable via `memory.nudge_interval`, default: 10), a background LLM call:
+
+1. Loads the full session transcript from the database
+2. Reviews it for important information
+3. Persists findings using `MemoryWrite` and `MemoryAppendDaily`:
+   - User preferences and personal details → `USER.md`
+   - Key decisions, facts, and technical context → `MEMORY.md`
+   - Time-specific notes and conversation summaries → daily log
+
+The nudge runs in a background task and never blocks the main chat flow. If the LLM call fails, a warning is logged and the conversation continues unaffected (fail-open).
+
+### Configuration
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `nudge_interval` | integer | `10` | User messages between nudges. Set to `0` to disable |
+| `nudge_model` | string | — | Model override. Falls back to `compaction.flush_model` → `compaction_model` → primary model |
+
+```toml
+[memory]
+nudge_interval = 10
+nudge_model = "anthropic/claude-haiku-4-5-20251001"
+```
+
+::: tip
+Use a fast, cheap model (like Haiku) for nudges — they don't need the full power of your primary model.
+:::
+
+### Nudge vs. Pre-Compaction Flush
+
+Starpod has two mechanisms for background memory persistence:
+
+| | Nudge | Flush |
+|---|---|---|
+| **When** | Every N user messages | Before context compaction |
+| **Trigger** | Message count | Context window filling up |
+| **Scope** | Full session transcript | Messages being discarded |
+| **Config** | `memory.nudge_interval` | `compaction.memory_flush` |
+
+Both can be active simultaneously. The nudge catches information proactively; the flush is a safety net before context is lost.
+
 ## CLI
 
 ```bash

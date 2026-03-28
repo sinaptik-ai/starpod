@@ -228,6 +228,8 @@ The `[memory]` section tunes search and indexing behavior.
 | `chunk_overlap` | integer | `320` | Overlap in characters between chunks (~80 tokens) |
 | `bootstrap_file_cap` | integer | `20000` | Max characters per file included in bootstrap context |
 | `export_sessions` | bool | `true` | Export closed session transcripts to memory for long-term recall |
+| `nudge_interval` | integer | `10` | Background memory review every N user messages (`0` = disabled) |
+| `nudge_model` | string | — | Model for background reviews (falls back to flush → compaction → primary model) |
 
 ## Compaction
 
@@ -261,6 +263,7 @@ Starpod watches `starpod.toml` and `agent.toml` for changes while the server is 
 - `reasoning_effort` — change thinking budget
 - `compaction` settings — adjust context budget
 - `memory.export_sessions` — toggle session export
+- `memory.nudge_interval` — adjust review frequency
 - `followup_mode` — switch between inject and queue
 - `self_improve` — toggle self-improve mode
 

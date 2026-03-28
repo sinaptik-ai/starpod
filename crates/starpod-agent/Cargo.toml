@@ -36,3 +36,5 @@ readability = { version = "0.3", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"
+async-trait = "0.1"
+futures = "0.3"

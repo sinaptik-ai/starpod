@@ -54,8 +54,8 @@ Do NOT save:
 Use MemoryWrite with append=true to add to MEMORY.md, or MemoryAppendDaily for time-specific notes. \
 Respond with ONLY tool calls, no explanatory text.";
 
-/// Tool definitions exposed to the flush LLM turn.
-fn flush_tool_definitions() -> Vec<ToolDefinition> {
+/// Tool definitions exposed to the flush/nudge LLM turn.
+pub fn flush_tool_definitions() -> Vec<ToolDefinition> {
     vec![
         ToolDefinition {
             name: "MemoryWrite".into(),
@@ -136,8 +136,8 @@ fn messages_to_transcript(messages: &[ApiMessage]) -> String {
     parts.join("\n\n")
 }
 
-/// Execute tool calls from the flush LLM response against the memory store.
-async fn execute_flush_tool_calls(
+/// Execute tool calls from the flush/nudge LLM response against the memory store.
+pub async fn execute_flush_tool_calls(
     content: &[ApiContentBlock],
     memory: &MemoryStore,
     user_view: Option<&UserMemoryView>,

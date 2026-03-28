@@ -123,6 +123,8 @@ struct MemorySettings {
     chunk_size: usize,
     chunk_overlap: usize,
     export_sessions: bool,
+    nudge_interval: u32,
+    nudge_model: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -524,6 +526,8 @@ async fn get_memory(State(state): State<Arc<AppState>>) -> ApiResult<MemorySetti
         chunk_size: cfg.memory.chunk_size,
         chunk_overlap: cfg.memory.chunk_overlap,
         export_sessions: cfg.memory.export_sessions,
+        nudge_interval: cfg.memory.nudge_interval,
+        nudge_model: cfg.memory.nudge_model.clone(),
     }))
 }
 
@@ -563,6 +567,18 @@ async fn put_memory(
         "export_sessions".into(),
         toml::Value::Boolean(settings.export_sessions),
     );
+    mem.insert(
+        "nudge_interval".into(),
+        toml::Value::Integer(settings.nudge_interval as i64),
+    );
+    match &settings.nudge_model {
+        Some(model) => {
+            mem.insert("nudge_model".into(), toml::Value::String(model.clone()));
+        }
+        None => {
+            mem.remove("nudge_model");
+        }
+    }
 
     write_agent_toml(&state, &doc)?;
     Ok(ok_json())
@@ -2221,11 +2237,15 @@ mod tests {
             chunk_size: 800,
             chunk_overlap: 160,
             export_sessions: true,
+            nudge_interval: 5,
+            nudge_model: Some("anthropic/claude-haiku-4-5-20251001".into()),
         };
         let json = serde_json::to_string(&settings).unwrap();
         let back: MemorySettings = serde_json::from_str(&json).unwrap();
         assert_eq!(back.half_life_days, 14.0);
         assert!(!back.vector_search);
+        assert_eq!(back.nudge_interval, 5);
+        assert_eq!(back.nudge_model.as_deref(), Some("anthropic/claude-haiku-4-5-20251001"));
     }
 
     #[test]
@@ -2440,6 +2460,8 @@ mod tests {
         assert_eq!(json["half_life_days"], 30.0);
         assert_eq!(json["mmr_lambda"], 0.7);
         assert_eq!(json["vector_search"], true);
+        assert_eq!(json["nudge_interval"], 10);
+        assert!(json["nudge_model"].is_null());
     }
 
     #[tokio::test]
@@ -2450,7 +2472,8 @@ mod tests {
             "/api/settings/memory",
             serde_json::json!({
                 "half_life_days": 14.0, "mmr_lambda": 0.5, "vector_search": false,
-                "chunk_size": 800, "chunk_overlap": 160, "export_sessions": false
+                "chunk_size": 800, "chunk_overlap": 160, "export_sessions": false,
+                "nudge_interval": 5, "nudge_model": "anthropic/claude-haiku-4-5-20251001"
             }),
         )
         .await;
@@ -2460,6 +2483,80 @@ mod tests {
         let parsed: toml::Value = toml::from_str(&content).unwrap();
         assert_eq!(parsed["memory"]["half_life_days"].as_float(), Some(14.0));
         assert_eq!(parsed["memory"]["vector_search"].as_bool(), Some(false));
+        assert_eq!(parsed["memory"]["nudge_interval"].as_integer(), Some(5));
+        assert_eq!(parsed["memory"]["nudge_model"].as_str(), Some("anthropic/claude-haiku-4-5-20251001"));
+    }
+
+    #[tokio::test]
+    async fn put_memory_nudge_model_null_removes_from_toml() {
+        let (_tmp, state) = test_app_state().await;
+
+        // First set a nudge_model
+        let (status, _) = put_json(
+            Arc::clone(&state),
+            "/api/settings/memory",
+            serde_json::json!({
+                "half_life_days": 30.0, "mmr_lambda": 0.7, "vector_search": true,
+                "chunk_size": 1600, "chunk_overlap": 320, "export_sessions": true,
+                "nudge_interval": 10, "nudge_model": "anthropic/claude-haiku-4-5-20251001"
+            }),
+        ).await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Verify it was written
+        let content = std::fs::read_to_string(&state.paths.agent_toml).unwrap();
+        let parsed: toml::Value = toml::from_str(&content).unwrap();
+        assert!(parsed["memory"]["nudge_model"].is_str());
+
+        // Now set nudge_model to null
+        let (status, _) = put_json(
+            Arc::clone(&state),
+            "/api/settings/memory",
+            serde_json::json!({
+                "half_life_days": 30.0, "mmr_lambda": 0.7, "vector_search": true,
+                "chunk_size": 1600, "chunk_overlap": 320, "export_sessions": true,
+                "nudge_interval": 10, "nudge_model": null
+            }),
+        ).await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Verify nudge_model was removed from TOML
+        let content = std::fs::read_to_string(&state.paths.agent_toml).unwrap();
+        let parsed: toml::Value = toml::from_str(&content).unwrap();
+        assert!(
+            parsed["memory"].get("nudge_model").is_none()
+                || parsed["memory"]["nudge_model"].as_str().is_none(),
+            "nudge_model should be removed from TOML when set to null"
+        );
+        // nudge_interval should still be present
+        assert_eq!(parsed["memory"]["nudge_interval"].as_integer(), Some(10));
+    }
+
+    #[tokio::test]
+    async fn put_memory_then_get_returns_updated_nudge_values() {
+        let (_tmp, state) = test_app_state().await;
+
+        // PUT custom nudge values
+        let (status, _) = put_json(
+            Arc::clone(&state),
+            "/api/settings/memory",
+            serde_json::json!({
+                "half_life_days": 30.0, "mmr_lambda": 0.7, "vector_search": true,
+                "chunk_size": 1600, "chunk_overlap": 320, "export_sessions": true,
+                "nudge_interval": 5, "nudge_model": "anthropic/claude-haiku-4-5-20251001"
+            }),
+        ).await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Reload config so GET reflects the new values
+        let agent_cfg = starpod_core::reload_agent_config(&state.paths).unwrap();
+        *state.config.write().unwrap() = agent_cfg.into_starpod_config(&state.paths);
+
+        // GET should return updated values
+        let (status, json) = get_json(state, "/api/settings/memory").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["nudge_interval"], 5);
+        assert_eq!(json["nudge_model"], "anthropic/claude-haiku-4-5-20251001");
     }
 
     #[tokio::test]

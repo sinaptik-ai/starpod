@@ -43,6 +43,7 @@ let attachments = out_attachments.lock().await.drain(..).collect::<Vec<_>>();
 8. **Self-improve reflection** — if `self_improve` is enabled and conditions are met (skill failure or 5+ tool calls), run a follow-up query to create/update skills
 9. **Record usage** — tokens and cost to session database
 10. **Append daily log** — conversation summary
+11. **Background memory nudge** — if message count hits the nudge interval, spawn a background review
 
 ## Followup Message Handling
 
@@ -96,7 +97,24 @@ agent.config()      // StarpodConfig (owned snapshot)
 
 ## Memory Nudging
 
-The system prompt includes always-on memory guidance that instructs the agent to proactively persist knowledge — user corrections, preferences, environment facts, and daily log summaries — without waiting to be asked. This is not gated behind `self_improve` as it's core agent behavior.
+Memory persistence operates at two levels:
+
+**System prompt guidance** — The system prompt includes always-on instructions that guide the agent to proactively persist knowledge (user corrections, preferences, environment facts) via `MemoryWrite` and `MemoryAppendDaily` tools during normal conversation. This is core agent behavior, not gated behind `self_improve`.
+
+**Background nudge** — Every `memory.nudge_interval` user messages (default: 10), a background `tokio::spawn` task reviews the conversation and persists important information automatically. This catches details the agent may have missed during inline conversation.
+
+The nudge pipeline:
+1. `StarpodAgent` tracks a per-session message counter (`nudge_counters`)
+2. When `count % nudge_interval == 0`, `maybe_nudge_memory()` loads the session transcript
+3. A background task calls `nudge::run_memory_nudge()` which:
+   - Converts `SessionMessage` records into a transcript (truncated to 30K chars)
+   - Makes a single non-streaming LLM call with `MemoryWrite` / `MemoryAppendDaily` tools
+   - Executes any tool calls from the response (reuses `flush::execute_flush_tool_calls`)
+   - Discards the LLM's text output
+
+Model resolution: `memory.nudge_model` → `compaction.flush_model` → `compaction_model` → primary model. The nudge is fail-open — provider errors are logged and the chat flow is never interrupted.
+
+Counters are evicted when a session closes (alongside the bootstrap cache).
 
 ## Self-Improve Mode
 
@@ -110,4 +128,4 @@ After the main agent loop, `run_self_improve_reflection()` checks these metrics 
 
 ## Tests
 
-25+ unit tests covering agent construction, custom tools, attachments (inbound and outbound via `Attach`), config reload, session export, and self-improve tracking.
+25+ unit tests covering agent construction, custom tools, attachments (inbound and outbound via `Attach`), config reload, session export, self-improve tracking, and memory nudging.
