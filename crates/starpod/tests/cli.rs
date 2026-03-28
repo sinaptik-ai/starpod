@@ -301,7 +301,6 @@ fn init_lifecycle_files_are_empty() {
 #[test]
 fn deploy_requires_auth() {
     let output = starpod().args(["deploy"]).output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
     // Deploy should fail because we're not logged in
     assert!(!output.status.success(), "deploy without auth should fail");
 }
