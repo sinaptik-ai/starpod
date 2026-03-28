@@ -42,7 +42,7 @@ use sqlx::{Row, SqlitePool};
 use tracing::{debug, info};
 use uuid::Uuid;
 
-use starpod_core::{StarpodError, Result};
+use starpod_core::{Result, StarpodError};
 
 pub use rate_limit::RateLimiter;
 pub use types::*;
@@ -84,7 +84,7 @@ impl AuthStore {
 
         sqlx::query(
             "INSERT INTO users (id, email, display_name, role, is_active, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, 1, ?, ?)"
+             VALUES (?, ?, ?, ?, 1, ?, ?)",
         )
         .bind(&id)
         .bind(email)
@@ -150,8 +150,12 @@ impl AuthStore {
     ) -> Result<()> {
         let now = Utc::now().to_rfc3339();
 
-        let role_clause = role.map(|r| format!(", role = '{}'", r.as_str())).unwrap_or_default();
-        let fs_clause = filesystem_enabled.map(|v| format!(", filesystem_enabled = {}", v as i32)).unwrap_or_default();
+        let role_clause = role
+            .map(|r| format!(", role = '{}'", r.as_str()))
+            .unwrap_or_default();
+        let fs_clause = filesystem_enabled
+            .map(|v| format!(", filesystem_enabled = {}", v as i32))
+            .unwrap_or_default();
 
         let sql = format!(
             "UPDATE users SET email = COALESCE(?, email), display_name = COALESCE(?, display_name){}{}, \
@@ -219,7 +223,7 @@ impl AuthStore {
 
         sqlx::query(
             "INSERT INTO api_keys (id, user_id, prefix, key_hash, label, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(user_id)
@@ -268,7 +272,7 @@ impl AuthStore {
 
         sqlx::query(
             "INSERT INTO api_keys (id, user_id, prefix, key_hash, label, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(user_id)
@@ -297,8 +301,7 @@ impl AuthStore {
     /// Authenticate a request by API key. Returns the user if valid.
     pub async fn authenticate_api_key(&self, key: &str) -> Result<Option<User>> {
         // Extract prefix: sp_live_ keys use the standard prefix, others use first 8 chars
-        let prefix = api_key::extract_prefix(key)
-            .unwrap_or_else(|| &key[..key.len().min(8)]);
+        let prefix = api_key::extract_prefix(key).unwrap_or_else(|| &key[..key.len().min(8)]);
 
         let candidates = sqlx::query(
                 "SELECT ak.id AS ak_id, ak.key_hash, u.id, u.email, u.display_name, u.role, u.is_active, \
@@ -343,7 +346,7 @@ impl AuthStore {
     pub async fn list_api_keys(&self, user_id: &str) -> Result<Vec<ApiKeyMeta>> {
         let rows = sqlx::query(
             "SELECT id, user_id, prefix, label, expires_at, revoked_at, last_used_at, created_at \
-             FROM api_keys WHERE user_id = ? ORDER BY created_at DESC"
+             FROM api_keys WHERE user_id = ? ORDER BY created_at DESC",
         )
         .bind(user_id)
         .fetch_all(&self.pool)
@@ -403,19 +406,23 @@ impl AuthStore {
                 .bind(tid)
                 .execute(&self.pool)
                 .await
-                .map_err(|e| StarpodError::Auth(format!("Failed to clear old Telegram ID link: {}", e)))?;
+                .map_err(|e| {
+                    StarpodError::Auth(format!("Failed to clear old Telegram ID link: {}", e))
+                })?;
         }
         if let Some(uname) = username {
             sqlx::query("DELETE FROM telegram_links WHERE username = ?")
                 .bind(uname)
                 .execute(&self.pool)
                 .await
-                .map_err(|e| StarpodError::Auth(format!("Failed to clear old username link: {}", e)))?;
+                .map_err(|e| {
+                    StarpodError::Auth(format!("Failed to clear old username link: {}", e))
+                })?;
         }
 
         sqlx::query(
             "INSERT INTO telegram_links (telegram_id, user_id, username, linked_at) \
-             VALUES (?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?)",
         )
         .bind(telegram_id)
         .bind(user_id)
@@ -441,7 +448,7 @@ impl AuthStore {
     /// first message and the link was created without a numeric ID.
     pub async fn backfill_telegram_id(&self, username: &str, telegram_id: i64) -> Result<()> {
         sqlx::query(
-            "UPDATE telegram_links SET telegram_id = ? WHERE username = ? AND telegram_id IS NULL"
+            "UPDATE telegram_links SET telegram_id = ? WHERE username = ? AND telegram_id IS NULL",
         )
         .bind(telegram_id)
         .bind(username)
@@ -470,7 +477,11 @@ impl AuthStore {
     ///    numeric ID is back-filled so subsequent lookups succeed by ID alone.
     ///
     /// Returns `None` if the user is not linked or is deactivated.
-    pub async fn authenticate_telegram(&self, telegram_id: i64, username: Option<&str>) -> Result<Option<User>> {
+    pub async fn authenticate_telegram(
+        &self,
+        telegram_id: i64,
+        username: Option<&str>,
+    ) -> Result<Option<User>> {
         // Try by ID first
         let row = sqlx::query(
             "SELECT u.id, u.email, u.display_name, u.role, u.is_active, u.filesystem_enabled, u.created_at, u.updated_at \
@@ -545,12 +556,15 @@ impl AuthStore {
         .await
         .map_err(|e| StarpodError::Auth(format!("Failed to list Telegram links: {}", e)))?;
 
-        Ok(rows.iter().map(|r| TelegramLink {
-            telegram_id: r.get("telegram_id"),
-            user_id: r.get("user_id"),
-            username: r.get("username"),
-            linked_at: parse_dt(r.get("linked_at")),
-        }).collect())
+        Ok(rows
+            .iter()
+            .map(|r| TelegramLink {
+                telegram_id: r.get("telegram_id"),
+                user_id: r.get("user_id"),
+                username: r.get("username"),
+                linked_at: parse_dt(r.get("linked_at")),
+            })
+            .collect())
     }
 
     // ── Audit Log ────────────────────────────────────────────────────────
@@ -569,7 +583,7 @@ impl AuthStore {
         let now = Utc::now().to_rfc3339();
         sqlx::query(
             "INSERT INTO auth_audit_log (user_id, event_type, detail, ip_address, created_at) \
-             VALUES (?, ?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?, ?)",
         )
         .bind(user_id)
         .bind(event_type)
@@ -586,21 +600,24 @@ impl AuthStore {
     pub async fn recent_audit(&self, limit: usize) -> Result<Vec<AuditEntry>> {
         let rows = sqlx::query(
             "SELECT id, user_id, event_type, detail, ip_address, created_at \
-             FROM auth_audit_log ORDER BY created_at DESC LIMIT ?"
+             FROM auth_audit_log ORDER BY created_at DESC LIMIT ?",
         )
         .bind(limit as i64)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| StarpodError::Auth(format!("Failed to get audit log: {}", e)))?;
 
-        Ok(rows.iter().map(|r| AuditEntry {
-            id: r.get("id"),
-            user_id: r.get("user_id"),
-            event_type: r.get("event_type"),
-            detail: r.get("detail"),
-            ip_address: r.get("ip_address"),
-            created_at: parse_dt(r.get("created_at")),
-        }).collect())
+        Ok(rows
+            .iter()
+            .map(|r| AuditEntry {
+                id: r.get("id"),
+                user_id: r.get("user_id"),
+                event_type: r.get("event_type"),
+                detail: r.get("detail"),
+                ip_address: r.get("ip_address"),
+                created_at: parse_dt(r.get("created_at")),
+            })
+            .collect())
     }
 
     // ── Bootstrap ────────────────────────────────────────────────────────
@@ -627,20 +644,30 @@ impl AuthStore {
 
         let admin = self.create_user(None, Some("Admin"), Role::Admin).await?;
         // Enable filesystem access for the bootstrap admin
-        self.update_user(&admin.id, None, None, None, Some(true)).await?;
+        self.update_user(&admin.id, None, None, None, Some(true))
+            .await?;
         let admin = self.get_user(&admin.id).await?.unwrap_or(admin);
 
         let key_str = if let Some(existing) = existing_api_key {
-            self.import_api_key(&admin.id, existing, Some("Imported from STARPOD_API_KEY")).await?;
+            self.import_api_key(&admin.id, existing, Some("Imported from STARPOD_API_KEY"))
+                .await?;
             info!("Imported existing STARPOD_API_KEY as admin API key");
             existing.to_string()
         } else {
-            let created = self.create_api_key(&admin.id, Some("Auto-generated admin key")).await?;
+            let created = self
+                .create_api_key(&admin.id, Some("Auto-generated admin key"))
+                .await?;
             info!(key = %created.key, "Generated new admin API key — save this!");
             created.key
         };
 
-        self.log_event(Some(&admin.id), "bootstrap", Some("Admin user created"), None).await?;
+        self.log_event(
+            Some(&admin.id),
+            "bootstrap",
+            Some("Admin user created"),
+            None,
+        )
+        .await?;
 
         Ok(Some((admin, key_str)))
     }
@@ -679,9 +706,15 @@ fn row_to_api_key_meta(row: &sqlx::sqlite::SqliteRow) -> ApiKeyMeta {
         user_id: row.get("user_id"),
         prefix: row.get("prefix"),
         label: row.get("label"),
-        expires_at: row.get::<Option<String>, _>("expires_at").and_then(|s| parse_dt_opt(&s)),
-        revoked_at: row.get::<Option<String>, _>("revoked_at").and_then(|s| parse_dt_opt(&s)),
-        last_used_at: row.get::<Option<String>, _>("last_used_at").and_then(|s| parse_dt_opt(&s)),
+        expires_at: row
+            .get::<Option<String>, _>("expires_at")
+            .and_then(|s| parse_dt_opt(&s)),
+        revoked_at: row
+            .get::<Option<String>, _>("revoked_at")
+            .and_then(|s| parse_dt_opt(&s)),
+        last_used_at: row
+            .get::<Option<String>, _>("last_used_at")
+            .and_then(|s| parse_dt_opt(&s)),
         created_at: parse_dt(row.get("created_at")),
     }
 }
@@ -712,7 +745,10 @@ mod tests {
     #[tokio::test]
     async fn create_and_get_user() {
         let store = test_store().await;
-        let user = store.create_user(Some("test@example.com"), Some("Test"), Role::User).await.unwrap();
+        let user = store
+            .create_user(Some("test@example.com"), Some("Test"), Role::User)
+            .await
+            .unwrap();
         assert_eq!(user.role, Role::User);
         assert!(user.is_active);
 
@@ -724,8 +760,14 @@ mod tests {
     #[tokio::test]
     async fn list_users() {
         let store = test_store().await;
-        store.create_user(None, Some("A"), Role::Admin).await.unwrap();
-        store.create_user(None, Some("B"), Role::User).await.unwrap();
+        store
+            .create_user(None, Some("A"), Role::Admin)
+            .await
+            .unwrap();
+        store
+            .create_user(None, Some("B"), Role::User)
+            .await
+            .unwrap();
 
         let users = store.list_users().await.unwrap();
         assert_eq!(users.len(), 2);
@@ -734,8 +776,14 @@ mod tests {
     #[tokio::test]
     async fn update_user() {
         let store = test_store().await;
-        let user = store.create_user(None, Some("Old"), Role::User).await.unwrap();
-        store.update_user(&user.id, Some("new@example.com"), Some("New"), None, None).await.unwrap();
+        let user = store
+            .create_user(None, Some("Old"), Role::User)
+            .await
+            .unwrap();
+        store
+            .update_user(&user.id, Some("new@example.com"), Some("New"), None, None)
+            .await
+            .unwrap();
 
         let fetched = store.get_user(&user.id).await.unwrap().unwrap();
         assert_eq!(fetched.email.as_deref(), Some("new@example.com"));
@@ -756,12 +804,19 @@ mod tests {
     async fn api_key_create_and_authenticate() {
         let store = test_store().await;
         let user = store.create_user(None, None, Role::User).await.unwrap();
-        let created = store.create_api_key(&user.id, Some("test key")).await.unwrap();
+        let created = store
+            .create_api_key(&user.id, Some("test key"))
+            .await
+            .unwrap();
 
         assert!(created.key.starts_with("sp_live_"));
         assert_eq!(created.meta.label.as_deref(), Some("test key"));
 
-        let authed = store.authenticate_api_key(&created.key).await.unwrap().unwrap();
+        let authed = store
+            .authenticate_api_key(&created.key)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(authed.id, user.id);
     }
 
@@ -771,7 +826,10 @@ mod tests {
         let user = store.create_user(None, None, Role::User).await.unwrap();
         store.create_api_key(&user.id, None).await.unwrap();
 
-        let result = store.authenticate_api_key("sp_live_0000000000000000000000000000000000000000").await.unwrap();
+        let result = store
+            .authenticate_api_key("sp_live_0000000000000000000000000000000000000000")
+            .await
+            .unwrap();
         assert!(result.is_none());
     }
 
@@ -814,9 +872,16 @@ mod tests {
     async fn telegram_link_and_auth() {
         let store = test_store().await;
         let user = store.create_user(None, None, Role::User).await.unwrap();
-        store.link_telegram(&user.id, Some(123456789), Some("alice")).await.unwrap();
+        store
+            .link_telegram(&user.id, Some(123456789), Some("alice"))
+            .await
+            .unwrap();
 
-        let authed = store.authenticate_telegram(123456789, None).await.unwrap().unwrap();
+        let authed = store
+            .authenticate_telegram(123456789, None)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(authed.id, user.id);
     }
 
@@ -831,7 +896,10 @@ mod tests {
     async fn telegram_unlink() {
         let store = test_store().await;
         let user = store.create_user(None, None, Role::User).await.unwrap();
-        store.link_telegram(&user.id, Some(123), None).await.unwrap();
+        store
+            .link_telegram(&user.id, Some(123), None)
+            .await
+            .unwrap();
         store.unlink_telegram(123).await.unwrap();
 
         let result = store.authenticate_telegram(123, None).await.unwrap();
@@ -841,10 +909,22 @@ mod tests {
     #[tokio::test]
     async fn list_telegram_links() {
         let store = test_store().await;
-        let alice = store.create_user(None, Some("Alice"), Role::User).await.unwrap();
-        let bob = store.create_user(None, Some("Bob"), Role::User).await.unwrap();
-        store.link_telegram(&alice.id, Some(111), Some("alice")).await.unwrap();
-        store.link_telegram(&bob.id, Some(222), Some("bob")).await.unwrap();
+        let alice = store
+            .create_user(None, Some("Alice"), Role::User)
+            .await
+            .unwrap();
+        let bob = store
+            .create_user(None, Some("Bob"), Role::User)
+            .await
+            .unwrap();
+        store
+            .link_telegram(&alice.id, Some(111), Some("alice"))
+            .await
+            .unwrap();
+        store
+            .link_telegram(&bob.id, Some(222), Some("bob"))
+            .await
+            .unwrap();
 
         let links = store.list_telegram_links().await.unwrap();
         assert_eq!(links.len(), 2);
@@ -853,8 +933,19 @@ mod tests {
     #[tokio::test]
     async fn audit_log() {
         let store = test_store().await;
-        store.log_event(Some("user1"), "login", Some("via API key"), Some("127.0.0.1")).await.unwrap();
-        store.log_event(None, "failed_auth", Some("invalid key"), Some("1.2.3.4")).await.unwrap();
+        store
+            .log_event(
+                Some("user1"),
+                "login",
+                Some("via API key"),
+                Some("127.0.0.1"),
+            )
+            .await
+            .unwrap();
+        store
+            .log_event(None, "failed_auth", Some("invalid key"), Some("1.2.3.4"))
+            .await
+            .unwrap();
 
         let entries = store.recent_audit(10).await.unwrap();
         assert_eq!(entries.len(), 2);
@@ -896,7 +987,10 @@ mod tests {
     async fn update_user_role() {
         let store = test_store().await;
         let user = store.create_user(None, None, Role::User).await.unwrap();
-        store.update_user(&user.id, None, None, Some(Role::Admin), None).await.unwrap();
+        store
+            .update_user(&user.id, None, None, Some(Role::Admin), None)
+            .await
+            .unwrap();
 
         let fetched = store.get_user(&user.id).await.unwrap().unwrap();
         assert_eq!(fetched.role, Role::Admin);
@@ -918,9 +1012,17 @@ mod tests {
     #[tokio::test]
     async fn duplicate_email_rejected() {
         let store = test_store().await;
-        store.create_user(Some("dup@example.com"), None, Role::User).await.unwrap();
-        let result = store.create_user(Some("dup@example.com"), None, Role::User).await;
-        assert!(result.is_err(), "Duplicate email should be rejected by UNIQUE constraint");
+        store
+            .create_user(Some("dup@example.com"), None, Role::User)
+            .await
+            .unwrap();
+        let result = store
+            .create_user(Some("dup@example.com"), None, Role::User)
+            .await;
+        assert!(
+            result.is_err(),
+            "Duplicate email should be rejected by UNIQUE constraint"
+        );
     }
 
     #[tokio::test]
@@ -929,7 +1031,11 @@ mod tests {
         store.create_user(None, None, Role::User).await.unwrap();
         store.create_user(None, None, Role::User).await.unwrap();
         let users = store.list_users().await.unwrap();
-        assert_eq!(users.len(), 2, "Multiple users with NULL email should be allowed");
+        assert_eq!(
+            users.len(),
+            2,
+            "Multiple users with NULL email should be allowed"
+        );
     }
 
     #[tokio::test]
@@ -986,17 +1092,34 @@ mod tests {
     #[tokio::test]
     async fn telegram_relink_to_different_user() {
         let store = test_store().await;
-        let alice = store.create_user(None, Some("Alice"), Role::User).await.unwrap();
-        let bob = store.create_user(None, Some("Bob"), Role::User).await.unwrap();
+        let alice = store
+            .create_user(None, Some("Alice"), Role::User)
+            .await
+            .unwrap();
+        let bob = store
+            .create_user(None, Some("Bob"), Role::User)
+            .await
+            .unwrap();
 
         // Link to Alice
-        store.link_telegram(&alice.id, Some(999), None).await.unwrap();
-        let authed = store.authenticate_telegram(999, None).await.unwrap().unwrap();
+        store
+            .link_telegram(&alice.id, Some(999), None)
+            .await
+            .unwrap();
+        let authed = store
+            .authenticate_telegram(999, None)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(authed.id, alice.id);
 
         // Relink same telegram_id to Bob (INSERT OR REPLACE)
         store.link_telegram(&bob.id, Some(999), None).await.unwrap();
-        let authed = store.authenticate_telegram(999, None).await.unwrap().unwrap();
+        let authed = store
+            .authenticate_telegram(999, None)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(authed.id, bob.id, "Relink should point to the new user");
 
         // Should only be one link total
@@ -1008,23 +1131,32 @@ mod tests {
     async fn deactivated_user_telegram_auth_fails() {
         let store = test_store().await;
         let user = store.create_user(None, None, Role::User).await.unwrap();
-        store.link_telegram(&user.id, Some(111), None).await.unwrap();
+        store
+            .link_telegram(&user.id, Some(111), None)
+            .await
+            .unwrap();
 
         store.deactivate_user(&user.id).await.unwrap();
 
         let result = store.authenticate_telegram(111, None).await.unwrap();
-        assert!(result.is_none(), "Deactivated user should not authenticate via Telegram");
+        assert!(
+            result.is_none(),
+            "Deactivated user should not authenticate via Telegram"
+        );
     }
 
     #[tokio::test]
     async fn audit_log_entries_have_correct_fields() {
         let store = test_store().await;
-        store.log_event(
-            Some("uid"),
-            "api_key_created",
-            Some("label: test"),
-            Some("10.0.0.1"),
-        ).await.unwrap();
+        store
+            .log_event(
+                Some("uid"),
+                "api_key_created",
+                Some("label: test"),
+                Some("10.0.0.1"),
+            )
+            .await
+            .unwrap();
 
         let entries = store.recent_audit(1).await.unwrap();
         assert_eq!(entries.len(), 1);
@@ -1039,7 +1171,10 @@ mod tests {
     async fn audit_log_respects_limit() {
         let store = test_store().await;
         for i in 0..10 {
-            store.log_event(None, &format!("event_{}", i), None, None).await.unwrap();
+            store
+                .log_event(None, &format!("event_{}", i), None, None)
+                .await
+                .unwrap();
         }
         let entries = store.recent_audit(3).await.unwrap();
         assert_eq!(entries.len(), 3);
@@ -1048,10 +1183,20 @@ mod tests {
     #[tokio::test]
     async fn get_telegram_link_for_user() {
         let store = test_store().await;
-        let user = store.create_user(None, Some("Alice"), Role::User).await.unwrap();
-        store.link_telegram(&user.id, Some(12345), Some("alice")).await.unwrap();
+        let user = store
+            .create_user(None, Some("Alice"), Role::User)
+            .await
+            .unwrap();
+        store
+            .link_telegram(&user.id, Some(12345), Some("alice"))
+            .await
+            .unwrap();
 
-        let link = store.get_telegram_link_for_user(&user.id).await.unwrap().unwrap();
+        let link = store
+            .get_telegram_link_for_user(&user.id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(link.telegram_id, Some(12345));
         assert_eq!(link.username.as_deref(), Some("alice"));
     }
@@ -1068,7 +1213,10 @@ mod tests {
     async fn unlink_telegram_by_user() {
         let store = test_store().await;
         let user = store.create_user(None, None, Role::User).await.unwrap();
-        store.link_telegram(&user.id, Some(999), None).await.unwrap();
+        store
+            .link_telegram(&user.id, Some(999), None)
+            .await
+            .unwrap();
 
         store.unlink_telegram_by_user(&user.id).await.unwrap();
         let result = store.authenticate_telegram(999, None).await.unwrap();
@@ -1078,15 +1226,25 @@ mod tests {
     #[tokio::test]
     async fn telegram_link_username_only() {
         let store = test_store().await;
-        let user = store.create_user(None, Some("Alice"), Role::User).await.unwrap();
+        let user = store
+            .create_user(None, Some("Alice"), Role::User)
+            .await
+            .unwrap();
 
         // Link with username only (no telegram_id)
-        let link = store.link_telegram(&user.id, None, Some("alice")).await.unwrap();
+        let link = store
+            .link_telegram(&user.id, None, Some("alice"))
+            .await
+            .unwrap();
         assert_eq!(link.telegram_id, None);
         assert_eq!(link.username.as_deref(), Some("alice"));
 
         // Verify the link is retrievable
-        let found = store.get_telegram_link_for_user(&user.id).await.unwrap().unwrap();
+        let found = store
+            .get_telegram_link_for_user(&user.id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(found.telegram_id, None);
         assert_eq!(found.username.as_deref(), Some("alice"));
     }
@@ -1094,21 +1252,35 @@ mod tests {
     #[tokio::test]
     async fn telegram_auth_by_username_with_backfill() {
         let store = test_store().await;
-        let user = store.create_user(None, Some("Alice"), Role::User).await.unwrap();
+        let user = store
+            .create_user(None, Some("Alice"), Role::User)
+            .await
+            .unwrap();
 
         // Link with username only
-        store.link_telegram(&user.id, None, Some("alice")).await.unwrap();
+        store
+            .link_telegram(&user.id, None, Some("alice"))
+            .await
+            .unwrap();
 
         // Auth by ID alone should fail (no telegram_id stored)
         let result = store.authenticate_telegram(42, None).await.unwrap();
         assert!(result.is_none());
 
         // Auth with matching username should succeed and backfill the ID
-        let authed = store.authenticate_telegram(42, Some("alice")).await.unwrap().unwrap();
+        let authed = store
+            .authenticate_telegram(42, Some("alice"))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(authed.id, user.id);
 
         // After backfill, auth by ID alone should now work
-        let authed2 = store.authenticate_telegram(42, None).await.unwrap().unwrap();
+        let authed2 = store
+            .authenticate_telegram(42, None)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(authed2.id, user.id);
     }
 
@@ -1118,7 +1290,10 @@ mod tests {
         let user = store.create_user(None, None, Role::User).await.unwrap();
 
         // Link with username only
-        store.link_telegram(&user.id, None, Some("alice")).await.unwrap();
+        store
+            .link_telegram(&user.id, None, Some("alice"))
+            .await
+            .unwrap();
 
         // Auth with wrong username should fail
         let result = store.authenticate_telegram(42, Some("bob")).await.unwrap();
@@ -1131,14 +1306,24 @@ mod tests {
         let user = store.create_user(None, None, Role::User).await.unwrap();
 
         // Link with ID
-        store.link_telegram(&user.id, Some(111), Some("old")).await.unwrap();
+        store
+            .link_telegram(&user.id, Some(111), Some("old"))
+            .await
+            .unwrap();
         // Relink same user with different ID — old link removed
-        store.link_telegram(&user.id, Some(222), Some("new")).await.unwrap();
+        store
+            .link_telegram(&user.id, Some(222), Some("new"))
+            .await
+            .unwrap();
 
         let result = store.authenticate_telegram(111, None).await.unwrap();
         assert!(result.is_none(), "Old telegram_id should no longer work");
 
-        let authed = store.authenticate_telegram(222, None).await.unwrap().unwrap();
+        let authed = store
+            .authenticate_telegram(222, None)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(authed.id, user.id);
 
         // Only one link should exist
@@ -1149,16 +1334,35 @@ mod tests {
     #[tokio::test]
     async fn telegram_link_replaces_conflicting_username() {
         let store = test_store().await;
-        let alice = store.create_user(None, Some("Alice"), Role::User).await.unwrap();
-        let bob = store.create_user(None, Some("Bob"), Role::User).await.unwrap();
+        let alice = store
+            .create_user(None, Some("Alice"), Role::User)
+            .await
+            .unwrap();
+        let bob = store
+            .create_user(None, Some("Bob"), Role::User)
+            .await
+            .unwrap();
 
         // Alice links with username "shared"
-        store.link_telegram(&alice.id, None, Some("shared")).await.unwrap();
+        store
+            .link_telegram(&alice.id, None, Some("shared"))
+            .await
+            .unwrap();
         // Bob links with same username — Alice's link is removed
-        store.link_telegram(&bob.id, None, Some("shared")).await.unwrap();
+        store
+            .link_telegram(&bob.id, None, Some("shared"))
+            .await
+            .unwrap();
 
-        let authed = store.authenticate_telegram(42, Some("shared")).await.unwrap().unwrap();
-        assert_eq!(authed.id, bob.id, "Username 'shared' should now point to Bob");
+        let authed = store
+            .authenticate_telegram(42, Some("shared"))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            authed.id, bob.id,
+            "Username 'shared' should now point to Bob"
+        );
 
         // Alice should have no link
         let alice_link = store.get_telegram_link_for_user(&alice.id).await.unwrap();
@@ -1171,13 +1375,20 @@ mod tests {
         let user = store.create_user(None, None, Role::User).await.unwrap();
 
         // Link with both ID and username
-        store.link_telegram(&user.id, Some(100), Some("alice")).await.unwrap();
+        store
+            .link_telegram(&user.id, Some(100), Some("alice"))
+            .await
+            .unwrap();
 
         // Backfill should be a no-op (telegram_id IS NOT NULL)
         store.backfill_telegram_id("alice", 999).await.unwrap();
 
         // Original ID should still work
-        let authed = store.authenticate_telegram(100, None).await.unwrap().unwrap();
+        let authed = store
+            .authenticate_telegram(100, None)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(authed.id, user.id);
 
         // The "new" ID should NOT work (backfill only applies to NULL telegram_id)
@@ -1231,7 +1442,10 @@ mod tests {
     #[tokio::test]
     async fn create_user_defaults_filesystem_disabled() {
         let store = test_store().await;
-        let user = store.create_user(None, Some("Test"), Role::User).await.unwrap();
+        let user = store
+            .create_user(None, Some("Test"), Role::User)
+            .await
+            .unwrap();
         assert!(!user.filesystem_enabled);
 
         let fetched = store.get_user(&user.id).await.unwrap().unwrap();
@@ -1241,10 +1455,16 @@ mod tests {
     #[tokio::test]
     async fn update_user_enables_filesystem() {
         let store = test_store().await;
-        let user = store.create_user(None, Some("Test"), Role::User).await.unwrap();
+        let user = store
+            .create_user(None, Some("Test"), Role::User)
+            .await
+            .unwrap();
         assert!(!user.filesystem_enabled);
 
-        store.update_user(&user.id, None, None, None, Some(true)).await.unwrap();
+        store
+            .update_user(&user.id, None, None, None, Some(true))
+            .await
+            .unwrap();
         let fetched = store.get_user(&user.id).await.unwrap().unwrap();
         assert!(fetched.filesystem_enabled);
     }
@@ -1252,10 +1472,19 @@ mod tests {
     #[tokio::test]
     async fn update_user_disables_filesystem() {
         let store = test_store().await;
-        let user = store.create_user(None, Some("Test"), Role::User).await.unwrap();
-        store.update_user(&user.id, None, None, None, Some(true)).await.unwrap();
+        let user = store
+            .create_user(None, Some("Test"), Role::User)
+            .await
+            .unwrap();
+        store
+            .update_user(&user.id, None, None, None, Some(true))
+            .await
+            .unwrap();
 
-        store.update_user(&user.id, None, None, None, Some(false)).await.unwrap();
+        store
+            .update_user(&user.id, None, None, None, Some(false))
+            .await
+            .unwrap();
         let fetched = store.get_user(&user.id).await.unwrap().unwrap();
         assert!(!fetched.filesystem_enabled);
     }
@@ -1263,11 +1492,20 @@ mod tests {
     #[tokio::test]
     async fn update_user_none_preserves_filesystem() {
         let store = test_store().await;
-        let user = store.create_user(None, Some("Test"), Role::User).await.unwrap();
-        store.update_user(&user.id, None, None, None, Some(true)).await.unwrap();
+        let user = store
+            .create_user(None, Some("Test"), Role::User)
+            .await
+            .unwrap();
+        store
+            .update_user(&user.id, None, None, None, Some(true))
+            .await
+            .unwrap();
 
         // Update name only — filesystem should remain enabled
-        store.update_user(&user.id, None, Some("NewName"), None, None).await.unwrap();
+        store
+            .update_user(&user.id, None, Some("NewName"), None, None)
+            .await
+            .unwrap();
         let fetched = store.get_user(&user.id).await.unwrap().unwrap();
         assert!(fetched.filesystem_enabled);
         assert_eq!(fetched.display_name.as_deref(), Some("NewName"));
@@ -1276,14 +1514,29 @@ mod tests {
     #[tokio::test]
     async fn list_users_includes_filesystem_field() {
         let store = test_store().await;
-        let u1 = store.create_user(None, Some("A"), Role::User).await.unwrap();
-        store.create_user(None, Some("B"), Role::User).await.unwrap();
-        store.update_user(&u1.id, None, None, None, Some(true)).await.unwrap();
+        let u1 = store
+            .create_user(None, Some("A"), Role::User)
+            .await
+            .unwrap();
+        store
+            .create_user(None, Some("B"), Role::User)
+            .await
+            .unwrap();
+        store
+            .update_user(&u1.id, None, None, None, Some(true))
+            .await
+            .unwrap();
 
         let users = store.list_users().await.unwrap();
         assert_eq!(users.len(), 2);
-        let a = users.iter().find(|u| u.display_name.as_deref() == Some("A")).unwrap();
-        let b = users.iter().find(|u| u.display_name.as_deref() == Some("B")).unwrap();
+        let a = users
+            .iter()
+            .find(|u| u.display_name.as_deref() == Some("A"))
+            .unwrap();
+        let b = users
+            .iter()
+            .find(|u| u.display_name.as_deref() == Some("B"))
+            .unwrap();
         assert!(a.filesystem_enabled);
         assert!(!b.filesystem_enabled);
     }
@@ -1293,7 +1546,10 @@ mod tests {
         let store = test_store().await;
         let result = store.bootstrap_admin(None).await.unwrap();
         let (admin, _key) = result.unwrap();
-        assert!(admin.filesystem_enabled, "Bootstrap admin should have filesystem enabled");
+        assert!(
+            admin.filesystem_enabled,
+            "Bootstrap admin should have filesystem enabled"
+        );
 
         // Verify it persists
         let fetched = store.get_user(&admin.id).await.unwrap().unwrap();
@@ -1304,7 +1560,10 @@ mod tests {
     async fn api_key_auth_returns_filesystem_field() {
         let store = test_store().await;
         let user = store.create_user(None, None, Role::User).await.unwrap();
-        store.update_user(&user.id, None, None, None, Some(true)).await.unwrap();
+        store
+            .update_user(&user.id, None, None, None, Some(true))
+            .await
+            .unwrap();
         let key = store.create_api_key(&user.id, None).await.unwrap();
 
         let authed = store.authenticate_api_key(&key.key).await.unwrap().unwrap();
@@ -1315,10 +1574,20 @@ mod tests {
     async fn telegram_auth_returns_filesystem_field() {
         let store = test_store().await;
         let user = store.create_user(None, None, Role::User).await.unwrap();
-        store.update_user(&user.id, None, None, None, Some(true)).await.unwrap();
-        store.link_telegram(&user.id, Some(12345), None).await.unwrap();
+        store
+            .update_user(&user.id, None, None, None, Some(true))
+            .await
+            .unwrap();
+        store
+            .link_telegram(&user.id, Some(12345), None)
+            .await
+            .unwrap();
 
-        let authed = store.authenticate_telegram(12345, None).await.unwrap().unwrap();
+        let authed = store
+            .authenticate_telegram(12345, None)
+            .await
+            .unwrap()
+            .unwrap();
         assert!(authed.filesystem_enabled);
     }
 

@@ -74,10 +74,7 @@ pub struct PopulateResult {
 ///
 /// Dry check — no vault writes. Returns an error if required secrets are missing.
 /// Returns warnings for missing optional secrets.
-pub fn validate_env(
-    deploy_toml_path: &Path,
-    env_file: Option<&Path>,
-) -> Result<Vec<String>> {
+pub fn validate_env(deploy_toml_path: &Path, env_file: Option<&Path>) -> Result<Vec<String>> {
     let manifest = match DeployManifest::load(deploy_toml_path)? {
         Some(m) => m,
         None => return Ok(vec![]),
@@ -261,10 +258,7 @@ pub async fn populate_vault(
 /// from the vault and calls `std::env::set_var()`.
 ///
 /// Returns the number of variables injected.
-pub async fn inject_env_from_vault(
-    deploy_toml_path: &Path,
-    vault: &Vault,
-) -> Result<usize> {
+pub async fn inject_env_from_vault(deploy_toml_path: &Path, vault: &Vault) -> Result<usize> {
     let manifest = match DeployManifest::load(deploy_toml_path)? {
         Some(m) => m,
         None => {
@@ -331,7 +325,9 @@ mod tests {
 
     async fn test_vault(tmp: &TempDir) -> Vault {
         let key = [0xAB; 32];
-        Vault::new(&tmp.path().join("vault.db"), &key).await.unwrap()
+        Vault::new(&tmp.path().join("vault.db"), &key)
+            .await
+            .unwrap()
     }
 
     fn write_env(dir: &Path, content: &str) -> std::path::PathBuf {
@@ -350,11 +346,9 @@ mod tests {
     async fn test_populate_no_deploy_toml() {
         let tmp = TempDir::new().unwrap();
         let vault = test_vault(&tmp).await;
-        let result = populate_vault(
-            &tmp.path().join("nonexistent.toml"),
-            None,
-            &vault,
-        ).await.unwrap();
+        let result = populate_vault(&tmp.path().join("nonexistent.toml"), None, &vault)
+            .await
+            .unwrap();
         assert_eq!(result.secrets_count, 0);
         assert_eq!(result.variables_count, 0);
     }
@@ -364,8 +358,13 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let vault = test_vault(&tmp).await;
 
-        let env_path = write_env(tmp.path(), "ANTHROPIC_API_KEY=sk-ant-xxx\nGITHUB_TOKEN=ghp_yyy\n");
-        let deploy_path = write_deploy_toml(tmp.path(), r#"
+        let env_path = write_env(
+            tmp.path(),
+            "ANTHROPIC_API_KEY=sk-ant-xxx\nGITHUB_TOKEN=ghp_yyy\n",
+        );
+        let deploy_path = write_deploy_toml(
+            tmp.path(),
+            r#"
 version = 1
 
 [agent.secrets.ANTHROPIC_API_KEY]
@@ -377,12 +376,25 @@ description = "Anthropic key"
 secret = "GITHUB_TOKEN"
 required = true
 description = "GitHub PAT"
-"#);
+"#,
+        );
 
-        let result = populate_vault(&deploy_path, Some(&env_path), &vault).await.unwrap();
+        let result = populate_vault(&deploy_path, Some(&env_path), &vault)
+            .await
+            .unwrap();
         assert_eq!(result.secrets_count, 2);
-        assert_eq!(vault.get("ANTHROPIC_API_KEY", None).await.unwrap().as_deref(), Some("sk-ant-xxx"));
-        assert_eq!(vault.get("GITHUB_TOKEN", None).await.unwrap().as_deref(), Some("ghp_yyy"));
+        assert_eq!(
+            vault
+                .get("ANTHROPIC_API_KEY", None)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("sk-ant-xxx")
+        );
+        assert_eq!(
+            vault.get("GITHUB_TOKEN", None).await.unwrap().as_deref(),
+            Some("ghp_yyy")
+        );
     }
 
     #[tokio::test]
@@ -391,14 +403,17 @@ description = "GitHub PAT"
         let vault = test_vault(&tmp).await;
 
         let env_path = write_env(tmp.path(), ""); // empty .env
-        let deploy_path = write_deploy_toml(tmp.path(), r#"
+        let deploy_path = write_deploy_toml(
+            tmp.path(),
+            r#"
 version = 1
 
 [agent.secrets.ANTHROPIC_API_KEY]
 secret = "ANTHROPIC_API_KEY"
 required = true
 description = "Anthropic key"
-"#);
+"#,
+        );
 
         let result = populate_vault(&deploy_path, Some(&env_path), &vault).await;
         assert!(result.is_err());
@@ -412,7 +427,9 @@ description = "Anthropic key"
         let vault = test_vault(&tmp).await;
 
         let env_path = write_env(tmp.path(), "ANTHROPIC_API_KEY=sk-xxx\n");
-        let deploy_path = write_deploy_toml(tmp.path(), r#"
+        let deploy_path = write_deploy_toml(
+            tmp.path(),
+            r#"
 version = 1
 
 [agent.secrets.ANTHROPIC_API_KEY]
@@ -424,9 +441,12 @@ description = "Anthropic key"
 secret = "OPTIONAL_KEY"
 required = false
 description = "Not critical"
-"#);
+"#,
+        );
 
-        let result = populate_vault(&deploy_path, Some(&env_path), &vault).await.unwrap();
+        let result = populate_vault(&deploy_path, Some(&env_path), &vault)
+            .await
+            .unwrap();
         assert_eq!(result.secrets_count, 1);
         assert_eq!(result.warnings.len(), 1);
         assert!(result.warnings[0].contains("OPTIONAL_KEY"));
@@ -438,18 +458,26 @@ description = "Not critical"
         let vault = test_vault(&tmp).await;
 
         let env_path = write_env(tmp.path(), "CITY=Milan\n");
-        let deploy_path = write_deploy_toml(tmp.path(), r#"
+        let deploy_path = write_deploy_toml(
+            tmp.path(),
+            r#"
 version = 1
 
 [skills.weather.variables.CITY]
 default = "Rome"
 description = "Default city"
-"#);
+"#,
+        );
 
-        let result = populate_vault(&deploy_path, Some(&env_path), &vault).await.unwrap();
+        let result = populate_vault(&deploy_path, Some(&env_path), &vault)
+            .await
+            .unwrap();
         assert_eq!(result.variables_count, 1);
         // .env wins over default
-        assert_eq!(vault.get("CITY", None).await.unwrap().as_deref(), Some("Milan"));
+        assert_eq!(
+            vault.get("CITY", None).await.unwrap().as_deref(),
+            Some("Milan")
+        );
     }
 
     #[tokio::test]
@@ -458,17 +486,25 @@ description = "Default city"
         let vault = test_vault(&tmp).await;
 
         let env_path = write_env(tmp.path(), ""); // no CITY in .env
-        let deploy_path = write_deploy_toml(tmp.path(), r#"
+        let deploy_path = write_deploy_toml(
+            tmp.path(),
+            r#"
 version = 1
 
 [skills.weather.variables.CITY]
 default = "Rome"
 description = "Default city"
-"#);
+"#,
+        );
 
-        let result = populate_vault(&deploy_path, Some(&env_path), &vault).await.unwrap();
+        let result = populate_vault(&deploy_path, Some(&env_path), &vault)
+            .await
+            .unwrap();
         assert_eq!(result.variables_count, 1);
-        assert_eq!(vault.get("CITY", None).await.unwrap().as_deref(), Some("Rome"));
+        assert_eq!(
+            vault.get("CITY", None).await.unwrap().as_deref(),
+            Some("Rome")
+        );
     }
 
     #[tokio::test]
@@ -476,12 +512,15 @@ description = "Default city"
         let tmp = TempDir::new().unwrap();
         let vault = test_vault(&tmp).await;
 
-        let deploy_path = write_deploy_toml(tmp.path(), r#"
+        let deploy_path = write_deploy_toml(
+            tmp.path(),
+            r#"
 version = 1
 
 [skills.my-skill.variables.REGION]
 description = "Cloud region"
-"#);
+"#,
+        );
 
         let result = populate_vault(&deploy_path, None, &vault).await.unwrap();
         assert_eq!(result.variables_count, 0);
@@ -497,7 +536,9 @@ description = "Cloud region"
         vault.set("MY_SECRET", "secret_value", None).await.unwrap();
         vault.set("MY_VAR", "var_value", None).await.unwrap();
 
-        let deploy_path = write_deploy_toml(tmp.path(), r#"
+        let deploy_path = write_deploy_toml(
+            tmp.path(),
+            r#"
 version = 1
 
 [agent.secrets.MY_SECRET]
@@ -508,7 +549,8 @@ description = "A secret"
 [agent.variables.MY_VAR]
 default = "unused"
 description = "A var"
-"#);
+"#,
+        );
 
         // Use unique env var names to avoid test pollution
         let count = inject_env_from_vault(&deploy_path, &vault).await.unwrap();
@@ -525,7 +567,9 @@ description = "A var"
     async fn test_inject_no_deploy_toml() {
         let tmp = TempDir::new().unwrap();
         let vault = test_vault(&tmp).await;
-        let count = inject_env_from_vault(&tmp.path().join("nope.toml"), &vault).await.unwrap();
+        let count = inject_env_from_vault(&tmp.path().join("nope.toml"), &vault)
+            .await
+            .unwrap();
         assert_eq!(count, 0);
     }
 
@@ -534,14 +578,17 @@ description = "A var"
         let tmp = TempDir::new().unwrap();
         let vault = test_vault(&tmp).await;
         // Vault is empty, deploy.toml declares a key
-        let deploy_path = write_deploy_toml(tmp.path(), r#"
+        let deploy_path = write_deploy_toml(
+            tmp.path(),
+            r#"
 version = 1
 
 [agent.secrets.MISSING_KEY]
 secret = "MISSING_KEY"
 required = true
 description = "Not in vault"
-"#);
+"#,
+        );
 
         let count = inject_env_from_vault(&deploy_path, &vault).await.unwrap();
         assert_eq!(count, 0);
@@ -553,7 +600,9 @@ description = "Not in vault"
         let vault = test_vault(&tmp).await;
 
         let env_path = write_env(tmp.path(), "SHARED_TOKEN=shared_value\n");
-        let deploy_path = write_deploy_toml(tmp.path(), r#"
+        let deploy_path = write_deploy_toml(
+            tmp.path(),
+            r#"
 version = 1
 
 [skills.skill-a.secrets.SHARED_TOKEN]
@@ -565,12 +614,18 @@ description = "Shared token (skill-a)"
 secret = "SHARED_TOKEN"
 required = true
 description = "Shared token (skill-b)"
-"#);
+"#,
+        );
 
-        let result = populate_vault(&deploy_path, Some(&env_path), &vault).await.unwrap();
+        let result = populate_vault(&deploy_path, Some(&env_path), &vault)
+            .await
+            .unwrap();
         // Should only be counted once despite appearing in two skills
         assert_eq!(result.secrets_count, 1);
-        assert_eq!(vault.get("SHARED_TOKEN", None).await.unwrap().as_deref(), Some("shared_value"));
+        assert_eq!(
+            vault.get("SHARED_TOKEN", None).await.unwrap().as_deref(),
+            Some("shared_value")
+        );
     }
 
     #[tokio::test]
@@ -579,7 +634,9 @@ description = "Shared token (skill-b)"
         let vault = test_vault(&tmp).await;
 
         let env_path = write_env(tmp.path(), "RT_API_KEY=sk-123\nRT_TIMEOUT=60\n");
-        let deploy_path = write_deploy_toml(tmp.path(), r#"
+        let deploy_path = write_deploy_toml(
+            tmp.path(),
+            r#"
 version = 1
 
 [agent.secrets.RT_API_KEY]
@@ -594,10 +651,13 @@ description = "Timeout"
 [skills.my-skill.variables.RT_CITY]
 default = "Rome"
 description = "City"
-"#);
+"#,
+        );
 
         // Build: populate
-        let result = populate_vault(&deploy_path, Some(&env_path), &vault).await.unwrap();
+        let result = populate_vault(&deploy_path, Some(&env_path), &vault)
+            .await
+            .unwrap();
         assert_eq!(result.secrets_count, 1);
         assert_eq!(result.variables_count, 2); // TIMEOUT from .env, CITY from default
 
@@ -620,21 +680,36 @@ description = "City"
         let vault = test_vault(&tmp).await;
 
         // .env has TELEGRAM_BOT_TOKEN (a system key) but deploy.toml doesn't declare it
-        let env_path = write_env(tmp.path(), "TELEGRAM_BOT_TOKEN=bot123:abc\nANTHROPIC_API_KEY=sk-ant-xxx\n");
-        let deploy_path = write_deploy_toml(tmp.path(), r#"
+        let env_path = write_env(
+            tmp.path(),
+            "TELEGRAM_BOT_TOKEN=bot123:abc\nANTHROPIC_API_KEY=sk-ant-xxx\n",
+        );
+        let deploy_path = write_deploy_toml(
+            tmp.path(),
+            r#"
 version = 1
 
 [agent.secrets.ANTHROPIC_API_KEY]
 secret = "ANTHROPIC_API_KEY"
 required = true
 description = "Anthropic key"
-"#);
+"#,
+        );
 
         // Build: populate vault
-        let result = populate_vault(&deploy_path, Some(&env_path), &vault).await.unwrap();
+        let result = populate_vault(&deploy_path, Some(&env_path), &vault)
+            .await
+            .unwrap();
         // ANTHROPIC_API_KEY (declared) + TELEGRAM_BOT_TOKEN (system key)
         assert_eq!(result.secrets_count, 2);
-        assert_eq!(vault.get("TELEGRAM_BOT_TOKEN", None).await.unwrap().as_deref(), Some("bot123:abc"));
+        assert_eq!(
+            vault
+                .get("TELEGRAM_BOT_TOKEN", None)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("bot123:abc")
+        );
 
         // Serve: inject from vault (no .env on disk)
         let count = inject_env_from_vault(&deploy_path, &vault).await.unwrap();
@@ -653,23 +728,36 @@ description = "Anthropic key"
         let vault = test_vault(&tmp).await;
 
         // Pre-populate vault (simulating a prior `starpod build`)
-        vault.set("ANTHROPIC_API_KEY", "sk-ant-sealed", None).await.unwrap();
+        vault
+            .set("ANTHROPIC_API_KEY", "sk-ant-sealed", None)
+            .await
+            .unwrap();
 
-        let deploy_path = write_deploy_toml(tmp.path(), r#"
+        let deploy_path = write_deploy_toml(
+            tmp.path(),
+            r#"
 version = 1
 
 [agent.secrets.ANTHROPIC_API_KEY]
 secret = "ANTHROPIC_API_KEY"
 required = true
 description = "Anthropic key"
-"#);
+"#,
+        );
 
         // No .env file — vault already has the secret, should not fail
         let result = populate_vault(&deploy_path, None, &vault).await.unwrap();
         assert_eq!(result.secrets_count, 0); // nothing new written
         assert!(result.warnings.is_empty());
         // Value is still in the vault
-        assert_eq!(vault.get("ANTHROPIC_API_KEY", None).await.unwrap().as_deref(), Some("sk-ant-sealed"));
+        assert_eq!(
+            vault
+                .get("ANTHROPIC_API_KEY", None)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("sk-ant-sealed")
+        );
     }
 
     #[tokio::test]
@@ -678,18 +766,24 @@ description = "Anthropic key"
         let vault = test_vault(&tmp).await;
         // Vault is empty, no .env
 
-        let deploy_path = write_deploy_toml(tmp.path(), r#"
+        let deploy_path = write_deploy_toml(
+            tmp.path(),
+            r#"
 version = 1
 
 [agent.secrets.ANTHROPIC_API_KEY]
 secret = "ANTHROPIC_API_KEY"
 required = true
 description = "Anthropic key"
-"#);
+"#,
+        );
 
         let result = populate_vault(&deploy_path, None, &vault).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("ANTHROPIC_API_KEY"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("ANTHROPIC_API_KEY"));
     }
 
     #[tokio::test]
@@ -698,19 +792,28 @@ description = "Anthropic key"
         let vault = test_vault(&tmp).await;
 
         // Pre-populate vault with optional secret
-        vault.set("BRAVE_API_KEY", "brave-sealed", None).await.unwrap();
+        vault
+            .set("BRAVE_API_KEY", "brave-sealed", None)
+            .await
+            .unwrap();
 
-        let deploy_path = write_deploy_toml(tmp.path(), r#"
+        let deploy_path = write_deploy_toml(
+            tmp.path(),
+            r#"
 version = 1
 
 [agent.secrets.BRAVE_API_KEY]
 secret = "BRAVE_API_KEY"
 required = false
 description = "Brave Search API key"
-"#);
+"#,
+        );
 
         let result = populate_vault(&deploy_path, None, &vault).await.unwrap();
-        assert!(result.warnings.is_empty(), "should not warn for secrets already in vault");
+        assert!(
+            result.warnings.is_empty(),
+            "should not warn for secrets already in vault"
+        );
     }
 
     // ── validate_env tests ────────────────────────────────────────
@@ -726,7 +829,9 @@ description = "Brave Search API key"
     fn test_validate_env_all_present() {
         let tmp = TempDir::new().unwrap();
         let env_path = write_env(tmp.path(), "KEY_A=val\nKEY_B=val\n");
-        let deploy_path = write_deploy_toml(tmp.path(), r#"
+        let deploy_path = write_deploy_toml(
+            tmp.path(),
+            r#"
 version = 1
 
 [agent.secrets.KEY_A]
@@ -738,7 +843,8 @@ description = "A"
 secret = "KEY_B"
 required = true
 description = "B"
-"#);
+"#,
+        );
         let warnings = validate_env(&deploy_path, Some(&env_path)).unwrap();
         assert!(warnings.is_empty());
     }
@@ -747,14 +853,17 @@ description = "B"
     fn test_validate_env_missing_required_fails() {
         let tmp = TempDir::new().unwrap();
         let env_path = write_env(tmp.path(), ""); // empty
-        let deploy_path = write_deploy_toml(tmp.path(), r#"
+        let deploy_path = write_deploy_toml(
+            tmp.path(),
+            r#"
 version = 1
 
 [agent.secrets.MISSING_KEY]
 secret = "MISSING_KEY"
 required = true
 description = "Required key"
-"#);
+"#,
+        );
         let result = validate_env(&deploy_path, Some(&env_path));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -765,14 +874,17 @@ description = "Required key"
     fn test_validate_env_missing_optional_warns() {
         let tmp = TempDir::new().unwrap();
         let env_path = write_env(tmp.path(), "");
-        let deploy_path = write_deploy_toml(tmp.path(), r#"
+        let deploy_path = write_deploy_toml(
+            tmp.path(),
+            r#"
 version = 1
 
 [agent.secrets.OPT_KEY]
 secret = "OPT_KEY"
 required = false
 description = "Optional"
-"#);
+"#,
+        );
         let warnings = validate_env(&deploy_path, Some(&env_path)).unwrap();
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("OPT_KEY"));
@@ -782,7 +894,9 @@ description = "Optional"
     fn test_validate_env_deduplicates_across_skills() {
         let tmp = TempDir::new().unwrap();
         let env_path = write_env(tmp.path(), ""); // missing
-        let deploy_path = write_deploy_toml(tmp.path(), r#"
+        let deploy_path = write_deploy_toml(
+            tmp.path(),
+            r#"
 version = 1
 
 [skills.a.secrets.SHARED]
@@ -794,7 +908,8 @@ description = "In skill A"
 secret = "SHARED"
 required = false
 description = "In skill B"
-"#);
+"#,
+        );
         let warnings = validate_env(&deploy_path, Some(&env_path)).unwrap();
         // Deduplicated: only one warning for SHARED
         assert_eq!(warnings.len(), 1);
@@ -803,14 +918,17 @@ description = "In skill B"
     #[test]
     fn test_validate_env_no_env_file() {
         let tmp = TempDir::new().unwrap();
-        let deploy_path = write_deploy_toml(tmp.path(), r#"
+        let deploy_path = write_deploy_toml(
+            tmp.path(),
+            r#"
 version = 1
 
 [agent.secrets.KEY]
 secret = "KEY"
 required = true
 description = "Needed"
-"#);
+"#,
+        );
         // No .env file at all
         let result = validate_env(&deploy_path, None);
         assert!(result.is_err());

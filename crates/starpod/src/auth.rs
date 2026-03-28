@@ -187,21 +187,17 @@ pub async fn browser_login(spawner_url: &str) -> Result<Credentials, String> {
                     .trim_end_matches('\0')
                     .to_string();
 
-                let (status, resp_body, done) =
-                    match serde_json::from_str::<CallbackPayload>(&body) {
-                        Ok(payload) => {
-                            let mut guard = tx_for_server.lock().await;
-                            if let Some(sender) = guard.take() {
-                                let _ = sender.send(payload);
-                            }
-                            (200, r#"{"ok":true}"#.to_string(), true)
+                let (status, resp_body, done) = match serde_json::from_str::<CallbackPayload>(&body)
+                {
+                    Ok(payload) => {
+                        let mut guard = tx_for_server.lock().await;
+                        if let Some(sender) = guard.take() {
+                            let _ = sender.send(payload);
                         }
-                        Err(e) => (
-                            400,
-                            format!(r#"{{"error":"{}"}}"#, e),
-                            false,
-                        ),
-                    };
+                        (200, r#"{"ok":true}"#.to_string(), true)
+                    }
+                    Err(e) => (400, format!(r#"{{"error":"{}"}}"#, e), false),
+                };
 
                 let reason = if status == 200 { "OK" } else { "Bad Request" };
                 let response = format!(
@@ -234,11 +230,7 @@ pub async fn browser_login(spawner_url: &str) -> Result<Credentials, String> {
     println!();
 
     if let Err(e) = open_browser(&auth_url) {
-        eprintln!(
-            "  {} Could not open browser: {}",
-            "!".yellow().bold(),
-            e
-        );
+        eprintln!("  {} Could not open browser: {}", "!".yellow().bold(), e);
         println!(
             "  {} Open this URL manually: {}",
             "→".dimmed(),

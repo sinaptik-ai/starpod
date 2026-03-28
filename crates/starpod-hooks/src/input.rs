@@ -1,7 +1,7 @@
 //! Hook input types — the data passed to hook callbacks.
 
-use serde::{Deserialize, Serialize};
 use crate::permissions::PermissionUpdate;
+use serde::{Deserialize, Serialize};
 
 /// Base fields shared by all hook inputs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -380,24 +380,105 @@ mod tests {
     fn all_event_names_covered() {
         // Ensure event_name() returns non-empty for every variant
         let inputs = vec![
-            HookInput::PreToolUse { base: base(), tool_name: "t".into(), tool_input: serde_json::json!(null), tool_use_id: "id".into() },
-            HookInput::PostToolUse { base: base(), tool_name: "t".into(), tool_input: serde_json::json!(null), tool_response: serde_json::json!(null), tool_use_id: "id".into() },
-            HookInput::PostToolUseFailure { base: base(), tool_name: "t".into(), tool_input: serde_json::json!(null), tool_use_id: "id".into(), error: "e".into(), is_interrupt: None },
-            HookInput::Notification { base: base(), message: "m".into(), title: None, notification_type: "info".into() },
-            HookInput::UserPromptSubmit { base: base(), prompt: "p".into() },
-            HookInput::SessionStart { base: base(), source: SessionStartSource::Startup, model: None },
-            HookInput::SessionEnd { base: base(), reason: "done".into() },
-            HookInput::Stop { base: base(), stop_hook_active: false, last_assistant_message: None },
-            HookInput::SubagentStart { base: base(), agent_id: "a".into(), agent_type: "general".into() },
-            HookInput::SubagentStop { base: base(), stop_hook_active: false, agent_id: "a".into(), agent_transcript_path: "/t".into(), agent_type: "general".into(), last_assistant_message: None },
-            HookInput::PreCompact { base: base(), trigger: CompactTriggerType::Auto, custom_instructions: None },
-            HookInput::PermissionRequest { base: base(), tool_name: "t".into(), tool_input: serde_json::json!(null), permission_suggestions: None },
-            HookInput::Setup { base: base(), trigger: SetupTrigger::Init },
-            HookInput::TeammateIdle { base: base(), teammate_name: "n".into(), team_name: "t".into() },
-            HookInput::TaskCompleted { base: base(), task_id: "1".into(), task_subject: "s".into(), task_description: None, teammate_name: None, team_name: None },
-            HookInput::ConfigChange { base: base(), source: ConfigChangeSource::Skills, file_path: None },
-            HookInput::WorktreeCreate { base: base(), name: "wt".into() },
-            HookInput::WorktreeRemove { base: base(), worktree_path: "/wt".into() },
+            HookInput::PreToolUse {
+                base: base(),
+                tool_name: "t".into(),
+                tool_input: serde_json::json!(null),
+                tool_use_id: "id".into(),
+            },
+            HookInput::PostToolUse {
+                base: base(),
+                tool_name: "t".into(),
+                tool_input: serde_json::json!(null),
+                tool_response: serde_json::json!(null),
+                tool_use_id: "id".into(),
+            },
+            HookInput::PostToolUseFailure {
+                base: base(),
+                tool_name: "t".into(),
+                tool_input: serde_json::json!(null),
+                tool_use_id: "id".into(),
+                error: "e".into(),
+                is_interrupt: None,
+            },
+            HookInput::Notification {
+                base: base(),
+                message: "m".into(),
+                title: None,
+                notification_type: "info".into(),
+            },
+            HookInput::UserPromptSubmit {
+                base: base(),
+                prompt: "p".into(),
+            },
+            HookInput::SessionStart {
+                base: base(),
+                source: SessionStartSource::Startup,
+                model: None,
+            },
+            HookInput::SessionEnd {
+                base: base(),
+                reason: "done".into(),
+            },
+            HookInput::Stop {
+                base: base(),
+                stop_hook_active: false,
+                last_assistant_message: None,
+            },
+            HookInput::SubagentStart {
+                base: base(),
+                agent_id: "a".into(),
+                agent_type: "general".into(),
+            },
+            HookInput::SubagentStop {
+                base: base(),
+                stop_hook_active: false,
+                agent_id: "a".into(),
+                agent_transcript_path: "/t".into(),
+                agent_type: "general".into(),
+                last_assistant_message: None,
+            },
+            HookInput::PreCompact {
+                base: base(),
+                trigger: CompactTriggerType::Auto,
+                custom_instructions: None,
+            },
+            HookInput::PermissionRequest {
+                base: base(),
+                tool_name: "t".into(),
+                tool_input: serde_json::json!(null),
+                permission_suggestions: None,
+            },
+            HookInput::Setup {
+                base: base(),
+                trigger: SetupTrigger::Init,
+            },
+            HookInput::TeammateIdle {
+                base: base(),
+                teammate_name: "n".into(),
+                team_name: "t".into(),
+            },
+            HookInput::TaskCompleted {
+                base: base(),
+                task_id: "1".into(),
+                task_subject: "s".into(),
+                task_description: None,
+                teammate_name: None,
+                team_name: None,
+            },
+            HookInput::ConfigChange {
+                base: base(),
+                source: ConfigChangeSource::Skills,
+                file_path: None,
+            },
+            HookInput::WorktreeCreate {
+                base: base(),
+                name: "wt".into(),
+            },
+            HookInput::WorktreeRemove {
+                base: base(),
+                worktree_path: "/wt".into(),
+            },
         ];
 
         for input in &inputs {

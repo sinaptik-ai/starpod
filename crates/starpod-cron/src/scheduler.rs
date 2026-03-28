@@ -38,8 +38,11 @@ pub struct JobResult {
 /// Receives a [`JobContext`] with the prompt, session mode, and job metadata.
 /// Returns [`JobResult`] on success (with session ID for notification routing)
 /// or an error string on failure.
-pub type JobExecutor =
-    Arc<dyn Fn(JobContext) -> Pin<Box<dyn Future<Output = Result<JobResult, String>> + Send>> + Send + Sync>;
+pub type JobExecutor = Arc<
+    dyn Fn(JobContext) -> Pin<Box<dyn Future<Output = Result<JobResult, String>> + Send>>
+        + Send
+        + Sync,
+>;
 
 /// Callback type for sending notifications after a cron job completes.
 ///
@@ -51,8 +54,9 @@ pub type JobExecutor =
 ///
 /// The gateway composes this to broadcast to WebSocket clients and optionally
 /// forward to Telegram.
-pub type NotificationSender =
-    Arc<dyn Fn(String, String, String, bool) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+pub type NotificationSender = Arc<
+    dyn Fn(String, String, String, bool) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync,
+>;
 
 /// Background scheduler that polls for due jobs and executes them.
 ///
@@ -115,11 +119,13 @@ impl CronScheduler {
     /// Start the scheduler background loop. Returns a JoinHandle.
     pub fn start(self) -> JoinHandle<()> {
         tokio::spawn(async move {
-            info!(tick_secs = self.tick_interval_secs, "Cron scheduler started");
+            info!(
+                tick_secs = self.tick_interval_secs,
+                "Cron scheduler started"
+            );
 
             loop {
-                tokio::time::sleep(tokio::time::Duration::from_secs(self.tick_interval_secs))
-                    .await;
+                tokio::time::sleep(tokio::time::Duration::from_secs(self.tick_interval_secs)).await;
 
                 self.tick().await;
             }
@@ -263,7 +269,13 @@ impl CronScheduler {
             // Send notification if configured
             if let Some(ref notifier) = self.notifier {
                 let success = status == RunStatus::Success;
-                (notifier)(job.name.clone(), session_id.clone(), summary.clone(), success).await;
+                (notifier)(
+                    job.name.clone(),
+                    session_id.clone(),
+                    summary.clone(),
+                    success,
+                )
+                .await;
             }
 
             // Handle one-shot / delete-after-run
@@ -356,7 +368,13 @@ impl CronScheduler {
 
             if let Some(ref notifier) = self.notifier {
                 let success = status == RunStatus::Success;
-                (notifier)(job.name.clone(), session_id.clone(), summary.clone(), success).await;
+                (notifier)(
+                    job.name.clone(),
+                    session_id.clone(),
+                    summary.clone(),
+                    success,
+                )
+                .await;
             }
         }
     }
@@ -374,7 +392,14 @@ mod tests {
     }
 
     fn success_executor() -> JobExecutor {
-        Arc::new(|_ctx| Box::pin(async { Ok(JobResult { session_id: "test-session".into(), summary: "done".into() }) }))
+        Arc::new(|_ctx| {
+            Box::pin(async {
+                Ok(JobResult {
+                    session_id: "test-session".into(),
+                    summary: "done".into(),
+                })
+            })
+        })
     }
 
     fn failing_executor() -> JobExecutor {
@@ -386,7 +411,10 @@ mod tests {
             let counter = Arc::clone(&counter);
             Box::pin(async move {
                 counter.fetch_add(1, Ordering::SeqCst);
-                Ok(JobResult { session_id: "test-session".into(), summary: "done".into() })
+                Ok(JobResult {
+                    session_id: "test-session".into(),
+                    summary: "done".into(),
+                })
             })
         })
     }
@@ -398,12 +426,18 @@ mod tests {
 
         // Add a job due in the past
         let schedule = Schedule::Interval { every_ms: 60000 };
-        store.add_job("tick-job", "test", &schedule, false, None).await.unwrap();
+        store
+            .add_job("tick-job", "test", &schedule, false, None)
+            .await
+            .unwrap();
 
         // Backdate next_run_at
         let jobs = store.list_jobs().await.unwrap();
         let past = Utc::now().timestamp() - 10;
-        store.update_next_run(&jobs[0].id, Some(past)).await.unwrap();
+        store
+            .update_next_run(&jobs[0].id, Some(past))
+            .await
+            .unwrap();
 
         let scheduler = CronScheduler::new(
             Arc::clone(&store),
@@ -429,7 +463,10 @@ mod tests {
 
         // Add a job with next_run in the future
         let schedule = Schedule::Interval { every_ms: 60000 };
-        store.add_job("future-job", "test", &schedule, false, None).await.unwrap();
+        store
+            .add_job("future-job", "test", &schedule, false, None)
+            .await
+            .unwrap();
 
         let scheduler = CronScheduler::new(
             Arc::clone(&store),
@@ -448,19 +485,20 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        store.add_job("fail-job", "test", &schedule, false, None).await.unwrap();
+        store
+            .add_job("fail-job", "test", &schedule, false, None)
+            .await
+            .unwrap();
 
         // Backdate next_run_at
         let jobs = store.list_jobs().await.unwrap();
         let past = Utc::now().timestamp() - 10;
-        store.update_next_run(&jobs[0].id, Some(past)).await.unwrap();
+        store
+            .update_next_run(&jobs[0].id, Some(past))
+            .await
+            .unwrap();
 
-        let scheduler = CronScheduler::new(
-            Arc::clone(&store),
-            failing_executor(),
-            60,
-            None,
-        );
+        let scheduler = CronScheduler::new(Arc::clone(&store), failing_executor(), 60, None);
 
         scheduler.tick().await;
 
@@ -477,7 +515,10 @@ mod tests {
         let counter = Arc::new(AtomicU32::new(0));
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let id = store.add_job("retry-exec", "test", &schedule, false, None).await.unwrap();
+        let id = store
+            .add_job("retry-exec", "test", &schedule, false, None)
+            .await
+            .unwrap();
 
         // Schedule a retry in the past
         let past = Utc::now().timestamp() - 10;
@@ -507,8 +548,14 @@ mod tests {
         let counter = Arc::new(AtomicU32::new(0));
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        store.add_job("job-1", "test1", &schedule, false, None).await.unwrap();
-        store.add_job("job-2", "test2", &schedule, false, None).await.unwrap();
+        store
+            .add_job("job-1", "test1", &schedule, false, None)
+            .await
+            .unwrap();
+        store
+            .add_job("job-2", "test2", &schedule, false, None)
+            .await
+            .unwrap();
 
         // Backdate both to be due
         let past = Utc::now().timestamp() - 10;
@@ -537,8 +584,14 @@ mod tests {
         let counter = Arc::new(AtomicU32::new(0));
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        store.add_job("multi-1", "test1", &schedule, false, None).await.unwrap();
-        store.add_job("multi-2", "test2", &schedule, false, None).await.unwrap();
+        store
+            .add_job("multi-1", "test1", &schedule, false, None)
+            .await
+            .unwrap();
+        store
+            .add_job("multi-2", "test2", &schedule, false, None)
+            .await
+            .unwrap();
 
         let past = Utc::now().timestamp() - 10;
         let jobs = store.list_jobs().await.unwrap();
@@ -566,7 +619,17 @@ mod tests {
         // Job with max_retries = 1
         let schedule = Schedule::Interval { every_ms: 60000 };
         let id = store
-            .add_job_full("exhaust-retry", "test", &schedule, false, None, 1, 7200, SessionMode::Isolated, None)
+            .add_job_full(
+                "exhaust-retry",
+                "test",
+                &schedule,
+                false,
+                None,
+                1,
+                7200,
+                SessionMode::Isolated,
+                None,
+            )
             .await
             .unwrap();
 
@@ -574,16 +637,15 @@ mod tests {
         let past = Utc::now().timestamp() - 10;
         store.update_next_run(&id, Some(past)).await.unwrap();
 
-        let scheduler = CronScheduler::new(
-            Arc::clone(&store),
-            failing_executor(),
-            60,
-            None,
-        );
+        let scheduler = CronScheduler::new(Arc::clone(&store), failing_executor(), 60, None);
 
         scheduler.tick().await;
 
-        let job = store.get_job_by_name("exhaust-retry").await.unwrap().unwrap();
+        let job = store
+            .get_job_by_name("exhaust-retry")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(job.retry_count, 1);
         assert!(job.retry_at.is_some());
 
@@ -608,13 +670,20 @@ mod tests {
 
         scheduler.tick().await;
 
-        let job = store.get_job_by_name("exhaust-retry").await.unwrap().unwrap();
+        let job = store
+            .get_job_by_name("exhaust-retry")
+            .await
+            .unwrap()
+            .unwrap();
         // retry_count is now 1 (from the schedule_retry above), but since
         // retry_count (1) >= max_retries (1), the scheduler should mark permanently failed
         // The retry tick increments retry_count via schedule_retry in the failure path
         // But wait: the scheduler checks job.retry_count < job.max_retries BEFORE executing
         // The job has retry_count=1, max_retries=1 — so 1 < 1 is false, mark_permanently_failed is called
-        assert!(job.retry_at.is_none(), "retry_at should be cleared after max retries exhausted");
+        assert!(
+            job.retry_at.is_none(),
+            "retry_at should be cleared after max retries exhausted"
+        );
     }
 
     #[tokio::test]
@@ -623,27 +692,29 @@ mod tests {
         let notified = Arc::new(AtomicU32::new(0));
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        store.add_job("notify-job", "test", &schedule, false, None).await.unwrap();
+        store
+            .add_job("notify-job", "test", &schedule, false, None)
+            .await
+            .unwrap();
 
         let past = Utc::now().timestamp() - 10;
         let jobs = store.list_jobs().await.unwrap();
-        store.update_next_run(&jobs[0].id, Some(past)).await.unwrap();
+        store
+            .update_next_run(&jobs[0].id, Some(past))
+            .await
+            .unwrap();
 
         let notified_clone = Arc::clone(&notified);
-        let notifier: crate::NotificationSender = Arc::new(move |_name, _session_id, _result, _success| {
-            let n = Arc::clone(&notified_clone);
-            Box::pin(async move {
-                n.fetch_add(1, Ordering::SeqCst);
-            })
-        });
+        let notifier: crate::NotificationSender =
+            Arc::new(move |_name, _session_id, _result, _success| {
+                let n = Arc::clone(&notified_clone);
+                Box::pin(async move {
+                    n.fetch_add(1, Ordering::SeqCst);
+                })
+            });
 
-        let scheduler = CronScheduler::new(
-            Arc::clone(&store),
-            success_executor(),
-            60,
-            None,
-        )
-        .with_notifier(notifier);
+        let scheduler = CronScheduler::new(Arc::clone(&store), success_executor(), 60, None)
+            .with_notifier(notifier);
 
         scheduler.tick().await;
 
@@ -657,20 +728,28 @@ mod tests {
         // Add a delete-after-run job
         let schedule = Schedule::Interval { every_ms: 60000 };
         store
-            .add_job_full("one-shot", "test", &schedule, true, None, 3, 7200, SessionMode::Isolated, None)
+            .add_job_full(
+                "one-shot",
+                "test",
+                &schedule,
+                true,
+                None,
+                3,
+                7200,
+                SessionMode::Isolated,
+                None,
+            )
             .await
             .unwrap();
 
         let past = Utc::now().timestamp() - 10;
         let jobs = store.list_jobs().await.unwrap();
-        store.update_next_run(&jobs[0].id, Some(past)).await.unwrap();
+        store
+            .update_next_run(&jobs[0].id, Some(past))
+            .await
+            .unwrap();
 
-        let scheduler = CronScheduler::new(
-            Arc::clone(&store),
-            success_executor(),
-            60,
-            None,
-        );
+        let scheduler = CronScheduler::new(Arc::clone(&store), success_executor(), 60, None);
 
         scheduler.tick().await;
 
@@ -684,13 +763,26 @@ mod tests {
 
         let schedule = Schedule::Interval { every_ms: 60000 };
         store
-            .add_job_full("ctx-job", "hello world", &schedule, false, None, 3, 7200, SessionMode::Main, None)
+            .add_job_full(
+                "ctx-job",
+                "hello world",
+                &schedule,
+                false,
+                None,
+                3,
+                7200,
+                SessionMode::Main,
+                None,
+            )
             .await
             .unwrap();
 
         let past = Utc::now().timestamp() - 10;
         let jobs = store.list_jobs().await.unwrap();
-        store.update_next_run(&jobs[0].id, Some(past)).await.unwrap();
+        store
+            .update_next_run(&jobs[0].id, Some(past))
+            .await
+            .unwrap();
 
         let received_ctx = Arc::new(tokio::sync::Mutex::new(None::<JobContext>));
         let ctx_clone = Arc::clone(&received_ctx);
@@ -699,16 +791,14 @@ mod tests {
             let ctx_clone = Arc::clone(&ctx_clone);
             Box::pin(async move {
                 *ctx_clone.lock().await = Some(ctx);
-                Ok(JobResult { session_id: "test-session".into(), summary: "done".into() })
+                Ok(JobResult {
+                    session_id: "test-session".into(),
+                    summary: "done".into(),
+                })
             })
         });
 
-        let scheduler = CronScheduler::new(
-            Arc::clone(&store),
-            executor,
-            60,
-            None,
-        );
+        let scheduler = CronScheduler::new(Arc::clone(&store), executor, 60, None);
 
         scheduler.tick().await;
 
@@ -724,20 +814,29 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        store.add_job("session-notify", "test", &schedule, false, None).await.unwrap();
+        store
+            .add_job("session-notify", "test", &schedule, false, None)
+            .await
+            .unwrap();
 
         let past = Utc::now().timestamp() - 10;
         let jobs = store.list_jobs().await.unwrap();
-        store.update_next_run(&jobs[0].id, Some(past)).await.unwrap();
+        store
+            .update_next_run(&jobs[0].id, Some(past))
+            .await
+            .unwrap();
 
-        let received = Arc::new(tokio::sync::Mutex::new(None::<(String, String, String, bool)>));
+        let received = Arc::new(tokio::sync::Mutex::new(
+            None::<(String, String, String, bool)>,
+        ));
         let received_clone = Arc::clone(&received);
-        let notifier: crate::NotificationSender = Arc::new(move |name, session_id, result, success| {
-            let r = Arc::clone(&received_clone);
-            Box::pin(async move {
-                *r.lock().await = Some((name, session_id, result, success));
-            })
-        });
+        let notifier: crate::NotificationSender =
+            Arc::new(move |name, session_id, result, success| {
+                let r = Arc::clone(&received_clone);
+                Box::pin(async move {
+                    *r.lock().await = Some((name, session_id, result, success));
+                })
+            });
 
         // Executor returns a specific session_id
         let executor: JobExecutor = Arc::new(|_ctx| {
@@ -749,13 +848,14 @@ mod tests {
             })
         });
 
-        let scheduler = CronScheduler::new(Arc::clone(&store), executor, 60, None)
-            .with_notifier(notifier);
+        let scheduler =
+            CronScheduler::new(Arc::clone(&store), executor, 60, None).with_notifier(notifier);
 
         scheduler.tick().await;
 
         let r = received.lock().await;
-        let (name, session_id, result, success) = r.as_ref().expect("Notifier should have been called");
+        let (name, session_id, result, success) =
+            r.as_ref().expect("Notifier should have been called");
         assert_eq!(name, "session-notify");
         assert_eq!(session_id, "cron-session-42");
         assert_eq!(result, "all good");
@@ -767,20 +867,27 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        store.add_job("fail-notify", "test", &schedule, false, None).await.unwrap();
+        store
+            .add_job("fail-notify", "test", &schedule, false, None)
+            .await
+            .unwrap();
 
         let past = Utc::now().timestamp() - 10;
         let jobs = store.list_jobs().await.unwrap();
-        store.update_next_run(&jobs[0].id, Some(past)).await.unwrap();
+        store
+            .update_next_run(&jobs[0].id, Some(past))
+            .await
+            .unwrap();
 
         let received = Arc::new(tokio::sync::Mutex::new(None::<(String, String, bool)>));
         let received_clone = Arc::clone(&received);
-        let notifier: crate::NotificationSender = Arc::new(move |_name, session_id, _result, success| {
-            let r = Arc::clone(&received_clone);
-            Box::pin(async move {
-                *r.lock().await = Some((session_id, _result, success));
-            })
-        });
+        let notifier: crate::NotificationSender =
+            Arc::new(move |_name, session_id, _result, success| {
+                let r = Arc::clone(&received_clone);
+                Box::pin(async move {
+                    *r.lock().await = Some((session_id, _result, success));
+                })
+            });
 
         let scheduler = CronScheduler::new(Arc::clone(&store), failing_executor(), 60, None)
             .with_notifier(notifier);
@@ -788,8 +895,13 @@ mod tests {
         scheduler.tick().await;
 
         let r = received.lock().await;
-        let (session_id, result, success) = r.as_ref().expect("Notifier should have been called on failure");
-        assert!(session_id.is_empty(), "Failed jobs should have empty session_id");
+        let (session_id, result, success) = r
+            .as_ref()
+            .expect("Notifier should have been called on failure");
+        assert!(
+            session_id.is_empty(),
+            "Failed jobs should have empty session_id"
+        );
         assert_eq!(result, "connection refused");
         assert!(!success);
     }
@@ -799,7 +911,10 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let id = store.add_job("retry-notify", "test", &schedule, false, None).await.unwrap();
+        let id = store
+            .add_job("retry-notify", "test", &schedule, false, None)
+            .await
+            .unwrap();
 
         // Schedule a retry in the past
         let past = Utc::now().timestamp() - 10;
@@ -807,12 +922,13 @@ mod tests {
 
         let received = Arc::new(tokio::sync::Mutex::new(None::<(String, String, bool)>));
         let received_clone = Arc::clone(&received);
-        let notifier: crate::NotificationSender = Arc::new(move |_name, session_id, _result, success| {
-            let r = Arc::clone(&received_clone);
-            Box::pin(async move {
-                *r.lock().await = Some((session_id, _result, success));
-            })
-        });
+        let notifier: crate::NotificationSender =
+            Arc::new(move |_name, session_id, _result, success| {
+                let r = Arc::clone(&received_clone);
+                Box::pin(async move {
+                    *r.lock().await = Some((session_id, _result, success));
+                })
+            });
 
         let scheduler = CronScheduler::new(Arc::clone(&store), success_executor(), 60, None)
             .with_notifier(notifier);

@@ -51,8 +51,7 @@ impl VertexProvider {
             .or_else(|_| env::var("GCP_PROJECT_ID"))
             .map_err(|_| {
                 AgentError::AuthenticationFailed(
-                    "GOOGLE_CLOUD_PROJECT or GCP_PROJECT_ID environment variable is not set"
-                        .into(),
+                    "GOOGLE_CLOUD_PROJECT or GCP_PROJECT_ID environment variable is not set".into(),
                 )
             })?;
         let region = env::var("GOOGLE_CLOUD_LOCATION")
@@ -64,10 +63,7 @@ impl VertexProvider {
 
     /// Create with explicit project ID and region. Credentials are discovered
     /// automatically via Application Default Credentials (ADC).
-    pub async fn new(
-        project_id: impl Into<String>,
-        region: impl Into<String>,
-    ) -> Result<Self> {
+    pub async fn new(project_id: impl Into<String>, region: impl Into<String>) -> Result<Self> {
         let auth = gcp_auth::provider().await.map_err(|e| {
             AgentError::AuthenticationFailed(format!("Google Cloud auth error: {e}"))
         })?;
@@ -212,10 +208,7 @@ impl VertexProvider {
 
     fn backoff_duration(&self, attempt: u32) -> Duration {
         let secs = self.retry_config.initial_backoff.as_secs_f64()
-            * self
-                .retry_config
-                .backoff_multiplier
-                .powi(attempt as i32);
+            * self.retry_config.backoff_multiplier.powi(attempt as i32);
         let max_secs = self.retry_config.max_backoff.as_secs_f64();
         Duration::from_secs_f64(secs.min(max_secs))
     }
@@ -318,7 +311,10 @@ mod tests {
 
     #[async_trait]
     impl TokenProvider for DummyTokenProvider {
-        async fn token(&self, _scopes: &[&str]) -> std::result::Result<Arc<gcp_auth::Token>, gcp_auth::Error> {
+        async fn token(
+            &self,
+            _scopes: &[&str],
+        ) -> std::result::Result<Arc<gcp_auth::Token>, gcp_auth::Error> {
             unimplemented!("DummyTokenProvider should not be called in unit tests")
         }
         async fn project_id(&self) -> std::result::Result<Arc<str>, gcp_auth::Error> {
@@ -328,7 +324,11 @@ mod tests {
 
     /// Helper to create a VertexProvider without real GCP credentials (for unit tests).
     fn test_provider() -> VertexProvider {
-        VertexProvider::with_auth("test-project-123", "us-central1", Arc::new(DummyTokenProvider))
+        VertexProvider::with_auth(
+            "test-project-123",
+            "us-central1",
+            Arc::new(DummyTokenProvider),
+        )
     }
 
     fn test_request() -> CreateMessageRequest {

@@ -27,7 +27,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use axum::extract::{Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -73,7 +73,10 @@ async fn require_filesystem_access(
     let user = authenticate_request(state, headers).await?;
     match user {
         Some(u) if u.filesystem_enabled => Ok(()),
-        Some(_) => Err(err(StatusCode::FORBIDDEN, "Filesystem access is not enabled for this user")),
+        Some(_) => Err(err(
+            StatusCode::FORBIDDEN,
+            "Filesystem access is not enabled for this user",
+        )),
         None => Ok(()), // Auth disabled — allow access
     }
 }
@@ -108,8 +111,12 @@ fn validate_sandbox_path(relative: &str, home_dir: &Path) -> Result<PathBuf, Str
     let resolved = home_dir.join(relative);
 
     if resolved.exists() {
-        let canonical = resolved.canonicalize().map_err(|e| format!("Failed to resolve path: {}", e))?;
-        let root_canonical = home_dir.canonicalize().map_err(|e| format!("Failed to resolve root: {}", e))?;
+        let canonical = resolved
+            .canonicalize()
+            .map_err(|e| format!("Failed to resolve path: {}", e))?;
+        let root_canonical = home_dir
+            .canonicalize()
+            .map_err(|e| format!("Failed to resolve root: {}", e))?;
         if !canonical.starts_with(&root_canonical) {
             return Err("Path resolves outside the sandbox".into());
         }
@@ -191,12 +198,14 @@ async fn list_handler(
     let resolved = if params.path == "." {
         home.clone()
     } else {
-        validate_sandbox_path(&params.path, home)
-            .map_err(|e| err(StatusCode::BAD_REQUEST, e))?
+        validate_sandbox_path(&params.path, home).map_err(|e| err(StatusCode::BAD_REQUEST, e))?
     };
 
     if !resolved.is_dir() {
-        return Err(err(StatusCode::BAD_REQUEST, format!("Not a directory: {}", params.path)));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            format!("Not a directory: {}", params.path),
+        ));
     }
 
     let entries = std::fs::read_dir(&resolved).map_err(|e| internal(e))?;
@@ -212,7 +221,11 @@ async fn list_handler(
         let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
         items.push(FileEntry {
             name: if is_dir { format!("{}/", name) } else { name },
-            entry_type: if is_dir { "directory".into() } else { "file".into() },
+            entry_type: if is_dir {
+                "directory".into()
+            } else {
+                "file".into()
+            },
             size,
         });
     }
@@ -235,18 +248,28 @@ async fn read_handler(
     require_filesystem_access(&state, &headers).await?;
 
     let home = &state.paths.home_dir;
-    let resolved = validate_sandbox_path(&params.path, home)
-        .map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
+    let resolved =
+        validate_sandbox_path(&params.path, home).map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
 
     if !resolved.exists() {
-        return Err(err(StatusCode::NOT_FOUND, format!("File not found: {}", params.path)));
+        return Err(err(
+            StatusCode::NOT_FOUND,
+            format!("File not found: {}", params.path),
+        ));
     }
     if resolved.is_dir() {
-        return Err(err(StatusCode::BAD_REQUEST, "Cannot read a directory — use list instead"));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "Cannot read a directory — use list instead",
+        ));
     }
 
-    let content = std::fs::read_to_string(&resolved)
-        .map_err(|e| err(StatusCode::UNPROCESSABLE_ENTITY, format!("Cannot read file (binary?): {}", e)))?;
+    let content = std::fs::read_to_string(&resolved).map_err(|e| {
+        err(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("Cannot read file (binary?): {}", e),
+        )
+    })?;
     let size = resolved.metadata().map(|m| m.len()).unwrap_or(0);
 
     Ok(Json(FileContent {
@@ -269,8 +292,8 @@ async fn write_handler(
     require_filesystem_access(&state, &headers).await?;
 
     let home = &state.paths.home_dir;
-    let resolved = validate_sandbox_path(&req.path, home)
-        .map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
+    let resolved =
+        validate_sandbox_path(&req.path, home).map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
 
     if let Some(parent) = resolved.parent() {
         std::fs::create_dir_all(parent).map_err(|e| internal(e))?;
@@ -294,11 +317,14 @@ async fn delete_handler(
     require_filesystem_access(&state, &headers).await?;
 
     let home = &state.paths.home_dir;
-    let resolved = validate_sandbox_path(&params.path, home)
-        .map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
+    let resolved =
+        validate_sandbox_path(&params.path, home).map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
 
     if !resolved.exists() {
-        return Err(err(StatusCode::NOT_FOUND, format!("File not found: {}", params.path)));
+        return Err(err(
+            StatusCode::NOT_FOUND,
+            format!("File not found: {}", params.path),
+        ));
     }
 
     if resolved.is_dir() {
@@ -323,8 +349,8 @@ async fn mkdir_handler(
     require_filesystem_access(&state, &headers).await?;
 
     let home = &state.paths.home_dir;
-    let resolved = validate_sandbox_path(&req.path, home)
-        .map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
+    let resolved =
+        validate_sandbox_path(&req.path, home).map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
 
     std::fs::create_dir_all(&resolved).map_err(|e| internal(e))?;
 
@@ -345,20 +371,29 @@ async fn raw_handler(
     require_filesystem_access(&state, &headers).await?;
 
     let home = &state.paths.home_dir;
-    let resolved = validate_sandbox_path(&params.path, home)
-        .map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
+    let resolved =
+        validate_sandbox_path(&params.path, home).map_err(|e| err(StatusCode::BAD_REQUEST, e))?;
 
     if !resolved.exists() {
-        return Err(err(StatusCode::NOT_FOUND, format!("File not found: {}", params.path)));
+        return Err(err(
+            StatusCode::NOT_FOUND,
+            format!("File not found: {}", params.path),
+        ));
     }
     if resolved.is_dir() {
-        return Err(err(StatusCode::BAD_REQUEST, "Cannot serve a directory as raw bytes"));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "Cannot serve a directory as raw bytes",
+        ));
     }
 
     let meta = resolved.metadata().map_err(|e| internal(e))?;
     const MAX_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
     if meta.len() > MAX_SIZE {
-        return Err(err(StatusCode::UNPROCESSABLE_ENTITY, "File too large (max 50 MB)"));
+        return Err(err(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "File too large (max 50 MB)",
+        ));
     }
 
     let bytes = std::fs::read(&resolved).map_err(|e| internal(e))?;
@@ -366,10 +401,7 @@ async fn raw_handler(
         .first_or_octet_stream()
         .to_string();
 
-    Ok((
-        [(header::CONTENT_TYPE, mime)],
-        bytes,
-    ))
+    Ok(([(header::CONTENT_TYPE, mime)], bytes))
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────
@@ -385,10 +417,10 @@ mod tests {
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
+    use crate::{build_router, GatewayEvent};
     use starpod_agent::StarpodAgent;
     use starpod_auth::{AuthStore, RateLimiter};
-    use starpod_core::{ResolvedPaths, StarpodConfig, Mode};
-    use crate::{build_router, GatewayEvent};
+    use starpod_core::{Mode, ResolvedPaths, StarpodConfig};
 
     /// Build a test AppState with a real auth store and temp home directory.
     async fn test_app_state() -> (tempfile::TempDir, Arc<AppState>) {
@@ -406,7 +438,11 @@ mod tests {
         std::fs::create_dir_all(&users_dir).unwrap();
         std::fs::create_dir_all(&skills_dir).unwrap();
         std::fs::create_dir_all(&home_dir).unwrap();
-        std::fs::write(&agent_toml, "models = [\"anthropic/test\"]\nagent_name = \"Test\"\n").unwrap();
+        std::fs::write(
+            &agent_toml,
+            "models = [\"anthropic/test\"]\nagent_name = \"Test\"\n",
+        )
+        .unwrap();
 
         let config = StarpodConfig {
             db_dir: db_dir.clone(),
@@ -421,7 +457,9 @@ mod tests {
         let (events_tx, _) = tokio::sync::broadcast::channel::<GatewayEvent>(16);
 
         let paths = ResolvedPaths {
-            mode: Mode::SingleAgent { starpod_dir: starpod_dir.clone() },
+            mode: Mode::SingleAgent {
+                starpod_dir: starpod_dir.clone(),
+            },
             agent_toml,
             agent_home: starpod_dir,
             config_dir,
@@ -455,21 +493,37 @@ mod tests {
 
     /// Create a user with filesystem access and return their API key.
     async fn create_fs_user(state: &AppState) -> String {
-        let user = state.auth.create_user(None, Some("TestUser"), starpod_auth::Role::User).await.unwrap();
-        state.auth.update_user(&user.id, None, None, None, Some(true)).await.unwrap();
+        let user = state
+            .auth
+            .create_user(None, Some("TestUser"), starpod_auth::Role::User)
+            .await
+            .unwrap();
+        state
+            .auth
+            .update_user(&user.id, None, None, None, Some(true))
+            .await
+            .unwrap();
         let key = state.auth.create_api_key(&user.id, None).await.unwrap();
         key.key
     }
 
     /// Create a user without filesystem access and return their API key.
     async fn create_no_fs_user(state: &AppState) -> String {
-        let user = state.auth.create_user(None, Some("NoFsUser"), starpod_auth::Role::User).await.unwrap();
+        let user = state
+            .auth
+            .create_user(None, Some("NoFsUser"), starpod_auth::Role::User)
+            .await
+            .unwrap();
         let key = state.auth.create_api_key(&user.id, None).await.unwrap();
         key.key
     }
 
     /// Make a GET request with an API key.
-    async fn get_with_key(state: Arc<AppState>, path: &str, key: &str) -> (StatusCode, serde_json::Value) {
+    async fn get_with_key(
+        state: Arc<AppState>,
+        path: &str,
+        key: &str,
+    ) -> (StatusCode, serde_json::Value) {
         let app = build_router(state);
         let req = Request::builder()
             .method("GET")
@@ -485,7 +539,12 @@ mod tests {
     }
 
     /// Make a PUT request with JSON body and API key.
-    async fn put_with_key(state: Arc<AppState>, path: &str, key: &str, body: serde_json::Value) -> (StatusCode, serde_json::Value) {
+    async fn put_with_key(
+        state: Arc<AppState>,
+        path: &str,
+        key: &str,
+        body: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value) {
         let app = build_router(state);
         let req = Request::builder()
             .method("PUT")
@@ -502,7 +561,12 @@ mod tests {
     }
 
     /// Make a POST request with JSON body and API key.
-    async fn post_with_key(state: Arc<AppState>, path: &str, key: &str, body: serde_json::Value) -> (StatusCode, serde_json::Value) {
+    async fn post_with_key(
+        state: Arc<AppState>,
+        path: &str,
+        key: &str,
+        body: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value) {
         let app = build_router(state);
         let req = Request::builder()
             .method("POST")
@@ -519,7 +583,11 @@ mod tests {
     }
 
     /// Make a DELETE request with API key.
-    async fn delete_with_key(state: Arc<AppState>, path: &str, key: &str) -> (StatusCode, serde_json::Value) {
+    async fn delete_with_key(
+        state: Arc<AppState>,
+        path: &str,
+        key: &str,
+    ) -> (StatusCode, serde_json::Value) {
         let app = build_router(state);
         let req = Request::builder()
             .method("DELETE")
@@ -613,7 +681,11 @@ mod tests {
     async fn missing_api_key_gets_401() {
         let (_tmp, state) = test_app_state().await;
         // Create a user so auth is enforced
-        state.auth.create_user(None, None, starpod_auth::Role::Admin).await.unwrap();
+        state
+            .auth
+            .create_user(None, None, starpod_auth::Role::Admin)
+            .await
+            .unwrap();
 
         let app = build_router(Arc::clone(&state));
         let req = Request::builder()
@@ -688,11 +760,7 @@ mod tests {
         std::fs::create_dir_all(home.join("docs")).unwrap();
         std::fs::write(home.join("docs/readme.md"), "# Hello").unwrap();
 
-        let (status, json) = get_with_key(
-            Arc::clone(&state),
-            "/api/files?path=docs",
-            &key,
-        ).await;
+        let (status, json) = get_with_key(Arc::clone(&state), "/api/files?path=docs", &key).await;
         assert_eq!(status, StatusCode::OK);
 
         let entries = json.as_array().unwrap();
@@ -705,11 +773,7 @@ mod tests {
         let (_tmp, state) = test_app_state().await;
         let key = create_fs_user(&state).await;
 
-        let (status, json) = get_with_key(
-            Arc::clone(&state),
-            "/api/files?path=../etc",
-            &key,
-        ).await;
+        let (status, json) = get_with_key(Arc::clone(&state), "/api/files?path=../etc", &key).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(json["error"].as_str().unwrap().contains("traversal"));
     }
@@ -723,11 +787,8 @@ mod tests {
 
         std::fs::write(state.paths.home_dir.join("test.txt"), "file content here").unwrap();
 
-        let (status, json) = get_with_key(
-            Arc::clone(&state),
-            "/api/files/read?path=test.txt",
-            &key,
-        ).await;
+        let (status, json) =
+            get_with_key(Arc::clone(&state), "/api/files/read?path=test.txt", &key).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(json["path"], "test.txt");
         assert_eq!(json["content"], "file content here");
@@ -739,11 +800,8 @@ mod tests {
         let (_tmp, state) = test_app_state().await;
         let key = create_fs_user(&state).await;
 
-        let (status, _) = get_with_key(
-            Arc::clone(&state),
-            "/api/files/read?path=nope.txt",
-            &key,
-        ).await;
+        let (status, _) =
+            get_with_key(Arc::clone(&state), "/api/files/read?path=nope.txt", &key).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
@@ -754,11 +812,8 @@ mod tests {
 
         std::fs::create_dir_all(state.paths.home_dir.join("mydir")).unwrap();
 
-        let (status, json) = get_with_key(
-            Arc::clone(&state),
-            "/api/files/read?path=mydir",
-            &key,
-        ).await;
+        let (status, json) =
+            get_with_key(Arc::clone(&state), "/api/files/read?path=mydir", &key).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(json["error"].as_str().unwrap().contains("directory"));
     }
@@ -772,11 +827,8 @@ mod tests {
         std::fs::create_dir_all(&nested).unwrap();
         std::fs::write(nested.join("deep.md"), "# Deep").unwrap();
 
-        let (status, json) = get_with_key(
-            Arc::clone(&state),
-            "/api/files/read?path=a/b/deep.md",
-            &key,
-        ).await;
+        let (status, json) =
+            get_with_key(Arc::clone(&state), "/api/files/read?path=a/b/deep.md", &key).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(json["content"], "# Deep");
     }
@@ -793,7 +845,8 @@ mod tests {
             "/api/files/write",
             &key,
             serde_json::json!({"path": "new.txt", "content": "hello world"}),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
 
         // Verify file was written
@@ -811,10 +864,12 @@ mod tests {
             "/api/files/write",
             &key,
             serde_json::json!({"path": "deep/nested/file.txt", "content": "nested!"}),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
 
-        let content = std::fs::read_to_string(state.paths.home_dir.join("deep/nested/file.txt")).unwrap();
+        let content =
+            std::fs::read_to_string(state.paths.home_dir.join("deep/nested/file.txt")).unwrap();
         assert_eq!(content, "nested!");
     }
 
@@ -830,7 +885,8 @@ mod tests {
             "/api/files/write",
             &key,
             serde_json::json!({"path": "exist.txt", "content": "new"}),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
 
         let content = std::fs::read_to_string(state.paths.home_dir.join("exist.txt")).unwrap();
@@ -847,7 +903,8 @@ mod tests {
             "/api/files/write",
             &key,
             serde_json::json!({"path": ".starpod/config/agent.toml", "content": "evil"}),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(json["error"].as_str().unwrap().contains(".starpod"));
     }
@@ -863,11 +920,8 @@ mod tests {
         std::fs::write(&path, "bye").unwrap();
         assert!(path.exists());
 
-        let (status, _) = delete_with_key(
-            Arc::clone(&state),
-            "/api/files?path=delete_me.txt",
-            &key,
-        ).await;
+        let (status, _) =
+            delete_with_key(Arc::clone(&state), "/api/files?path=delete_me.txt", &key).await;
         assert_eq!(status, StatusCode::OK);
         assert!(!path.exists());
     }
@@ -881,11 +935,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("sub")).unwrap();
         std::fs::write(dir.join("sub/file.txt"), "nested").unwrap();
 
-        let (status, _) = delete_with_key(
-            Arc::clone(&state),
-            "/api/files?path=rm_dir",
-            &key,
-        ).await;
+        let (status, _) = delete_with_key(Arc::clone(&state), "/api/files?path=rm_dir", &key).await;
         assert_eq!(status, StatusCode::OK);
         assert!(!dir.exists());
     }
@@ -895,11 +945,8 @@ mod tests {
         let (_tmp, state) = test_app_state().await;
         let key = create_fs_user(&state).await;
 
-        let (status, _) = delete_with_key(
-            Arc::clone(&state),
-            "/api/files?path=ghost.txt",
-            &key,
-        ).await;
+        let (status, _) =
+            delete_with_key(Arc::clone(&state), "/api/files?path=ghost.txt", &key).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
@@ -915,7 +962,8 @@ mod tests {
             "/api/files/mkdir",
             &key,
             serde_json::json!({"path": "new_dir"}),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         assert!(state.paths.home_dir.join("new_dir").is_dir());
     }
@@ -930,7 +978,8 @@ mod tests {
             "/api/files/mkdir",
             &key,
             serde_json::json!({"path": "a/b/c/d"}),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         assert!(state.paths.home_dir.join("a/b/c/d").is_dir());
     }
@@ -945,7 +994,8 @@ mod tests {
             "/api/files/mkdir",
             &key,
             serde_json::json!({"path": "../../escape"}),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
@@ -962,7 +1012,8 @@ mod tests {
             "/api/files/mkdir",
             &key,
             serde_json::json!({"path": "project"}),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
 
         // 2. Write a file into it
@@ -971,15 +1022,13 @@ mod tests {
             "/api/files/write",
             &key,
             serde_json::json!({"path": "project/notes.md", "content": "# Notes\n\nFirst entry."}),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
 
         // 3. List the directory
-        let (status, json) = get_with_key(
-            Arc::clone(&state),
-            "/api/files?path=project",
-            &key,
-        ).await;
+        let (status, json) =
+            get_with_key(Arc::clone(&state), "/api/files?path=project", &key).await;
         assert_eq!(status, StatusCode::OK);
         let entries = json.as_array().unwrap();
         assert_eq!(entries.len(), 1);
@@ -990,7 +1039,8 @@ mod tests {
             Arc::clone(&state),
             "/api/files/read?path=project/notes.md",
             &key,
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(json["content"], "# Notes\n\nFirst entry.");
 
@@ -1000,7 +1050,8 @@ mod tests {
             "/api/files/write",
             &key,
             serde_json::json!({"path": "project/notes.md", "content": "# Notes\n\nUpdated."}),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
 
         // 6. Verify update
@@ -1008,16 +1059,14 @@ mod tests {
             Arc::clone(&state),
             "/api/files/read?path=project/notes.md",
             &key,
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(json["content"], "# Notes\n\nUpdated.");
 
         // 7. Delete the file
-        let (status, _) = delete_with_key(
-            Arc::clone(&state),
-            "/api/files?path=project/notes.md",
-            &key,
-        ).await;
+        let (status, _) =
+            delete_with_key(Arc::clone(&state), "/api/files?path=project/notes.md", &key).await;
         assert_eq!(status, StatusCode::OK);
 
         // 8. Verify deletion
@@ -1025,7 +1074,8 @@ mod tests {
             Arc::clone(&state),
             "/api/files/read?path=project/notes.md",
             &key,
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
 }

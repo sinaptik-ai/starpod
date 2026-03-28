@@ -120,7 +120,9 @@ fn messages_to_transcript(messages: &[ApiMessage]) -> String {
                     // Truncate long tool results
                     let truncated = if text.len() > 500 {
                         let mut end = 500;
-                        while end > 0 && !text.is_char_boundary(end) { end -= 1; }
+                        while end > 0 && !text.is_char_boundary(end) {
+                            end -= 1;
+                        }
                         format!("{}...", &text[..end])
                     } else {
                         text
@@ -153,7 +155,10 @@ async fn execute_flush_tool_calls(
                         Some(c) => c,
                         None => continue,
                     };
-                    let append = input.get("append").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let append = input
+                        .get("append")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
 
                     let final_content = if append {
                         let existing = if let Some(uv) = user_view {
@@ -229,7 +234,9 @@ pub async fn run_memory_flush(
     // Cap transcript to avoid huge flush requests
     let transcript = if transcript.len() > 30_000 {
         let mut end = 30_000;
-        while end > 0 && !transcript.is_char_boundary(end) { end -= 1; }
+        while end > 0 && !transcript.is_char_boundary(end) {
+            end -= 1;
+        }
         format!("{}...\n\n[transcript truncated]", &transcript[..end])
     } else {
         transcript
@@ -263,7 +270,9 @@ pub async fn run_memory_flush(
 
     match provider.create_message(&request).await {
         Ok(response) => {
-            let tool_calls: Vec<_> = response.content.iter()
+            let tool_calls: Vec<_> = response
+                .content
+                .iter()
                 .filter(|b| matches!(b, ApiContentBlock::ToolUse { .. }))
                 .collect();
             debug!(tool_calls = tool_calls.len(), "Flush: LLM responded");
@@ -368,7 +377,10 @@ mod tests {
         let store = MemoryStore::new_user(tmp.path()).await.unwrap();
 
         // Pre-write a file
-        store.write_file("MEMORY.md", "# Memory\n\nOriginal.").await.unwrap();
+        store
+            .write_file("MEMORY.md", "# Memory\n\nOriginal.")
+            .await
+            .unwrap();
 
         // Simulate LLM response with MemoryWrite tool call (append mode)
         let content = vec![ApiContentBlock::ToolUse {
@@ -384,8 +396,14 @@ mod tests {
         execute_flush_tool_calls(&content, &store, None).await;
 
         let written = store.read_file("MEMORY.md").unwrap();
-        assert!(written.contains("Original"), "Original content should be preserved");
-        assert!(written.contains("dark mode"), "Appended content should be present");
+        assert!(
+            written.contains("Original"),
+            "Original content should be preserved"
+        );
+        assert!(
+            written.contains("dark mode"),
+            "Appended content should be present"
+        );
     }
 
     #[tokio::test]

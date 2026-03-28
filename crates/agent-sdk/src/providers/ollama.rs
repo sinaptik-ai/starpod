@@ -118,7 +118,10 @@ impl OllamaDiscovery {
             .build()
             .unwrap_or_default();
 
-        Self { base_url: base, http }
+        Self {
+            base_url: base,
+            http,
+        }
     }
 
     /// Create a discovery client with the default Ollama URL (`localhost:11434`).
@@ -228,7 +231,11 @@ impl OllamaDiscovery {
                 vision = detail.supports_vision,
                 "discovered ollama model"
             );
-            registry.register("ollama", &summary.name, detail.into_model_info(&summary.name));
+            registry.register(
+                "ollama",
+                &summary.name,
+                detail.into_model_info(&summary.name),
+            );
         }
 
         Ok(registry)

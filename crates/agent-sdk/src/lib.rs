@@ -33,9 +33,9 @@ pub mod compact;
 pub mod error;
 pub mod hooks;
 pub mod mcp;
+pub mod models;
 pub mod options;
 pub mod permissions;
-pub mod models;
 pub mod provider;
 
 /// Backward-compatible alias for `models`.
@@ -51,15 +51,23 @@ pub mod types;
 
 // Re-export main public API
 pub use error::AgentError;
-pub use hooks::{hook_fn, HookCallback, HookCallbackMatcher, HookEvent, HookInput, HookOutput, HookRegistry};
-pub use mcp::{McpServerConfig, McpStdioServerConfig, McpHttpServerConfig, McpSseServerConfig};
-pub use options::{CustomToolDefinition, ExternalToolHandlerFn, Options, OptionsBuilder, PermissionMode, PreCompactHandlerFn, QueryAttachment};
+pub use hooks::{
+    hook_fn, HookCallback, HookCallbackMatcher, HookEvent, HookInput, HookOutput, HookRegistry,
+};
+pub use mcp::{McpHttpServerConfig, McpServerConfig, McpSseServerConfig, McpStdioServerConfig};
 pub use models::{ModelRegistry, PricingRegistry};
+pub use options::{
+    CustomToolDefinition, ExternalToolHandlerFn, Options, OptionsBuilder, PermissionMode,
+    PreCompactHandlerFn, QueryAttachment,
+};
 pub use provider::{CostRates, LlmProvider, ProviderCapabilities};
-pub use providers::{AnthropicProvider, BedrockProvider, GeminiProvider, OllamaDiscovery, OpenAiProvider, VertexProvider};
+pub use providers::{
+    AnthropicProvider, BedrockProvider, GeminiProvider, OllamaDiscovery, OpenAiProvider,
+    VertexProvider,
+};
 pub use query::{query, Query};
 pub use session::{Session, SessionInfo};
+pub use tools::executor::ToolResult;
 pub use types::agent::{AgentDefinition, AgentInput};
 pub use types::messages::*;
-pub use tools::executor::ToolResult;
 pub use types::tools::*;

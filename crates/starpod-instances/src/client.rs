@@ -5,7 +5,7 @@ use reqwest::Client;
 use tokio_stream::Stream;
 use tracing::debug;
 
-use starpod_core::{StarpodError, Result};
+use starpod_core::{Result, StarpodError};
 
 use crate::types::*;
 
@@ -24,7 +24,11 @@ impl InstanceClient {
     }
 
     /// Create a new client with a custom HTTP timeout (in seconds).
-    pub fn new_with_timeout(base_url: &str, api_key: Option<String>, timeout_secs: u64) -> Result<Self> {
+    pub fn new_with_timeout(
+        base_url: &str,
+        api_key: Option<String>,
+        timeout_secs: u64,
+    ) -> Result<Self> {
         let client = Client::builder()
             .timeout(Duration::from_secs(timeout_secs))
             .build()
@@ -148,10 +152,7 @@ impl InstanceClient {
     /// Destroy (permanently delete) an instance and all its runtime state.
     pub async fn destroy_instance(&self, id: &str) -> Result<()> {
         let resp = self
-            .auth(
-                self.client
-                    .delete(self.url(&format!("/instances/{}", id))),
-            )
+            .auth(self.client.delete(self.url(&format!("/instances/{}", id))))
             .send()
             .await
             .map_err(|e| StarpodError::Channel(format!("Failed to destroy instance: {}", e)))?;
@@ -309,10 +310,7 @@ impl InstanceClient {
     /// Get SSH connection info for an instance.
     pub async fn get_ssh_info(&self, id: &str) -> Result<SshInfo> {
         let resp = self
-            .auth(
-                self.client
-                    .get(self.url(&format!("/instances/{}/ssh", id))),
-            )
+            .auth(self.client.get(self.url(&format!("/instances/{}/ssh", id))))
             .send()
             .await
             .map_err(|e| StarpodError::Channel(format!("Failed to get SSH info: {}", e)))?;
@@ -365,8 +363,7 @@ mod tests {
 
     async fn setup() -> (MockServer, InstanceClient) {
         let server = MockServer::start().await;
-        let client =
-            InstanceClient::new(&server.uri(), Some("test-key".to_string())).unwrap();
+        let client = InstanceClient::new(&server.uri(), Some("test-key".to_string())).unwrap();
         (server, client)
     }
 
@@ -438,12 +435,17 @@ mod tests {
         let inst = sample_instance();
 
         Mock::given(method("GET"))
-            .and(path("/api/v1/instances/a1b2c3d4-e5f6-7890-abcd-ef1234567890"))
+            .and(path(
+                "/api/v1/instances/a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(&inst))
             .mount(&server)
             .await;
 
-        let result = client.get_instance("a1b2c3d4-e5f6-7890-abcd-ef1234567890").await.unwrap();
+        let result = client
+            .get_instance("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+            .await
+            .unwrap();
         assert_eq!(result.id, "a1b2c3d4-e5f6-7890-abcd-ef1234567890");
         assert_eq!(result.zone, Some("europe-west4-a".to_string()));
     }
@@ -549,9 +551,7 @@ mod tests {
 
         Mock::given(method("POST"))
             .and(path("/api/v1/instances"))
-            .respond_with(
-                ResponseTemplate::new(500).set_body_string("Internal Server Error"),
-            )
+            .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
             .mount(&server)
             .await;
 
@@ -753,6 +753,9 @@ mod tests {
 
         let result = client.resolve_id("nonexist").await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No instance found"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No instance found"));
     }
 }

@@ -7,7 +7,6 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-
 // ---------------------------------------------------------------------------
 // API types – request
 // ---------------------------------------------------------------------------
@@ -82,9 +81,7 @@ pub enum ApiContentBlock {
     },
 
     #[serde(rename = "image")]
-    Image {
-        source: ImageSource,
-    },
+    Image { source: ImageSource },
 
     #[serde(rename = "tool_use")]
     ToolUse {
@@ -381,12 +378,11 @@ mod tests {
 
     #[test]
     fn backoff_duration_increases() {
-        use crate::AnthropicProvider;
         use crate::provider::LlmProvider;
+        use crate::AnthropicProvider;
         let provider = AnthropicProvider::with_api_key("test-key");
         let caps = provider.capabilities();
         assert!(caps.streaming);
         assert!(caps.tool_use);
     }
-
 }

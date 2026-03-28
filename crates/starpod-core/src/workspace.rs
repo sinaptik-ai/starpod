@@ -81,9 +81,8 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::config::{
-    AttachmentsConfig, AuthConfig, BrowserConfig, ChannelsConfig, CompactionConfig,
-    CronConfig, FollowupMode, InternetConfig, MemoryConfig, ProvidersConfig,
-    ReasoningEffort, StarpodConfig,
+    AttachmentsConfig, AuthConfig, BrowserConfig, ChannelsConfig, CompactionConfig, CronConfig,
+    FollowupMode, InternetConfig, MemoryConfig, ProvidersConfig, ReasoningEffort, StarpodConfig,
 };
 use crate::error::StarpodError;
 
@@ -97,7 +96,10 @@ pub enum Mode {
     /// Dev workspace: `starpod.toml` found via walk-up.
     Workspace { root: PathBuf, agent_name: String },
     /// Instance mode: CWD is inside `.instances/<name>/`.
-    Instance { instance_root: PathBuf, agent_name: String },
+    Instance {
+        instance_root: PathBuf,
+        agent_name: String,
+    },
 }
 
 /// Detect the operating mode from the current directory.
@@ -107,9 +109,8 @@ pub enum Mode {
 /// - Walk up for `starpod.toml` -> `Workspace` (requires `agent_name`)
 /// - Neither -> error
 pub fn detect_mode(agent_name: Option<&str>) -> crate::Result<Mode> {
-    let cwd = std::env::current_dir().map_err(|e| {
-        StarpodError::Config(format!("Failed to get current directory: {}", e))
-    })?;
+    let cwd = std::env::current_dir()
+        .map_err(|e| StarpodError::Config(format!("Failed to get current directory: {}", e)))?;
     detect_mode_from(agent_name, &cwd)
 }
 
@@ -273,9 +274,7 @@ impl ResolvedPaths {
                 let users_dir = starpod_dir.join("users");
                 let instance_root = starpod_dir
                     .parent()
-                    .ok_or_else(|| {
-                        StarpodError::Config("Invalid .starpod/ path".to_string())
-                    })?
+                    .ok_or_else(|| StarpodError::Config("Invalid .starpod/ path".to_string()))?
                     .to_path_buf();
                 let home_dir = instance_root.join("home");
                 let project_root = home_dir.clone();
@@ -299,7 +298,10 @@ impl ResolvedPaths {
                     },
                 })
             }
-            Mode::Instance { instance_root, agent_name: _ } => {
+            Mode::Instance {
+                instance_root,
+                agent_name: _,
+            } => {
                 let agent_home = instance_root.join(".starpod");
                 let config_dir = agent_home.join("config");
                 let agent_toml = config_dir.join("agent.toml");
@@ -393,7 +395,11 @@ impl ResolvedPaths {
             memory_dir: user_dir.join("memory"),
             env_file: {
                 let p = user_dir.join(".env");
-                if p.is_file() { Some(p) } else { None }
+                if p.is_file() {
+                    Some(p)
+                } else {
+                    None
+                }
             },
         }
     }
@@ -754,7 +760,10 @@ mod tests {
 
         let mode = detect_mode_from(None, &agent_dir).unwrap();
         match mode {
-            Mode::Workspace { root: detected_root, agent_name } => {
+            Mode::Workspace {
+                root: detected_root,
+                agent_name,
+            } => {
                 assert_eq!(detected_root, root);
                 assert_eq!(agent_name, "test-bot");
             }
@@ -803,7 +812,10 @@ mod tests {
 
         let mode = detect_mode_from(None, &instance_dir).unwrap();
         match mode {
-            Mode::Instance { instance_root, agent_name } => {
+            Mode::Instance {
+                instance_root,
+                agent_name,
+            } => {
                 assert_eq!(instance_root, instance_dir);
                 assert_eq!(agent_name, "aster");
             }
@@ -823,7 +835,10 @@ mod tests {
 
         let mode = detect_mode_from(None, &subdir).unwrap();
         match mode {
-            Mode::Instance { instance_root, agent_name } => {
+            Mode::Instance {
+                instance_root,
+                agent_name,
+            } => {
                 assert_eq!(instance_root, instance_dir);
                 assert_eq!(agent_name, "aster");
             }
@@ -841,7 +856,10 @@ mod tests {
         };
         let paths = ResolvedPaths::resolve(&mode).unwrap();
 
-        assert_eq!(paths.agent_toml, PathBuf::from("/app/.starpod/config/agent.toml"));
+        assert_eq!(
+            paths.agent_toml,
+            PathBuf::from("/app/.starpod/config/agent.toml")
+        );
         assert_eq!(paths.agent_home, PathBuf::from("/app/.starpod"));
         assert_eq!(paths.config_dir, PathBuf::from("/app/.starpod/config"));
         assert_eq!(paths.db_dir, PathBuf::from("/app/.starpod/db"));
@@ -898,7 +916,11 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("not found"), "expected 'not found' in: {}", err);
+        assert!(
+            err.contains("not found"),
+            "expected 'not found' in: {}",
+            err
+        );
     }
 
     #[test]
@@ -986,9 +1008,18 @@ mod tests {
 
         assert_eq!(ctx.user_id, "admin");
         assert_eq!(ctx.user_dir, PathBuf::from("/app/.starpod/users/admin"));
-        assert_eq!(ctx.user_md, PathBuf::from("/app/.starpod/users/admin/USER.md"));
-        assert_eq!(ctx.memory_md, PathBuf::from("/app/.starpod/users/admin/MEMORY.md"));
-        assert_eq!(ctx.memory_dir, PathBuf::from("/app/.starpod/users/admin/memory"));
+        assert_eq!(
+            ctx.user_md,
+            PathBuf::from("/app/.starpod/users/admin/USER.md")
+        );
+        assert_eq!(
+            ctx.memory_md,
+            PathBuf::from("/app/.starpod/users/admin/MEMORY.md")
+        );
+        assert_eq!(
+            ctx.memory_dir,
+            PathBuf::from("/app/.starpod/users/admin/memory")
+        );
     }
 
     // ── load_agent_config ───────────────────────────────────────────────
@@ -1121,7 +1152,11 @@ max_turns = 30
 
         let agent_dir = root.join("agents").join("env-test");
         std::fs::create_dir_all(&agent_dir).unwrap();
-        std::fs::write(agent_dir.join("agent.toml"), "models = [\"anthropic/claude-haiku-4-5\"]\n").unwrap();
+        std::fs::write(
+            agent_dir.join("agent.toml"),
+            "models = [\"anthropic/claude-haiku-4-5\"]\n",
+        )
+        .unwrap();
 
         let mode = Mode::Workspace {
             root: root.to_path_buf(),
@@ -1192,7 +1227,10 @@ max_turns = 30
             Mode::SingleAgent { starpod_dir: dir } => {
                 assert_eq!(dir, starpod_dir);
             }
-            _ => panic!("Expected SingleAgent mode from subdirectory, got {:?}", mode),
+            _ => panic!(
+                "Expected SingleAgent mode from subdirectory, got {:?}",
+                mode
+            ),
         }
     }
 
@@ -1251,9 +1289,12 @@ max_turns = 30
         std::fs::write(
             config_dir.join("agent.toml"),
             "models = [\"anthropic/claude-haiku-4-5\"]\n",
-        ).unwrap();
+        )
+        .unwrap();
 
-        let mode = Mode::SingleAgent { starpod_dir: starpod_dir.clone() };
+        let mode = Mode::SingleAgent {
+            starpod_dir: starpod_dir.clone(),
+        };
         let paths = ResolvedPaths::resolve(&mode).unwrap();
 
         let config1 = reload_agent_config(&paths).unwrap();
@@ -1263,7 +1304,8 @@ max_turns = 30
         std::fs::write(
             config_dir.join("agent.toml"),
             "models = [\"anthropic/claude-opus-4-6\"]\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let config2 = reload_agent_config(&paths).unwrap();
         assert_eq!(config2.models, vec!["anthropic/claude-opus-4-6"]);
@@ -1307,7 +1349,10 @@ models = ["openai/gpt-4o"]
 models = ["anthropic/claude-haiku-4-5"]
 "#;
         let config: WorkspaceConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.models.as_deref(), Some(&["anthropic/claude-haiku-4-5".to_string()][..]));
+        assert_eq!(
+            config.models.as_deref(),
+            Some(&["anthropic/claude-haiku-4-5".to_string()][..])
+        );
         assert!(config.max_turns.is_none());
     }
 
@@ -1335,7 +1380,8 @@ models = ["anthropic/claude-haiku-4-5"]
         std::fs::write(
             config_dir.join("agent.toml"),
             "agent_name = \"CustomBot\"\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let mode = Mode::SingleAgent { starpod_dir };
         let paths = ResolvedPaths::resolve(&mode).unwrap();
@@ -1365,7 +1411,8 @@ models = ["anthropic/claude-haiku-4-5"]
             bot_token = "123:ABC"
             gap_minutes = 120
             "#,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mode = Mode::SingleAgent { starpod_dir };
         let paths = ResolvedPaths::resolve(&mode).unwrap();
@@ -1388,7 +1435,8 @@ models = ["anthropic/claude-haiku-4-5"]
             [providers.anthropic]
             api_key = "sk-ant-legacy"
             "#,
-        ).unwrap();
+        )
+        .unwrap();
         let agent_dir = root.join("agents").join("test-bot");
         std::fs::create_dir_all(&agent_dir).unwrap();
         std::fs::write(
@@ -1397,9 +1445,13 @@ models = ["anthropic/claude-haiku-4-5"]
             [channels.telegram]
             bot_token = "123:legacy"
             "#,
-        ).unwrap();
+        )
+        .unwrap();
 
-        let mode = Mode::Workspace { root, agent_name: "test-bot".to_string() };
+        let mode = Mode::Workspace {
+            root,
+            agent_name: "test-bot".to_string(),
+        };
         let paths = ResolvedPaths::resolve(&mode).unwrap();
         let config = load_agent_config(&paths).unwrap();
 
@@ -1422,7 +1474,8 @@ models = ["anthropic/claude-haiku-4-5"]
 agent_name = "Aster"
 models = ["anthropic/claude-haiku-4-5"]
 "#,
-        ).unwrap();
+        )
+        .unwrap();
 
         let mode = Mode::Instance {
             instance_root: instance_dir,
@@ -1444,7 +1497,8 @@ models = ["anthropic/claude-haiku-4-5"]
         std::fs::write(
             agent_home.join(".env"),
             "STARPOD_INSTANCE_ENV_TEST=from_instance\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         load_env(agent_home, None);
         assert_eq!(
@@ -1461,14 +1515,12 @@ models = ["anthropic/claude-haiku-4-5"]
         std::fs::write(
             agent_home.join(".env"),
             "STARPOD_OVERRIDE_TEST=instance_val\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let user_dir = agent_home.join("users").join("alice");
         std::fs::create_dir_all(&user_dir).unwrap();
-        std::fs::write(
-            user_dir.join(".env"),
-            "STARPOD_OVERRIDE_TEST=alice_val\n",
-        ).unwrap();
+        std::fs::write(user_dir.join(".env"), "STARPOD_OVERRIDE_TEST=alice_val\n").unwrap();
 
         load_env(agent_home, Some("alice"));
         assert_eq!(
@@ -1518,7 +1570,11 @@ models = ["anthropic/claude-haiku-4-5"]
 
         // Workspace .env
         std::fs::write(root.join("starpod.toml"), "").unwrap();
-        std::fs::write(root.join(".env"), "STARPOD_INST_OVERRIDE_TEST=workspace_val\n").unwrap();
+        std::fs::write(
+            root.join(".env"),
+            "STARPOD_INST_OVERRIDE_TEST=workspace_val\n",
+        )
+        .unwrap();
 
         // Instance .env overrides (agent.toml in config/, .env at starpod root)
         let instance_dir = root.join(".instances").join("bot");
@@ -1526,7 +1582,11 @@ models = ["anthropic/claude-haiku-4-5"]
         let config_dir = starpod_dir.join("config");
         std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::write(config_dir.join("agent.toml"), "").unwrap();
-        std::fs::write(starpod_dir.join(".env"), "STARPOD_INST_OVERRIDE_TEST=instance_val\n").unwrap();
+        std::fs::write(
+            starpod_dir.join(".env"),
+            "STARPOD_INST_OVERRIDE_TEST=instance_val\n",
+        )
+        .unwrap();
 
         let mode = Mode::Instance {
             instance_root: instance_dir,

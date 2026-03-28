@@ -146,7 +146,9 @@ pub struct TelegramChannelConfig {
     pub stream_mode: String,
 }
 
-fn default_gap_minutes() -> Option<i64> { Some(360) }
+fn default_gap_minutes() -> Option<i64> {
+    Some(360)
+}
 
 impl Default for TelegramChannelConfig {
     fn default() -> Self {
@@ -189,7 +191,9 @@ pub struct EmailChannelConfig {
     pub gap_minutes: Option<i64>,
 }
 
-fn default_email_gap_minutes() -> Option<i64> { Some(1440) }
+fn default_email_gap_minutes() -> Option<i64> {
+    Some(1440)
+}
 
 impl Default for EmailChannelConfig {
     fn default() -> Self {
@@ -289,11 +293,21 @@ pub struct MemoryConfig {
     pub memory_md_limit: usize,
 }
 
-fn default_chunk_size() -> usize { 1600 }
-fn default_chunk_overlap() -> usize { 320 }
-fn default_bootstrap_file_cap() -> usize { 20_000 }
-fn default_user_md_limit() -> usize { 4_000 }
-fn default_memory_md_limit() -> usize { 8_000 }
+fn default_chunk_size() -> usize {
+    1600
+}
+fn default_chunk_overlap() -> usize {
+    320
+}
+fn default_bootstrap_file_cap() -> usize {
+    20_000
+}
+fn default_user_md_limit() -> usize {
+    4_000
+}
+fn default_memory_md_limit() -> usize {
+    8_000
+}
 
 impl Default for MemoryConfig {
     fn default() -> Self {
@@ -311,7 +325,6 @@ impl Default for MemoryConfig {
         }
     }
 }
-
 
 /// Cron scheduling configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -332,10 +345,18 @@ pub struct CronConfig {
     pub heartbeat_interval_minutes: u32,
 }
 
-fn default_cron_max_retries() -> u32 { 3 }
-fn default_cron_timeout_secs() -> u64 { 7200 }
-fn default_cron_max_concurrent() -> usize { 1 }
-fn default_heartbeat_interval_minutes() -> u32 { 30 }
+fn default_cron_max_retries() -> u32 {
+    3
+}
+fn default_cron_timeout_secs() -> u64 {
+    7200
+}
+fn default_cron_max_concurrent() -> usize {
+    1
+}
+fn default_heartbeat_interval_minutes() -> u32 {
+    30
+}
 
 impl Default for CronConfig {
     fn default() -> Self {
@@ -382,12 +403,24 @@ pub struct CompactionConfig {
     pub prune_tool_result_max_chars: usize,
 }
 
-fn default_context_budget() -> u64 { 160_000 }
-fn default_summary_max_tokens() -> u32 { 4096 }
-fn default_min_keep_messages() -> usize { 4 }
-fn default_max_tool_result_bytes() -> usize { 50_000 }
-fn default_prune_threshold_pct() -> u8 { 70 }
-fn default_prune_tool_result_max_chars() -> usize { 2_000 }
+fn default_context_budget() -> u64 {
+    160_000
+}
+fn default_summary_max_tokens() -> u32 {
+    4096
+}
+fn default_min_keep_messages() -> usize {
+    4
+}
+fn default_max_tool_result_bytes() -> usize {
+    50_000
+}
+fn default_prune_threshold_pct() -> u8 {
+    70
+}
+fn default_prune_tool_result_max_chars() -> usize {
+    2_000
+}
 
 impl Default for CompactionConfig {
     fn default() -> Self {
@@ -492,12 +525,12 @@ impl AttachmentsConfig {
         }
 
         if !self.allowed_extensions.is_empty() {
-            let ext = file_name
-                .rsplit('.')
-                .next()
-                .unwrap_or("")
-                .to_lowercase();
-            if !self.allowed_extensions.iter().any(|e| e.to_lowercase() == ext) {
+            let ext = file_name.rsplit('.').next().unwrap_or("").to_lowercase();
+            if !self
+                .allowed_extensions
+                .iter()
+                .any(|e| e.to_lowercase() == ext)
+            {
                 return Err(format!(
                     "File extension '{}' is not allowed (allowed: {})",
                     ext,
@@ -883,7 +916,6 @@ impl StarpodConfig {
 
         cfg.map(|c| &c.options).unwrap_or(&EMPTY)
     }
-
 }
 
 #[cfg(test)]
@@ -947,7 +979,10 @@ mod tests {
     #[test]
     fn resolved_provider_api_key_unknown_provider_returns_none() {
         let config = StarpodConfig::default();
-        assert_eq!(config.resolved_provider_api_key("nonexistent_provider"), None);
+        assert_eq!(
+            config.resolved_provider_api_key("nonexistent_provider"),
+            None
+        );
     }
 
     #[test]
@@ -979,7 +1014,10 @@ mod tests {
     #[test]
     fn resolved_provider_base_url_unknown_returns_none() {
         let config = StarpodConfig::default();
-        assert_eq!(config.resolved_provider_base_url("nonexistent_provider"), None);
+        assert_eq!(
+            config.resolved_provider_base_url("nonexistent_provider"),
+            None
+        );
     }
 
     #[test]
@@ -999,19 +1037,25 @@ mod tests {
     fn resolved_provider_api_key_ollama_returns_empty_string() {
         let config = StarpodConfig::default();
         // Ollama doesn't require an API key, returns empty string
-        assert_eq!(config.resolved_provider_api_key("ollama"), Some(String::new()));
+        assert_eq!(
+            config.resolved_provider_api_key("ollama"),
+            Some(String::new())
+        );
     }
 
     // ── Credential-in-config rejection tests ─────────────────────────────
 
     #[test]
     fn warn_credentials_in_toml_detects_api_key() {
-        let value: toml::Value = toml::from_str(r#"
+        let value: toml::Value = toml::from_str(
+            r#"
             [providers.anthropic]
             api_key = "sk-ant-bad"
             [providers.openai]
             base_url = "https://example.com"
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         // Should not panic — warning goes to tracing. We just verify the
         // function runs without error on input containing credentials.
         warn_credentials_in_toml(&value, "test.toml");
@@ -1019,32 +1063,41 @@ mod tests {
 
     #[test]
     fn warn_credentials_in_toml_detects_bot_token() {
-        let value: toml::Value = toml::from_str(r#"
+        let value: toml::Value = toml::from_str(
+            r#"
             [channels.telegram]
             bot_token = "123:ABC"
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         warn_credentials_in_toml(&value, "test.toml");
     }
 
     #[test]
     fn warn_credentials_in_toml_clean_config_no_panic() {
         // A config with no credentials should pass through silently.
-        let value: toml::Value = toml::from_str(r#"
+        let value: toml::Value = toml::from_str(
+            r#"
             [providers.anthropic]
             base_url = "https://api.anthropic.com"
             [channels.telegram]
             gap_minutes = 360
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         warn_credentials_in_toml(&value, "clean.toml");
     }
 
     #[test]
     fn resolved_api_key_ignores_config_reads_env_only() {
         // Even if a provider section exists, the resolved key comes from env.
-        let config: StarpodConfig = toml::from_str(r#"
+        let config: StarpodConfig = toml::from_str(
+            r#"
             [providers.anthropic]
             base_url = "https://custom.example.com"
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         std::env::remove_var("ANTHROPIC_API_KEY");
         assert!(config.resolved_api_key().is_none());
 
@@ -1202,7 +1255,10 @@ mod tests {
     #[test]
     fn test_export_sessions_defaults_true() {
         let cfg = MemoryConfig::default();
-        assert!(cfg.export_sessions, "export_sessions should default to true");
+        assert!(
+            cfg.export_sessions,
+            "export_sessions should default to true"
+        );
     }
 
     #[test]
@@ -1264,7 +1320,10 @@ mod tests {
         assert_eq!(cfg.summary_max_tokens, 4096);
         assert_eq!(cfg.min_keep_messages, 4);
         assert!(cfg.memory_flush, "memory_flush should default to true");
-        assert!(cfg.flush_model.is_none(), "flush_model should default to None");
+        assert!(
+            cfg.flush_model.is_none(),
+            "flush_model should default to None"
+        );
         assert_eq!(cfg.max_tool_result_bytes, 50_000);
         assert_eq!(cfg.prune_threshold_pct, 70);
         assert_eq!(cfg.prune_tool_result_max_chars, 2_000);
@@ -1330,7 +1389,10 @@ mod tests {
         "#;
         let config: StarpodConfig = toml::from_str(toml).unwrap();
         assert!(!config.compaction.memory_flush);
-        assert_eq!(config.compaction.flush_model.as_deref(), Some("claude-haiku-4-5-20251001"));
+        assert_eq!(
+            config.compaction.flush_model.as_deref(),
+            Some("claude-haiku-4-5-20251001")
+        );
     }
 
     #[test]
@@ -1471,16 +1533,22 @@ mod tests {
 
     #[test]
     fn deep_merge_nested_tables() {
-        let mut base: toml::Value = toml::from_str(r#"
+        let mut base: toml::Value = toml::from_str(
+            r#"
             [memory]
             half_life_days = 30.0
-        "#).unwrap();
-        let overlay: toml::Value = toml::from_str(r#"
+        "#,
+        )
+        .unwrap();
+        let overlay: toml::Value = toml::from_str(
+            r#"
             [memory]
             mmr_lambda = 0.5
             [channels.telegram]
             bot_token = "test"
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         deep_merge(&mut base, overlay);
         let config: StarpodConfig = base.try_into().unwrap();
         assert_eq!(config.memory.half_life_days, 30.0); // kept from base
@@ -1496,22 +1564,31 @@ mod tests {
     fn deep_merge_overlay_replaces_scalar_with_table() {
         // Edge case: base has a scalar, overlay has a table at the same key
         let mut base: toml::Value = toml::from_str(r#"memory = "flat""#).unwrap();
-        let overlay: toml::Value = toml::from_str(r#"
+        let overlay: toml::Value = toml::from_str(
+            r#"
             [memory]
             half_life_days = 7.0
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         deep_merge(&mut base, overlay);
         // The table should win
         let table = base.get("memory").unwrap().as_table().unwrap();
-        assert_eq!(table.get("half_life_days").unwrap().as_float().unwrap(), 7.0);
+        assert_eq!(
+            table.get("half_life_days").unwrap().as_float().unwrap(),
+            7.0
+        );
     }
 
     #[test]
     fn deep_merge_empty_overlay_preserves_base() {
-        let mut base: toml::Value = toml::from_str(r#"
+        let mut base: toml::Value = toml::from_str(
+            r#"
             models = ["anthropic/haiku"]
             agent_name = "Aster"
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let overlay: toml::Value = toml::from_str("").unwrap();
         deep_merge(&mut base, overlay);
         let config: StarpodConfig = base.try_into().unwrap();
@@ -1521,16 +1598,22 @@ mod tests {
 
     #[test]
     fn deep_merge_instance_overrides_model_but_keeps_other_fields() {
-        let mut base: toml::Value = toml::from_str(r#"
+        let mut base: toml::Value = toml::from_str(
+            r#"
             models = ["anthropic/haiku"]
             max_turns = 30
             agent_name = "Aster"
-        "#).unwrap();
-        let overlay: toml::Value = toml::from_str(r#"
+        "#,
+        )
+        .unwrap();
+        let overlay: toml::Value = toml::from_str(
+            r#"
             models = ["anthropic/sonnet"]
             [channels.telegram]
             gap_minutes = 120
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         deep_merge(&mut base, overlay);
         let config: StarpodConfig = base.try_into().unwrap();
         assert_eq!(config.models, vec!["anthropic/sonnet"]); // overridden
@@ -1589,7 +1672,8 @@ mod tests {
         std::fs::write(
             dir.path().join("frontend.toml"),
             "greeting = \"ready_\"\nprompts = [\"test prompt\"]\n",
-        ).unwrap();
+        )
+        .unwrap();
         let config = FrontendConfig::load(dir.path());
         assert_eq!(config.greeting.as_deref(), Some("ready_"));
         assert_eq!(config.prompts, vec!["test prompt"]);
@@ -1759,9 +1843,18 @@ mod tests {
 
     #[test]
     fn parse_model_spec_valid() {
-        assert_eq!(parse_model_spec("anthropic/claude-sonnet-4-6"), Some(("anthropic", "claude-sonnet-4-6")));
-        assert_eq!(parse_model_spec("openai/gpt-4o"), Some(("openai", "gpt-4o")));
-        assert_eq!(parse_model_spec("ollama/llama3"), Some(("ollama", "llama3")));
+        assert_eq!(
+            parse_model_spec("anthropic/claude-sonnet-4-6"),
+            Some(("anthropic", "claude-sonnet-4-6"))
+        );
+        assert_eq!(
+            parse_model_spec("openai/gpt-4o"),
+            Some(("openai", "gpt-4o"))
+        );
+        assert_eq!(
+            parse_model_spec("ollama/llama3"),
+            Some(("ollama", "llama3"))
+        );
     }
 
     #[test]
@@ -1773,7 +1866,10 @@ mod tests {
     #[test]
     fn parse_model_spec_multiple_slashes() {
         // Only splits on first slash
-        assert_eq!(parse_model_spec("openrouter/openai/gpt-4o"), Some(("openrouter", "openai/gpt-4o")));
+        assert_eq!(
+            parse_model_spec("openrouter/openai/gpt-4o"),
+            Some(("openrouter", "openai/gpt-4o"))
+        );
     }
 
     #[test]
@@ -1786,9 +1882,12 @@ mod tests {
 
     #[test]
     fn default_model_returns_first_entry() {
-        let config: StarpodConfig = toml::from_str(r#"
+        let config: StarpodConfig = toml::from_str(
+            r#"
             models = ["openai/gpt-4o", "anthropic/claude-sonnet-4-6"]
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         assert_eq!(config.default_model(), ("openai", "gpt-4o"));
         assert_eq!(config.provider(), "openai");
         assert_eq!(config.model(), "gpt-4o");
@@ -1812,9 +1911,12 @@ mod tests {
 
     #[test]
     fn resolve_model_none_returns_default() {
-        let config: StarpodConfig = toml::from_str(r#"
+        let config: StarpodConfig = toml::from_str(
+            r#"
             models = ["anthropic/claude-sonnet-4-6", "openai/gpt-4o"]
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let (p, m) = config.resolve_model(None).unwrap();
         assert_eq!(p, "anthropic");
         assert_eq!(m, "claude-sonnet-4-6");
@@ -1822,9 +1924,12 @@ mod tests {
 
     #[test]
     fn resolve_model_valid_override() {
-        let config: StarpodConfig = toml::from_str(r#"
+        let config: StarpodConfig = toml::from_str(
+            r#"
             models = ["anthropic/claude-sonnet-4-6", "openai/gpt-4o"]
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let (p, m) = config.resolve_model(Some("openai/gpt-4o")).unwrap();
         assert_eq!(p, "openai");
         assert_eq!(m, "gpt-4o");
@@ -1832,19 +1937,27 @@ mod tests {
 
     #[test]
     fn resolve_model_override_not_in_list() {
-        let config: StarpodConfig = toml::from_str(r#"
+        let config: StarpodConfig = toml::from_str(
+            r#"
             models = ["anthropic/claude-sonnet-4-6"]
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let err = config.resolve_model(Some("openai/gpt-4o")).unwrap_err();
         assert!(err.contains("not in the allowed list"));
     }
 
     #[test]
     fn resolve_model_override_matches_default() {
-        let config: StarpodConfig = toml::from_str(r#"
+        let config: StarpodConfig = toml::from_str(
+            r#"
             models = ["anthropic/claude-sonnet-4-6"]
-        "#).unwrap();
-        let (p, m) = config.resolve_model(Some("anthropic/claude-sonnet-4-6")).unwrap();
+        "#,
+        )
+        .unwrap();
+        let (p, m) = config
+            .resolve_model(Some("anthropic/claude-sonnet-4-6"))
+            .unwrap();
         assert_eq!(p, "anthropic");
         assert_eq!(m, "claude-sonnet-4-6");
     }
@@ -1853,9 +1966,12 @@ mod tests {
 
     #[test]
     fn resolve_compaction_model_none_falls_back_to_default() {
-        let config: StarpodConfig = toml::from_str(r#"
+        let config: StarpodConfig = toml::from_str(
+            r#"
             models = ["anthropic/claude-sonnet-4-6"]
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let (p, m) = config.resolve_compaction_model();
         assert_eq!(p, "anthropic");
         assert_eq!(m, "claude-sonnet-4-6");
@@ -1863,10 +1979,13 @@ mod tests {
 
     #[test]
     fn resolve_compaction_model_with_spec() {
-        let config: StarpodConfig = toml::from_str(r#"
+        let config: StarpodConfig = toml::from_str(
+            r#"
             models = ["anthropic/claude-sonnet-4-6"]
             compaction_model = "openai/gpt-4o-mini"
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let (p, m) = config.resolve_compaction_model();
         assert_eq!(p, "openai");
         assert_eq!(m, "gpt-4o-mini");
@@ -1874,10 +1993,13 @@ mod tests {
 
     #[test]
     fn resolve_compaction_model_invalid_spec_falls_back() {
-        let config: StarpodConfig = toml::from_str(r#"
+        let config: StarpodConfig = toml::from_str(
+            r#"
             models = ["anthropic/claude-sonnet-4-6"]
             compaction_model = "no-slash"
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         // Invalid spec (no slash) falls back to primary
         let (p, m) = config.resolve_compaction_model();
         assert_eq!(p, "anthropic");
@@ -1888,21 +2010,27 @@ mod tests {
 
     #[test]
     fn models_from_toml_single() {
-        let config: StarpodConfig = toml::from_str(r#"
+        let config: StarpodConfig = toml::from_str(
+            r#"
             models = ["anthropic/claude-haiku-4-5"]
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         assert_eq!(config.models, vec!["anthropic/claude-haiku-4-5"]);
     }
 
     #[test]
     fn models_from_toml_multiple() {
-        let config: StarpodConfig = toml::from_str(r#"
+        let config: StarpodConfig = toml::from_str(
+            r#"
             models = [
                 "anthropic/claude-sonnet-4-6",
                 "anthropic/claude-opus-4-6",
                 "openai/gpt-4o",
             ]
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         assert_eq!(config.models.len(), 3);
         assert_eq!(config.model(), "claude-sonnet-4-6");
         assert_eq!(config.provider(), "anthropic");

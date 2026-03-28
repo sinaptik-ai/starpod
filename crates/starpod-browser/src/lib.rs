@@ -305,12 +305,15 @@ impl BrowserSession {
         let child = Command::new(&binary)
             .args([
                 "serve",
-                "--host", "127.0.0.1",
-                "--port", &port.to_string(),
+                "--host",
+                "127.0.0.1",
+                "--port",
+                &port.to_string(),
                 // Keep alive for up to 1 hour — the agent can take minutes
                 // between tool calls, and the default 10s timeout kills the
                 // session mid-conversation.
-                "--timeout", "3600",
+                "--timeout",
+                "3600",
             ])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -346,12 +349,20 @@ impl BrowserSession {
         let cdp = CdpClient::connect(ws_url).await?;
 
         // 1. Enable target discovery
-        cdp.send("Target.setDiscoverTargets", serde_json::json!({"discover": true}), None)
-            .await?;
+        cdp.send(
+            "Target.setDiscoverTargets",
+            serde_json::json!({"discover": true}),
+            None,
+        )
+        .await?;
 
         // 2. Create a new target (page)
         let result = cdp
-            .send("Target.createTarget", serde_json::json!({"url": "about:blank"}), None)
+            .send(
+                "Target.createTarget",
+                serde_json::json!({"url": "about:blank"}),
+                None,
+            )
             .await?;
         let target_id = result["targetId"]
             .as_str()
@@ -407,9 +418,7 @@ impl BrowserSession {
         loop {
             match tokio::time::timeout_at(deadline, events.recv()).await {
                 Ok(Ok(event)) => {
-                    if event.get("method").and_then(|m| m.as_str())
-                        == Some("Page.loadEventFired")
-                    {
+                    if event.get("method").and_then(|m| m.as_str()) == Some("Page.loadEventFired") {
                         break;
                     }
                 }
@@ -465,8 +474,8 @@ impl BrowserSession {
     ///
     /// - [`BrowserError::ElementNotFound`] if the selector matches nothing
     pub async fn click(&self, selector: &str) -> Result<()> {
-        let sel_json = serde_json::to_string(selector)
-            .map_err(|e| BrowserError::EvalFailed(e.to_string()))?;
+        let sel_json =
+            serde_json::to_string(selector).map_err(|e| BrowserError::EvalFailed(e.to_string()))?;
         let js = format!(
             r#"(function(){{
   var el = document.querySelector({sel});
@@ -499,10 +508,10 @@ impl BrowserSession {
     ///
     /// - [`BrowserError::ElementNotFound`] if the selector matches nothing
     pub async fn type_text(&self, selector: &str, text: &str) -> Result<()> {
-        let sel_json = serde_json::to_string(selector)
-            .map_err(|e| BrowserError::EvalFailed(e.to_string()))?;
-        let val_json = serde_json::to_string(text)
-            .map_err(|e| BrowserError::EvalFailed(e.to_string()))?;
+        let sel_json =
+            serde_json::to_string(selector).map_err(|e| BrowserError::EvalFailed(e.to_string()))?;
+        let val_json =
+            serde_json::to_string(text).map_err(|e| BrowserError::EvalFailed(e.to_string()))?;
         let js = format!(
             r#"(function(){{
   var el = document.querySelector({sel});
@@ -677,8 +686,8 @@ async fn which_lightpanda() -> Result<PathBuf> {
 
 /// Returns `~/.local/bin`, creating it if it doesn't exist.
 fn default_install_dir() -> Result<PathBuf> {
-    let home = std::env::var("HOME")
-        .map_err(|_| BrowserError::InstallFailed("HOME not set".into()))?;
+    let home =
+        std::env::var("HOME").map_err(|_| BrowserError::InstallFailed("HOME not set".into()))?;
     let dir = PathBuf::from(home).join(".local").join("bin");
     Ok(dir)
 }
@@ -702,9 +711,7 @@ fn lightpanda_asset_name() -> Result<&'static str> {
 /// Download and install the lightpanda binary to `install_dir`.
 async fn install_lightpanda(install_dir: &std::path::Path) -> Result<()> {
     let asset = lightpanda_asset_name()?;
-    let url = format!(
-        "https://github.com/lightpanda-io/browser/releases/download/nightly/{asset}"
-    );
+    let url = format!("https://github.com/lightpanda-io/browser/releases/download/nightly/{asset}");
 
     info!(url = %url, "Downloading lightpanda");
 
@@ -730,14 +737,9 @@ async fn install_lightpanda(install_dir: &std::path::Path) -> Result<()> {
     }
 
     // Create install directory
-    tokio::fs::create_dir_all(install_dir)
-        .await
-        .map_err(|e| {
-            BrowserError::InstallFailed(format!(
-                "cannot create {}: {e}",
-                install_dir.display()
-            ))
-        })?;
+    tokio::fs::create_dir_all(install_dir).await.map_err(|e| {
+        BrowserError::InstallFailed(format!("cannot create {}: {e}", install_dir.display()))
+    })?;
 
     let binary_path = install_dir.join("lightpanda");
 
@@ -856,9 +858,7 @@ mod tests {
     #[tokio::test]
     async fn wait_for_cdp_succeeds_when_listener_exists() {
         // Start a TCP listener, then verify wait_for_cdp connects to it
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap().to_string();
 
         // Should succeed immediately since the port is already listening

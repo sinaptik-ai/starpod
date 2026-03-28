@@ -81,20 +81,12 @@ pub fn is_read_only(tool_name: &str) -> bool {
 pub mod presets {
     /// Read-only analysis tools.
     pub fn read_only() -> Vec<String> {
-        vec![
-            "Read".into(),
-            "Glob".into(),
-            "Grep".into(),
-        ]
+        vec!["Read".into(), "Glob".into(), "Grep".into()]
     }
 
     /// Test execution tools.
     pub fn test_execution() -> Vec<String> {
-        vec![
-            "Bash".into(),
-            "Read".into(),
-            "Grep".into(),
-        ]
+        vec!["Bash".into(), "Read".into(), "Grep".into()]
     }
 
     /// Code modification tools (no command execution).

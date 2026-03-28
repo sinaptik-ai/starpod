@@ -25,7 +25,9 @@ fn build_web_ui(manifest_dir: &str, npm: &str) {
     let web_dir = Path::new(manifest_dir).join("../../web");
     let dist_dir = Path::new(manifest_dir).join("static/dist");
 
-    if !web_dir.join("package.json").exists() || Command::new(npm).arg("--version").output().is_err() {
+    if !web_dir.join("package.json").exists()
+        || Command::new(npm).arg("--version").output().is_err()
+    {
         eprintln!(
             "warning: web/ directory not found or npm not available — \
              web UI will not be included."
@@ -88,7 +90,9 @@ fn build_docs(manifest_dir: &str, npm: &str) {
     let docs_dir = Path::new(manifest_dir).join("../../docs");
     let dist_dir = docs_dir.join(".vitepress/dist");
 
-    if !docs_dir.join("package.json").exists() || Command::new(npm).arg("--version").output().is_err() {
+    if !docs_dir.join("package.json").exists()
+        || Command::new(npm).arg("--version").output().is_err()
+    {
         eprintln!(
             "warning: docs/ directory not found or npm not available — \
              docs will not be included."

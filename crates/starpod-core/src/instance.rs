@@ -89,14 +89,15 @@ pub fn apply_blueprint(
     let config_dir = starpod_dir.join("config");
 
     // 1. Create directory structure
-    std::fs::create_dir_all(&config_dir)
-        .map_err(|e| StarpodError::Config(format!(
-            "Failed to create .starpod/config/ in {}: {}", instance_dir.display(), e
-        )))?;
-    std::fs::create_dir_all(starpod_dir.join("db"))
-        .map_err(StarpodError::Io)?;
-    std::fs::create_dir_all(starpod_dir.join("users"))
-        .map_err(StarpodError::Io)?;
+    std::fs::create_dir_all(&config_dir).map_err(|e| {
+        StarpodError::Config(format!(
+            "Failed to create .starpod/config/ in {}: {}",
+            instance_dir.display(),
+            e
+        ))
+    })?;
+    std::fs::create_dir_all(starpod_dir.join("db")).map_err(StarpodError::Io)?;
+    std::fs::create_dir_all(starpod_dir.join("users")).map_err(StarpodError::Io)?;
 
     // 1b. Create home/ directory with placeholder subdirs
     let home_dir = instance_dir.join("home");
@@ -120,9 +121,7 @@ pub fn apply_blueprint(
     let src_toml = blueprint_dir.join("agent.toml");
     if src_toml.is_file() {
         std::fs::copy(&src_toml, config_dir.join("agent.toml"))
-            .map_err(|e| StarpodError::Config(format!(
-                "Failed to copy agent.toml: {}", e
-            )))?;
+            .map_err(|e| StarpodError::Config(format!("Failed to copy agent.toml: {}", e)))?;
         debug!("Copied agent.toml from blueprint");
     }
 
@@ -130,9 +129,7 @@ pub fn apply_blueprint(
     let src_soul = blueprint_dir.join("SOUL.md");
     if src_soul.is_file() {
         std::fs::copy(&src_soul, config_dir.join("SOUL.md"))
-            .map_err(|e| StarpodError::Config(format!(
-                "Failed to copy SOUL.md: {}", e
-            )))?;
+            .map_err(|e| StarpodError::Config(format!("Failed to copy SOUL.md: {}", e)))?;
         debug!("Copied SOUL.md from blueprint");
     }
 
@@ -208,14 +205,15 @@ pub fn build_standalone(
     }
 
     // 1. Create directory structure
-    std::fs::create_dir_all(&config_dir)
-        .map_err(|e| StarpodError::Config(format!(
-            "Failed to create .starpod/config/ in {}: {}", output_dir.display(), e
-        )))?;
-    std::fs::create_dir_all(starpod_dir.join("db"))
-        .map_err(StarpodError::Io)?;
-    std::fs::create_dir_all(starpod_dir.join("users"))
-        .map_err(StarpodError::Io)?;
+    std::fs::create_dir_all(&config_dir).map_err(|e| {
+        StarpodError::Config(format!(
+            "Failed to create .starpod/config/ in {}: {}",
+            output_dir.display(),
+            e
+        ))
+    })?;
+    std::fs::create_dir_all(starpod_dir.join("db")).map_err(StarpodError::Io)?;
+    std::fs::create_dir_all(starpod_dir.join("users")).map_err(StarpodError::Io)?;
 
     // 1b. Create home/ directory with placeholder subdirs
     let home_dir = output_dir.join("home");
@@ -236,18 +234,14 @@ pub fn build_standalone(
 
     // agent.toml (always refresh)
     std::fs::copy(&src_toml, config_dir.join("agent.toml"))
-        .map_err(|e| StarpodError::Config(format!(
-            "Failed to copy agent.toml: {}", e
-        )))?;
+        .map_err(|e| StarpodError::Config(format!("Failed to copy agent.toml: {}", e)))?;
     debug!("Copied agent.toml from blueprint");
 
     // SOUL.md (always refresh)
     let src_soul = blueprint_dir.join("SOUL.md");
     if src_soul.is_file() {
         std::fs::copy(&src_soul, config_dir.join("SOUL.md"))
-            .map_err(|e| StarpodError::Config(format!(
-                "Failed to copy SOUL.md: {}", e
-            )))?;
+            .map_err(|e| StarpodError::Config(format!("Failed to copy SOUL.md: {}", e)))?;
         debug!("Copied SOUL.md from blueprint");
     }
 
@@ -255,9 +249,7 @@ pub fn build_standalone(
     let src_deploy = blueprint_dir.join("deploy.toml");
     if src_deploy.is_file() {
         std::fs::copy(&src_deploy, config_dir.join("deploy.toml"))
-            .map_err(|e| StarpodError::Config(format!(
-                "Failed to copy deploy.toml: {}", e
-            )))?;
+            .map_err(|e| StarpodError::Config(format!("Failed to copy deploy.toml: {}", e)))?;
         debug!("Copied deploy.toml from blueprint");
     }
 
@@ -333,8 +325,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> crate::Result<()> {
 
 /// Recursively copy files from `src` to `dst`, skipping `.starpod/` in dst.
 fn sync_files(src: &Path, dst: &Path) -> crate::Result<()> {
-    let entries = std::fs::read_dir(src)
-        .map_err(StarpodError::Io)?;
+    let entries = std::fs::read_dir(src).map_err(StarpodError::Io)?;
 
     for entry in entries {
         let entry = entry.map_err(StarpodError::Io)?;
@@ -356,9 +347,7 @@ fn sync_files(src: &Path, dst: &Path) -> crate::Result<()> {
             // Only copy if destination doesn't exist (preserve agent-created files)
             if !dst_path.exists() {
                 std::fs::copy(&src_path, &dst_path).map_err(|e| {
-                    StarpodError::Config(format!(
-                        "Failed to sync {}: {}", src_path.display(), e
-                    ))
+                    StarpodError::Config(format!("Failed to sync {}: {}", src_path.display(), e))
                 })?;
             }
         }
@@ -390,11 +379,8 @@ pub fn create_ephemeral_instance() -> crate::Result<(tempfile::TempDir, crate::R
     std::fs::create_dir_all(starpod_dir.join("skills")).map_err(StarpodError::Io)?;
 
     // Minimal agent.toml — all fields default via serde
-    std::fs::write(
-        config_dir.join("agent.toml"),
-        "agent_name = \"Starpod\"\n",
-    )
-    .map_err(StarpodError::Io)?;
+    std::fs::write(config_dir.join("agent.toml"), "agent_name = \"Starpod\"\n")
+        .map_err(StarpodError::Io)?;
 
     // Empty SOUL.md
     std::fs::write(config_dir.join("SOUL.md"), "").map_err(StarpodError::Io)?;
@@ -417,11 +403,9 @@ mod tests {
         std::fs::write(
             blueprint.join("agent.toml"),
             "agent_name = \"TestBot\"\nmodel = \"claude-haiku-4-5\"\n",
-        ).unwrap();
-        std::fs::write(
-            blueprint.join("SOUL.md"),
-            "# Soul\n\nYou are TestBot.\n",
-        ).unwrap();
+        )
+        .unwrap();
+        std::fs::write(blueprint.join("SOUL.md"), "# Soul\n\nYou are TestBot.\n").unwrap();
 
         // .env lives at workspace root (tmp root), not in the blueprint
         std::fs::write(tmp.path().join(".env"), "PROD_KEY=secret\n").unwrap();
@@ -446,7 +430,10 @@ mod tests {
         let cfg = sp.join("config");
         assert!(cfg.join("agent.toml").is_file());
         assert!(cfg.join("SOUL.md").is_file());
-        assert!(!sp.join(".env").exists(), ".env should not be copied — vault handles secrets");
+        assert!(
+            !sp.join(".env").exists(),
+            ".env should not be copied — vault handles secrets"
+        );
         assert!(sp.join("db").is_dir());
         assert!(cfg.join("HEARTBEAT.md").exists());
         assert!(cfg.join("BOOT.md").exists());
@@ -484,7 +471,11 @@ mod tests {
 
         apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Dev).unwrap();
 
-        assert!(instance.join("home").join("templates").join("report.md").is_file());
+        assert!(instance
+            .join("home")
+            .join("templates")
+            .join("report.md")
+            .is_file());
     }
 
     #[test]
@@ -514,7 +505,11 @@ mod tests {
         let home = instance.join("home");
         std::fs::write(home.join("documents").join("notes.md"), "My notes").unwrap();
         std::fs::create_dir_all(home.join("projects").join("my-app")).unwrap();
-        std::fs::write(home.join("projects").join("my-app").join("main.rs"), "fn main() {}").unwrap();
+        std::fs::write(
+            home.join("projects").join("my-app").join("main.rs"),
+            "fn main() {}",
+        )
+        .unwrap();
 
         // Re-apply blueprint
         apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Dev).unwrap();
@@ -543,14 +538,15 @@ mod tests {
         std::fs::write(
             blueprint.join("agent.toml"),
             "agent_name = \"UpdatedBot\"\nmodel = \"gpt-4o\"\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         // Re-apply — agent.toml should be refreshed in config/
         apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Dev).unwrap();
 
-        let content = std::fs::read_to_string(
-            instance.join(".starpod").join("config").join("agent.toml")
-        ).unwrap();
+        let content =
+            std::fs::read_to_string(instance.join(".starpod").join("config").join("agent.toml"))
+                .unwrap();
         assert!(content.contains("UpdatedBot"));
     }
 
@@ -581,7 +577,11 @@ mod tests {
         apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Dev).unwrap();
 
         // Instance should be created with config/agent.toml but no .env file
-        assert!(instance.join(".starpod").join("config").join("agent.toml").is_file());
+        assert!(instance
+            .join(".starpod")
+            .join("config")
+            .join("agent.toml")
+            .is_file());
         assert!(!instance.join(".starpod").join(".env").exists());
     }
 
@@ -616,12 +616,14 @@ mod tests {
         std::fs::write(
             ws_skills.join("code-review").join("SKILL.md"),
             "---\nname: code-review\ndescription: Review code.\n---\n\nCheck for bugs.",
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::create_dir_all(ws_skills.join("summarize")).unwrap();
         std::fs::write(
             ws_skills.join("summarize").join("SKILL.md"),
             "---\nname: summarize\ndescription: Summarize text.\n---\n\nBe concise.",
-        ).unwrap();
+        )
+        .unwrap();
 
         apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Dev).unwrap();
 
@@ -631,9 +633,8 @@ mod tests {
         assert!(inst_skills.join("summarize").join("SKILL.md").is_file());
 
         // Verify content was copied correctly
-        let content = std::fs::read_to_string(
-            inst_skills.join("code-review").join("SKILL.md")
-        ).unwrap();
+        let content =
+            std::fs::read_to_string(inst_skills.join("code-review").join("SKILL.md")).unwrap();
         assert!(content.contains("Check for bugs"));
     }
 
@@ -649,7 +650,8 @@ mod tests {
         std::fs::write(
             ws_skills.join("ws-skill").join("SKILL.md"),
             "---\nname: ws-skill\ndescription: From workspace.\n---\n\nOriginal.",
-        ).unwrap();
+        )
+        .unwrap();
 
         apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Dev).unwrap();
 
@@ -659,13 +661,15 @@ mod tests {
         std::fs::write(
             inst_skills.join("agent-skill").join("SKILL.md"),
             "---\nname: agent-skill\ndescription: Created by agent.\n---\n\nRuntime skill.",
-        ).unwrap();
+        )
+        .unwrap();
 
         // Update the workspace skill (new version)
         std::fs::write(
             ws_skills.join("ws-skill").join("SKILL.md"),
             "---\nname: ws-skill\ndescription: Updated.\n---\n\nModified.",
-        ).unwrap();
+        )
+        .unwrap();
 
         // Re-apply blueprint
         apply_blueprint(&blueprint, &instance, tmp.path(), EnvSource::Dev).unwrap();
@@ -674,10 +678,12 @@ mod tests {
         assert!(inst_skills.join("agent-skill").join("SKILL.md").is_file());
 
         // Blueprint skill should be overwritten with new version
-        let content = std::fs::read_to_string(
-            inst_skills.join("ws-skill").join("SKILL.md")
-        ).unwrap();
-        assert!(content.contains("Modified"), "Blueprint skill should be overwritten on re-apply");
+        let content =
+            std::fs::read_to_string(inst_skills.join("ws-skill").join("SKILL.md")).unwrap();
+        assert!(
+            content.contains("Modified"),
+            "Blueprint skill should be overwritten on re-apply"
+        );
     }
 
     #[test]
@@ -703,7 +709,8 @@ mod tests {
         std::fs::write(
             blueprint.join("agent.toml"),
             "agent_name = \"TestBot\"\nmodel = \"claude-haiku-4-5\"\n",
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(
             blueprint.join("deploy.toml"),
             "version = 1\n\n[agent.secrets.ANTHROPIC_API_KEY]\nrequired = true\ndescription = \"key\"\n",
@@ -715,7 +722,10 @@ mod tests {
         build_standalone(&blueprint, &output, None, None, false).unwrap();
 
         let deployed = output.join(".starpod").join("config").join("deploy.toml");
-        assert!(deployed.is_file(), "deploy.toml should be copied to .starpod/config/");
+        assert!(
+            deployed.is_file(),
+            "deploy.toml should be copied to .starpod/config/"
+        );
         let content = std::fs::read_to_string(&deployed).unwrap();
         assert!(content.contains("ANTHROPIC_API_KEY"));
     }
@@ -728,11 +738,9 @@ mod tests {
         std::fs::write(
             blueprint.join("agent.toml"),
             "agent_name = \"TestBot\"\nmodel = \"claude-haiku-4-5\"\n",
-        ).unwrap();
-        std::fs::write(
-            blueprint.join("SOUL.md"),
-            "# Soul\n\nYou are TestBot.\n",
-        ).unwrap();
+        )
+        .unwrap();
+        std::fs::write(blueprint.join("SOUL.md"), "# Soul\n\nYou are TestBot.\n").unwrap();
 
         let output = tmp.path().join("deploy");
         std::fs::create_dir_all(&output).unwrap();
@@ -822,7 +830,8 @@ mod tests {
             None,
             Some(Path::new("/nonexistent/.env")),
             false,
-        ).unwrap(); // should not error
+        )
+        .unwrap(); // should not error
     }
 
     #[test]
@@ -837,7 +846,8 @@ mod tests {
         std::fs::write(
             skills.join("code-review").join("SKILL.md"),
             "---\nname: code-review\n---\nReview code.",
-        ).unwrap();
+        )
+        .unwrap();
 
         let output = tmp.path().join("deploy");
         std::fs::create_dir_all(&output).unwrap();
@@ -845,7 +855,12 @@ mod tests {
         build_standalone(&blueprint, &output, Some(&skills), None, false).unwrap();
 
         // Skills stay at starpod root, not in config/
-        assert!(output.join(".starpod").join("skills").join("code-review").join("SKILL.md").is_file());
+        assert!(output
+            .join(".starpod")
+            .join("skills")
+            .join("code-review")
+            .join("SKILL.md")
+            .is_file());
     }
 
     #[test]
@@ -864,7 +879,11 @@ mod tests {
 
         build_standalone(&blueprint, &output, None, None, false).unwrap();
 
-        assert!(output.join("home").join("templates").join("report.md").is_file());
+        assert!(output
+            .join("home")
+            .join("templates")
+            .join("report.md")
+            .is_file());
     }
 
     #[test]
@@ -899,10 +918,11 @@ mod tests {
 
         build_standalone(&blueprint, &output, None, None, false).unwrap();
 
-        let content = std::fs::read_to_string(output.join(".starpod").join("config").join("BOOT.md")).unwrap();
+        let content =
+            std::fs::read_to_string(output.join(".starpod").join("config").join("BOOT.md"))
+                .unwrap();
         assert!(content.contains("Run migrations on startup"));
     }
-
 
     #[test]
     fn build_standalone_no_env_when_not_provided() {
@@ -918,7 +938,11 @@ mod tests {
 
         assert!(!output.join(".starpod").join(".env").exists());
         // But config/ should exist with agent.toml
-        assert!(output.join(".starpod").join("config").join("agent.toml").is_file());
+        assert!(output
+            .join(".starpod")
+            .join("config")
+            .join("agent.toml")
+            .is_file());
     }
 
     // ── Config/runtime separation tests ──────────────────────────
@@ -937,7 +961,11 @@ mod tests {
 
         let skills = tmp.path().join("skills");
         std::fs::create_dir_all(skills.join("greet")).unwrap();
-        std::fs::write(skills.join("greet").join("SKILL.md"), "---\nname: greet\n---\nHi.").unwrap();
+        std::fs::write(
+            skills.join("greet").join("SKILL.md"),
+            "---\nname: greet\n---\nHi.",
+        )
+        .unwrap();
 
         let output = tmp.path().join("deploy");
         std::fs::create_dir_all(&output).unwrap();
@@ -1016,7 +1044,8 @@ mod tests {
         std::fs::write(
             skills.join("bp-skill").join("SKILL.md"),
             "---\nname: bp-skill\n---\nBlueprint v1.",
-        ).unwrap();
+        )
+        .unwrap();
 
         let output = tmp.path().join("deploy");
         std::fs::create_dir_all(&output).unwrap();
@@ -1030,25 +1059,33 @@ mod tests {
         std::fs::write(
             inst_skills.join("user-skill").join("SKILL.md"),
             "---\nname: user-skill\n---\nCreated by agent.",
-        ).unwrap();
+        )
+        .unwrap();
 
         // Update blueprint skill
         std::fs::write(
             skills.join("bp-skill").join("SKILL.md"),
             "---\nname: bp-skill\n---\nBlueprint v2.",
-        ).unwrap();
+        )
+        .unwrap();
 
         // Second build with --force
         build_standalone(&blueprint, &output, Some(&skills), None, true).unwrap();
 
         // Blueprint skill should be updated
         let bp = std::fs::read_to_string(inst_skills.join("bp-skill").join("SKILL.md")).unwrap();
-        assert!(bp.contains("Blueprint v2"), "Blueprint skill should be overwritten");
+        assert!(
+            bp.contains("Blueprint v2"),
+            "Blueprint skill should be overwritten"
+        );
 
         // User skill should be preserved
         assert!(inst_skills.join("user-skill").join("SKILL.md").is_file());
         let us = std::fs::read_to_string(inst_skills.join("user-skill").join("SKILL.md")).unwrap();
-        assert!(us.contains("Created by agent"), "User-created skill should be preserved");
+        assert!(
+            us.contains("Created by agent"),
+            "User-created skill should be preserved"
+        );
     }
 
     #[test]
@@ -1118,10 +1155,16 @@ mod tests {
         {
             let (tmp, _paths) = create_ephemeral_instance().unwrap();
             dir_path = tmp.path().to_path_buf();
-            assert!(dir_path.exists(), "Temp dir should exist while guard is held");
+            assert!(
+                dir_path.exists(),
+                "Temp dir should exist while guard is held"
+            );
         }
         // TempDir dropped — directory should be cleaned up
-        assert!(!dir_path.exists(), "Temp dir should be removed after guard drops");
+        assert!(
+            !dir_path.exists(),
+            "Temp dir should be removed after guard drops"
+        );
     }
 
     #[test]

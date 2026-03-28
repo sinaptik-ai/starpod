@@ -16,11 +16,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Create a hook that blocks writes to .env files
     let protect_env = hook_fn(|input, _tool_use_id, _cancel| async move {
-        if let HookInput::PreToolUse {
-            tool_input,
-            ..
-        } = &input
-        {
+        if let HookInput::PreToolUse { tool_input, .. } = &input {
             if let Some(file_path) = tool_input.get("file_path").and_then(|v| v.as_str()) {
                 if file_path.ends_with(".env") {
                     return Ok(HookOutput::Sync(SyncHookOutput {
@@ -60,8 +56,7 @@ async fn main() -> anyhow::Result<()> {
             .hook(
                 HookEvent::PreToolUse,
                 vec![
-                    HookCallbackMatcher::new(vec![protect_env])
-                        .with_matcher("Write|Edit"),
+                    HookCallbackMatcher::new(vec![protect_env]).with_matcher("Write|Edit"),
                     HookCallbackMatcher::new(vec![log_tools]),
                 ],
             )

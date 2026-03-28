@@ -96,10 +96,7 @@ mod tests {
 
     #[test]
     fn rrf_fts_only() {
-        let fts = vec![
-            make_result("a.md", 1, -10.0),
-            make_result("b.md", 1, -5.0),
-        ];
+        let fts = vec![make_result("a.md", 1, -10.0), make_result("b.md", 1, -5.0)];
         let results = reciprocal_rank_fusion(&fts, &[], 10);
         assert_eq!(results.len(), 2);
         // First result should have better (more negative) rank
@@ -109,10 +106,7 @@ mod tests {
 
     #[test]
     fn rrf_vector_only() {
-        let vec_results = vec![
-            make_result("c.md", 1, -0.9),
-            make_result("d.md", 1, -0.5),
-        ];
+        let vec_results = vec![make_result("c.md", 1, -0.9), make_result("d.md", 1, -0.5)];
         let results = reciprocal_rank_fusion(&[], &vec_results, 10);
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].source, "c.md");
@@ -121,14 +115,8 @@ mod tests {
     #[test]
     fn rrf_overlap_boosts_shared_results() {
         // "a.md" appears in both lists — should get boosted
-        let fts = vec![
-            make_result("a.md", 1, -10.0),
-            make_result("b.md", 1, -5.0),
-        ];
-        let vec_results = vec![
-            make_result("a.md", 1, -0.9),
-            make_result("c.md", 1, -0.5),
-        ];
+        let fts = vec![make_result("a.md", 1, -10.0), make_result("b.md", 1, -5.0)];
+        let vec_results = vec![make_result("a.md", 1, -0.9), make_result("c.md", 1, -0.5)];
         let results = reciprocal_rank_fusion(&fts, &vec_results, 10);
         assert_eq!(results[0].source, "a.md", "Shared result should rank first");
         assert_eq!(results.len(), 3); // a.md, b.md, c.md (deduplicated)
@@ -164,16 +152,17 @@ mod tests {
         let fts = vec![make_result("a.md", 1, -10.0)];
         let vec_results = vec![make_result("a.md", 20, -0.9)];
         let results = reciprocal_rank_fusion(&fts, &vec_results, 10);
-        assert_eq!(results.len(), 2, "Different line ranges are distinct chunks");
+        assert_eq!(
+            results.len(),
+            2,
+            "Different line ranges are distinct chunks"
+        );
     }
 
     #[test]
     fn rrf_scores_are_negative() {
         // All output ranks should be negative (convention: more negative = better)
-        let fts = vec![
-            make_result("a.md", 1, -10.0),
-            make_result("b.md", 1, -5.0),
-        ];
+        let fts = vec![make_result("a.md", 1, -10.0), make_result("b.md", 1, -5.0)];
         let results = reciprocal_rank_fusion(&fts, &[], 10);
         for r in &results {
             assert!(r.rank < 0.0, "RRF rank should be negative, got {}", r.rank);
@@ -193,15 +182,29 @@ mod tests {
         ];
         let results = reciprocal_rank_fusion(&fts, &vec_results, 10);
 
-        let shared_rank = results.iter().find(|r| r.source == "shared.md").unwrap().rank;
-        let fts_only_rank = results.iter().find(|r| r.source == "fts_only.md").unwrap().rank;
-        let vec_only_rank = results.iter().find(|r| r.source == "vec_only.md").unwrap().rank;
+        let shared_rank = results
+            .iter()
+            .find(|r| r.source == "shared.md")
+            .unwrap()
+            .rank;
+        let fts_only_rank = results
+            .iter()
+            .find(|r| r.source == "fts_only.md")
+            .unwrap()
+            .rank;
+        let vec_only_rank = results
+            .iter()
+            .find(|r| r.source == "vec_only.md")
+            .unwrap()
+            .rank;
 
         // shared should have a more negative (better) rank
         assert!(
             shared_rank < fts_only_rank && shared_rank < vec_only_rank,
             "Shared result rank ({}) should be better than fts_only ({}) and vec_only ({})",
-            shared_rank, fts_only_rank, vec_only_rank
+            shared_rank,
+            fts_only_rank,
+            vec_only_rank
         );
     }
 }

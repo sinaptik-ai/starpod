@@ -6,15 +6,14 @@ pub mod types;
 pub mod workspace;
 
 pub use config::{
-    AttachmentsConfig, AuthConfig, BrowserConfig, ChannelsConfig, CompactionConfig,
-    CronConfig, FollowupMode, FrontendConfig, InternetConfig, MemoryConfig, StarpodConfig,
-    ProviderConfig, ProvidersConfig, ReasoningEffort, TelegramChannelConfig,
-    parse_model_spec,
+    parse_model_spec, AttachmentsConfig, AuthConfig, BrowserConfig, ChannelsConfig,
+    CompactionConfig, CronConfig, FollowupMode, FrontendConfig, InternetConfig, MemoryConfig,
+    ProviderConfig, ProvidersConfig, ReasoningEffort, StarpodConfig, TelegramChannelConfig,
 };
-pub use error::{StarpodError, Result};
-pub use instance::{EnvSource, apply_blueprint, build_standalone, create_ephemeral_instance};
+pub use error::{Result, StarpodError};
+pub use instance::{apply_blueprint, build_standalone, create_ephemeral_instance, EnvSource};
 pub use types::{Attachment, ChatMessage, ChatResponse, ChatUsage, MAX_ATTACHMENT_SIZE};
 pub use workspace::{
-    AgentConfig, Mode, ResolvedPaths, UserContext, WorkspaceConfig,
-    detect_mode, detect_mode_from, load_agent_config, load_env, reload_agent_config,
+    detect_mode, detect_mode_from, load_agent_config, load_env, reload_agent_config, AgentConfig,
+    Mode, ResolvedPaths, UserContext, WorkspaceConfig,
 };

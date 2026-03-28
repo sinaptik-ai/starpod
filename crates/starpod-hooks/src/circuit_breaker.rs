@@ -196,7 +196,10 @@ mod tests {
         cb.record_failure("h");
         // Now at 3 failures — should be tripped
         assert!(cb.is_tripped("h"));
-        assert!(matches!(cb.status("h"), BreakerStatus::Open { failures: 3, .. }));
+        assert!(matches!(
+            cb.status("h"),
+            BreakerStatus::Open { failures: 3, .. }
+        ));
     }
 
     #[test]

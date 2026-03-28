@@ -22,18 +22,15 @@ fn print_header() {
     println!();
     println!(
         "{}",
-        "  ╭──────────────────────────────────────────╮"
-            .bright_cyan()
+        "  ╭──────────────────────────────────────────╮".bright_cyan()
     );
     println!(
         "{}",
-        "  │       Agent SDK  ·  Subagent Demo        │"
-            .bright_cyan()
+        "  │       Agent SDK  ·  Subagent Demo        │".bright_cyan()
     );
     println!(
         "{}",
-        "  ╰──────────────────────────────────────────╯"
-            .bright_cyan()
+        "  ╰──────────────────────────────────────────╯".bright_cyan()
     );
     println!();
 }
@@ -106,18 +103,10 @@ async fn main() -> anyhow::Result<()> {
                     format!("Session {}", &sys.session_id[..8]).dimmed()
                 );
                 if let Some(ref model) = sys.model {
-                    println!(
-                        "  {} Model: {}",
-                        "│".dimmed(),
-                        model.bright_white()
-                    );
+                    println!("  {} Model: {}", "│".dimmed(), model.bright_white());
                 }
                 if let Some(ref tools) = sys.tools {
-                    println!(
-                        "  {} Tools: {}",
-                        "│".dimmed(),
-                        tools.join(", ").dimmed()
-                    );
+                    println!("  {} Tools: {}", "│".dimmed(), tools.join(", ").dimmed());
                 }
                 if let Some(ref agents) = sys.agents {
                     println!(
@@ -171,8 +160,7 @@ async fn main() -> anyhow::Result<()> {
                                 input.get("pattern").and_then(|v| v.as_str())
                             {
                                 pattern.to_string()
-                            } else if let Some(cmd) =
-                                input.get("command").and_then(|v| v.as_str())
+                            } else if let Some(cmd) = input.get("command").and_then(|v| v.as_str())
                             {
                                 truncate(cmd, 60)
                             } else if let Some(prompt) =
@@ -204,9 +192,7 @@ async fn main() -> anyhow::Result<()> {
                         let result_str = content
                             .as_str()
                             .map(|s| s.to_string())
-                            .unwrap_or_else(|| {
-                                serde_json::to_string(content).unwrap_or_default()
-                            });
+                            .unwrap_or_else(|| serde_json::to_string(content).unwrap_or_default());
 
                         let lines: Vec<&str> = result_str.lines().collect();
                         let preview = if lines.len() > 3 {
@@ -233,20 +219,12 @@ async fn main() -> anyhow::Result<()> {
                 print_separator();
 
                 if result.is_error {
-                    println!(
-                        "  {} {}",
-                        "✗".red().bold(),
-                        "Error".red().bold()
-                    );
+                    println!("  {} {}", "✗".red().bold(), "Error".red().bold());
                     for err in &result.errors {
                         println!("    {}", err.red());
                     }
                 } else {
-                    println!(
-                        "  {} {}",
-                        "✓".green().bold(),
-                        "Complete".green().bold()
-                    );
+                    println!("  {} {}", "✓".green().bold(), "Complete".green().bold());
                 }
 
                 if let Some(ref text) = result.result {

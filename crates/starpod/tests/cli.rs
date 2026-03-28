@@ -39,16 +39,19 @@ fn skill_new_subcommand_exists() {
 #[test]
 fn skill_new_requires_name() {
     // `skill new` without a name should fail with a usage error.
-    starpod()
-        .args(["skill", "new"])
-        .assert()
-        .failure();
+    starpod().args(["skill", "new"]).assert().failure();
 }
 
 #[test]
 fn skill_new_accepts_description_flag() {
     let output = starpod()
-        .args(["skill", "new", "pr-review", "--description", "Review PRs for security"])
+        .args([
+            "skill",
+            "new",
+            "pr-review",
+            "--description",
+            "Review PRs for security",
+        ])
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -61,7 +64,13 @@ fn skill_new_accepts_description_flag() {
 #[test]
 fn skill_new_accepts_prompt_flag() {
     let output = starpod()
-        .args(["skill", "new", "pr-review", "--prompt", "Focus on OWASP top 10"])
+        .args([
+            "skill",
+            "new",
+            "pr-review",
+            "--prompt",
+            "Focus on OWASP top 10",
+        ])
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -75,9 +84,13 @@ fn skill_new_accepts_prompt_flag() {
 fn skill_new_accepts_description_and_prompt_flags() {
     let output = starpod()
         .args([
-            "skill", "new", "pr-review",
-            "--description", "Review PRs for security",
-            "--prompt", "Focus on OWASP top 10",
+            "skill",
+            "new",
+            "pr-review",
+            "--description",
+            "Review PRs for security",
+            "--prompt",
+            "Focus on OWASP top 10",
         ])
         .output()
         .unwrap();
@@ -92,9 +105,13 @@ fn skill_new_accepts_description_and_prompt_flags() {
 fn skill_new_accepts_short_flags() {
     let output = starpod()
         .args([
-            "skill", "new", "pr-review",
-            "-d", "Review PRs",
-            "-p", "Focus on security",
+            "skill",
+            "new",
+            "pr-review",
+            "-d",
+            "Review PRs",
+            "-p",
+            "Focus on security",
         ])
         .output()
         .unwrap();
@@ -141,38 +158,33 @@ fn skill_create_subcommand_removed() {
 fn skill_new_mirrors_agent_new_pattern() {
     // Both `agent new` and `skill new` take a positional name argument.
     // This test verifies they follow the same CLI pattern.
-    let agent_output = starpod()
-        .args(["agent", "new", "--help"])
-        .output()
-        .unwrap();
+    let agent_output = starpod().args(["agent", "new", "--help"]).output().unwrap();
     let agent_help = String::from_utf8_lossy(&agent_output.stdout);
 
-    let skill_output = starpod()
-        .args(["skill", "new", "--help"])
-        .output()
-        .unwrap();
+    let skill_output = starpod().args(["skill", "new", "--help"]).output().unwrap();
     let skill_help = String::from_utf8_lossy(&skill_output.stdout);
 
     // Both should show NAME as a positional argument in usage
     // (required <NAME> or optional [NAME]).
     assert!(
-        agent_help.contains("<NAME>") || agent_help.contains("<name>")
-            || agent_help.contains("[NAME]") || agent_help.contains("[name]"),
+        agent_help.contains("<NAME>")
+            || agent_help.contains("<name>")
+            || agent_help.contains("[NAME]")
+            || agent_help.contains("[name]"),
         "agent new should have a positional NAME arg, got:\n{agent_help}"
     );
     assert!(
-        skill_help.contains("<NAME>") || skill_help.contains("<name>")
-            || skill_help.contains("[NAME]") || skill_help.contains("[name]"),
+        skill_help.contains("<NAME>")
+            || skill_help.contains("<name>")
+            || skill_help.contains("[NAME]")
+            || skill_help.contains("[name]"),
         "skill new should have a positional NAME arg, got:\n{skill_help}"
     );
 }
 
 #[test]
 fn skill_new_help_mentions_ai() {
-    let output = starpod()
-        .args(["skill", "new", "--help"])
-        .output()
-        .unwrap();
+    let output = starpod().args(["skill", "new", "--help"]).output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("AI") || stdout.contains("generat"),
@@ -198,10 +210,7 @@ fn skill_parent_accepts_agent_flag() {
 
 #[test]
 fn skill_list_subcommand_exists() {
-    let output = starpod()
-        .args(["skill", "list"])
-        .output()
-        .unwrap();
+    let output = starpod().args(["skill", "list"]).output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !stderr.contains("unrecognized subcommand"),
@@ -211,18 +220,12 @@ fn skill_list_subcommand_exists() {
 
 #[test]
 fn skill_show_requires_name() {
-    starpod()
-        .args(["skill", "show"])
-        .assert()
-        .failure();
+    starpod().args(["skill", "show"]).assert().failure();
 }
 
 #[test]
 fn skill_delete_requires_name() {
-    starpod()
-        .args(["skill", "delete"])
-        .assert()
-        .failure();
+    starpod().args(["skill", "delete"]).assert().failure();
 }
 
 #[test]
@@ -256,7 +259,10 @@ fn agent_new_uses_name_as_display_name() {
 
     // frontend.toml should be scaffolded with defaults
     let frontend_path = ws.path().join("agents/mybot/frontend.toml");
-    assert!(frontend_path.exists(), "frontend.toml should be created by agent new");
+    assert!(
+        frontend_path.exists(),
+        "frontend.toml should be created by agent new"
+    );
     let frontend_content = fs::read_to_string(&frontend_path).unwrap();
     assert!(
         frontend_content.contains("prompts"),
@@ -275,7 +281,14 @@ fn agent_new_agent_name_flag_overrides() {
     let ws = workspace();
     starpod()
         .current_dir(ws.path())
-        .args(["agent", "new", "mybot", "--default", "--agent-name", "Jarvis"])
+        .args([
+            "agent",
+            "new",
+            "mybot",
+            "--default",
+            "--agent-name",
+            "Jarvis",
+        ])
         .assert()
         .success();
 
@@ -304,11 +317,9 @@ fn build_creates_starpod_directory() {
     fs::write(
         agent_dir.join("agent.toml"),
         "agent_name = \"TestBot\"\nmodel = \"claude-haiku-4-5\"\n",
-    ).unwrap();
-    fs::write(
-        agent_dir.join("SOUL.md"),
-        "# Soul\n\nYou are TestBot.\n",
-    ).unwrap();
+    )
+    .unwrap();
+    fs::write(agent_dir.join("SOUL.md"), "# Soul\n\nYou are TestBot.\n").unwrap();
 
     // Provide .env with required secrets so build validation passes
     let env_file = tmp.path().join("test.env");
@@ -320,17 +331,26 @@ fn build_creates_starpod_directory() {
     starpod()
         .args([
             "build",
-            "--agent", agent_dir.to_str().unwrap(),
-            "--output", output_dir.to_str().unwrap(),
-            "--env", env_file.to_str().unwrap(),
+            "--agent",
+            agent_dir.to_str().unwrap(),
+            "--output",
+            output_dir.to_str().unwrap(),
+            "--env",
+            env_file.to_str().unwrap(),
         ])
         .assert()
         .success();
 
     let sp = output_dir.join(".starpod");
     let cfg = sp.join("config");
-    assert!(cfg.join("agent.toml").is_file(), ".starpod/config/agent.toml should exist");
-    assert!(cfg.join("SOUL.md").is_file(), ".starpod/config/SOUL.md should exist");
+    assert!(
+        cfg.join("agent.toml").is_file(),
+        ".starpod/config/agent.toml should exist"
+    );
+    assert!(
+        cfg.join("SOUL.md").is_file(),
+        ".starpod/config/SOUL.md should exist"
+    );
     assert!(sp.join("db").is_dir(), ".starpod/db/ should exist");
     assert!(sp.join("users").is_dir(), ".starpod/users/ should exist");
 }
@@ -344,10 +364,7 @@ fn build_fails_without_agent_toml() {
     // No agent.toml
 
     starpod()
-        .args([
-            "build",
-            "--agent", agent_dir.to_str().unwrap(),
-        ])
+        .args(["build", "--agent", agent_dir.to_str().unwrap()])
         .assert()
         .failure();
 }
@@ -362,7 +379,11 @@ fn build_with_env_file() {
 
     // Include required ANTHROPIC_API_KEY alongside custom vars
     let env_file = tmp.path().join("prod.env");
-    fs::write(&env_file, "ANTHROPIC_API_KEY=sk-test-dummy\nAPI_KEY=secret123\n").unwrap();
+    fs::write(
+        &env_file,
+        "ANTHROPIC_API_KEY=sk-test-dummy\nAPI_KEY=secret123\n",
+    )
+    .unwrap();
 
     let output_dir = tmp.path().join("deploy");
     fs::create_dir_all(&output_dir).unwrap();
@@ -370,9 +391,12 @@ fn build_with_env_file() {
     starpod()
         .args([
             "build",
-            "--agent", agent_dir.to_str().unwrap(),
-            "--output", output_dir.to_str().unwrap(),
-            "--env", env_file.to_str().unwrap(),
+            "--agent",
+            agent_dir.to_str().unwrap(),
+            "--output",
+            output_dir.to_str().unwrap(),
+            "--env",
+            env_file.to_str().unwrap(),
         ])
         .assert()
         .success();
@@ -400,7 +424,8 @@ fn build_with_skills() {
     fs::write(
         skills_dir.join("greet").join("SKILL.md"),
         "---\nname: greet\ndescription: Greet users.\n---\nSay hello.",
-    ).unwrap();
+    )
+    .unwrap();
 
     let output_dir = tmp.path().join("deploy");
     fs::create_dir_all(&output_dir).unwrap();
@@ -408,10 +433,14 @@ fn build_with_skills() {
     starpod()
         .args([
             "build",
-            "--agent", agent_dir.to_str().unwrap(),
-            "--skills", skills_dir.to_str().unwrap(),
-            "--output", output_dir.to_str().unwrap(),
-            "--env", env_file.to_str().unwrap(),
+            "--agent",
+            agent_dir.to_str().unwrap(),
+            "--skills",
+            skills_dir.to_str().unwrap(),
+            "--output",
+            output_dir.to_str().unwrap(),
+            "--env",
+            env_file.to_str().unwrap(),
         ])
         .assert()
         .success();
@@ -598,7 +627,11 @@ fn agent_list_json_output() {
     let ws = workspace();
     // Create an agent so we get non-empty output
     fs::create_dir_all(ws.path().join("agents/test-bot")).unwrap();
-    fs::write(ws.path().join("agents/test-bot/agent.toml"), "agent_name = \"Bot\"\n").unwrap();
+    fs::write(
+        ws.path().join("agents/test-bot/agent.toml"),
+        "agent_name = \"Bot\"\n",
+    )
+    .unwrap();
 
     let output = starpod_json()
         .current_dir(ws.path())
@@ -650,10 +683,7 @@ fn agent_diff_subcommand_exists() {
 
 #[test]
 fn agent_diff_requires_name() {
-    starpod()
-        .args(["agent", "diff"])
-        .assert()
-        .failure();
+    starpod().args(["agent", "diff"]).assert().failure();
 }
 
 // ── P1: push --dry-run ────────────────────────────────────────────────

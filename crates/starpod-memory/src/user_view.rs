@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use starpod_core::{StarpodError, Result};
+use starpod_core::{Result, StarpodError};
 
 use crate::scoring;
 use crate::store::{MemoryStore, SearchResult};
@@ -49,17 +49,15 @@ impl UserMemoryView {
         // Seed defaults if they don't exist
         let user_md = user_dir.join("USER.md");
         if !user_md.exists() {
-            std::fs::write(
-                &user_md,
-                crate::defaults::DEFAULT_USER,
-            ).map_err(StarpodError::Io)?;
+            std::fs::write(&user_md, crate::defaults::DEFAULT_USER).map_err(StarpodError::Io)?;
         }
         let memory_md = user_dir.join("MEMORY.md");
         if !memory_md.exists() {
             std::fs::write(
                 &memory_md,
                 "# Memory Index\n\nImportant facts and links to memory files.\n",
-            ).map_err(StarpodError::Io)?;
+            )
+            .map_err(StarpodError::Io)?;
         }
 
         // Create per-user memory store (owns its own FTS5 index in user_dir/memory.db)
@@ -97,11 +95,7 @@ impl UserMemoryView {
             let mut entries: Vec<_> = std::fs::read_dir(&memory_dir)
                 .map_err(StarpodError::Io)?
                 .filter_map(|e| e.ok())
-                .filter(|e| {
-                    e.path()
-                        .extension()
-                        .is_some_and(|ext| ext == "md")
-                })
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
                 .collect();
             entries.sort_by_key(|b| std::cmp::Reverse(b.file_name()));
             entries.truncate(3);
@@ -134,7 +128,11 @@ impl UserMemoryView {
 
         // Merge: interleave by rank (more negative = better match)
         results.append(&mut user_hits);
-        results.sort_by(|a, b| a.rank.partial_cmp(&b.rank).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            a.rank
+                .partial_cmp(&b.rank)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(limit);
 
         Ok(results)
@@ -179,9 +177,7 @@ impl UserMemoryView {
 
 /// Check if a file path should be stored per-user.
 fn is_user_file(name: &str) -> bool {
-    name == "USER.md"
-        || name == "MEMORY.md"
-        || name.starts_with("memory/")
+    name == "USER.md" || name == "MEMORY.md" || name.starts_with("memory/")
 }
 
 /// Read a file from the user directory, returning empty string if not found.
@@ -198,7 +194,9 @@ fn read_user_file(user_dir: &Path, name: &str) -> Result<String> {
 fn cap_str(s: &str, max: usize) -> &str {
     if s.len() > max {
         let mut end = max;
-        while end > 0 && !s.is_char_boundary(end) { end -= 1; }
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
         &s[..end]
     } else {
         s
@@ -216,7 +214,11 @@ mod tests {
         let agent_home = tmp.path().join("agent_home");
         let config_dir = agent_home.join("config");
         let db_dir = tmp.path().join("db");
-        let store = Arc::new(MemoryStore::new(&agent_home, &config_dir, &db_dir).await.unwrap());
+        let store = Arc::new(
+            MemoryStore::new(&agent_home, &config_dir, &db_dir)
+                .await
+                .unwrap(),
+        );
         let user_dir = tmp.path().join("users").join("alice");
         (tmp, store, user_dir)
     }
@@ -253,7 +255,9 @@ mod tests {
     #[tokio::test]
     async fn user_view_write_routes_correctly() {
         let (_tmp, store, user_dir) = setup().await;
-        let view = UserMemoryView::new(Arc::clone(&store), user_dir.clone()).await.unwrap();
+        let view = UserMemoryView::new(Arc::clone(&store), user_dir.clone())
+            .await
+            .unwrap();
 
         // USER.md goes to user dir
         view.write_file("USER.md", "# User\nBob\n").await.unwrap();
@@ -262,7 +266,9 @@ mod tests {
         assert!(content.contains("Bob"));
 
         // Non-user files go to agent store
-        view.write_file("test-shared.md", "# Test\nShared content\n").await.unwrap();
+        view.write_file("test-shared.md", "# Test\nShared content\n")
+            .await
+            .unwrap();
         let content = store.read_file("test-shared.md").unwrap();
         assert!(content.contains("Shared content"));
     }
@@ -286,7 +292,9 @@ mod tests {
     #[tokio::test]
     async fn user_view_read_routes_correctly() {
         let (_tmp, store, user_dir) = setup().await;
-        let view = UserMemoryView::new(Arc::clone(&store), user_dir.clone()).await.unwrap();
+        let view = UserMemoryView::new(Arc::clone(&store), user_dir.clone())
+            .await
+            .unwrap();
 
         // Read USER.md from user dir
         std::fs::write(user_dir.join("USER.md"), "custom user data").unwrap();
@@ -301,28 +309,41 @@ mod tests {
     #[tokio::test]
     async fn user_view_search_finds_user_files() {
         let (_tmp, store, user_dir) = setup().await;
-        let view = UserMemoryView::new(Arc::clone(&store), user_dir.clone()).await.unwrap();
-
-        // Write user-specific memory content
-        view.write_file("MEMORY.md", "# Memory\n\nAlice prefers dark mode and Vim keybindings.\n")
+        let view = UserMemoryView::new(Arc::clone(&store), user_dir.clone())
             .await
             .unwrap();
 
+        // Write user-specific memory content
+        view.write_file(
+            "MEMORY.md",
+            "# Memory\n\nAlice prefers dark mode and Vim keybindings.\n",
+        )
+        .await
+        .unwrap();
+
         // Search should find user content
         let results = view.search("dark mode Vim", 5).await.unwrap();
-        assert!(!results.is_empty(), "Should find user memory content via FTS");
+        assert!(
+            !results.is_empty(),
+            "Should find user memory content via FTS"
+        );
         assert!(results.iter().any(|r| r.text.contains("dark mode")));
     }
 
     #[tokio::test]
     async fn user_view_search_merges_agent_and_user() {
         let (_tmp, store, user_dir) = setup().await;
-        let view = UserMemoryView::new(Arc::clone(&store), user_dir.clone()).await.unwrap();
-
-        // Write user-specific content
-        view.write_file("MEMORY.md", "# Memory\n\nThe assistant helps with Rust code.\n")
+        let view = UserMemoryView::new(Arc::clone(&store), user_dir.clone())
             .await
             .unwrap();
+
+        // Write user-specific content
+        view.write_file(
+            "MEMORY.md",
+            "# Memory\n\nThe assistant helps with Rust code.\n",
+        )
+        .await
+        .unwrap();
 
         // Search for "assistant" — should match both SOUL.md (agent) and MEMORY.md (user)
         let results = view.search("assistant", 10).await.unwrap();
@@ -336,12 +357,19 @@ mod tests {
     #[tokio::test]
     async fn user_view_append_daily_is_searchable() {
         let (_tmp, store, user_dir) = setup().await;
-        let view = UserMemoryView::new(Arc::clone(&store), user_dir.clone()).await.unwrap();
+        let view = UserMemoryView::new(Arc::clone(&store), user_dir.clone())
+            .await
+            .unwrap();
 
-        view.append_daily("Discussed quantum computing with Bob").await.unwrap();
+        view.append_daily("Discussed quantum computing with Bob")
+            .await
+            .unwrap();
 
         let results = view.search("quantum computing", 5).await.unwrap();
-        assert!(!results.is_empty(), "Daily log entries should be searchable");
+        assert!(
+            !results.is_empty(),
+            "Daily log entries should be searchable"
+        );
         assert!(results.iter().any(|r| r.text.contains("quantum computing")));
     }
 
@@ -363,7 +391,7 @@ mod tests {
         // Slicing at 4 would split the 'é' (bytes 3-4). cap_str should not panic.
         let result = cap_str(s, 4);
         assert_eq!(result, "caf"); // truncates before the multi-byte char
-        // Slicing at 5 returns the full string
+                                   // Slicing at 5 returns the full string
         assert_eq!(cap_str(s, 5), "café");
         assert_eq!(cap_str(s, 100), "café");
         // Edge: cap at 0
@@ -385,10 +413,15 @@ mod tests {
     #[tokio::test]
     async fn read_user_file_rejects_traversal() {
         let (_tmp, store, user_dir) = setup().await;
-        let _view = UserMemoryView::new(Arc::clone(&store), user_dir.clone()).await.unwrap();
+        let _view = UserMemoryView::new(Arc::clone(&store), user_dir.clone())
+            .await
+            .unwrap();
 
         // Attempt path traversal via user file path
         let result = read_user_file(&user_dir, "memory/../../../etc/passwd");
-        assert!(result.is_err(), "read_user_file should reject path traversal");
+        assert!(
+            result.is_err(),
+            "read_user_file should reject path traversal"
+        );
     }
 }

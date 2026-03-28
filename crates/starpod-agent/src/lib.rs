@@ -9,15 +9,20 @@ use chrono::Local;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
 
-use agent_sdk::{ExternalToolHandlerFn, LlmProvider, Message, ModelRegistry, OllamaDiscovery, Options, PermissionMode, Query, QueryAttachment};
-use agent_sdk::{AnthropicProvider, BedrockProvider, GeminiProvider, OpenAiProvider, VertexProvider};
 use agent_sdk::options::{SystemPrompt, ThinkingConfig};
+use agent_sdk::{
+    AnthropicProvider, BedrockProvider, GeminiProvider, OpenAiProvider, VertexProvider,
+};
+use agent_sdk::{
+    ExternalToolHandlerFn, LlmProvider, Message, ModelRegistry, OllamaDiscovery, Options,
+    PermissionMode, Query, QueryAttachment,
+};
 use starpod_core::{FollowupMode, ReasoningEffort};
 use tokio::sync::mpsc;
 
 use starpod_core::{
-    Attachment, ChatMessage, ChatResponse, ChatUsage, StarpodConfig, StarpodError, Result,
-    AgentConfig, ResolvedPaths,
+    AgentConfig, Attachment, ChatMessage, ChatResponse, ChatUsage, ResolvedPaths, Result,
+    StarpodConfig, StarpodError,
 };
 use starpod_cron::CronStore;
 use starpod_db::CoreDb;
@@ -29,15 +34,35 @@ use crate::tools::{custom_tool_definitions, handle_custom_tool, ToolContext};
 
 /// All custom tool names.
 const CUSTOM_TOOLS: &[&str] = &[
-    "MemorySearch", "MemoryWrite", "MemoryAppendDaily",
+    "MemorySearch",
+    "MemoryWrite",
+    "MemoryAppendDaily",
     "EnvGet",
-    "FileRead", "FileWrite", "FileList", "FileDelete",
-    "SkillActivate", "SkillCreate", "SkillUpdate", "SkillDelete", "SkillList",
-    "CronAdd", "CronList", "CronRemove", "CronRuns",
-    "CronRun", "CronUpdate", "HeartbeatWake",
-    "WebSearch", "WebFetch",
-    "BrowserOpen", "BrowserClick", "BrowserType",
-    "BrowserExtract", "BrowserEval", "BrowserWaitFor", "BrowserClose",
+    "FileRead",
+    "FileWrite",
+    "FileList",
+    "FileDelete",
+    "SkillActivate",
+    "SkillCreate",
+    "SkillUpdate",
+    "SkillDelete",
+    "SkillList",
+    "CronAdd",
+    "CronList",
+    "CronRemove",
+    "CronRuns",
+    "CronRun",
+    "CronUpdate",
+    "HeartbeatWake",
+    "WebSearch",
+    "WebFetch",
+    "BrowserOpen",
+    "BrowserClick",
+    "BrowserType",
+    "BrowserExtract",
+    "BrowserEval",
+    "BrowserWaitFor",
+    "BrowserClose",
     "Attach",
 ];
 
@@ -102,7 +127,11 @@ impl StarpodAgent {
             self_improve: config.self_improve,
         };
 
-        let starpod_dir = config.db_dir.parent().unwrap_or(&config.db_dir).to_path_buf();
+        let starpod_dir = config
+            .db_dir
+            .parent()
+            .unwrap_or(&config.db_dir)
+            .to_path_buf();
         let instance_root = starpod_dir.parent().unwrap_or(&starpod_dir).to_path_buf();
         let home_dir = instance_root.join("home");
         let paths = ResolvedPaths {
@@ -133,7 +162,8 @@ impl StarpodAgent {
         let config = agent_config.clone().into_starpod_config(&paths);
 
         // Memory: config_dir has SOUL.md + lifecycle files; agent_home for runtime data; db_dir has memory.db
-        let mut memory = MemoryStore::new(&paths.agent_home, &paths.config_dir, &paths.db_dir).await?;
+        let mut memory =
+            MemoryStore::new(&paths.agent_home, &paths.config_dir, &paths.db_dir).await?;
         memory.set_half_life_days(config.memory.half_life_days);
         memory.set_mmr_lambda(config.memory.mmr_lambda);
         memory.set_chunk_size(config.memory.chunk_size);
@@ -154,8 +184,7 @@ impl StarpodAgent {
         let session_mgr = SessionManager::from_pool(pool.clone());
 
         // Skills from resolved skills_dir, with optional filter
-        let skills = SkillStore::new(&paths.skills_dir)?
-            .with_filter(agent_config.skills.clone());
+        let skills = SkillStore::new(&paths.skills_dir)?.with_filter(agent_config.skills.clone());
 
         // Cron from shared pool
         let mut cron = CronStore::from_pool(pool);
@@ -167,7 +196,8 @@ impl StarpodAgent {
             let vault_key_path = paths.db_dir.join(".vault_key");
             if vault_key_path.exists() {
                 let master_key = starpod_vault::derive_master_key(&paths.db_dir)?;
-                let v = starpod_vault::Vault::new(&paths.db_dir.join("vault.db"), &master_key).await?;
+                let v =
+                    starpod_vault::Vault::new(&paths.db_dir.join("vault.db"), &master_key).await?;
                 Some(Arc::new(v))
             } else {
                 None
@@ -231,10 +261,7 @@ impl StarpodAgent {
 
     /// Save attachments to disk under `{project_root}/downloads/`.
     /// Returns a list of saved file paths.
-    async fn save_attachments(
-        &self,
-        attachments: &[Attachment],
-    ) -> Vec<PathBuf> {
+    async fn save_attachments(&self, attachments: &[Attachment]) -> Vec<PathBuf> {
         if attachments.is_empty() {
             return Vec::new();
         }
@@ -248,7 +275,8 @@ impl StarpodAgent {
         let ts = Local::now().format("%Y%m%d_%H%M%S");
         let mut paths = Vec::new();
         for att in attachments {
-            let safe_name = att.file_name
+            let safe_name = att
+                .file_name
                 .replace(['/', '\\', ':', '\0'], "_")
                 .replace("..", "_");
             let filename = format!("{ts}_{safe_name}");
@@ -284,7 +312,8 @@ impl StarpodAgent {
         let mut extra_text = String::new();
 
         for (i, att) in attachments.iter().enumerate() {
-            let path = saved_paths.get(i)
+            let path = saved_paths
+                .get(i)
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|| "(save failed)".to_string());
 
@@ -322,7 +351,8 @@ impl StarpodAgent {
         while let Ok(Some(entry)) = entries.next_entry().await {
             if let Ok(meta) = entry.metadata().await {
                 if meta.is_file() {
-                    let modified = meta.modified()
+                    let modified = meta
+                        .modified()
                         .ok()
                         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                         .map(|d| d.as_secs())
@@ -341,10 +371,7 @@ impl StarpodAgent {
         files.truncate(20);
 
         let list: Vec<&str> = files.iter().map(|(name, _)| name.as_str()).collect();
-        format!(
-            "\n[Files already in downloads/: {}]",
-            list.join(", ")
-        )
+        format!("\n[Files already in downloads/: {}]", list.join(", "))
     }
 
     /// Build the system prompt from bootstrap context + skill catalog.
@@ -353,7 +380,13 @@ impl StarpodAgent {
     /// frozen per session — computed once on the first turn and reused for
     /// all subsequent turns. This keeps the prompt prefix stable for the
     /// LLM provider's prompt cache and avoids redundant disk I/O.
-    async fn build_system_prompt(&self, session_id: &str, config: &StarpodConfig, user_id: Option<&str>, activated_skill: Option<&str>) -> Result<String> {
+    async fn build_system_prompt(
+        &self,
+        session_id: &str,
+        config: &StarpodConfig,
+        user_id: Option<&str>,
+        activated_skill: Option<&str>,
+    ) -> Result<String> {
         let agent_name = &config.agent_name;
 
         // Check the per-session bootstrap cache first.
@@ -378,7 +411,9 @@ impl StarpodAgent {
         };
         let skill_catalog = self.skills.skill_catalog_excluding(activated_skill)?;
         let date_str = Local::now().format("%A, %B %d, %Y at %H:%M").to_string();
-        let tz_str = config.resolved_timezone().unwrap_or_else(|| "UTC".to_string());
+        let tz_str = config
+            .resolved_timezone()
+            .unwrap_or_else(|| "UTC".to_string());
 
         // ── Enumerate available (non-system) env vars from the vault ────
         // Only list keys that are actually in the process environment (injected
@@ -387,7 +422,8 @@ impl StarpodAgent {
         let env_vars_section = if let Some(ref vault) = self.vault {
             match vault.list_keys().await {
                 Ok(keys) => {
-                    let user_keys: Vec<&str> = keys.iter()
+                    let user_keys: Vec<&str> = keys
+                        .iter()
                         .map(|k| k.as_str())
                         .filter(|k| !starpod_vault::is_system_key(k) && std::env::var(k).is_ok())
                         .collect();
@@ -509,7 +545,6 @@ impl StarpodAgent {
 
         Ok(prompt)
     }
-
 }
 
 /// Append execution-context block to the system prompt when the message
@@ -543,17 +578,22 @@ impl StarpodAgent {
     /// Map reasoning effort config to ThinkingConfig.
     fn thinking_config(config: &StarpodConfig) -> Option<ThinkingConfig> {
         config.reasoning_effort.map(|effort| match effort {
-            ReasoningEffort::Low => ThinkingConfig::Enabled { budget_tokens: 4096 },
-            ReasoningEffort::Medium => ThinkingConfig::Enabled { budget_tokens: 10240 },
-            ReasoningEffort::High => ThinkingConfig::Enabled { budget_tokens: 32768 },
+            ReasoningEffort::Low => ThinkingConfig::Enabled {
+                budget_tokens: 4096,
+            },
+            ReasoningEffort::Medium => ThinkingConfig::Enabled {
+                budget_tokens: 10240,
+            },
+            ReasoningEffort::High => ThinkingConfig::Enabled {
+                budget_tokens: 32768,
+            },
         })
     }
 
     /// Build the allowed tools list (built-in + custom).
     fn allowed_tools() -> Vec<String> {
-        let mut tools: Vec<String> = vec![
-            "Read".into(), "Bash".into(), "Glob".into(), "Grep".into(),
-        ];
+        let mut tools: Vec<String> =
+            vec!["Read".into(), "Bash".into(), "Glob".into(), "Grep".into()];
         tools.extend(CUSTOM_TOOLS.iter().map(|s| s.to_string()));
         tools
     }
@@ -564,28 +604,33 @@ impl StarpodAgent {
     }
 
     /// Build an LLM provider for the given provider name using config for API key / base URL.
-    async fn build_provider_for(&self, provider_name: &str, config: &StarpodConfig) -> Result<Box<dyn LlmProvider>> {
+    async fn build_provider_for(
+        &self,
+        provider_name: &str,
+        config: &StarpodConfig,
+    ) -> Result<Box<dyn LlmProvider>> {
         let api_key = config.resolved_provider_api_key(provider_name)
             .ok_or_else(|| StarpodError::Config(format!(
                 "No API key found for provider '{}'. Set it in config.toml or via environment variable.",
                 provider_name
             )))?;
-        let base_url = config.resolved_provider_base_url(provider_name)
-            .ok_or_else(|| StarpodError::Config(format!(
-                "Unknown provider: '{}'",
-                provider_name
-            )))?;
+        let base_url = config
+            .resolved_provider_base_url(provider_name)
+            .ok_or_else(|| {
+                StarpodError::Config(format!("Unknown provider: '{}'", provider_name))
+            })?;
 
         let pricing = self.load_model_registry().await;
 
         let provider: Box<dyn LlmProvider> = match provider_name {
-            "anthropic" => Box::new(
-                AnthropicProvider::new(api_key, base_url).with_pricing(pricing)
-            ),
+            "anthropic" => {
+                Box::new(AnthropicProvider::new(api_key, base_url).with_pricing(pricing))
+            }
             "bedrock" => {
                 // Bedrock handles its own auth via AWS SigV4 — region from config options or env
                 let opts = config.provider_options("bedrock");
-                let region = opts.get("region")
+                let region = opts
+                    .get("region")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
                     .or_else(|| std::env::var("AWS_REGION").ok())
@@ -606,19 +651,21 @@ impl StarpodAgent {
                     .ok_or_else(|| StarpodError::Config(
                         "Vertex AI requires project_id in [providers.vertex.options] or GOOGLE_CLOUD_PROJECT env var".into()
                     ))?;
-                let region = opts.get("region")
+                let region = opts
+                    .get("region")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
                     .or_else(|| std::env::var("GOOGLE_CLOUD_LOCATION").ok())
                     .or_else(|| std::env::var("GCP_REGION").ok())
                     .unwrap_or_else(|| "us-central1".to_string());
-                let provider = VertexProvider::new(project_id, region).await
+                let provider = VertexProvider::new(project_id, region)
+                    .await
                     .map_err(|e| StarpodError::Config(format!("Vertex AI provider error: {e}")))?;
                 Box::new(provider.with_pricing(pricing))
             }
-            "gemini" => Box::new(
-                GeminiProvider::with_base_url(api_key, base_url).with_pricing(pricing)
-            ),
+            "gemini" => {
+                Box::new(GeminiProvider::with_base_url(api_key, base_url).with_pricing(pricing))
+            }
             // OpenAI-compatible providers
             "openai" | "groq" | "deepseek" | "openrouter" | "ollama" => {
                 let mut opts = config.provider_options(provider_name).clone();
@@ -629,7 +676,7 @@ impl StarpodAgent {
                 Box::new(
                     OpenAiProvider::with_base_url(api_key, base_url, provider_name)
                         .with_pricing(pricing)
-                        .with_extra_body(opts)
+                        .with_extra_body(opts),
                 )
             }
             other => {
@@ -752,7 +799,9 @@ impl StarpodAgent {
                     let combined = text_parts.join("\n");
                     let truncated = if combined.len() > 2000 {
                         let mut end = 2000;
-                        while end > 0 && !combined.is_char_boundary(end) { end -= 1; }
+                        while end > 0 && !combined.is_char_boundary(end) {
+                            end -= 1;
+                        }
                         format!("{}...", &combined[..end])
                     } else {
                         combined
@@ -771,7 +820,10 @@ impl StarpodAgent {
         }
 
         // Agentic flush: build provider and user view for the closure
-        let flush_model = config.compaction.flush_model.clone()
+        let flush_model = config
+            .compaction
+            .flush_model
+            .clone()
             .or_else(|| config.compaction_model.clone())
             .unwrap_or_else(|| config.model().to_string());
 
@@ -786,7 +838,8 @@ impl StarpodAgent {
                         let mut parts: Vec<String> = Vec::new();
                         for msg in &messages {
                             for block in &msg.content {
-                                if let agent_sdk::client::ApiContentBlock::Text { text, .. } = block {
+                                if let agent_sdk::client::ApiContentBlock::Text { text, .. } = block
+                                {
                                     parts.push(text.clone());
                                 }
                             }
@@ -795,13 +848,20 @@ impl StarpodAgent {
                             let combined = parts.join("\n");
                             let truncated = if combined.len() > 2000 {
                                 let mut end = 2000;
-                                while end > 0 && !combined.is_char_boundary(end) { end -= 1; }
+                                while end > 0 && !combined.is_char_boundary(end) {
+                                    end -= 1;
+                                }
                                 format!("{}...", &combined[..end])
-                            } else { combined };
-                            let result = if let Some(ref uv) = user_view {
-                                uv.append_daily(&format!("## Pre-compaction save\n{}", truncated)).await
                             } else {
-                                memory.append_daily(&format!("## Pre-compaction save\n{}", truncated)).await
+                                combined
+                            };
+                            let result = if let Some(ref uv) = user_view {
+                                uv.append_daily(&format!("## Pre-compaction save\n{}", truncated))
+                                    .await
+                            } else {
+                                memory
+                                    .append_daily(&format!("## Pre-compaction save\n{}", truncated))
+                                    .await
                             };
                             if let Err(e) = result {
                                 warn!("Failed to save pre-compaction context: {}", e);
@@ -839,7 +899,8 @@ impl StarpodAgent {
                     &messages,
                     &memory,
                     user_view.as_deref(),
-                ).await;
+                )
+                .await;
             })
         })
     }
@@ -918,7 +979,11 @@ impl StarpodAgent {
         let (channel, key) = resolve_channel(&message);
         let gap = config.channel_gap_minutes(channel.as_str());
         let user_id = message.user_id.as_deref().unwrap_or("admin");
-        let (session_id, is_resuming) = match self.session_mgr.resolve_session_for_user(&channel, &key, gap, user_id).await? {
+        let (session_id, is_resuming) = match self
+            .session_mgr
+            .resolve_session_for_user(&channel, &key, gap, user_id)
+            .await?
+        {
             SessionDecision::Continue(id) => {
                 debug!(session_id = %id, channel = %channel.as_str(), "Continuing existing session");
                 (id, true)
@@ -928,18 +993,24 @@ impl StarpodAgent {
                 if let Some(ref closed_id) = closed_session_id {
                     self.export_session_to_memory(closed_id).await;
                 }
-                let id = self.session_mgr.create_session_full(
-                    &channel,
-                    &key,
-                    message.user_id.as_deref().unwrap_or("admin"),
-                    message.triggered_by.as_deref(),
-                ).await?;
+                let id = self
+                    .session_mgr
+                    .create_session_full(
+                        &channel,
+                        &key,
+                        message.user_id.as_deref().unwrap_or("admin"),
+                        message.triggered_by.as_deref(),
+                    )
+                    .await?;
                 debug!(session_id = %id, channel = %channel.as_str(), "Created new session");
                 (id, false)
             }
         };
         self.session_mgr.touch_session(&session_id).await?;
-        let _ = self.session_mgr.set_title_if_empty(&session_id, &message.text).await;
+        let _ = self
+            .session_mgr
+            .set_title_if_empty(&session_id, &message.text)
+            .await;
 
         // Step 2: Save attachments to downloads/ and build query attachments
         let saved_paths = self.save_attachments(&message.attachments).await;
@@ -960,9 +1031,15 @@ impl StarpodAgent {
         };
 
         // Step 3: Build system prompt
-        let mut system_prompt = self.build_system_prompt(&session_id, &config, message.user_id.as_deref(), None).await?;
+        let mut system_prompt = self
+            .build_system_prompt(&session_id, &config, message.user_id.as_deref(), None)
+            .await?;
 
-        append_execution_context(&mut system_prompt, message.channel_id.as_deref(), message.user_id.as_deref());
+        append_execution_context(
+            &mut system_prompt,
+            message.channel_id.as_deref(),
+            message.user_id.as_deref(),
+        );
 
         // Step 4: Resolve model (may be overridden per-message) and build provider
         let (resolved_provider, resolved_model) = config
@@ -987,14 +1064,29 @@ impl StarpodAgent {
             .max_tool_result_bytes(config.compaction.max_tool_result_bytes)
             .prune_threshold_pct(config.compaction.prune_threshold_pct)
             .prune_tool_result_max_chars(config.compaction.prune_tool_result_max_chars)
-            .external_tool_handler(self.build_tool_handler(&config, message.user_id.as_deref(), Arc::clone(&out_attachments)).await)
-            .pre_compact_handler(self.build_pre_compact_handler(&config, message.user_id.as_deref()).await)
+            .external_tool_handler(
+                self.build_tool_handler(
+                    &config,
+                    message.user_id.as_deref(),
+                    Arc::clone(&out_attachments),
+                )
+                .await,
+            )
+            .pre_compact_handler(
+                self.build_pre_compact_handler(&config, message.user_id.as_deref())
+                    .await,
+            )
             .custom_tools(custom_tool_definitions())
             .attachments(query_atts)
             .provider(provider)
             .cwd(config.project_root.to_string_lossy().to_string())
             .additional_directories(vec![])
-            .env_blocklist(starpod_vault::SYSTEM_KEYS.iter().map(|k| k.to_string()).collect())
+            .env_blocklist(
+                starpod_vault::SYSTEM_KEYS
+                    .iter()
+                    .map(|k| k.to_string())
+                    .collect(),
+            )
             .hook_dirs(vec![config.db_dir.join("hooks")]);
 
         // Resume existing session to load conversation history, or set ID for new ones
@@ -1010,7 +1102,9 @@ impl StarpodAgent {
                 builder = builder.compaction_model(cm_name);
                 if cp != resolved_provider {
                     match self.build_provider_for(cp, &config).await {
-                        Ok(p) => { builder = builder.compaction_provider(p); }
+                        Ok(p) => {
+                            builder = builder.compaction_provider(p);
+                        }
                         Err(e) => {
                             tracing::warn!(provider = cp, error = %e, "Failed to build compaction provider, falling back to primary");
                         }
@@ -1062,19 +1156,25 @@ impl StarpodAgent {
                             cost_usd: result.total_cost_usd,
                         };
 
-                        let _ = self.session_mgr.record_usage(
-                            &session_id,
-                            &UsageRecord {
-                                input_tokens: u.input_tokens,
-                                output_tokens: u.output_tokens,
-                                cache_read: u.cache_read_input_tokens,
-                                cache_write: u.cache_creation_input_tokens,
-                                cost_usd: result.total_cost_usd,
-                                model: resolved_model.clone(),
-                                user_id: message.user_id.clone().unwrap_or_else(|| "admin".into()),
-                            },
-                            result.num_turns,
-                        ).await;
+                        let _ = self
+                            .session_mgr
+                            .record_usage(
+                                &session_id,
+                                &UsageRecord {
+                                    input_tokens: u.input_tokens,
+                                    output_tokens: u.output_tokens,
+                                    cache_read: u.cache_read_input_tokens,
+                                    cache_write: u.cache_creation_input_tokens,
+                                    cost_usd: result.total_cost_usd,
+                                    model: resolved_model.clone(),
+                                    user_id: message
+                                        .user_id
+                                        .clone()
+                                        .unwrap_or_else(|| "admin".into()),
+                                },
+                                result.num_turns,
+                            )
+                            .await;
                     }
 
                     if result.is_error {
@@ -1092,9 +1192,15 @@ impl StarpodAgent {
         }
 
         // Step 5: Save messages to session history
-        let _ = self.session_mgr.save_message(&session_id, "user", &message.text).await;
+        let _ = self
+            .session_mgr
+            .save_message(&session_id, "user", &message.text)
+            .await;
         if !result_text.is_empty() {
-            let _ = self.session_mgr.save_message(&session_id, "assistant", &result_text).await;
+            let _ = self
+                .session_mgr
+                .save_message(&session_id, "assistant", &result_text)
+                .await;
         }
 
         // Step 6: Append summary to daily log (opt-in, off by default when memory flush is enabled)
@@ -1106,7 +1212,9 @@ impl StarpodAgent {
                 truncate(&message.text, 200),
                 summary,
             );
-            let _ = self.append_daily_for_user(message.user_id.as_deref(), &entry).await;
+            let _ = self
+                .append_daily_for_user(message.user_id.as_deref(), &entry)
+                .await;
         }
 
         let attachments = out_attachments.lock().await.drain(..).collect();
@@ -1134,13 +1242,22 @@ impl StarpodAgent {
     pub async fn chat_stream(
         &self,
         message: &ChatMessage,
-    ) -> Result<(Query, String, mpsc::UnboundedSender<String>, Arc<tokio::sync::Mutex<Vec<Attachment>>>)> {
+    ) -> Result<(
+        Query,
+        String,
+        mpsc::UnboundedSender<String>,
+        Arc<tokio::sync::Mutex<Vec<Attachment>>>,
+    )> {
         let config = self.snapshot_config();
 
         let (channel, key) = resolve_channel(message);
         let gap = config.channel_gap_minutes(channel.as_str());
         let user_id = message.user_id.as_deref().unwrap_or("admin");
-        let (session_id, is_resuming) = match self.session_mgr.resolve_session_for_user(&channel, &key, gap, user_id).await? {
+        let (session_id, is_resuming) = match self
+            .session_mgr
+            .resolve_session_for_user(&channel, &key, gap, user_id)
+            .await?
+        {
             SessionDecision::Continue(id) => {
                 debug!(session_id = %id, channel = %channel.as_str(), "Continuing existing session");
                 (id, true)
@@ -1149,18 +1266,24 @@ impl StarpodAgent {
                 if let Some(ref closed_id) = closed_session_id {
                     self.export_session_to_memory(closed_id).await;
                 }
-                let id = self.session_mgr.create_session_full(
-                    &channel,
-                    &key,
-                    message.user_id.as_deref().unwrap_or("admin"),
-                    message.triggered_by.as_deref(),
-                ).await?;
+                let id = self
+                    .session_mgr
+                    .create_session_full(
+                        &channel,
+                        &key,
+                        message.user_id.as_deref().unwrap_or("admin"),
+                        message.triggered_by.as_deref(),
+                    )
+                    .await?;
                 debug!(session_id = %id, channel = %channel.as_str(), "Created new session");
                 (id, false)
             }
         };
         self.session_mgr.touch_session(&session_id).await?;
-        let _ = self.session_mgr.set_title_if_empty(&session_id, &message.text).await;
+        let _ = self
+            .session_mgr
+            .set_title_if_empty(&session_id, &message.text)
+            .await;
 
         // Save attachments and build query attachments
         let saved_paths = self.save_attachments(&message.attachments).await;
@@ -1207,7 +1330,14 @@ impl StarpodAgent {
             }
         }
 
-        let system_prompt = self.build_system_prompt(&session_id, &config, message.user_id.as_deref(), activated_skill.as_deref()).await?;
+        let system_prompt = self
+            .build_system_prompt(
+                &session_id,
+                &config,
+                message.user_id.as_deref(),
+                activated_skill.as_deref(),
+            )
+            .await?;
 
         // Resolve model (may be overridden per-message)
         let (resolved_provider, resolved_model) = config
@@ -1235,15 +1365,30 @@ impl StarpodAgent {
             .max_tool_result_bytes(config.compaction.max_tool_result_bytes)
             .prune_threshold_pct(config.compaction.prune_threshold_pct)
             .prune_tool_result_max_chars(config.compaction.prune_tool_result_max_chars)
-            .external_tool_handler(self.build_tool_handler(&config, message.user_id.as_deref(), Arc::clone(&out_attachments)).await)
-            .pre_compact_handler(self.build_pre_compact_handler(&config, message.user_id.as_deref()).await)
+            .external_tool_handler(
+                self.build_tool_handler(
+                    &config,
+                    message.user_id.as_deref(),
+                    Arc::clone(&out_attachments),
+                )
+                .await,
+            )
+            .pre_compact_handler(
+                self.build_pre_compact_handler(&config, message.user_id.as_deref())
+                    .await,
+            )
             .custom_tools(custom_tool_definitions())
             .followup_rx(followup_rx)
             .attachments(query_atts)
             .provider(provider)
             .cwd(config.project_root.to_string_lossy().to_string())
             .additional_directories(vec![])
-            .env_blocklist(starpod_vault::SYSTEM_KEYS.iter().map(|k| k.to_string()).collect())
+            .env_blocklist(
+                starpod_vault::SYSTEM_KEYS
+                    .iter()
+                    .map(|k| k.to_string())
+                    .collect(),
+            )
             .hook_dirs(vec![config.db_dir.join("hooks")])
             .include_partial_messages(true);
 
@@ -1260,7 +1405,9 @@ impl StarpodAgent {
                 builder = builder.compaction_model(cm_name);
                 if cp != resolved_provider {
                     match self.build_provider_for(cp, &config).await {
-                        Ok(p) => { builder = builder.compaction_provider(p); }
+                        Ok(p) => {
+                            builder = builder.compaction_provider(p);
+                        }
                         Err(e) => {
                             tracing::warn!(provider = cp, error = %e, "Failed to build compaction provider, falling back to primary");
                         }
@@ -1299,19 +1446,22 @@ impl StarpodAgent {
         let config = self.snapshot_config();
 
         if let Some(u) = &result.usage {
-            let _ = self.session_mgr.record_usage(
-                session_id,
-                &UsageRecord {
-                    input_tokens: u.input_tokens,
-                    output_tokens: u.output_tokens,
-                    cache_read: u.cache_read_input_tokens,
-                    cache_write: u.cache_creation_input_tokens,
-                    cost_usd: result.total_cost_usd,
-                    model: config.model().to_string(),
-                    user_id: user_id.unwrap_or("admin").to_string(),
-                },
-                result.num_turns,
-            ).await;
+            let _ = self
+                .session_mgr
+                .record_usage(
+                    session_id,
+                    &UsageRecord {
+                        input_tokens: u.input_tokens,
+                        output_tokens: u.output_tokens,
+                        cache_read: u.cache_read_input_tokens,
+                        cache_write: u.cache_creation_input_tokens,
+                        cost_usd: result.total_cost_usd,
+                        model: config.model().to_string(),
+                        user_id: user_id.unwrap_or("admin").to_string(),
+                    },
+                    result.num_turns,
+                )
+                .await;
         }
 
         if config.memory.auto_log {
@@ -1327,7 +1477,11 @@ impl StarpodAgent {
     }
 
     /// Append to daily log via user view when a user_id is present, falling back to agent-level store.
-    async fn append_daily_for_user(&self, user_id: Option<&str>, text: &str) -> starpod_core::Result<()> {
+    async fn append_daily_for_user(
+        &self,
+        user_id: Option<&str>,
+        text: &str,
+    ) -> starpod_core::Result<()> {
         if let Some(uid) = user_id {
             let user_dir = self.paths.users_dir.join(uid);
             if let Ok(uv) = UserMemoryView::new(Arc::clone(&self.memory), user_dir).await {
@@ -1366,7 +1520,13 @@ impl StarpodAgent {
         let slug: String = title
             .chars()
             .take(50)
-            .map(|c| if c.is_alphanumeric() || c == '-' { c.to_ascii_lowercase() } else { '-' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' {
+                    c.to_ascii_lowercase()
+                } else {
+                    '-'
+                }
+            })
             .collect::<String>()
             .trim_matches('-')
             .to_string();
@@ -1379,8 +1539,10 @@ impl StarpodAgent {
              - **Date**: {}\n\
              - **Channel**: {}\n\
              - **Messages**: {}\n",
-            title, &meta.created_at[..10.min(meta.created_at.len())],
-            meta.channel, meta.message_count,
+            title,
+            &meta.created_at[..10.min(meta.created_at.len())],
+            meta.channel,
+            meta.message_count,
         );
         if let Some(ref summary) = meta.summary {
             transcript.push_str(&format!("- **Summary**: {}\n", summary));
@@ -1397,20 +1559,24 @@ impl StarpodAgent {
         }
 
         // Route per-user when user_id is present (non-empty and not synthetic)
-        let write_result = if !meta.user_id.is_empty() && meta.user_id != "heartbeat" && meta.user_id != "cron" {
-            let user_dir = self.paths.users_dir.join(&meta.user_id);
-            match UserMemoryView::new(Arc::clone(&self.memory), user_dir).await {
-                Ok(uv) => uv.write_file(&filename, &transcript).await,
-                Err(e) => Err(e),
-            }
-        } else {
-            self.memory.write_file(&filename, &transcript).await
-        };
+        let write_result =
+            if !meta.user_id.is_empty() && meta.user_id != "heartbeat" && meta.user_id != "cron" {
+                let user_dir = self.paths.users_dir.join(&meta.user_id);
+                match UserMemoryView::new(Arc::clone(&self.memory), user_dir).await {
+                    Ok(uv) => uv.write_file(&filename, &transcript).await,
+                    Err(e) => Err(e),
+                }
+            } else {
+                self.memory.write_file(&filename, &transcript).await
+            };
 
         if let Err(e) = write_result {
             warn!(error = %e, session_id, "Failed to export session transcript to memory");
         } else {
-            debug!(session_id, filename, "Exported session transcript to memory");
+            debug!(
+                session_id,
+                filename, "Exported session transcript to memory"
+            );
         }
     }
 
@@ -1489,9 +1655,7 @@ impl StarpodAgent {
                 }
 
                 let (channel_id, session_key) = match ctx.session_mode {
-                    starpod_cron::SessionMode::Isolated => {
-                        ("scheduler".to_string(), None)
-                    }
+                    starpod_cron::SessionMode::Isolated => ("scheduler".to_string(), None),
                     starpod_cron::SessionMode::Main => {
                         ("main".to_string(), Some("main".to_string()))
                     }
@@ -1595,10 +1759,7 @@ async fn run_lifecycle_prompts(agent: &Arc<StarpodAgent>) {
 /// The heartbeat is opt-in: the job is only created if HEARTBEAT.md exists
 /// and has content. If the user later clears HEARTBEAT.md, execution will
 /// be silently skipped (see `execute_heartbeat`).
-async fn ensure_heartbeat(
-    agent: &StarpodAgent,
-    store: &CronStore,
-) -> Result<()> {
+async fn ensure_heartbeat(agent: &StarpodAgent, store: &CronStore) -> Result<()> {
     if store.get_job_by_name("__heartbeat__").await?.is_some() {
         return Ok(());
     }
@@ -1634,7 +1795,10 @@ async fn ensure_heartbeat(
         )
         .await?;
 
-    info!(interval_minutes = interval, "Created __heartbeat__ cron job");
+    info!(
+        interval_minutes = interval,
+        "Created __heartbeat__ cron job"
+    );
     Ok(())
 }
 
@@ -1678,7 +1842,9 @@ async fn execute_heartbeat(
 fn resolve_channel(msg: &ChatMessage) -> (Channel, String) {
     match msg.channel_id.as_deref().unwrap_or("main") {
         "telegram" => {
-            let key = msg.channel_session_key.clone()
+            let key = msg
+                .channel_session_key
+                .clone()
                 .or_else(|| msg.user_id.clone())
                 .unwrap_or_else(|| "default".into());
             (Channel::Telegram, key)
@@ -1687,13 +1853,17 @@ fn resolve_channel(msg: &ChatMessage) -> (Channel, String) {
             // Email channel: key is the sender email address.
             // All emails from the same sender continue the same session
             // until the gap timeout (24h default) expires.
-            let key = msg.channel_session_key.clone()
+            let key = msg
+                .channel_session_key
+                .clone()
                 .unwrap_or_else(|| "unknown@sender".into());
             (Channel::Email, key)
         }
         _ => {
             // "main", "scheduler", or any unknown → explicit Main session
-            let key = msg.channel_session_key.clone()
+            let key = msg
+                .channel_session_key
+                .clone()
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             (Channel::Main, key)
         }
@@ -1805,8 +1975,16 @@ mod tests {
         let skill_b = skills_dir.join("beta");
         std::fs::create_dir_all(&skill_a).unwrap();
         std::fs::create_dir_all(&skill_b).unwrap();
-        std::fs::write(skill_a.join("SKILL.md"), "---\nname: alpha\ndescription: A\n---\nBody A").unwrap();
-        std::fs::write(skill_b.join("SKILL.md"), "---\nname: beta\ndescription: B\n---\nBody B").unwrap();
+        std::fs::write(
+            skill_a.join("SKILL.md"),
+            "---\nname: alpha\ndescription: A\n---\nBody A",
+        )
+        .unwrap();
+        std::fs::write(
+            skill_b.join("SKILL.md"),
+            "---\nname: beta\ndescription: B\n---\nBody B",
+        )
+        .unwrap();
 
         let paths = ResolvedPaths {
             mode: starpod_core::Mode::SingleAgent {
@@ -1946,12 +2124,7 @@ mod tests {
         assert!(result.is_some());
         assert!(!result.unwrap().is_error);
 
-        let result = handle_custom_tool(
-            &ctx,
-            "SkillList",
-            &serde_json::json!({}),
-        )
-        .await;
+        let result = handle_custom_tool(&ctx, "SkillList", &serde_json::json!({})).await;
         assert!(result.is_some());
         let r = result.unwrap();
         assert!(!r.is_error);
@@ -1971,12 +2144,7 @@ mod tests {
         assert!(result.is_some());
         assert!(!result.unwrap().is_error);
 
-        let result = handle_custom_tool(
-            &ctx,
-            "CronList",
-            &serde_json::json!({}),
-        )
-        .await;
+        let result = handle_custom_tool(&ctx, "CronList", &serde_json::json!({})).await;
         assert!(result.is_some());
         let r = result.unwrap();
         assert!(!r.is_error);
@@ -2032,24 +2200,16 @@ mod tests {
         assert!(result.unwrap().is_error);
 
         // Test CronRun (records a run start)
-        let result = handle_custom_tool(
-            &ctx,
-            "CronRun",
-            &serde_json::json!({"name": "test-job"}),
-        )
-        .await;
+        let result =
+            handle_custom_tool(&ctx, "CronRun", &serde_json::json!({"name": "test-job"})).await;
         assert!(result.is_some());
         let r = result.unwrap();
         assert!(!r.is_error);
         assert!(r.content.contains("Manual run recorded"));
 
         // Test CronRun on nonexistent job
-        let result = handle_custom_tool(
-            &ctx,
-            "CronRun",
-            &serde_json::json!({"name": "nope"}),
-        )
-        .await;
+        let result =
+            handle_custom_tool(&ctx, "CronRun", &serde_json::json!({"name": "nope"})).await;
         assert!(result.is_some());
         assert!(result.unwrap().is_error);
 
@@ -2066,51 +2226,45 @@ mod tests {
         assert!(r.content.contains("success") || r.content.contains("Success")); // the run we completed
 
         // Test CronRuns on nonexistent job
-        let result = handle_custom_tool(
-            &ctx,
-            "CronRuns",
-            &serde_json::json!({"name": "nope"}),
-        )
-        .await;
+        let result =
+            handle_custom_tool(&ctx, "CronRuns", &serde_json::json!({"name": "nope"})).await;
         assert!(result.is_some());
         assert!(result.unwrap().is_error);
 
         // Test HeartbeatWake (no heartbeat job exists, should error)
-        let result = handle_custom_tool(
-            &ctx,
-            "HeartbeatWake",
-            &serde_json::json!({"mode": "now"}),
-        )
-        .await;
+        let result =
+            handle_custom_tool(&ctx, "HeartbeatWake", &serde_json::json!({"mode": "now"})).await;
         assert!(result.is_some());
         assert!(result.unwrap().is_error); // no __heartbeat__ job yet
 
         // Test HeartbeatWake with mode="next" (always succeeds)
-        let result = handle_custom_tool(
-            &ctx,
-            "HeartbeatWake",
-            &serde_json::json!({"mode": "next"}),
-        )
-        .await;
+        let result =
+            handle_custom_tool(&ctx, "HeartbeatWake", &serde_json::json!({"mode": "next"})).await;
         assert!(result.is_some());
         assert!(!result.unwrap().is_error);
 
         // Test HeartbeatWake with default mode (no mode specified)
-        let result = handle_custom_tool(
-            &ctx,
-            "HeartbeatWake",
-            &serde_json::json!({}),
-        )
-        .await;
+        let result = handle_custom_tool(&ctx, "HeartbeatWake", &serde_json::json!({})).await;
         assert!(result.is_some());
         assert!(!result.unwrap().is_error);
 
         // Create a heartbeat job, then test wake "now"
-        ctx.cron.add_job_full(
-            "__heartbeat__", "heartbeat prompt",
-            &starpod_cron::Schedule::Cron { expr: "0 */30 * * * *".into() },
-            false, None, 3, 7200, starpod_cron::SessionMode::Main, None,
-        ).await.unwrap();
+        ctx.cron
+            .add_job_full(
+                "__heartbeat__",
+                "heartbeat prompt",
+                &starpod_cron::Schedule::Cron {
+                    expr: "0 */30 * * * *".into(),
+                },
+                false,
+                None,
+                3,
+                7200,
+                starpod_cron::SessionMode::Main,
+                None,
+            )
+            .await
+            .unwrap();
 
         let result = handle_custom_tool(
             &ctx,
@@ -2124,17 +2278,17 @@ mod tests {
         assert!(r.content.contains("next scheduler tick"));
 
         // Verify heartbeat's next_run_at was set to ~now
-        let hb = ctx.cron.get_job_by_name("__heartbeat__").await.unwrap().unwrap();
+        let hb = ctx
+            .cron
+            .get_job_by_name("__heartbeat__")
+            .await
+            .unwrap()
+            .unwrap();
         let now = chrono::Utc::now().timestamp();
         assert!(hb.next_run_at.unwrap() <= now + 2);
 
         // Test unknown tool
-        let result = handle_custom_tool(
-            &ctx,
-            "UnknownTool",
-            &serde_json::json!({}),
-        )
-        .await;
+        let result = handle_custom_tool(&ctx, "UnknownTool", &serde_json::json!({})).await;
         assert!(result.is_none());
     }
 
@@ -2197,13 +2351,11 @@ mod tests {
 
     #[test]
     fn test_build_query_attachments_images() {
-        let attachments = vec![
-            Attachment {
-                file_name: "photo.png".into(),
-                mime_type: "image/png".into(),
-                data: "base64data".into(),
-            },
-        ];
+        let attachments = vec![Attachment {
+            file_name: "photo.png".into(),
+            mime_type: "image/png".into(),
+            data: "base64data".into(),
+        }];
         let saved = vec![std::path::PathBuf::from("/tmp/photo.png")];
 
         let (query_atts, extra_text) = StarpodAgent::build_query_attachments(&attachments, &saved);
@@ -2216,13 +2368,11 @@ mod tests {
 
     #[test]
     fn test_build_query_attachments_non_images() {
-        let attachments = vec![
-            Attachment {
-                file_name: "doc.pdf".into(),
-                mime_type: "application/pdf".into(),
-                data: "base64data".into(),
-            },
-        ];
+        let attachments = vec![Attachment {
+            file_name: "doc.pdf".into(),
+            mime_type: "application/pdf".into(),
+            data: "base64data".into(),
+        }];
         let saved = vec![std::path::PathBuf::from("/tmp/doc.pdf")];
 
         let (query_atts, extra_text) = StarpodAgent::build_query_attachments(&attachments, &saved);
@@ -2359,8 +2509,16 @@ mod tests {
 
         // Verify the daily log landed in users/bob/memory/
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-        let user_daily = tmp.path().join("users").join("bob").join("memory").join(format!("{}.md", today));
-        assert!(user_daily.exists(), "Pre-compact daily log should be in user dir");
+        let user_daily = tmp
+            .path()
+            .join("users")
+            .join("bob")
+            .join("memory")
+            .join(format!("{}.md", today));
+        assert!(
+            user_daily.exists(),
+            "Pre-compact daily log should be in user dir"
+        );
 
         let content = std::fs::read_to_string(&user_daily).unwrap();
         assert!(content.contains("Pre-compaction save"));
@@ -2368,7 +2526,10 @@ mod tests {
 
         // Agent-level should NOT have it
         let agent_daily = tmp.path().join("memory").join(format!("{}.md", today));
-        assert!(!agent_daily.exists(), "Pre-compact log should NOT be in agent-level dir");
+        assert!(
+            !agent_daily.exists(),
+            "Pre-compact log should NOT be in agent-level dir"
+        );
     }
 
     #[tokio::test]
@@ -2377,7 +2538,10 @@ mod tests {
         let agent = StarpodAgent::new(test_config(&tmp)).await.unwrap();
 
         // Append with a user_id — should write to users/{id}/memory/
-        agent.append_daily_for_user(Some("alice"), "Hello from Alice").await.unwrap();
+        agent
+            .append_daily_for_user(Some("alice"), "Hello from Alice")
+            .await
+            .unwrap();
 
         let user_memory_dir = tmp.path().join("users").join("alice").join("memory");
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
@@ -2389,7 +2553,10 @@ mod tests {
 
         // Agent-level memory dir should NOT have today's file
         let agent_daily = tmp.path().join("memory").join(format!("{}.md", today));
-        assert!(!agent_daily.exists(), "Daily log should NOT be in agent-level dir");
+        assert!(
+            !agent_daily.exists(),
+            "Daily log should NOT be in agent-level dir"
+        );
     }
 
     #[tokio::test]
@@ -2398,12 +2565,18 @@ mod tests {
         let agent = StarpodAgent::new(test_config(&tmp)).await.unwrap();
 
         // Append with no user_id — should fall back to agent-level store
-        agent.append_daily_for_user(None, "Agent-level entry").await.unwrap();
+        agent
+            .append_daily_for_user(None, "Agent-level entry")
+            .await
+            .unwrap();
 
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
 
         // Should be in agent-level memory (the MemoryStore root)
-        let content = agent.memory().read_file(&format!("memory/{}.md", today)).unwrap();
+        let content = agent
+            .memory()
+            .read_file(&format!("memory/{}.md", today))
+            .unwrap();
         assert!(content.contains("Agent-level entry"));
     }
 
@@ -2455,7 +2628,10 @@ mod tests {
         let session_id = "test-session-1";
 
         // First call computes and caches bootstrap
-        let prompt1 = agent.build_system_prompt(session_id, &config, None, None).await.unwrap();
+        let prompt1 = agent
+            .build_system_prompt(session_id, &config, None, None)
+            .await
+            .unwrap();
         assert!(prompt1.contains("SOUL.md"));
 
         // Mutate the SOUL.md on disk
@@ -2463,13 +2639,19 @@ mod tests {
         std::fs::write(&soul_path, "# Soul\nModified content").unwrap();
 
         // Second call for the SAME session returns the frozen snapshot
-        let prompt2 = agent.build_system_prompt(session_id, &config, None, None).await.unwrap();
+        let prompt2 = agent
+            .build_system_prompt(session_id, &config, None, None)
+            .await
+            .unwrap();
 
         // The bootstrap portion should be identical (frozen)
         assert!(!prompt2.contains("Modified content"));
 
         // A DIFFERENT session gets the fresh (modified) content
-        let prompt3 = agent.build_system_prompt("test-session-2", &config, None, None).await.unwrap();
+        let prompt3 = agent
+            .build_system_prompt("test-session-2", &config, None, None)
+            .await
+            .unwrap();
         assert!(prompt3.contains("Modified content"));
     }
 
@@ -2483,7 +2665,10 @@ mod tests {
 
         // Populate the cache for a session
         let session_id = "evict-test-session";
-        let _ = agent.build_system_prompt(session_id, &config, None, None).await.unwrap();
+        let _ = agent
+            .build_system_prompt(session_id, &config, None, None)
+            .await
+            .unwrap();
 
         // Verify cache is populated
         assert!(agent.bootstrap_cache.read().await.contains_key(session_id));

@@ -4,8 +4,8 @@
 //! tool result before it enters the conversation. It strips base64 data URIs,
 //! hex blobs, and enforces a hard byte-length limit.
 
-use std::sync::LazyLock;
 use regex::Regex;
+use std::sync::LazyLock;
 
 /// Default maximum tool result size in bytes.
 pub const DEFAULT_MAX_TOOL_RESULT_BYTES: usize = 50_000;
@@ -57,7 +57,10 @@ pub fn sanitize_tool_result(content: &str, max_bytes: usize) -> String {
         boundary -= 1;
     }
     let mut truncated = stripped[..boundary].to_string();
-    truncated.push_str(&format!("\n[Output truncated at {} bytes, {} total]", boundary, total_len));
+    truncated.push_str(&format!(
+        "\n[Output truncated at {} bytes, {} total]",
+        boundary, total_len
+    ));
     truncated
 }
 
@@ -68,7 +71,10 @@ mod tests {
     #[test]
     fn passthrough_normal_content() {
         let input = "Hello, this is a normal tool result.";
-        assert_eq!(sanitize_tool_result(input, DEFAULT_MAX_TOOL_RESULT_BYTES), input);
+        assert_eq!(
+            sanitize_tool_result(input, DEFAULT_MAX_TOOL_RESULT_BYTES),
+            input
+        );
     }
 
     #[test]

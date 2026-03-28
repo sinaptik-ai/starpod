@@ -13,11 +13,10 @@ use tracing_subscriber::EnvFilter;
 use agent_sdk::{ContentBlock, Message};
 use starpod_agent::StarpodAgent;
 use starpod_core::{
-    ChatMessage, StarpodConfig, ResolvedPaths,
     deploy_manifest::{AgentConfigInput, DeployManifest, SkillEnvInput},
-    detect_mode, load_agent_config,
+    detect_mode, load_agent_config, ChatMessage, ResolvedPaths, StarpodConfig,
 };
-use starpod_instances::{DeployClient, DeployOpts, InstanceClient, SecretResponse, parse_env_file};
+use starpod_instances::{parse_env_file, DeployClient, DeployOpts, InstanceClient, SecretResponse};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum OutputFormat {
@@ -32,7 +31,10 @@ impl std::str::FromStr for OutputFormat {
         match s.to_lowercase().as_str() {
             "text" => Ok(Self::Text),
             "json" => Ok(Self::Json),
-            other => Err(format!("unknown format '{}' (expected 'text' or 'json')", other)),
+            other => Err(format!(
+                "unknown format '{}' (expected 'text' or 'json')",
+                other
+            )),
         }
     }
 }
@@ -47,7 +49,11 @@ impl std::fmt::Display for OutputFormat {
 }
 
 #[derive(Parser)]
-#[command(name = "starpod", about = "Starpod — personal AI assistant platform", version)]
+#[command(
+    name = "starpod",
+    about = "Starpod — personal AI assistant platform",
+    version
+)]
 struct Cli {
     /// Output format: text (default) or json.
     #[arg(long, global = true, default_value = "text")]
@@ -622,16 +628,15 @@ async fn generate_skill_body(
         }
     }
 
-    let result = result_msg
-        .ok_or_else(|| anyhow::anyhow!("No result from AI"))?;
+    let result = result_msg.ok_or_else(|| anyhow::anyhow!("No result from AI"))?;
 
     if result.is_error {
         anyhow::bail!("{}", result.errors.join("; "));
     }
 
-    let result_text = result.result.ok_or_else(|| {
-        anyhow::anyhow!("No text returned from AI")
-    })?;
+    let result_text = result
+        .result
+        .ok_or_else(|| anyhow::anyhow!("No text returned from AI"))?;
 
     #[derive(serde::Deserialize)]
     struct SkillGen {
@@ -659,18 +664,25 @@ fn generate_deploy_manifest(
         let content = std::fs::read_to_string(&agent_toml_path)?;
         let table: toml::Value = toml::from_str(&content)?;
 
-        let models = table.get("models")
+        let models = table
+            .get("models")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_default();
 
-        let telegram_enabled = table.get("channels")
+        let telegram_enabled = table
+            .get("channels")
             .and_then(|c| c.get("telegram"))
             .and_then(|t| t.get("enabled"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let internet_enabled = table.get("internet")
+        let internet_enabled = table
+            .get("internet")
             .and_then(|i| i.get("enabled"))
             .and_then(|v| v.as_bool())
             .unwrap_or(true); // enabled by default
@@ -683,14 +695,19 @@ fn generate_deploy_manifest(
     // Collect skill env declarations
     let skill_envs = if let Some(sd) = skills_dir.filter(|p| p.exists()) {
         let store = starpod_skills::SkillStore::new(sd)?;
-        store.collect_env_by_skill()?
+        store
+            .collect_env_by_skill()?
             .into_iter()
             .map(|(name, env)| SkillEnvInput {
                 name,
-                secrets: env.secrets.into_iter()
+                secrets: env
+                    .secrets
+                    .into_iter()
                     .map(|(k, v)| (k, v.required, v.description))
                     .collect(),
-                variables: env.variables.into_iter()
+                variables: env
+                    .variables
+                    .into_iter()
                     .map(|(k, v)| (k, v.default, v.description))
                     .collect(),
             })
@@ -699,7 +716,11 @@ fn generate_deploy_manifest(
         vec![]
     };
 
-    let config = AgentConfigInput { models, telegram_enabled, internet_enabled };
+    let config = AgentConfigInput {
+        models,
+        telegram_enabled,
+        internet_enabled,
+    };
     let deploy_path = agent_dir.join("deploy.toml");
     DeployManifest::generate_and_write(&config, skill_envs, &deploy_path)?;
     Ok(())
@@ -879,9 +900,7 @@ async fn process_stream(
                         let result_str = content
                             .as_str()
                             .map(|s| s.to_string())
-                            .unwrap_or_else(|| {
-                                serde_json::to_string(content).unwrap_or_default()
-                            });
+                            .unwrap_or_else(|| serde_json::to_string(content).unwrap_or_default());
 
                         let lines: Vec<&str> = result_str.lines().collect();
                         let preview = if lines.len() > 3 {
@@ -1017,7 +1036,11 @@ async fn scaffold_agent_blueprint(
         .as_ref()
         .and_then(|v| v.get("models"))
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_else(|| vec![format!("{provider}/{model}")]);
     let effective_max_turns = ws_int("max_turns", 30);
     let effective_server_addr = ws_str("server_addr", "127.0.0.1:3000");
@@ -1083,7 +1106,10 @@ server_addr = "{server_addr}"
         models = models_toml,
         max_turns = effective_max_turns,
         server_addr = effective_server_addr,
-        compaction_model = effective_models.first().map(|s| s.as_str()).unwrap_or("anthropic/claude-haiku-4-5"),
+        compaction_model = effective_models
+            .first()
+            .map(|s| s.as_str())
+            .unwrap_or("anthropic/claude-haiku-4-5"),
     );
     tokio::fs::write(agent_dir.join("agent.toml"), agent_toml).await?;
 
@@ -1168,22 +1194,25 @@ async fn resolve_agent(
 ///
 /// The Telegram bot itself is managed by the gateway (started/restarted
 /// via `AppState::restart_telegram`).
-fn build_cron_notifier(
-    config: &StarpodConfig,
-) -> Option<starpod_cron::NotificationSender> {
+fn build_cron_notifier(config: &StarpodConfig) -> Option<starpod_cron::NotificationSender> {
     let telegram_token = config.resolved_telegram_token();
 
     if let Some(ref token) = telegram_token {
         let token = token.clone();
-        Some(Arc::new(move |_job_name, _session_id, result_text, _success| {
-            let token = token.clone();
-            Box::pin(async move {
-                // Cron notifications go to all linked telegram users
-                // For now, just log — full notification routing will be added later
-                tracing::debug!("Cron notification: {}", &result_text[..result_text.len().min(100)]);
-                let _ = token;
-            })
-        }))
+        Some(Arc::new(
+            move |_job_name, _session_id, result_text, _success| {
+                let token = token.clone();
+                Box::pin(async move {
+                    // Cron notifications go to all linked telegram users
+                    // For now, just log — full notification routing will be added later
+                    tracing::debug!(
+                        "Cron notification: {}",
+                        &result_text[..result_text.len().min(100)]
+                    );
+                    let _ = token;
+                })
+            },
+        ))
     } else {
         None
     }
@@ -1191,7 +1220,11 @@ fn build_cron_notifier(
 
 // ── Sync diff display ──────────────────────────────────────────────────────
 
-fn print_sync_diff(diff: &starpod_instances::deploy::SyncManifestResponse, format: OutputFormat, context: &str) {
+fn print_sync_diff(
+    diff: &starpod_instances::deploy::SyncManifestResponse,
+    format: OutputFormat,
+    context: &str,
+) {
     if format == OutputFormat::Json {
         let json = serde_json::json!({
             "to_upload": diff.to_upload,
@@ -1273,7 +1306,9 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         // ── Init: scaffold a new workspace ────────────────────────────
-        Commands::Init { default: use_defaults } => {
+        Commands::Init {
+            default: use_defaults,
+        } => {
             let cwd = std::env::current_dir()?;
 
             if cwd.join("starpod.toml").exists() {
@@ -1292,36 +1327,43 @@ async fn main() -> anyhow::Result<()> {
                 onboarding::run_wizard()
             };
 
-            let (provider, model, api_key, brave_api_key, first_agent, agent_display) = match answers {
-                Some(a) => (
-                    a.provider,
-                    a.model,
-                    a.api_key,
-                    a.brave_api_key,
-                    a.first_agent_name,
-                    a.agent_display_name,
-                ),
-                None => (
-                    "anthropic".to_string(),
-                    "claude-haiku-4-5".to_string(),
-                    None,
-                    None,
-                    None,
-                    None,
-                ),
-            };
+            let (provider, model, api_key, brave_api_key, first_agent, agent_display) =
+                match answers {
+                    Some(a) => (
+                        a.provider,
+                        a.model,
+                        a.api_key,
+                        a.brave_api_key,
+                        a.first_agent_name,
+                        a.agent_display_name,
+                    ),
+                    None => (
+                        "anthropic".to_string(),
+                        "claude-haiku-4-5".to_string(),
+                        None,
+                        None,
+                        None,
+                        None,
+                    ),
+                };
 
             // Create workspace scaffold
             tokio::fs::write(
                 cwd.join("starpod.toml"),
                 onboarding::generate_workspace_config_with(&provider, &model),
-            ).await?;
+            )
+            .await?;
             tokio::fs::create_dir_all(cwd.join("agents")).await?;
             tokio::fs::create_dir_all(cwd.join("skills")).await?;
             tokio::fs::write(
                 cwd.join(".env"),
-                onboarding::generate_env_content_full(&provider, api_key.as_deref(), brave_api_key.as_deref()),
-            ).await?;
+                onboarding::generate_env_content_full(
+                    &provider,
+                    api_key.as_deref(),
+                    brave_api_key.as_deref(),
+                ),
+            )
+            .await?;
             // Add .env and .instances/ to .gitignore if not already there
             let gitignore_path = cwd.join(".gitignore");
             let mut gitignore_content = if gitignore_path.exists() {
@@ -1359,7 +1401,16 @@ async fn main() -> anyhow::Result<()> {
             if let Some(agent_name) = first_agent {
                 let display_name = agent_display.as_deref().unwrap_or("Aster");
                 let agent_dir = cwd.join("agents").join(&agent_name);
-                scaffold_agent_blueprint(&agent_dir, &agent_name, display_name, &model, &provider, None, Some(&cwd)).await?;
+                scaffold_agent_blueprint(
+                    &agent_dir,
+                    &agent_name,
+                    display_name,
+                    &model,
+                    &provider,
+                    None,
+                    Some(&cwd),
+                )
+                .await?;
 
                 println!(
                     "  {} Created agent '{}'",
@@ -1367,11 +1418,12 @@ async fn main() -> anyhow::Result<()> {
                     agent_name.bright_white()
                 );
 
-                let start_now = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-                    .with_prompt("Start the agent now?")
-                    .default(true)
-                    .interact()
-                    .unwrap_or(false);
+                let start_now =
+                    dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                        .with_prompt("Start the agent now?")
+                        .default(true)
+                        .interact()
+                        .unwrap_or(false);
 
                 if start_now {
                     println!();
@@ -1417,7 +1469,9 @@ async fn main() -> anyhow::Result<()> {
                         workspace_root = Some(dir);
                         break;
                     }
-                    if !dir.pop() { break; }
+                    if !dir.pop() {
+                        break;
+                    }
                 }
 
                 let root = workspace_root.ok_or_else(|| {
@@ -1445,7 +1499,8 @@ async fn main() -> anyhow::Result<()> {
                     "anthropic", // CLI default; starpod.toml values baked in via workspace_root
                     soul.as_deref(),
                     Some(&root),
-                ).await?;
+                )
+                .await?;
 
                 println!();
                 println!(
@@ -1457,7 +1512,11 @@ async fn main() -> anyhow::Result<()> {
                 println!(
                     "  {} Edit {} for agent-specific config.",
                     "→".dimmed(),
-                    agent_dir.join("agent.toml").display().to_string().bright_white()
+                    agent_dir
+                        .join("agent.toml")
+                        .display()
+                        .to_string()
+                        .bright_white()
                 );
                 println!(
                     "  {} Run {} to start in dev mode.",
@@ -1476,7 +1535,9 @@ async fn main() -> anyhow::Result<()> {
                         workspace_root = Some(dir);
                         break;
                     }
-                    if !dir.pop() { break; }
+                    if !dir.pop() {
+                        break;
+                    }
                 }
 
                 let root = workspace_root.ok_or_else(|| {
@@ -1503,21 +1564,31 @@ async fn main() -> anyhow::Result<()> {
                 agents.sort();
 
                 if output_format == OutputFormat::Json {
-                    let json: Vec<serde_json::Value> = agents.iter().map(|name| {
-                        let agent_toml = agents_dir.join(name).join("agent.toml");
-                        serde_json::json!({
-                            "name": name,
-                            "has_config": agent_toml.is_file(),
+                    let json: Vec<serde_json::Value> = agents
+                        .iter()
+                        .map(|name| {
+                            let agent_toml = agents_dir.join(name).join("agent.toml");
+                            serde_json::json!({
+                                "name": name,
+                                "has_config": agent_toml.is_file(),
+                            })
                         })
-                    }).collect();
+                        .collect();
                     println!("{}", serde_json::to_string_pretty(&json).unwrap());
                 } else if agents.is_empty() {
-                    println!("  No agents found. Run {} to create one.", "starpod agent new <name>".bright_white());
+                    println!(
+                        "  No agents found. Run {} to create one.",
+                        "starpod agent new <name>".bright_white()
+                    );
                 } else {
                     for name in &agents {
                         let agent_toml = agents_dir.join(name).join("agent.toml");
                         let has_config = agent_toml.is_file();
-                        let status = if has_config { "✓".green() } else { "?".yellow() };
+                        let status = if has_config {
+                            "✓".green()
+                        } else {
+                            "?".yellow()
+                        };
                         println!("  {} {}", status, name);
                     }
                 }
@@ -1534,7 +1605,11 @@ async fn main() -> anyhow::Result<()> {
                     .ok()
                     .or_else(|| saved.as_ref().map(|c| c.api_key.clone()));
                 let Some(api_key) = api_key else {
-                    eprintln!("  {} Authentication required. Run {}.", "✗".red().bold(), "starpod auth login".bright_white());
+                    eprintln!(
+                        "  {} Authentication required. Run {}.",
+                        "✗".red().bold(),
+                        "starpod auth login".bright_white()
+                    );
                     std::process::exit(1);
                 };
 
@@ -1546,12 +1621,20 @@ async fn main() -> anyhow::Result<()> {
 
                 let agent_dir = workspace_root.join("agents").join(&name);
                 if !agent_dir.exists() {
-                    eprintln!("  {} Agent '{}' not found in agents/ directory.", "✗".red().bold(), name);
+                    eprintln!(
+                        "  {} Agent '{}' not found in agents/ directory.",
+                        "✗".red().bold(),
+                        name
+                    );
                     std::process::exit(1);
                 }
 
                 let skills_dir = workspace_root.join("skills");
-                let skills_path = if skills_dir.exists() { Some(skills_dir.as_path()) } else { None };
+                let skills_path = if skills_dir.exists() {
+                    Some(skills_dir.as_path())
+                } else {
+                    None
+                };
 
                 // Generate deploy.toml before pushing
                 generate_deploy_manifest(&agent_dir, skills_path)?;
@@ -1560,7 +1643,11 @@ async fn main() -> anyhow::Result<()> {
 
                 if dry_run {
                     // Dry run: compute diff and display without pushing
-                    println!("  {} Computing diff for {}...", "⟳".bright_cyan(), name.bright_white().bold());
+                    println!(
+                        "  {} Computing diff for {}...",
+                        "⟳".bright_cyan(),
+                        name.bright_white().bold()
+                    );
                     let diff = client.diff_agent(&name, &agent_dir, skills_path).await?;
                     print_sync_diff(&diff, output_format, "push");
                 } else {
@@ -1571,7 +1658,11 @@ async fn main() -> anyhow::Result<()> {
                     if !diff.to_delete_remote.is_empty() && !yes {
                         println!("\n  Changes:");
                         if !diff.to_upload.is_empty() {
-                            println!("    {} {} file(s) to upload", "↑".bright_green(), diff.to_upload.len());
+                            println!(
+                                "    {} {} file(s) to upload",
+                                "↑".bright_green(),
+                                diff.to_upload.len()
+                            );
                         }
                         for path in &diff.to_delete_remote {
                             println!("    {} delete  {}", "-".bright_red(), path);
@@ -1582,7 +1673,11 @@ async fn main() -> anyhow::Result<()> {
                         }
                     }
 
-                    println!("  {} Pushing agent {}...", "⟳".bright_cyan(), name.bright_white().bold());
+                    println!(
+                        "  {} Pushing agent {}...",
+                        "⟳".bright_cyan(),
+                        name.bright_white().bold()
+                    );
                     let summary = client.push_agent(&name, &agent_dir, skills_path).await?;
 
                     if output_format == OutputFormat::Json {
@@ -1594,7 +1689,8 @@ async fn main() -> anyhow::Result<()> {
                         println!("{}", serde_json::to_string_pretty(&json).unwrap());
                     } else {
                         println!("  {} Push complete:", "✓".green().bold());
-                        println!("  {} {} uploaded, {} deleted, {} unchanged",
+                        println!(
+                            "  {} {} uploaded, {} deleted, {} unchanged",
                             "│".dimmed(),
                             summary.uploaded.to_string().bright_green(),
                             summary.deleted_remote.to_string().bright_red(),
@@ -1614,7 +1710,11 @@ async fn main() -> anyhow::Result<()> {
                     .ok()
                     .or_else(|| saved.as_ref().map(|c| c.api_key.clone()));
                 let Some(api_key) = api_key else {
-                    eprintln!("  {} Authentication required. Run {}.", "✗".red().bold(), "starpod auth login".bright_white());
+                    eprintln!(
+                        "  {} Authentication required. Run {}.",
+                        "✗".red().bold(),
+                        "starpod auth login".bright_white()
+                    );
                     std::process::exit(1);
                 };
 
@@ -1627,7 +1727,11 @@ async fn main() -> anyhow::Result<()> {
                 let agent_dir = workspace_root.join("agents").join(&name);
 
                 let client = DeployClient::new(&backend_url, &api_key)?;
-                println!("  {} Pulling agent {}...", "⟳".bright_cyan(), name.bright_white().bold());
+                println!(
+                    "  {} Pulling agent {}...",
+                    "⟳".bright_cyan(),
+                    name.bright_white().bold()
+                );
 
                 let summary = client.pull_agent(&name, &agent_dir).await?;
 
@@ -1640,7 +1744,8 @@ async fn main() -> anyhow::Result<()> {
                     println!("{}", serde_json::to_string_pretty(&json).unwrap());
                 } else {
                     println!("  {} Pull complete:", "✓".green().bold());
-                    println!("  {} {} downloaded, {} deleted locally, {} unchanged",
+                    println!(
+                        "  {} {} downloaded, {} deleted locally, {} unchanged",
                         "│".dimmed(),
                         summary.downloaded.to_string().bright_green(),
                         summary.deleted_local.to_string().bright_red(),
@@ -1659,7 +1764,11 @@ async fn main() -> anyhow::Result<()> {
                     .ok()
                     .or_else(|| saved.as_ref().map(|c| c.api_key.clone()));
                 let Some(api_key) = api_key else {
-                    eprintln!("  {} Authentication required. Run {}.", "✗".red().bold(), "starpod auth login".bright_white());
+                    eprintln!(
+                        "  {} Authentication required. Run {}.",
+                        "✗".red().bold(),
+                        "starpod auth login".bright_white()
+                    );
                     std::process::exit(1);
                 };
 
@@ -1671,29 +1780,42 @@ async fn main() -> anyhow::Result<()> {
 
                 let agent_dir = workspace_root.join("agents").join(&name);
                 if !agent_dir.exists() {
-                    eprintln!("  {} Agent '{}' not found in agents/ directory.", "✗".red().bold(), name);
+                    eprintln!(
+                        "  {} Agent '{}' not found in agents/ directory.",
+                        "✗".red().bold(),
+                        name
+                    );
                     std::process::exit(1);
                 }
 
                 let skills_dir = workspace_root.join("skills");
-                let skills_path = if skills_dir.exists() { Some(skills_dir.as_path()) } else { None };
+                let skills_path = if skills_dir.exists() {
+                    Some(skills_dir.as_path())
+                } else {
+                    None
+                };
 
                 let client = DeployClient::new(&backend_url, &api_key)?;
                 let diff = client.diff_agent(&name, &agent_dir, skills_path).await?;
                 print_sync_diff(&diff, output_format, "diff");
             }
-
         },
 
         // ── Dev ──────────────────────────────────────────────────────
-        Commands::Dev { agent: agent_name, port, build } => {
+        Commands::Dev {
+            agent: agent_name,
+            port,
+            build,
+        } => {
             // Require workspace mode
             let cwd = std::env::current_dir()?;
             let mode = starpod_core::detect_mode_from(Some(&agent_name), &cwd)?;
             let workspace_root = match &mode {
                 starpod_core::Mode::Workspace { root, .. } => root.clone(),
                 _ => {
-                    eprintln!("Error: `starpod dev` requires workspace mode (starpod.toml must exist).");
+                    eprintln!(
+                        "Error: `starpod dev` requires workspace mode (starpod.toml must exist)."
+                    );
                     std::process::exit(1);
                 }
             };
@@ -1720,13 +1842,21 @@ async fn main() -> anyhow::Result<()> {
             if !instance_exists || build {
                 // Generate deploy.toml BEFORE building so we can validate
                 let skills_dir = workspace_root.join("skills");
-                let skills_path = if skills_dir.exists() { Some(skills_dir.as_path()) } else { None };
+                let skills_path = if skills_dir.exists() {
+                    Some(skills_dir.as_path())
+                } else {
+                    None
+                };
                 generate_deploy_manifest(&blueprint_dir, skills_path)?;
 
                 // Validate .env BEFORE creating instance — fail fast, no stale .starpod/
                 let deploy_toml = blueprint_dir.join("deploy.toml");
                 let env_file = workspace_root.join(".env");
-                let env_path = if env_file.exists() { Some(env_file.as_path()) } else { None };
+                let env_path = if env_file.exists() {
+                    Some(env_file.as_path())
+                } else {
+                    None
+                };
                 match starpod_vault::env::validate_env(&deploy_toml, env_path) {
                     Ok(warnings) => {
                         for w in &warnings {
@@ -1765,9 +1895,14 @@ async fn main() -> anyhow::Result<()> {
             let deploy_toml = blueprint_dir.join("deploy.toml");
             let env_file = workspace_root.join(".env");
             if deploy_toml.exists() {
-                let env_path = if env_file.exists() { Some(env_file.as_path()) } else { None };
+                let env_path = if env_file.exists() {
+                    Some(env_file.as_path())
+                } else {
+                    None
+                };
                 let master_key = starpod_vault::derive_master_key(&paths.db_dir)?;
-                let vault = starpod_vault::Vault::new(&paths.db_dir.join("vault.db"), &master_key).await?;
+                let vault =
+                    starpod_vault::Vault::new(&paths.db_dir.join("vault.db"), &master_key).await?;
                 starpod_vault::env::populate_vault(&deploy_toml, env_path, &vault).await?;
                 starpod_vault::env::inject_env_from_vault(&deploy_toml, &vault).await?;
             }
@@ -1810,7 +1945,12 @@ async fn main() -> anyhow::Result<()> {
             let browser_token = auth_bootstrap.admin_key.as_ref().or(dev_api_key.as_ref());
 
             print_header_with_name(&display_name);
-            println!("  {} {} → {}", "DEV".bright_yellow().bold(), agent_name.bright_cyan(), instance_dir.display().to_string().dimmed());
+            println!(
+                "  {} {} → {}",
+                "DEV".bright_yellow().bold(),
+                agent_name.bright_cyan(),
+                instance_dir.display().to_string().dimmed()
+            );
             println!("  {} {}", "Server".dimmed(), addr.bright_green());
             if let Some(ref key) = browser_token {
                 println!("  {} {}", "API Key".dimmed(), key.bright_cyan());
@@ -1824,7 +1964,14 @@ async fn main() -> anyhow::Result<()> {
                 let _ = open::that(format!("http://{}", addr));
             }
 
-            starpod_gateway::serve_with_agent(agent, config, cron_notifier, paths, Some(auth_store)).await?;
+            starpod_gateway::serve_with_agent(
+                agent,
+                config,
+                cron_notifier,
+                paths,
+                Some(auth_store),
+            )
+            .await?;
         }
 
         // ── Serve ─────────────────────────────────────────────────────
@@ -1837,9 +1984,15 @@ async fn main() -> anyhow::Result<()> {
                 if deploy_toml.exists() {
                     // Resolve .env from project root
                     let env_file = paths.project_root.join(".env");
-                    let env_path = if env_file.exists() { Some(env_file.as_path()) } else { None };
+                    let env_path = if env_file.exists() {
+                        Some(env_file.as_path())
+                    } else {
+                        None
+                    };
                     let master_key = starpod_vault::derive_master_key(&paths.db_dir)?;
-                    let vault = starpod_vault::Vault::new(&paths.db_dir.join("vault.db"), &master_key).await?;
+                    let vault =
+                        starpod_vault::Vault::new(&paths.db_dir.join("vault.db"), &master_key)
+                            .await?;
                     starpod_vault::env::populate_vault(&deploy_toml, env_path, &vault).await?;
                     starpod_vault::env::inject_env_from_vault(&deploy_toml, &vault).await?;
                 }
@@ -1848,10 +2001,17 @@ async fn main() -> anyhow::Result<()> {
             let (agent, config, paths) = resolve_agent(agent_name).await?;
             let addr = config.server_addr.clone();
             let display_name = config.agent_name.clone();
-            let telegram_enabled = config.channels.telegram.as_ref().map_or(false, |t| t.enabled);
+            let telegram_enabled = config
+                .channels
+                .telegram
+                .as_ref()
+                .map_or(false, |t| t.enabled);
             let telegram_active = telegram_enabled && config.resolved_telegram_token().is_some();
             let agent = Arc::new(agent);
-            let auth = starpod_gateway::create_auth_store(&paths).await.ok().map(|b| b.store);
+            let auth = starpod_gateway::create_auth_store(&paths)
+                .await
+                .ok()
+                .map(|b| b.store);
             let cron_notifier = build_cron_notifier(&config);
 
             // Print startup banner
@@ -1886,7 +2046,10 @@ async fn main() -> anyhow::Result<()> {
                 "  {} {}",
                 "Telegram".dimmed(),
                 if telegram_active {
-                    let mode = config.channels.telegram.as_ref()
+                    let mode = config
+                        .channels
+                        .telegram
+                        .as_ref()
                         .map(|t| t.stream_mode.as_str())
                         .unwrap_or("final_only");
                     format!("connected (stream: {})", mode).green().to_string()
@@ -1905,11 +2068,7 @@ async fn main() -> anyhow::Result<()> {
                 config.model().bright_white()
             );
             if let Some(ref effort) = config.reasoning_effort {
-                println!(
-                    "  {} {:?}",
-                    "Thinking".dimmed(),
-                    effort
-                );
+                println!("  {} {:?}", "Thinking".dimmed(), effort);
             }
             println!(
                 "  {} {}",
@@ -1922,7 +2081,10 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ── Chat ──────────────────────────────────────────────────────
-        Commands::Chat { agent: agent_name, message } => {
+        Commands::Chat {
+            agent: agent_name,
+            message,
+        } => {
             // Try resolving an existing agent; if none found, create an ephemeral one
             let _ephemeral_guard: Option<tempfile::TempDir>;
             let (agent, config, _paths) = match resolve_agent(agent_name).await {
@@ -1952,7 +2114,8 @@ async fn main() -> anyhow::Result<()> {
                 triggered_by: None,
                 model: None,
             };
-            let (mut stream, session_id, _followup_tx, _out_attachments) = agent.chat_stream(&chat_msg).await?;
+            let (mut stream, session_id, _followup_tx, _out_attachments) =
+                agent.chat_stream(&chat_msg).await?;
             let (result_text, result_msg) = process_stream(&mut stream, &start).await?;
 
             if let Some(ref result) = result_msg {
@@ -1972,7 +2135,10 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ── Memory ────────────────────────────────────────────────────
-        Commands::Memory { agent: agent_name, action } => {
+        Commands::Memory {
+            agent: agent_name,
+            action,
+        } => {
             let (agent, _config, _paths) = resolve_agent(agent_name).await?;
             match action {
                 MemoryAction::Search { query, limit } => {
@@ -2001,7 +2167,10 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ── Sessions ──────────────────────────────────────────────────
-        Commands::Sessions { agent: agent_name, action } => {
+        Commands::Sessions {
+            agent: agent_name,
+            action,
+        } => {
             let (agent, _config, _paths) = resolve_agent(agent_name).await?;
             match action {
                 SessionAction::List { limit } => {
@@ -2011,10 +2180,7 @@ async fn main() -> anyhow::Result<()> {
                     } else {
                         for s in &sessions {
                             let status = if s.is_closed { "closed" } else { "open" };
-                            let summary = s
-                                .summary
-                                .as_deref()
-                                .unwrap_or("(no summary)");
+                            let summary = s.summary.as_deref().unwrap_or("(no summary)");
                             println!(
                                 "  {} [{}] msgs={} {}",
                                 &s.id[..8],
@@ -2029,7 +2195,10 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ── Skills ────────────────────────────────────────────────────
-        Commands::Skill { agent: agent_name, action } => {
+        Commands::Skill {
+            agent: agent_name,
+            action,
+        } => {
             // Resolve skills directory: use agent's instance skills if --agent given,
             // otherwise detect mode and use resolved skills_dir.
             // Also load .env so provider API keys are available for `skill new`.
@@ -2077,23 +2246,25 @@ async fn main() -> anyhow::Result<()> {
                         }
                     }
                 }
-                SkillAction::Show { name } => {
-                    match store.get(&name)? {
-                        Some(skill) => {
-                            println!("Name: {}", skill.name);
-                            println!("Description: {}", skill.description);
-                            if let Some(ref compat) = skill.compatibility {
-                                println!("Compatibility: {}", compat);
-                            }
-                            println!("---");
-                            println!("{}", skill.body);
+                SkillAction::Show { name } => match store.get(&name)? {
+                    Some(skill) => {
+                        println!("Name: {}", skill.name);
+                        println!("Description: {}", skill.description);
+                        if let Some(ref compat) = skill.compatibility {
+                            println!("Compatibility: {}", compat);
                         }
-                        None => println!("Skill '{}' not found.", name),
+                        println!("---");
+                        println!("{}", skill.body);
                     }
-                }
-                SkillAction::New { name, description, prompt } => {
+                    None => println!("Skill '{}' not found.", name),
+                },
+                SkillAction::New {
+                    name,
+                    description,
+                    prompt,
+                } => {
                     // Interactive prompts for missing fields
-                    use dialoguer::{Input, theme::ColorfulTheme};
+                    use dialoguer::{theme::ColorfulTheme, Input};
                     let theme = ColorfulTheme::default();
 
                     let name: String = match name {
@@ -2109,7 +2280,11 @@ async fn main() -> anyhow::Result<()> {
                                 .with_prompt("Description (what the skill does)")
                                 .allow_empty(true)
                                 .interact_text()?;
-                            if d.is_empty() { None } else { Some(d) }
+                            if d.is_empty() {
+                                None
+                            } else {
+                                Some(d)
+                            }
                         }
                     };
                     let version: String = Input::with_theme(&theme)
@@ -2123,7 +2298,11 @@ async fn main() -> anyhow::Result<()> {
                                 .with_prompt("Extra instructions / context (optional)")
                                 .allow_empty(true)
                                 .interact_text()?;
-                            if p.is_empty() { None } else { Some(p) }
+                            if p.is_empty() {
+                                None
+                            } else {
+                                Some(p)
+                            }
                         }
                     };
 
@@ -2134,7 +2313,13 @@ async fn main() -> anyhow::Result<()> {
                     );
 
                     // Try AI generation; fall back to a stub skill on any LLM error.
-                    let (skill_desc, skill_body, skill_env) = match generate_skill_body(&name, &description, &prompt).await {
+                    let (skill_desc, skill_body, skill_env) = match generate_skill_body(
+                        &name,
+                        &description,
+                        &prompt,
+                    )
+                    .await
+                    {
                         Ok((desc, body, env)) => {
                             let desc = description.unwrap_or(desc);
                             (desc, body, env)
@@ -2151,19 +2336,25 @@ async fn main() -> anyhow::Result<()> {
                         }
                     };
 
-                    let version_opt = if version.is_empty() { None } else { Some(version.as_str()) };
-                    store.create(&name, &skill_desc, version_opt, skill_env.as_ref(), &skill_body)?;
+                    let version_opt = if version.is_empty() {
+                        None
+                    } else {
+                        Some(version.as_str())
+                    };
+                    store.create(
+                        &name,
+                        &skill_desc,
+                        version_opt,
+                        skill_env.as_ref(),
+                        &skill_body,
+                    )?;
 
                     println!(
                         "  {} Created skill '{}'",
                         "✓".green().bold(),
                         name.bright_white()
                     );
-                    println!(
-                        "  {} {}",
-                        "Description:".dimmed(),
-                        skill_desc
-                    );
+                    println!("  {} {}", "Description:".dimmed(), skill_desc);
                     if !skill_body.is_empty() {
                         println!();
                         println!("{}", skill_body);
@@ -2177,121 +2368,144 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ── Cron ──────────────────────────────────────────────────────
-        Commands::Cron { agent: agent_name, action } => {
+        Commands::Cron {
+            agent: agent_name,
+            action,
+        } => {
             let (agent, _config, _paths) = resolve_agent(agent_name).await?;
             match action {
-                    CronAction::List => {
-                        let jobs = agent.cron().list_jobs().await?;
-                        if jobs.is_empty() {
-                            println!("No cron jobs.");
-                        } else {
-                            for j in &jobs {
-                                let status = if j.enabled { "enabled" } else { "disabled" };
-                                let next = j.next_run_at
-                                    .map(starpod_cron::store::epoch_to_rfc3339)
-                                    .unwrap_or_else(|| "none".to_string());
-                                let mode = j.session_mode.as_str();
-                                let mut extra = String::new();
-                                if j.retry_count > 0 {
-                                    extra.push_str(&format!(" retry={}/{}", j.retry_count, j.max_retries));
-                                }
-                                if let Some(ref err) = j.last_error {
-                                    extra.push_str(&format!(" err={}", truncate(err, 30)));
-                                }
-                                println!(
-                                    "  {} [{}] [{}] next={}{} — {}",
-                                    j.name, status, mode, next, extra,
-                                    truncate(&j.prompt, 60)
-                                );
+                CronAction::List => {
+                    let jobs = agent.cron().list_jobs().await?;
+                    if jobs.is_empty() {
+                        println!("No cron jobs.");
+                    } else {
+                        for j in &jobs {
+                            let status = if j.enabled { "enabled" } else { "disabled" };
+                            let next = j
+                                .next_run_at
+                                .map(starpod_cron::store::epoch_to_rfc3339)
+                                .unwrap_or_else(|| "none".to_string());
+                            let mode = j.session_mode.as_str();
+                            let mut extra = String::new();
+                            if j.retry_count > 0 {
+                                extra.push_str(&format!(
+                                    " retry={}/{}",
+                                    j.retry_count, j.max_retries
+                                ));
                             }
+                            if let Some(ref err) = j.last_error {
+                                extra.push_str(&format!(" err={}", truncate(err, 30)));
+                            }
+                            println!(
+                                "  {} [{}] [{}] next={}{} — {}",
+                                j.name,
+                                status,
+                                mode,
+                                next,
+                                extra,
+                                truncate(&j.prompt, 60)
+                            );
                         }
                     }
-                    CronAction::Remove { name } => {
-                        agent.cron().remove_job_by_name(&name).await?;
-                        println!("Removed job '{}'.", name);
-                    }
-                    CronAction::Runs { name, limit } => {
-                        let job = agent.cron().get_job_by_name(&name).await?;
-                        match job {
-                            Some(j) => {
-                                let runs = agent.cron().list_runs(&j.id, limit).await?;
-                                if runs.is_empty() {
-                                    println!("No runs for '{}'.", name);
-                                } else {
-                                    for r in &runs {
-                                        let summary = r.result_summary.as_deref().unwrap_or("");
-                                        let started = starpod_cron::store::epoch_to_rfc3339(r.started_at);
-                                        println!(
-                                            "  {} {:?} {}",
-                                            started, r.status,
-                                            truncate(summary, 60)
-                                        );
-                                    }
+                }
+                CronAction::Remove { name } => {
+                    agent.cron().remove_job_by_name(&name).await?;
+                    println!("Removed job '{}'.", name);
+                }
+                CronAction::Runs { name, limit } => {
+                    let job = agent.cron().get_job_by_name(&name).await?;
+                    match job {
+                        Some(j) => {
+                            let runs = agent.cron().list_runs(&j.id, limit).await?;
+                            if runs.is_empty() {
+                                println!("No runs for '{}'.", name);
+                            } else {
+                                for r in &runs {
+                                    let summary = r.result_summary.as_deref().unwrap_or("");
+                                    let started =
+                                        starpod_cron::store::epoch_to_rfc3339(r.started_at);
+                                    println!(
+                                        "  {} {:?} {}",
+                                        started,
+                                        r.status,
+                                        truncate(summary, 60)
+                                    );
                                 }
                             }
-                            None => println!("Job '{}' not found.", name),
                         }
+                        None => println!("Job '{}' not found.", name),
                     }
-                    CronAction::Run { name } => {
-                        let agent = Arc::new(agent);
-                        let job = agent.cron().get_job_by_name(&name).await?;
-                        match job {
-                            Some(j) => {
-                                println!("Running job '{}'...", name);
-                                let msg = ChatMessage {
-                                    text: j.prompt.clone(),
-                                    user_id: Some("cron-cli".into()),
-                                    channel_id: Some(match j.session_mode {
-                                        starpod_cron::SessionMode::Main => "main".into(),
-                                        starpod_cron::SessionMode::Isolated => "scheduler".into(),
-                                    }),
-                                    channel_session_key: match j.session_mode {
-                                        starpod_cron::SessionMode::Main => Some("main".into()),
-                                        starpod_cron::SessionMode::Isolated => None,
-                                    },
-                                    attachments: Vec::new(),
-                                    triggered_by: Some(j.name.clone()),
-                                    model: None,
-                                };
-                                match agent.chat(msg).await {
-                                    Ok(resp) => println!("{}", resp.text),
-                                    Err(e) => eprintln!("Job failed: {}", e),
-                                }
+                }
+                CronAction::Run { name } => {
+                    let agent = Arc::new(agent);
+                    let job = agent.cron().get_job_by_name(&name).await?;
+                    match job {
+                        Some(j) => {
+                            println!("Running job '{}'...", name);
+                            let msg = ChatMessage {
+                                text: j.prompt.clone(),
+                                user_id: Some("cron-cli".into()),
+                                channel_id: Some(match j.session_mode {
+                                    starpod_cron::SessionMode::Main => "main".into(),
+                                    starpod_cron::SessionMode::Isolated => "scheduler".into(),
+                                }),
+                                channel_session_key: match j.session_mode {
+                                    starpod_cron::SessionMode::Main => Some("main".into()),
+                                    starpod_cron::SessionMode::Isolated => None,
+                                },
+                                attachments: Vec::new(),
+                                triggered_by: Some(j.name.clone()),
+                                model: None,
+                            };
+                            match agent.chat(msg).await {
+                                Ok(resp) => println!("{}", resp.text),
+                                Err(e) => eprintln!("Job failed: {}", e),
                             }
-                            None => println!("Job '{}' not found.", name),
                         }
+                        None => println!("Job '{}' not found.", name),
                     }
-                    CronAction::Edit { name, prompt, schedule, enabled, max_retries, timeout_secs, session_mode } => {
-                        let job = agent.cron().get_job_by_name(&name).await?;
-                        match job {
-                            Some(j) => {
-                                let schedule_update = schedule.map(|expr| {
-                                    starpod_cron::Schedule::Cron { expr }
-                                });
-                                let session_mode_update = session_mode.map(|s| {
-                                    starpod_cron::SessionMode::from_str(&s)
-                                });
-                                let update = starpod_cron::JobUpdate {
-                                    prompt,
-                                    schedule: schedule_update,
-                                    enabled,
-                                    max_retries,
-                                    timeout_secs,
-                                    session_mode: session_mode_update,
-                                };
-                                agent.cron().update_job(&j.id, &update).await?;
-                                println!("Updated job '{}'.", name);
-                            }
-                            None => println!("Job '{}' not found.", name),
+                }
+                CronAction::Edit {
+                    name,
+                    prompt,
+                    schedule,
+                    enabled,
+                    max_retries,
+                    timeout_secs,
+                    session_mode,
+                } => {
+                    let job = agent.cron().get_job_by_name(&name).await?;
+                    match job {
+                        Some(j) => {
+                            let schedule_update =
+                                schedule.map(|expr| starpod_cron::Schedule::Cron { expr });
+                            let session_mode_update =
+                                session_mode.map(|s| starpod_cron::SessionMode::from_str(&s));
+                            let update = starpod_cron::JobUpdate {
+                                prompt,
+                                schedule: schedule_update,
+                                enabled,
+                                max_retries,
+                                timeout_secs,
+                                session_mode: session_mode_update,
+                            };
+                            agent.cron().update_job(&j.id, &update).await?;
+                            println!("Updated job '{}'.", name);
                         }
+                        None => println!("Job '{}' not found.", name),
                     }
+                }
             }
         }
 
         // ── Auth commands ─────────────────────────────────────────────
         Commands::Auth { action } => {
             match action {
-                AuthCommand::Login { url, api_key, email } => {
+                AuthCommand::Login {
+                    url,
+                    api_key,
+                    email,
+                } => {
                     let spawner_url = url
                         .or_else(|| std::env::var(auth::SPAWNER_URL_ENV).ok())
                         .unwrap_or_else(|| auth::DEFAULT_SPAWNER_URL.to_string());
@@ -2353,64 +2567,65 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                AuthCommand::Logout => {
-                    match auth::delete_credentials() {
-                        Ok(()) => {
+                AuthCommand::Logout => match auth::delete_credentials() {
+                    Ok(()) => {
+                        println!("  {} Logged out. Credentials removed.", "✓".green().bold());
+                    }
+                    Err(e) => {
+                        eprintln!("  {} {}", "✗".red().bold(), e);
+                        std::process::exit(1);
+                    }
+                },
+
+                AuthCommand::Status => match auth::load_credentials() {
+                    Some(creds) => {
+                        if output_format == OutputFormat::Json {
+                            let preview = if creds.api_key.len() > 12 {
+                                format!(
+                                    "{}...{}",
+                                    &creds.api_key[..8],
+                                    &creds.api_key[creds.api_key.len() - 4..]
+                                )
+                            } else {
+                                "****".to_string()
+                            };
+                            let json = serde_json::json!({
+                                "logged_in": true,
+                                "email": creds.email,
+                                "backend_url": creds.backend_url,
+                                "api_key_preview": preview,
+                            });
+                            println!("{}", serde_json::to_string_pretty(&json).unwrap());
+                        } else {
+                            println!("  {} Logged in", "✓".green().bold());
+                            println!("  {} Email:   {}", "│".dimmed(), creds.email.bright_white());
+                            println!("  {} Backend: {}", "│".dimmed(), creds.backend_url);
+                            let preview = if creds.api_key.len() > 12 {
+                                format!(
+                                    "{}...{}",
+                                    &creds.api_key[..8],
+                                    &creds.api_key[creds.api_key.len() - 4..]
+                                )
+                            } else {
+                                "****".to_string()
+                            };
+                            println!("  {} API Key: {}", "│".dimmed(), preview);
+                        }
+                    }
+                    None => {
+                        if output_format == OutputFormat::Json {
+                            let json = serde_json::json!({"logged_in": false});
+                            println!("{}", serde_json::to_string_pretty(&json).unwrap());
+                        } else {
+                            println!("  {} Not logged in", "✗".yellow().bold());
                             println!(
-                                "  {} Logged out. Credentials removed.",
-                                "✓".green().bold()
+                                "  {} Run {} to authenticate.",
+                                "→".dimmed(),
+                                "starpod auth login".bright_white()
                             );
                         }
-                        Err(e) => {
-                            eprintln!("  {} {}", "✗".red().bold(), e);
-                            std::process::exit(1);
-                        }
                     }
-                }
-
-                AuthCommand::Status => {
-                    match auth::load_credentials() {
-                        Some(creds) => {
-                            if output_format == OutputFormat::Json {
-                                let preview = if creds.api_key.len() > 12 {
-                                    format!("{}...{}", &creds.api_key[..8], &creds.api_key[creds.api_key.len()-4..])
-                                } else {
-                                    "****".to_string()
-                                };
-                                let json = serde_json::json!({
-                                    "logged_in": true,
-                                    "email": creds.email,
-                                    "backend_url": creds.backend_url,
-                                    "api_key_preview": preview,
-                                });
-                                println!("{}", serde_json::to_string_pretty(&json).unwrap());
-                            } else {
-                                println!("  {} Logged in", "✓".green().bold());
-                                println!("  {} Email:   {}", "│".dimmed(), creds.email.bright_white());
-                                println!("  {} Backend: {}", "│".dimmed(), creds.backend_url);
-                                let preview = if creds.api_key.len() > 12 {
-                                    format!("{}...{}", &creds.api_key[..8], &creds.api_key[creds.api_key.len()-4..])
-                                } else {
-                                    "****".to_string()
-                                };
-                                println!("  {} API Key: {}", "│".dimmed(), preview);
-                            }
-                        }
-                        None => {
-                            if output_format == OutputFormat::Json {
-                                let json = serde_json::json!({"logged_in": false});
-                                println!("{}", serde_json::to_string_pretty(&json).unwrap());
-                            } else {
-                                println!("  {} Not logged in", "✗".yellow().bold());
-                                println!(
-                                    "  {} Run {} to authenticate.",
-                                    "→".dimmed(),
-                                    "starpod auth login".bright_white()
-                                );
-                            }
-                        }
-                    }
-                }
+                },
             }
         }
 
@@ -2428,7 +2643,14 @@ async fn main() -> anyhow::Result<()> {
             let client = InstanceClient::new_with_timeout(&backend_url, api_key, 30)?;
 
             match action {
-                InstanceCommand::New { agent: agent_name, name, description, region, var_overrides, yes } => {
+                InstanceCommand::New {
+                    agent: agent_name,
+                    name,
+                    description,
+                    region,
+                    var_overrides,
+                    yes,
+                } => {
                     // Need the DeployClient for the deploy-config API
                     let api_key_str = std::env::var("STARPOD_API_KEY")
                         .ok()
@@ -2451,7 +2673,11 @@ async fn main() -> anyhow::Result<()> {
                         }
                     };
 
-                    println!("  {} Checking agent {}...", "⟳".bright_cyan(), agent_name.bright_white());
+                    println!(
+                        "  {} Checking agent {}...",
+                        "⟳".bright_cyan(),
+                        agent_name.bright_white()
+                    );
 
                     let agents = deploy_client.list_agents().await?;
                     let agent = match agents.iter().find(|a| a.name == agent_name) {
@@ -2461,9 +2687,14 @@ async fn main() -> anyhow::Result<()> {
                         }
                         None => {
                             // Try to push local blueprint
-                            let ws_agents_dir = std::path::PathBuf::from("agents").join(&agent_name);
+                            let ws_agents_dir =
+                                std::path::PathBuf::from("agents").join(&agent_name);
                             if !ws_agents_dir.join("agent.toml").exists() {
-                                eprintln!("  {} Agent '{}' not found locally or on remote.", "✗".red(), agent_name);
+                                eprintln!(
+                                    "  {} Agent '{}' not found locally or on remote.",
+                                    "✗".red(),
+                                    agent_name
+                                );
                                 std::process::exit(1);
                             }
 
@@ -2479,8 +2710,14 @@ async fn main() -> anyhow::Result<()> {
                             }
 
                             println!("  {} Pushing blueprint...", "⟳".bright_cyan());
-                            let summary = deploy_client.push_agent(&agent_name, &ws_agents_dir, None).await?;
-                            println!("  {} Agent created ({} files pushed)", "✓".green().bold(), summary.uploaded);
+                            let summary = deploy_client
+                                .push_agent(&agent_name, &ws_agents_dir, None)
+                                .await?;
+                            println!(
+                                "  {} Agent created ({} files pushed)",
+                                "✓".green().bold(),
+                                summary.uploaded
+                            );
 
                             let agents = deploy_client.list_agents().await?;
                             agents.into_iter().find(|a| a.name == agent_name).unwrap()
@@ -2533,7 +2770,11 @@ async fn main() -> anyhow::Result<()> {
                                 if !pushable.is_empty() {
                                     println!(
                                         "\n  Found in local .env: {}",
-                                        pushable.iter().map(|k| k.as_str()).collect::<Vec<_>>().join(", ")
+                                        pushable
+                                            .iter()
+                                            .map(|k| k.as_str())
+                                            .collect::<Vec<_>>()
+                                            .join(", ")
                                     );
                                     for key in &pushable {
                                         let value = &local_env[key.as_str()];
@@ -2542,7 +2783,10 @@ async fn main() -> anyhow::Result<()> {
                                         std::io::stdin().read_line(&mut buf)?;
                                         let answer = buf.trim().to_lowercase();
                                         if answer.is_empty() || answer == "y" || answer == "yes" {
-                                            match deploy_client.set_secret(&agent.id, key, value).await {
+                                            match deploy_client
+                                                .set_secret(&agent.id, key, value)
+                                                .await
+                                            {
                                                 Ok(s) => {
                                                     println!(
                                                         "    {} {} pushed (hint: ••••{})",
@@ -2552,14 +2796,20 @@ async fn main() -> anyhow::Result<()> {
                                                     );
                                                 }
                                                 Err(e) => {
-                                                    eprintln!("    {} Failed to push {}: {}", "✗".red(), key, e);
+                                                    eprintln!(
+                                                        "    {} Failed to push {}: {}",
+                                                        "✗".red(),
+                                                        key,
+                                                        e
+                                                    );
                                                 }
                                             }
                                         }
                                     }
 
                                     // Re-check readiness
-                                    let recheck = deploy_client.get_deploy_config(&agent.id).await?;
+                                    let recheck =
+                                        deploy_client.get_deploy_config(&agent.id).await?;
                                     if let Some(ref rc) = recheck {
                                         if !rc.ready {
                                             eprintln!(
@@ -2567,13 +2817,19 @@ async fn main() -> anyhow::Result<()> {
                                                 "✗".red().bold(),
                                                 rc.missing_required.join(", ")
                                             );
-                                            eprintln!("  Run: starpod secret set <KEY> --agent {}", agent_name);
+                                            eprintln!(
+                                                "  Run: starpod secret set <KEY> --agent {}",
+                                                agent_name
+                                            );
                                             std::process::exit(1);
                                         }
                                     }
                                 } else {
                                     eprintln!("\n  {} Cannot create instance: {} required secret(s) missing.", "✗".red().bold(), config.missing_required.len());
-                                    eprintln!("  Run: starpod secret set <KEY> --agent {}", agent_name);
+                                    eprintln!(
+                                        "  Run: starpod secret set <KEY> --agent {}",
+                                        agent_name
+                                    );
                                     std::process::exit(1);
                                 }
                             } else if yes {
@@ -2586,7 +2842,11 @@ async fn main() -> anyhow::Result<()> {
                                 );
                                 std::process::exit(1);
                             } else {
-                                eprintln!("\n  {} Cannot create instance: {} required secret(s) missing.", "✗".red().bold(), config.missing_required.len());
+                                eprintln!(
+                                    "\n  {} Cannot create instance: {} required secret(s) missing.",
+                                    "✗".red().bold(),
+                                    config.missing_required.len()
+                                );
                                 eprintln!("  Run: starpod secret set <KEY> --agent {}", agent_name);
                                 eprintln!("  Or create a .env file with the missing values.");
                                 std::process::exit(1);
@@ -2604,12 +2864,18 @@ async fn main() -> anyhow::Result<()> {
                                     println!("\n  Found optional secrets in local .env:");
                                     for key in &optional_pushable {
                                         let value = &local_env[key.as_str()];
-                                        eprint!("  ? Push {} to remote? [y/N] ", key.bright_white());
+                                        eprint!(
+                                            "  ? Push {} to remote? [y/N] ",
+                                            key.bright_white()
+                                        );
                                         let mut buf = String::new();
                                         std::io::stdin().read_line(&mut buf)?;
                                         let answer = buf.trim().to_lowercase();
                                         if answer == "y" || answer == "yes" {
-                                            match deploy_client.set_secret(&agent.id, key, value).await {
+                                            match deploy_client
+                                                .set_secret(&agent.id, key, value)
+                                                .await
+                                            {
                                                 Ok(resp) => {
                                                     println!(
                                                         "    {} {} pushed (hint: ••••{})",
@@ -2619,7 +2885,12 @@ async fn main() -> anyhow::Result<()> {
                                                     );
                                                 }
                                                 Err(e) => {
-                                                    eprintln!("    {} Failed to push {}: {}", "✗".red(), key, e);
+                                                    eprintln!(
+                                                        "    {} Failed to push {}: {}",
+                                                        "✗".red(),
+                                                        key,
+                                                        e
+                                                    );
                                                 }
                                             }
                                         }
@@ -2644,7 +2915,9 @@ async fn main() -> anyhow::Result<()> {
                         );
                         println!(
                             "  Configure secrets and variables at:\n  {}",
-                            format!("{}/agents/{}", backend_url, agent.id).bright_cyan().underline()
+                            format!("{}/agents/{}", backend_url, agent.id)
+                                .bright_cyan()
+                                .underline()
                         );
                         if !yes {
                             eprint!("\n  Continue without deploy configuration? [y/N] ");
@@ -2661,7 +2934,8 @@ async fn main() -> anyhow::Result<()> {
                     let overrides: HashMap<String, String> = var_overrides
                         .iter()
                         .filter_map(|s| {
-                            s.split_once('=').map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+                            s.split_once('=')
+                                .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
                         })
                         .collect();
 
@@ -2675,15 +2949,22 @@ async fn main() -> anyhow::Result<()> {
                     // Step 4: Create the instance
                     println!("\n  {} Creating instance...", "⟳".bright_cyan());
 
-                    let _variable_overrides = if overrides.is_empty() { None } else { Some(overrides) };
+                    let _variable_overrides = if overrides.is_empty() {
+                        None
+                    } else {
+                        Some(overrides)
+                    };
 
-                    match deploy_client.create_instance(
-                        &agent.id,
-                        name.as_deref(),
-                        description.as_deref(),
-                        region.as_deref(),
-                        None, // machine_type
-                    ).await {
+                    match deploy_client
+                        .create_instance(
+                            &agent.id,
+                            name.as_deref(),
+                            description.as_deref(),
+                            region.as_deref(),
+                            None, // machine_type
+                        )
+                        .await
+                    {
                         Ok(inst) => {
                             println!(
                                 "  {} Instance created (id: {})",
@@ -2692,49 +2973,74 @@ async fn main() -> anyhow::Result<()> {
                             );
 
                             // Wait for instance to become running (up to 15 min)
-                            let last_status = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+                            let last_status =
+                                std::sync::Arc::new(std::sync::Mutex::new(String::new()));
                             let last_status_clone = last_status.clone();
-                            let on_poll = move |inst: &starpod_instances::deploy::InstanceResponse| {
-                                let mut last = last_status_clone.lock().unwrap();
-                                if *last != inst.status {
-                                    eprint!(
-                                        "\r  {} Status: {}                    ",
-                                        "⟳".bright_cyan(),
-                                        inst.status.bright_yellow()
-                                    );
-                                    *last = inst.status.clone();
-                                }
-                            };
+                            let on_poll =
+                                move |inst: &starpod_instances::deploy::InstanceResponse| {
+                                    let mut last = last_status_clone.lock().unwrap();
+                                    if *last != inst.status {
+                                        eprint!(
+                                            "\r  {} Status: {}                    ",
+                                            "⟳".bright_cyan(),
+                                            inst.status.bright_yellow()
+                                        );
+                                        *last = inst.status.clone();
+                                    }
+                                };
 
-                            match deploy_client.wait_for_instance_ready(
-                                &inst.id,
-                                std::time::Duration::from_secs(900),
-                                on_poll,
-                            ).await {
+                            match deploy_client
+                                .wait_for_instance_ready(
+                                    &inst.id,
+                                    std::time::Duration::from_secs(900),
+                                    on_poll,
+                                )
+                                .await
+                            {
                                 Ok(ready) => {
                                     eprint!("\r                                                \r");
                                     println!("  {} Instance is running!", "✓".green().bold());
-                                    println!("  {} Status: {}", "│".dimmed(), ready.status.bright_green());
+                                    println!(
+                                        "  {} Status: {}",
+                                        "│".dimmed(),
+                                        ready.status.bright_green()
+                                    );
                                     if let Some(ref ip) = ready.ip_address {
-                                        println!("  {} IP:     {}", "│".dimmed(), ip.bright_white().bold());
+                                        println!(
+                                            "  {} IP:     {}",
+                                            "│".dimmed(),
+                                            ip.bright_white().bold()
+                                        );
                                     }
                                     if let Some(ref z) = ready.zone {
                                         println!("  {} Zone:   {}", "│".dimmed(), z);
                                     }
                                     if let Some(ref url) = ready.web_url {
-                                        println!("  {} Web UI: {}", "│".dimmed(), url.bright_cyan().underline());
+                                        println!(
+                                            "  {} Web UI: {}",
+                                            "│".dimmed(),
+                                            url.bright_cyan().underline()
+                                        );
                                     }
                                     if let Some(ref key) = ready.starpod_api_key {
                                         println!("  {} Key:    {}", "│".dimmed(), key.dimmed());
                                     }
                                     if let Some(ref url) = ready.direct_url {
                                         println!();
-                                        println!("  {} Open directly: {}", "→".bright_cyan().bold(), url.bright_cyan().underline());
+                                        println!(
+                                            "  {} Open directly: {}",
+                                            "→".bright_cyan().bold(),
+                                            url.bright_cyan().underline()
+                                        );
                                     }
                                 }
                                 Err(e) => {
                                     eprint!("\r                                                \r");
-                                    eprintln!("  {} Instance failed to reach running state: {}", "✗".red(), e);
+                                    eprintln!(
+                                        "  {} Instance failed to reach running state: {}",
+                                        "✗".red(),
+                                        e
+                                    );
                                     std::process::exit(1);
                                 }
                             }
@@ -2746,11 +3052,12 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                InstanceCommand::List => {
-                    match client.list_instances().await {
-                        Ok(instances) => {
-                            if output_format == OutputFormat::Json {
-                                let json: Vec<serde_json::Value> = instances.iter().map(|inst| {
+                InstanceCommand::List => match client.list_instances().await {
+                    Ok(instances) => {
+                        if output_format == OutputFormat::Json {
+                            let json: Vec<serde_json::Value> = instances
+                                .iter()
+                                .map(|inst| {
                                     serde_json::json!({
                                         "id": inst.id,
                                         "id_short": &inst.id[..8.min(inst.id.len())],
@@ -2767,80 +3074,64 @@ async fn main() -> anyhow::Result<()> {
                                         "error": inst.error_message,
                                         "created_at": inst.created_at,
                                     })
-                                }).collect();
-                                println!("{}", serde_json::to_string_pretty(&json).unwrap());
-                            } else if instances.is_empty() {
-                                println!("  {} No instances found.", "ℹ".bright_cyan());
-                            } else {
-                                println!();
-                                for inst in &instances {
-                                    let id_short = &inst.id[..8.min(inst.id.len())];
-                                    let agent_short = &inst.agent_id[..8.min(inst.agent_id.len())];
-                                    let status_str = format!("{}", inst.status);
-                                    let status_colored = match status_str.as_str() {
-                                        "running" => status_str.bright_green(),
-                                        "pending" | "provisioning" => status_str.bright_yellow(),
-                                        "stopped" | "stopping" => status_str.dimmed(),
-                                        "error" => status_str.bright_red(),
-                                        _ => status_str.normal(),
-                                    };
-                                    if let Some(ref name) = inst.name {
-                                        println!(
-                                            "  {}  {}  {}",
-                                            id_short.bright_white().bold(),
-                                            name.bright_white(),
-                                            status_colored,
-                                        );
-                                    } else {
-                                        println!(
-                                            "  {}  {}",
-                                            id_short.bright_white().bold(),
-                                            status_colored,
-                                        );
-                                    }
+                                })
+                                .collect();
+                            println!("{}", serde_json::to_string_pretty(&json).unwrap());
+                        } else if instances.is_empty() {
+                            println!("  {} No instances found.", "ℹ".bright_cyan());
+                        } else {
+                            println!();
+                            for inst in &instances {
+                                let id_short = &inst.id[..8.min(inst.id.len())];
+                                let agent_short = &inst.agent_id[..8.min(inst.agent_id.len())];
+                                let status_str = format!("{}", inst.status);
+                                let status_colored = match status_str.as_str() {
+                                    "running" => status_str.bright_green(),
+                                    "pending" | "provisioning" => status_str.bright_yellow(),
+                                    "stopped" | "stopping" => status_str.dimmed(),
+                                    "error" => status_str.bright_red(),
+                                    _ => status_str.normal(),
+                                };
+                                if let Some(ref name) = inst.name {
                                     println!(
-                                        "  {}  Agent   {}",
-                                        "│".dimmed(),
-                                        agent_short,
+                                        "  {}  {}  {}",
+                                        id_short.bright_white().bold(),
+                                        name.bright_white(),
+                                        status_colored,
                                     );
-                                    if let Some(ref zone) = inst.zone {
-                                        println!(
-                                            "  {}  Zone    {}",
-                                            "│".dimmed(),
-                                            zone.dimmed(),
-                                        );
-                                    }
-                                    if let Some(ref ip) = inst.ip_address {
-                                        println!(
-                                            "  {}  IP      {}",
-                                            "│".dimmed(),
-                                            ip,
-                                        );
-                                    }
-                                    if let Some(ref url) = inst.direct_url {
-                                        println!(
-                                            "  {}  Web UI  {}",
-                                            "│".dimmed(),
-                                            url.bright_cyan().underline(),
-                                        );
-                                    }
-                                    if let Some(ref err) = inst.error_message {
-                                        println!(
-                                            "  {}  Error   {}",
-                                            "│".dimmed(),
-                                            err.bright_red(),
-                                        );
-                                    }
-                                    println!();
+                                } else {
+                                    println!(
+                                        "  {}  {}",
+                                        id_short.bright_white().bold(),
+                                        status_colored,
+                                    );
                                 }
+                                println!("  {}  Agent   {}", "│".dimmed(), agent_short,);
+                                if let Some(ref zone) = inst.zone {
+                                    println!("  {}  Zone    {}", "│".dimmed(), zone.dimmed(),);
+                                }
+                                if let Some(ref ip) = inst.ip_address {
+                                    println!("  {}  IP      {}", "│".dimmed(), ip,);
+                                }
+                                if let Some(ref url) = inst.direct_url {
+                                    println!(
+                                        "  {}  Web UI  {}",
+                                        "│".dimmed(),
+                                        url.bright_cyan().underline(),
+                                    );
+                                }
+                                if let Some(ref err) = inst.error_message {
+                                    println!("  {}  Error   {}", "│".dimmed(), err.bright_red(),);
+                                }
+                                println!();
                             }
                         }
-                        Err(e) => {
-                            eprintln!("  {} Failed to list instances: {}", "✗".red(), e);
-                            std::process::exit(1);
-                        }
                     }
-                }
+                    Err(e) => {
+                        eprintln!("  {} Failed to list instances: {}", "✗".red(), e);
+                        std::process::exit(1);
+                    }
+                },
 
                 InstanceCommand::Destroy { id, yes } => {
                     let id = client.resolve_id(&id).await.unwrap_or_else(|e| {
@@ -2859,9 +3150,16 @@ async fn main() -> anyhow::Result<()> {
                         std::process::exit(0);
                     }
                     match client.destroy_instance(&id).await {
-                        Ok(()) => println!("  {} Destroyed instance {}.", "✓".green().bold(), id_short),
+                        Ok(()) => {
+                            println!("  {} Destroyed instance {}.", "✓".green().bold(), id_short)
+                        }
                         Err(e) => {
-                            eprintln!("  {} Failed to destroy instance {}: {}", "✗".red(), id_short, e);
+                            eprintln!(
+                                "  {} Failed to destroy instance {}: {}",
+                                "✗".red(),
+                                id_short,
+                                e
+                            );
                             std::process::exit(1);
                         }
                     }
@@ -2873,7 +3171,11 @@ async fn main() -> anyhow::Result<()> {
                         std::process::exit(1);
                     });
                     match client.stop_instance(&id).await {
-                        Ok(()) => println!("  {} Stopped instance {}.", "✓".green().bold(), &id[..8.min(id.len())]),
+                        Ok(()) => println!(
+                            "  {} Stopped instance {}.",
+                            "✓".green().bold(),
+                            &id[..8.min(id.len())]
+                        ),
                         Err(e) => {
                             eprintln!("  {} Failed to stop instance: {}", "✗".red(), e);
                             std::process::exit(1);
@@ -2887,7 +3189,11 @@ async fn main() -> anyhow::Result<()> {
                         std::process::exit(1);
                     });
                     match client.start_instance(&id).await {
-                        Ok(()) => println!("  {} Started instance {}.", "✓".green().bold(), &id[..8.min(id.len())]),
+                        Ok(()) => println!(
+                            "  {} Started instance {}.",
+                            "✓".green().bold(),
+                            &id[..8.min(id.len())]
+                        ),
                         Err(e) => {
                             eprintln!("  {} Failed to start instance: {}", "✗".red(), e);
                             std::process::exit(1);
@@ -2901,7 +3207,11 @@ async fn main() -> anyhow::Result<()> {
                         std::process::exit(1);
                     });
                     match client.restart_instance(&id).await {
-                        Ok(()) => println!("  {} Restarted instance {}.", "✓".green().bold(), &id[..8.min(id.len())]),
+                        Ok(()) => println!(
+                            "  {} Restarted instance {}.",
+                            "✓".green().bold(),
+                            &id[..8.min(id.len())]
+                        ),
                         Err(e) => {
                             eprintln!("  {} Failed to restart instance: {}", "✗".red(), e);
                             std::process::exit(1);
@@ -2968,7 +3278,8 @@ async fn main() -> anyhow::Result<()> {
                         Ok(ssh) => {
                             // If a private key is provided, write it to a temp file
                             let key_file = if let Some(ref key) = ssh.private_key {
-                                let path = std::env::temp_dir().join(format!("starpod-ssh-{}.pem", id));
+                                let path =
+                                    std::env::temp_dir().join(format!("starpod-ssh-{}.pem", id));
                                 std::fs::write(&path, key)?;
                                 #[cfg(unix)]
                                 {
@@ -3035,8 +3346,16 @@ async fn main() -> anyhow::Result<()> {
                                 });
                                 println!("{}", serde_json::to_string_pretty(&json).unwrap());
                             } else {
-                                println!("  {} Instance {} health:", "●".bright_green(), id.bright_white());
-                                println!("  {} CPU:       {:.1}%", "│".dimmed(), health.cpu_percent);
+                                println!(
+                                    "  {} Instance {} health:",
+                                    "●".bright_green(),
+                                    id.bright_white()
+                                );
+                                println!(
+                                    "  {} CPU:       {:.1}%",
+                                    "│".dimmed(),
+                                    health.cpu_percent
+                                );
                                 println!("  {} Memory:    {} MB", "│".dimmed(), health.memory_mb);
                                 println!("  {} Disk:      {} MB", "│".dimmed(), health.disk_mb);
                                 println!("  {} Uptime:    {}s", "│".dimmed(), health.uptime_secs);
@@ -3075,7 +3394,11 @@ async fn main() -> anyhow::Result<()> {
             let deploy_client = DeployClient::new(&backend_url, &api_key)?;
 
             match action {
-                SecretCommand::Set { key, value, agent: agent_name } => {
+                SecretCommand::Set {
+                    key,
+                    value,
+                    agent: agent_name,
+                } => {
                     // Get value from --value flag or prompt interactively
                     let secret_value = match value {
                         Some(v) => v,
@@ -3115,7 +3438,11 @@ async fn main() -> anyhow::Result<()> {
                                 }
                             }
                             None => {
-                                eprintln!("  {} Agent '{}' not found on remote.", "✗".red(), agent_name);
+                                eprintln!(
+                                    "  {} Agent '{}' not found on remote.",
+                                    "✗".red(),
+                                    agent_name
+                                );
                                 std::process::exit(1);
                             }
                         }
@@ -3159,8 +3486,16 @@ async fn main() -> anyhow::Result<()> {
                                 "UPDATED".dimmed()
                             );
                             for s in secrets {
-                                let scope = if s.agent_id.is_some() { "agent" } else { "global" };
-                                let hint = s.hint.as_deref().map(|h| format!("••••{}", h)).unwrap_or_else(|| "••••••••".into());
+                                let scope = if s.agent_id.is_some() {
+                                    "agent"
+                                } else {
+                                    "global"
+                                };
+                                let hint = s
+                                    .hint
+                                    .as_deref()
+                                    .map(|h| format!("••••{}", h))
+                                    .unwrap_or_else(|| "••••••••".into());
                                 println!(
                                     "  {:<28} {:<10} {:<12} {}",
                                     s.key,
@@ -3179,7 +3514,11 @@ async fn main() -> anyhow::Result<()> {
                             Some(a) => {
                                 let secrets = deploy_client.list_agent_secrets(&a.id).await?;
                                 if secrets.is_empty() && output_format != OutputFormat::Json {
-                                    println!("  {} No secrets for agent '{}'.", "ℹ".bright_cyan(), agent_name);
+                                    println!(
+                                        "  {} No secrets for agent '{}'.",
+                                        "ℹ".bright_cyan(),
+                                        agent_name
+                                    );
                                 } else {
                                     format_secrets(&secrets);
                                 }
@@ -3199,7 +3538,11 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
 
-                SecretCommand::Delete { key, agent: agent_name, yes } => {
+                SecretCommand::Delete {
+                    key,
+                    agent: agent_name,
+                    yes,
+                } => {
                     if !confirm(
                         &format!("Delete secret {}? Instances using this secret will fail on next restart.", key),
                         yes,
@@ -3218,10 +3561,20 @@ async fn main() -> anyhow::Result<()> {
                                 match secret {
                                     Some(s) => {
                                         deploy_client.delete_agent_secret(&a.id, &s.id).await?;
-                                        println!("  {} Deleted {} (agent: {})", "✓".green().bold(), key.bright_white(), agent_name);
+                                        println!(
+                                            "  {} Deleted {} (agent: {})",
+                                            "✓".green().bold(),
+                                            key.bright_white(),
+                                            agent_name
+                                        );
                                     }
                                     None => {
-                                        eprintln!("  {} Secret '{}' not found for agent '{}'.", "✗".red(), key, agent_name);
+                                        eprintln!(
+                                            "  {} Secret '{}' not found for agent '{}'.",
+                                            "✗".red(),
+                                            key,
+                                            agent_name
+                                        );
                                         std::process::exit(1);
                                     }
                                 }
@@ -3237,7 +3590,11 @@ async fn main() -> anyhow::Result<()> {
                         match secret {
                             Some(s) => {
                                 deploy_client.delete_user_secret(&s.id).await?;
-                                println!("  {} Deleted {} (user-global)", "✓".green().bold(), key.bright_white());
+                                println!(
+                                    "  {} Deleted {} (user-global)",
+                                    "✓".green().bold(),
+                                    key.bright_white()
+                                );
                             }
                             None => {
                                 eprintln!("  {} Secret '{}' not found.", "✗".red(), key);
@@ -3259,14 +3616,25 @@ async fn main() -> anyhow::Result<()> {
 
                     let env_vars = parse_env_file(&env_path)?;
                     if env_vars.is_empty() {
-                        println!("  {} No variables found in {}", "ℹ".bright_cyan(), env_path.display());
+                        println!(
+                            "  {} No variables found in {}",
+                            "ℹ".bright_cyan(),
+                            env_path.display()
+                        );
                         return Ok(());
                     }
 
-                    println!("  Found {} entries in {}:", env_vars.len(), env_path.display());
+                    println!(
+                        "  Found {} entries in {}:",
+                        env_vars.len(),
+                        env_path.display()
+                    );
                     let mut count = 0;
                     for (key, value) in &env_vars {
-                        eprint!("  ? Push {} as user-global secret? [Y/n] ", key.bright_white());
+                        eprint!(
+                            "  ? Push {} as user-global secret? [Y/n] ",
+                            key.bright_white()
+                        );
                         let mut buf = String::new();
                         std::io::stdin().read_line(&mut buf)?;
                         let answer = buf.trim().to_lowercase();
@@ -3295,7 +3663,13 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ── Build ─────────────────────────────────────────────────────
-        Commands::Build { agent, skills, output, env_file, force } => {
+        Commands::Build {
+            agent,
+            skills,
+            output,
+            env_file,
+            force,
+        } => {
             let agent_path = std::path::PathBuf::from(&agent);
             if !agent_path.join("agent.toml").is_file() {
                 eprintln!(
@@ -3347,12 +3721,14 @@ async fn main() -> anyhow::Result<()> {
             let deploy_toml_built = starpod_dir.join("config").join("deploy.toml");
             if deploy_toml_built.exists() {
                 let master_key = starpod_vault::derive_master_key(&db_dir)?;
-                let vault = starpod_vault::Vault::new(&db_dir.join("vault.db"), &master_key).await?;
+                let vault =
+                    starpod_vault::Vault::new(&db_dir.join("vault.db"), &master_key).await?;
                 let result = starpod_vault::env::populate_vault(
                     &deploy_toml_built,
                     env_path.as_deref(),
                     &vault,
-                ).await?;
+                )
+                .await?;
                 if result.secrets_count > 0 || result.variables_count > 0 {
                     println!(
                         "  {} Sealed {} secret(s) and {} variable(s) into vault",
@@ -3420,10 +3796,7 @@ async fn main() -> anyhow::Result<()> {
                 .ok()
                 .or_else(|| saved.as_ref().map(|c| c.api_key.clone()));
             let Some(api_key) = api_key else {
-                eprintln!(
-                    "  {} Authentication required.",
-                    "✗".red().bold()
-                );
+                eprintln!("  {} Authentication required.", "✗".red().bold());
                 eprintln!(
                     "  {} Run {} to authenticate.",
                     "→".dimmed(),
@@ -3474,17 +3847,9 @@ async fn main() -> anyhow::Result<()> {
                 "⟳".bright_cyan(),
                 agent_name.bright_white().bold()
             );
-            println!(
-                "  {} Agent dir:  {}",
-                "│".dimmed(),
-                agent_dir.display()
-            );
+            println!("  {} Agent dir:  {}", "│".dimmed(), agent_dir.display());
             if skills_dir.exists() {
-                println!(
-                    "  {} Skills dir: {}",
-                    "│".dimmed(),
-                    skills_dir.display()
-                );
+                println!("  {} Skills dir: {}", "│".dimmed(), skills_dir.display());
             }
             if !env_vars.is_empty() {
                 println!(
@@ -3509,22 +3874,23 @@ async fn main() -> anyhow::Result<()> {
             let last_status = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
             let last_status_clone = last_status.clone();
 
-            let on_poll: Option<Box<dyn FnMut(&starpod_instances::deploy::InstanceResponse) + Send>> =
-                if !no_instance {
-                    Some(Box::new(move |inst| {
-                        let mut last = last_status_clone.lock().unwrap();
-                        if *last != inst.status {
-                            eprint!(
-                                "\r  {} Instance: {}                    ",
-                                "⟳".bright_cyan(),
-                                inst.status.bright_yellow()
-                            );
-                            *last = inst.status.clone();
-                        }
-                    }))
-                } else {
-                    None
-                };
+            let on_poll: Option<
+                Box<dyn FnMut(&starpod_instances::deploy::InstanceResponse) + Send>,
+            > = if !no_instance {
+                Some(Box::new(move |inst| {
+                    let mut last = last_status_clone.lock().unwrap();
+                    if *last != inst.status {
+                        eprint!(
+                            "\r  {} Instance: {}                    ",
+                            "⟳".bright_cyan(),
+                            inst.status.bright_yellow()
+                        );
+                        *last = inst.status.clone();
+                    }
+                }))
+            } else {
+                None
+            };
 
             let summary = client
                 .deploy(DeployOpts {
@@ -3546,55 +3912,25 @@ async fn main() -> anyhow::Result<()> {
                 eprint!("\r                                                \r");
             }
 
-            println!(
-                "  {} Agent deployed successfully!",
-                "✓".green().bold()
-            );
+            println!("  {} Agent deployed successfully!", "✓".green().bold());
             println!(
                 "  {} Agent ID:   {}",
                 "│".dimmed(),
                 summary.agent_id.bright_white()
             );
-            println!(
-                "  {} Files:      {}",
-                "│".dimmed(),
-                summary.files_uploaded
-            );
-            println!(
-                "  {} Secrets:    {}",
-                "│".dimmed(),
-                summary.secrets_set
-            );
+            println!("  {} Files:      {}", "│".dimmed(), summary.files_uploaded);
+            println!("  {} Secrets:    {}", "│".dimmed(), summary.secrets_set);
 
             if let Some(ref inst) = summary.instance {
                 println!();
-                println!(
-                    "  {} Instance is running!",
-                    "✓".green().bold()
-                );
-                println!(
-                    "  {} ID:     {}",
-                    "│".dimmed(),
-                    inst.id.bright_white()
-                );
-                println!(
-                    "  {} Status: {}",
-                    "│".dimmed(),
-                    inst.status.bright_green()
-                );
+                println!("  {} Instance is running!", "✓".green().bold());
+                println!("  {} ID:     {}", "│".dimmed(), inst.id.bright_white());
+                println!("  {} Status: {}", "│".dimmed(), inst.status.bright_green());
                 if let Some(ref ip) = inst.ip_address {
-                    println!(
-                        "  {} IP:     {}",
-                        "│".dimmed(),
-                        ip.bright_white().bold()
-                    );
+                    println!("  {} IP:     {}", "│".dimmed(), ip.bright_white().bold());
                 }
                 if let Some(ref z) = inst.zone {
-                    println!(
-                        "  {} Zone:   {}",
-                        "│".dimmed(),
-                        z
-                    );
+                    println!("  {} Zone:   {}", "│".dimmed(), z);
                 }
             } else {
                 println!(
@@ -3604,7 +3940,6 @@ async fn main() -> anyhow::Result<()> {
                 );
             }
         }
-
     }
 
     Ok(())
@@ -3628,8 +3963,7 @@ async fn run_repl(agent: StarpodAgent, name: &str) -> anyhow::Result<()> {
         let line = match rl.readline(&prompt) {
             Ok(line) => line,
             Err(
-                rustyline::error::ReadlineError::Interrupted
-                | rustyline::error::ReadlineError::Eof,
+                rustyline::error::ReadlineError::Interrupted | rustyline::error::ReadlineError::Eof,
             ) => {
                 println!("\n  {} {}", "●".bright_yellow(), "Goodbye!".dimmed());
                 break;
@@ -3661,11 +3995,14 @@ async fn run_repl(agent: StarpodAgent, name: &str) -> anyhow::Result<()> {
             triggered_by: None,
             model: None,
         };
-        let (mut stream, session_id, _followup_tx, _out_attachments) = agent.chat_stream(&chat_msg).await?;
+        let (mut stream, session_id, _followup_tx, _out_attachments) =
+            agent.chat_stream(&chat_msg).await?;
         let (result_text, result_msg) = process_stream(&mut stream, &start).await?;
 
         if let Some(ref result) = result_msg {
-            agent.finalize_chat(&session_id, line, &result_text, result, None).await;
+            agent
+                .finalize_chat(&session_id, line, &result_text, result, None)
+                .await;
             print_result(&result_text, result, &start);
         } else if !result_text.is_empty() {
             println!("\n  {}\n", result_text);

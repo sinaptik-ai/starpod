@@ -89,13 +89,21 @@ pub fn build_summary_prompt(old_messages: &[ApiMessage]) -> String {
                 ApiContentBlock::ToolUse { name, input, .. } => {
                     rendered.push_str(&format!("Tool call: {} input: {}\n", name, input));
                 }
-                ApiContentBlock::ToolResult { content, is_error, .. } => {
-                    let label = if *is_error == Some(true) { "error" } else { "result" };
+                ApiContentBlock::ToolResult {
+                    content, is_error, ..
+                } => {
+                    let label = if *is_error == Some(true) {
+                        "error"
+                    } else {
+                        "result"
+                    };
                     // Truncate long tool results
                     let content_str = content.to_string();
                     if content_str.len() > 500 {
                         let mut end = 500;
-                        while end > 0 && !content_str.is_char_boundary(end) { end -= 1; }
+                        while end > 0 && !content_str.is_char_boundary(end) {
+                            end -= 1;
+                        }
                         rendered.push_str(&format!("Tool {}: {}...\n", label, &content_str[..end]));
                     } else {
                         rendered.push_str(&format!("Tool {}: {}\n", label, content_str));
@@ -175,11 +183,7 @@ pub async fn call_summarizer(
 }
 
 /// Replace old messages with a summary message.
-pub fn splice_conversation(
-    conversation: &mut Vec<ApiMessage>,
-    split_point: usize,
-    summary: &str,
-) {
+pub fn splice_conversation(conversation: &mut Vec<ApiMessage>, split_point: usize, summary: &str) {
     // Remove old messages
     conversation.drain(..split_point);
 
@@ -275,7 +279,10 @@ pub fn prune_tool_results(
     }
 
     if total_removed > 0 {
-        debug!(total_chars_removed = total_removed, "Tool result pruning complete");
+        debug!(
+            total_chars_removed = total_removed,
+            "Tool result pruning complete"
+        );
     }
 
     total_removed
@@ -306,11 +313,15 @@ fn char_boundary_rev(s: &str, distance: usize) -> usize {
 // ── helpers ──────────────────────────────────────────────────────────────
 
 fn has_tool_uses(blocks: &[ApiContentBlock]) -> bool {
-    blocks.iter().any(|b| matches!(b, ApiContentBlock::ToolUse { .. }))
+    blocks
+        .iter()
+        .any(|b| matches!(b, ApiContentBlock::ToolUse { .. }))
 }
 
 fn has_tool_results(blocks: &[ApiContentBlock]) -> bool {
-    blocks.iter().any(|b| matches!(b, ApiContentBlock::ToolResult { .. }))
+    blocks
+        .iter()
+        .any(|b| matches!(b, ApiContentBlock::ToolResult { .. }))
 }
 
 fn extract_text(content: &[ApiContentBlock]) -> Result<String> {
@@ -408,13 +419,13 @@ mod tests {
         // Split at 3 means keeping [3..7] which includes the tool pair — that's fine
         // But what if split would land at index 4 (user with tool_result)?
         let conv = vec![
-            text_msg("user", "hello"),           // 0
-            text_msg("assistant", "hi"),          // 1
-            text_msg("user", "do something"),     // 2
-            tool_use_msg(),                       // 3 - assistant with tool_use
-            tool_result_msg(),                    // 4 - user with tool_result
-            text_msg("assistant", "done"),        // 5
-            text_msg("user", "thanks"),           // 6
+            text_msg("user", "hello"),        // 0
+            text_msg("assistant", "hi"),      // 1
+            text_msg("user", "do something"), // 2
+            tool_use_msg(),                   // 3 - assistant with tool_use
+            tool_result_msg(),                // 4 - user with tool_result
+            text_msg("assistant", "done"),    // 5
+            text_msg("user", "thanks"),       // 6
         ];
 
         let split = find_split_point(&conv, DEFAULT_MIN_KEEP_MESSAGES);
@@ -431,11 +442,11 @@ mod tests {
         // MIN_KEEP = 4, candidate split = 5 - 4 = 1
         // Index 1 is tool_use(assistant), which is fine — kept portion starts with it
         let conv = vec![
-            text_msg("user", "start"),    // 0
-            tool_use_msg(),               // 1
-            tool_result_msg(),            // 2
-            text_msg("assistant", "ok"),  // 3
-            text_msg("user", "next"),     // 4
+            text_msg("user", "start"),   // 0
+            tool_use_msg(),              // 1
+            tool_result_msg(),           // 2
+            text_msg("assistant", "ok"), // 3
+            text_msg("user", "next"),    // 4
         ];
         let split = find_split_point(&conv, DEFAULT_MIN_KEEP_MESSAGES);
         assert_eq!(split, 1);
@@ -443,7 +454,7 @@ mod tests {
         // Now: 6 messages where split=2 lands on tool_result
         let conv2 = vec![
             text_msg("user", "start"),     // 0
-            text_msg("assistant", "ack"),   // 1
+            text_msg("assistant", "ack"),  // 1
             tool_result_msg(),             // 2 - user with tool_result (split candidate)
             text_msg("assistant", "done"), // 3
             text_msg("user", "q1"),        // 4
@@ -618,11 +629,11 @@ mod tests {
         let mut conv = vec![
             text_msg("user", "q1"),
             tool_use_msg(),
-            large_tool_result_msg(5000),   // index 2 — should be pruned
+            large_tool_result_msg(5000), // index 2 — should be pruned
             text_msg("assistant", "a1"),
             text_msg("user", "q2"),
             tool_use_msg(),
-            large_tool_result_msg(8000),   // index 6 — should be pruned
+            large_tool_result_msg(8000), // index 6 — should be pruned
             text_msg("assistant", "a2"),
             text_msg("user", "latest"),    // tail
             text_msg("assistant", "done"), // tail

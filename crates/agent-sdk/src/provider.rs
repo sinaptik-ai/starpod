@@ -121,13 +121,18 @@ mod tests {
         // 100 input + 50 output => (100 * 2.5 + 50 * 10.0) / 1_000_000 = 750 / 1_000_000
         let cost = rates.compute(100, 50);
         let expected = 750.0 / 1_000_000.0;
-        assert!((cost - expected).abs() < 1e-12, "expected {}, got {}", expected, cost);
+        assert!(
+            (cost - expected).abs() < 1e-12,
+            "expected {}, got {}",
+            expected,
+            cost
+        );
     }
 
     #[test]
     fn cost_rates_with_cache() {
         let rates = CostRates {
-            input_per_million: 3.0,  // Sonnet pricing
+            input_per_million: 3.0, // Sonnet pricing
             output_per_million: 15.0,
             cache_read_multiplier: Some(0.1),
             cache_creation_multiplier: Some(1.25),
@@ -135,7 +140,12 @@ mod tests {
         // 1000 uncached at $3/M + 10000 cache_read at $0.30/M + 2000 cache_creation at $3.75/M + 500 output at $15/M
         let cost = rates.compute_with_cache(1000, 500, 10_000, 2000);
         let expected = (1000.0 * 3.0 + 10_000.0 * 0.3 + 2000.0 * 3.75 + 500.0 * 15.0) / 1_000_000.0;
-        assert!((cost - expected).abs() < 1e-12, "expected {}, got {}", expected, cost);
+        assert!(
+            (cost - expected).abs() < 1e-12,
+            "expected {}, got {}",
+            expected,
+            cost
+        );
     }
 
     #[test]
@@ -149,7 +159,12 @@ mod tests {
         };
         let cost = rates.compute_with_cache(0, 200, 13_000, 0);
         let expected = (13_000.0 * 0.3 + 200.0 * 15.0) / 1_000_000.0;
-        assert!((cost - expected).abs() < 1e-12, "expected {}, got {}", expected, cost);
+        assert!(
+            (cost - expected).abs() < 1e-12,
+            "expected {}, got {}",
+            expected,
+            cost
+        );
     }
 
     #[test]
@@ -163,7 +178,12 @@ mod tests {
         };
         let cost = rates.compute_with_cache(500, 452, 0, 13_000);
         let expected = (500.0 * 3.0 + 13_000.0 * 3.75 + 452.0 * 15.0) / 1_000_000.0;
-        assert!((cost - expected).abs() < 1e-12, "expected {}, got {}", expected, cost);
+        assert!(
+            (cost - expected).abs() < 1e-12,
+            "expected {}, got {}",
+            expected,
+            cost
+        );
     }
 
     #[test]
@@ -178,7 +198,12 @@ mod tests {
         let cost = rates.compute_with_cache(1000, 500, 5000, 3000);
         // All input tokens (1000 + 5000 + 3000) at $2/M + 500 output at $8/M
         let expected = (9000.0 * 2.0 + 500.0 * 8.0) / 1_000_000.0;
-        assert!((cost - expected).abs() < 1e-12, "expected {}, got {}", expected, cost);
+        assert!(
+            (cost - expected).abs() < 1e-12,
+            "expected {}, got {}",
+            expected,
+            cost
+        );
     }
 
     #[test]
@@ -186,7 +211,7 @@ mod tests {
         // Simulates the accumulation pattern from run_agent_loop in query.rs:
         // total_cost += rates.compute_with_cache(...) per turn.
         let rates = CostRates {
-            input_per_million: 3.0,  // Sonnet
+            input_per_million: 3.0, // Sonnet
             output_per_million: 15.0,
             cache_read_multiplier: Some(0.1),
             cache_creation_multiplier: Some(1.25),
@@ -220,7 +245,13 @@ mod tests {
         );
 
         // Sanity: cache reads should make turns 2-3 much cheaper than turn 1
-        assert!(turn2 < turn1, "turn 2 should be cheaper than turn 1 (cache reads vs creation)");
-        assert!(turn3 < turn1, "turn 3 should be cheaper than turn 1 (cache reads vs creation)");
+        assert!(
+            turn2 < turn1,
+            "turn 2 should be cheaper than turn 1 (cache reads vs creation)"
+        );
+        assert!(
+            turn3 < turn1,
+            "turn 3 should be cheaper than turn 1 (cache reads vs creation)"
+        );
     }
 }

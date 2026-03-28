@@ -25,12 +25,12 @@ use crate::client::{
 };
 use crate::compact;
 use crate::error::{AgentError, Result};
-use crate::sanitize;
 use crate::hooks::HookRegistry;
 use crate::options::{Options, PermissionMode, ThinkingConfig};
 use crate::permissions::{PermissionEvaluator, PermissionVerdict};
 use crate::provider::LlmProvider;
 use crate::providers::AnthropicProvider;
+use crate::sanitize;
 use crate::session::Session;
 use crate::tools::definitions::get_tool_definitions;
 use crate::tools::executor::{ToolExecutor, ToolResult};
@@ -162,15 +162,12 @@ async fn run_agent_loop(
     let mut api_time_ms: u64 = 0;
 
     // Resolve working directory
-    let cwd = options
-        .cwd
-        .clone()
-        .unwrap_or_else(|| {
-            std::env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
-                .to_string_lossy()
-                .to_string()
-        });
+    let cwd = options.cwd.clone().unwrap_or_else(|| {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .to_string_lossy()
+            .to_string()
+    });
 
     // Create or resume session
     let session = if let Some(ref resume_id) = options.resume {
@@ -201,8 +198,12 @@ async fn run_agent_loop(
     } else if options.allowed_tools.is_empty() {
         // Default set of tools
         vec![
-            "Read".into(), "Write".into(), "Edit".into(), "Bash".into(),
-            "Glob".into(), "Grep".into(),
+            "Read".into(),
+            "Write".into(),
+            "Edit".into(),
+            "Bash".into(),
+            "Glob".into(),
+            "Grep".into(),
         ]
     } else {
         options.allowed_tools.clone()
@@ -272,7 +273,9 @@ async fn run_agent_loop(
 
     // Persist and emit init message
     if options.persist_session {
-        let _ = session.append_message(&serde_json::to_value(&init_msg).unwrap_or_default()).await;
+        let _ = session
+            .append_message(&serde_json::to_value(&init_msg).unwrap_or_default())
+            .await;
     }
     if tx.send(Ok(init_msg)).is_err() {
         return Ok(());
@@ -295,7 +298,8 @@ async fn run_agent_loop(
         ToolExecutor::new(PathBuf::from(&cwd))
     } else {
         ToolExecutor::with_allowed_dirs(PathBuf::from(&cwd), additional_dirs)
-    }.with_env_blocklist(env_blocklist);
+    }
+    .with_env_blocklist(env_blocklist);
 
     // Build hook registry from options, merging file-discovered hooks
     let mut hook_registry = HookRegistry::from_map(std::mem::take(&mut options.hooks));
@@ -453,7 +457,10 @@ async fn run_agent_loop(
             }
             if !followups.is_empty() {
                 let combined = followups.join("\n\n");
-                debug!(count = followups.len(), "Injecting followup messages into agent loop");
+                debug!(
+                    count = followups.len(),
+                    "Injecting followup messages into agent loop"
+                );
 
                 conversation.push(ApiMessage {
                     role: "user".to_string(),
@@ -540,11 +547,7 @@ async fn run_agent_loop(
             // Streaming mode: consume SSE events, emit text deltas, accumulate full response
             match provider.create_message_stream(&request).await {
                 Ok(mut event_stream) => {
-                    match accumulate_stream(
-                        &mut event_stream,
-                        &tx,
-                        &session_id,
-                    ).await {
+                    match accumulate_stream(&mut event_stream, &tx, &session_id).await {
                         Ok(resp) => resp,
                         Err(e) => {
                             error!("Stream accumulation failed: {}", e);
@@ -610,8 +613,7 @@ async fn run_agent_loop(
         total_usage.output_tokens += response.usage.output_tokens;
         total_usage.cache_creation_input_tokens +=
             response.usage.cache_creation_input_tokens.unwrap_or(0);
-        total_usage.cache_read_input_tokens +=
-            response.usage.cache_read_input_tokens.unwrap_or(0);
+        total_usage.cache_read_input_tokens += response.usage.cache_read_input_tokens.unwrap_or(0);
 
         // Estimate cost using provider-specific rates (with cache-aware pricing)
         let rates = provider.cost_rates(&model);
@@ -878,7 +880,8 @@ async fn run_agent_loop(
             })
             .collect();
 
-        while let Some((tool_use_id, tool_name, actual_input, mut tool_result)) = futs.next().await {
+        while let Some((tool_use_id, tool_name, actual_input, mut tool_result)) = futs.next().await
+        {
             // Sanitize tool result: strip blobs, enforce byte limit.
             let max_result_bytes = options
                 .max_tool_result_bytes
@@ -887,14 +890,16 @@ async fn run_agent_loop(
                 sanitize::sanitize_tool_result(&tool_result.content, max_result_bytes);
 
             // Run PostToolUse hooks
-            hook_registry.run_post_tool_use(
-                tool_name,
-                actual_input,
-                &serde_json::to_value(&tool_result.content).unwrap_or_default(),
-                tool_use_id,
-                &session_id,
-                &cwd,
-            ).await;
+            hook_registry
+                .run_post_tool_use(
+                    tool_name,
+                    actual_input,
+                    &serde_json::to_value(&tool_result.content).unwrap_or_default(),
+                    tool_use_id,
+                    &session_id,
+                    &cwd,
+                )
+                .await;
 
             let result_content = tool_result
                 .raw_content
@@ -949,11 +954,7 @@ async fn run_agent_loop(
                     .prune_tool_result_max_chars
                     .unwrap_or(compact::DEFAULT_PRUNE_TOOL_RESULT_MAX_CHARS);
                 let min_keep = options.min_keep_messages.unwrap_or(4);
-                let removed = compact::prune_tool_results(
-                    &mut conversation,
-                    max_chars,
-                    min_keep,
-                );
+                let removed = compact::prune_tool_results(&mut conversation, max_chars, min_keep);
                 if removed > 0 {
                     debug!(
                         chars_removed = removed,
@@ -996,11 +997,12 @@ async fn run_agent_loop(
                         Some(cp) => cp.as_ref(),
                         None => provider.as_ref(),
                     };
-                    let fallback_provider: Option<&dyn LlmProvider> = if options.compaction_provider.is_some() {
-                        Some(provider.as_ref())
-                    } else {
-                        None
-                    };
+                    let fallback_provider: Option<&dyn LlmProvider> =
+                        if options.compaction_provider.is_some() {
+                            Some(provider.as_ref())
+                        } else {
+                            None
+                        };
                     match compact::call_summarizer(
                         compact_provider,
                         &summary_prompt,
@@ -1015,11 +1017,7 @@ async fn run_agent_loop(
                             let pre_tokens = response.usage.input_tokens;
                             let messages_compacted = split_point;
 
-                            compact::splice_conversation(
-                                &mut conversation,
-                                split_point,
-                                &summary,
-                            );
+                            compact::splice_conversation(&mut conversation, split_point, &summary);
 
                             // Emit CompactBoundary system message
                             let compact_msg = Message::System(SystemMessage {
@@ -1042,8 +1040,7 @@ async fn run_agent_loop(
                             if options.persist_session {
                                 let _ = session
                                     .append_message(
-                                        &serde_json::to_value(&compact_msg)
-                                            .unwrap_or_default(),
+                                        &serde_json::to_value(&compact_msg).unwrap_or_default(),
                                     )
                                     .await;
                             }
@@ -1057,10 +1054,7 @@ async fn run_agent_loop(
                             );
                         }
                         Err(e) => {
-                            warn!(
-                                "Compaction failed, continuing without compaction: {}",
-                                e
-                            );
+                            warn!("Compaction failed, continuing without compaction: {}", e);
                         }
                     }
                 }
@@ -1072,7 +1066,9 @@ async fn run_agent_loop(
 /// Consume a streaming response, emitting `Message::StreamEvent` for each text
 /// delta, and accumulate the full `MessageResponse` for the agent loop.
 async fn accumulate_stream(
-    event_stream: &mut std::pin::Pin<Box<dyn futures::Stream<Item = Result<ClientStreamEvent>> + Send>>,
+    event_stream: &mut std::pin::Pin<
+        Box<dyn futures::Stream<Item = Result<ClientStreamEvent>> + Send>,
+    >,
     tx: &mpsc::UnboundedSender<Result<Message>>,
     session_id: &str,
 ) -> Result<MessageResponse> {
@@ -1102,7 +1098,10 @@ async fn accumulate_stream(
                 role = message.role;
                 usage = message.usage;
             }
-            SE::ContentBlockStart { index, content_block } => {
+            SE::ContentBlockStart {
+                index,
+                content_block,
+            } => {
                 // Ensure vectors are large enough
                 while block_texts.len() <= index {
                     block_texts.push(String::new());
@@ -1173,10 +1172,9 @@ async fn accumulate_stream(
                             cache_control: None,
                         },
                         "tool_use" => {
-                            let input: serde_json::Value = serde_json::from_str(
-                                &block_texts[index],
-                            )
-                            .unwrap_or(serde_json::Value::Object(Default::default()));
+                            let input: serde_json::Value =
+                                serde_json::from_str(&block_texts[index])
+                                    .unwrap_or(serde_json::Value::Object(Default::default()));
                             ApiContentBlock::ToolUse {
                                 id: std::mem::take(&mut block_tool_ids[index]),
                                 name: std::mem::take(&mut block_tool_names[index]),
@@ -1198,7 +1196,10 @@ async fn accumulate_stream(
                     content_blocks[index] = block;
                 }
             }
-            SE::MessageDelta { delta, usage: delta_usage } => {
+            SE::MessageDelta {
+                delta,
+                usage: delta_usage,
+            } => {
                 stop_reason = delta.stop_reason;
                 // MessageDelta carries output_tokens for the whole message
                 usage.output_tokens = delta_usage.output_tokens;
@@ -1262,9 +1263,7 @@ fn apply_cache_breakpoint(conversation: &mut [ApiMessage]) {
 /// Convert an API content block to our ContentBlock type.
 fn api_block_to_content_block(block: &ApiContentBlock) -> ContentBlock {
     match block {
-        ApiContentBlock::Text { text, .. } => ContentBlock::Text {
-            text: text.clone(),
-        },
+        ApiContentBlock::Text { text, .. } => ContentBlock::Text { text: text.clone() },
         ApiContentBlock::Image { .. } => ContentBlock::Text {
             text: "[image]".to_string(),
         },
@@ -1410,7 +1409,10 @@ mod tests {
     /// as the production code, collecting (tool_use_id, content, completion_order).
     async fn run_concurrent_tools(
         tools: Vec<(String, String, serde_json::Value)>,
-        handler: impl Fn(String, serde_json::Value) -> Pin<Box<dyn futures::Future<Output = Option<ToolResult>> + Send>>,
+        handler: impl Fn(
+            String,
+            serde_json::Value,
+        ) -> Pin<Box<dyn futures::Future<Output = Option<ToolResult>> + Send>>,
     ) -> Vec<(String, String, usize)> {
         let order = Arc::new(AtomicUsize::new(0));
         let handler = Arc::new(handler);
@@ -1691,10 +1693,8 @@ mod tests {
 
     #[tokio::test]
     async fn empty_tool_list_produces_no_results() {
-        let results = run_concurrent_tools(vec![], |_name, _input| {
-            Box::pin(async move { None })
-        })
-        .await;
+        let results =
+            run_concurrent_tools(vec![], |_name, _input| Box::pin(async move { None })).await;
 
         assert_eq!(results.len(), 0);
     }
@@ -1833,7 +1833,11 @@ mod tests {
 
         for (i, msg) in messages.iter().enumerate() {
             if let Message::User(user) = msg {
-                assert_eq!(user.content.len(), 1, "each message should have exactly 1 content block");
+                assert_eq!(
+                    user.content.len(),
+                    1,
+                    "each message should have exactly 1 content block"
+                );
                 assert!(user.is_synthetic);
                 if let ContentBlock::ToolResult { tool_use_id, .. } = &user.content[0] {
                     assert_eq!(tool_use_id, tool_ids[i]);
@@ -1848,7 +1852,9 @@ mod tests {
 
     #[tokio::test]
     async fn accumulate_stream_emits_text_deltas_and_builds_response() {
-        use crate::client::{ApiContentBlock, ApiUsage, ContentDelta, MessageResponse, StreamEvent as SE};
+        use crate::client::{
+            ApiContentBlock, ApiUsage, ContentDelta, MessageResponse, StreamEvent as SE,
+        };
 
         // Build a fake stream of SSE events
         let events: Vec<Result<SE>> = vec![
@@ -1876,11 +1882,15 @@ mod tests {
             }),
             Ok(SE::ContentBlockDelta {
                 index: 0,
-                delta: ContentDelta::TextDelta { text: "Hello".into() },
+                delta: ContentDelta::TextDelta {
+                    text: "Hello".into(),
+                },
             }),
             Ok(SE::ContentBlockDelta {
                 index: 0,
-                delta: ContentDelta::TextDelta { text: " world".into() },
+                delta: ContentDelta::TextDelta {
+                    text: " world".into(),
+                },
             }),
             Ok(SE::ContentBlockDelta {
                 index: 0,
@@ -1946,7 +1956,9 @@ mod tests {
 
     #[tokio::test]
     async fn accumulate_stream_handles_tool_use() {
-        use crate::client::{ApiContentBlock, ApiUsage, ContentDelta, MessageResponse, StreamEvent as SE};
+        use crate::client::{
+            ApiContentBlock, ApiUsage, ContentDelta, MessageResponse, StreamEvent as SE,
+        };
 
         let events: Vec<Result<SE>> = vec![
             Ok(SE::MessageStart {
@@ -1969,7 +1981,9 @@ mod tests {
             }),
             Ok(SE::ContentBlockDelta {
                 index: 0,
-                delta: ContentDelta::TextDelta { text: "Let me check.".into() },
+                delta: ContentDelta::TextDelta {
+                    text: "Let me check.".into(),
+                },
             }),
             Ok(SE::ContentBlockStop { index: 0 }),
             // Tool use block
@@ -1992,7 +2006,11 @@ mod tests {
                 delta: crate::client::MessageDelta {
                     stop_reason: Some("tool_use".into()),
                 },
-                usage: ApiUsage { input_tokens: 0, output_tokens: 20, ..Default::default() },
+                usage: ApiUsage {
+                    input_tokens: 0,
+                    output_tokens: 20,
+                    ..Default::default()
+                },
             }),
             Ok(SE::MessageStop),
         ];
@@ -2055,7 +2073,11 @@ mod tests {
                 delta: crate::client::MessageDelta {
                     stop_reason: Some("tool_use".into()),
                 },
-                usage: ApiUsage { input_tokens: 0, output_tokens: 10, ..Default::default() },
+                usage: ApiUsage {
+                    input_tokens: 0,
+                    output_tokens: 10,
+                    ..Default::default()
+                },
             }),
             Ok(SE::MessageStop),
         ];

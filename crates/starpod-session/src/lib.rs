@@ -4,7 +4,7 @@ use sqlx::{Row, SqlitePool};
 use tracing::debug;
 use uuid::Uuid;
 
-use starpod_core::{StarpodError, Result};
+use starpod_core::{Result, StarpodError};
 
 /// A channel that sessions are scoped to.
 #[derive(Debug, Clone, PartialEq)]
@@ -33,7 +33,6 @@ impl Channel {
             _ => Channel::Main,
         }
     }
-
 }
 
 /// Decision from session resolution on whether to continue or start a new session.
@@ -114,7 +113,8 @@ impl SessionManager {
         key: &str,
         gap_minutes: Option<i64>,
     ) -> Result<SessionDecision> {
-        self.resolve_session_for_user(channel, key, gap_minutes, "admin").await
+        self.resolve_session_for_user(channel, key, gap_minutes, "admin")
+            .await
     }
 
     /// Resolve session for a given channel, key, and user.
@@ -141,7 +141,11 @@ impl SessionManager {
 
         let row = match row {
             Some(r) => r,
-            None => return Ok(SessionDecision::New { closed_session_id: None }),
+            None => {
+                return Ok(SessionDecision::New {
+                    closed_session_id: None,
+                })
+            }
         };
 
         let session_id: String = row.get("id");
@@ -168,17 +172,16 @@ impl SessionManager {
             Ok(SessionDecision::Continue(session_id))
         } else {
             debug!(session_id = %session_id, gap_mins = gap.num_minutes(), "Auto-closing session (gap exceeded)");
-            self.close_session(&session_id, "Auto-closed: inactivity").await?;
-            Ok(SessionDecision::New { closed_session_id: Some(session_id) })
+            self.close_session(&session_id, "Auto-closed: inactivity")
+                .await?;
+            Ok(SessionDecision::New {
+                closed_session_id: Some(session_id),
+            })
         }
     }
 
     /// Create a new session for a channel and key, returning its ID.
-    pub async fn create_session(
-        &self,
-        channel: &Channel,
-        key: &str,
-    ) -> Result<String> {
+    pub async fn create_session(&self, channel: &Channel, key: &str) -> Result<String> {
         self.create_session_full(channel, key, "admin", None).await
     }
 
@@ -273,19 +276,22 @@ impl SessionManager {
         } else {
             title.to_string()
         };
-        sqlx::query(
-            "UPDATE session_metadata SET title = ?2 WHERE id = ?1 AND title IS NULL",
-        )
-        .bind(id)
-        .bind(&truncated)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| StarpodError::Database(format!("Set title failed: {}", e)))?;
+        sqlx::query("UPDATE session_metadata SET title = ?2 WHERE id = ?1 AND title IS NULL")
+            .bind(id)
+            .bind(&truncated)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StarpodError::Database(format!("Set title failed: {}", e)))?;
         Ok(())
     }
 
     /// Record token usage for a turn.
-    pub async fn record_usage(&self, session_id: &str, usage: &UsageRecord, turn: u32) -> Result<()> {
+    pub async fn record_usage(
+        &self,
+        session_id: &str,
+        usage: &UsageRecord,
+        turn: u32,
+    ) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         sqlx::query(
             "INSERT INTO usage_stats (session_id, turn, input_tokens, output_tokens, cache_read, cache_write, cost_usd, model, user_id, timestamp)
@@ -321,10 +327,8 @@ impl SessionManager {
         .await
         .map_err(|e| StarpodError::Database(format!("Query failed: {}", e)))?;
 
-        let sessions: Vec<SessionMeta> = rows
-            .iter()
-            .map(|row| session_meta_from_row(row))
-            .collect();
+        let sessions: Vec<SessionMeta> =
+            rows.iter().map(|row| session_meta_from_row(row)).collect();
 
         Ok(sessions)
     }
@@ -394,7 +398,9 @@ impl SessionManager {
         if let Some(ts) = bind_val {
             q = q.bind(ts);
         }
-        let total_row = q.fetch_one(&self.pool).await
+        let total_row = q
+            .fetch_one(&self.pool)
+            .await
             .map_err(|e| StarpodError::Database(format!("Cost total query failed: {}", e)))?;
 
         // By user
@@ -413,7 +419,9 @@ impl SessionManager {
         if let Some(ts) = bind_val {
             q = q.bind(ts);
         }
-        let user_rows = q.fetch_all(&self.pool).await
+        let user_rows = q
+            .fetch_all(&self.pool)
+            .await
             .map_err(|e| StarpodError::Database(format!("Cost by-user query failed: {}", e)))?;
 
         // By model
@@ -432,7 +440,9 @@ impl SessionManager {
         if let Some(ts) = bind_val {
             q = q.bind(ts);
         }
-        let model_rows = q.fetch_all(&self.pool).await
+        let model_rows = q
+            .fetch_all(&self.pool)
+            .await
             .map_err(|e| StarpodError::Database(format!("Cost by-model query failed: {}", e)))?;
 
         // By day + model
@@ -446,7 +456,9 @@ impl SessionManager {
         if let Some(ts) = bind_val {
             q = q.bind(ts);
         }
-        let day_rows = q.fetch_all(&self.pool).await
+        let day_rows = q
+            .fetch_all(&self.pool)
+            .await
             .map_err(|e| StarpodError::Database(format!("Cost by-day query failed: {}", e)))?;
 
         // Group day rows into DayCostSummary
@@ -457,12 +469,18 @@ impl SessionManager {
             let cost: f64 = row.get::<f64, _>("cost");
             if let Some(last) = by_day.last_mut().filter(|d| d.date == date) {
                 last.total_cost_usd += cost;
-                last.by_model.push(DayModelCost { model, cost_usd: cost });
+                last.by_model.push(DayModelCost {
+                    model,
+                    cost_usd: cost,
+                });
             } else {
                 by_day.push(DayCostSummary {
                     date,
                     total_cost_usd: cost,
-                    by_model: vec![DayModelCost { model, cost_usd: cost }],
+                    by_model: vec![DayModelCost {
+                        model,
+                        cost_usd: cost,
+                    }],
                 });
             }
         }
@@ -485,20 +503,31 @@ impl SessionManager {
                {}
              GROUP BY tool_name
              ORDER BY invocations DESC",
-            if bind_val.is_some() { "AND sm.timestamp >= ?1" } else { "" }
+            if bind_val.is_some() {
+                "AND sm.timestamp >= ?1"
+            } else {
+                ""
+            }
         );
         let mut q = sqlx::query(&tool_sql);
         if let Some(ts) = bind_val {
             q = q.bind(ts);
         }
-        let tool_rows = q.fetch_all(&self.pool).await
+        let tool_rows = q
+            .fetch_all(&self.pool)
+            .await
             .map_err(|e| StarpodError::Database(format!("Cost by-tool query failed: {}", e)))?;
 
-        let by_tool: Vec<ToolUsageSummary> = tool_rows.iter().map(|r| ToolUsageSummary {
-            tool_name: r.try_get("tool_name").unwrap_or_else(|_| "unknown".to_string()),
-            invocations: r.get::<i64, _>("invocations") as u32,
-            errors: r.get::<i64, _>("errors") as u32,
-        }).collect();
+        let by_tool: Vec<ToolUsageSummary> = tool_rows
+            .iter()
+            .map(|r| ToolUsageSummary {
+                tool_name: r
+                    .try_get("tool_name")
+                    .unwrap_or_else(|_| "unknown".to_string()),
+                invocations: r.get::<i64, _>("invocations") as u32,
+                errors: r.get::<i64, _>("errors") as u32,
+            })
+            .collect();
 
         Ok(CostOverview {
             total_cost_usd: total_row.get::<f64, _>("cost"),
@@ -507,24 +536,30 @@ impl SessionManager {
             total_cache_read: total_row.get::<i64, _>("cr") as u64,
             total_cache_write: total_row.get::<i64, _>("cw") as u64,
             total_turns: total_row.get::<i64, _>("turns") as u32,
-            by_user: user_rows.iter().map(|r| UserCostSummary {
-                user_id: r.get("user_id"),
-                total_cost_usd: r.get::<f64, _>("cost"),
-                total_input_tokens: r.get::<i64, _>("ti") as u64,
-                total_output_tokens: r.get::<i64, _>("to_") as u64,
-                total_cache_read: r.get::<i64, _>("cr") as u64,
-                total_cache_write: r.get::<i64, _>("cw") as u64,
-                total_turns: r.get::<i64, _>("turns") as u32,
-            }).collect(),
-            by_model: model_rows.iter().map(|r| ModelCostSummary {
-                model: r.try_get("model").unwrap_or_else(|_| "unknown".to_string()),
-                total_cost_usd: r.get::<f64, _>("cost"),
-                total_input_tokens: r.get::<i64, _>("ti") as u64,
-                total_output_tokens: r.get::<i64, _>("to_") as u64,
-                total_cache_read: r.get::<i64, _>("cr") as u64,
-                total_cache_write: r.get::<i64, _>("cw") as u64,
-                total_turns: r.get::<i64, _>("turns") as u32,
-            }).collect(),
+            by_user: user_rows
+                .iter()
+                .map(|r| UserCostSummary {
+                    user_id: r.get("user_id"),
+                    total_cost_usd: r.get::<f64, _>("cost"),
+                    total_input_tokens: r.get::<i64, _>("ti") as u64,
+                    total_output_tokens: r.get::<i64, _>("to_") as u64,
+                    total_cache_read: r.get::<i64, _>("cr") as u64,
+                    total_cache_write: r.get::<i64, _>("cw") as u64,
+                    total_turns: r.get::<i64, _>("turns") as u32,
+                })
+                .collect(),
+            by_model: model_rows
+                .iter()
+                .map(|r| ModelCostSummary {
+                    model: r.try_get("model").unwrap_or_else(|_| "unknown".to_string()),
+                    total_cost_usd: r.get::<f64, _>("cost"),
+                    total_input_tokens: r.get::<i64, _>("ti") as u64,
+                    total_output_tokens: r.get::<i64, _>("to_") as u64,
+                    total_cache_read: r.get::<i64, _>("cr") as u64,
+                    total_cache_write: r.get::<i64, _>("cw") as u64,
+                    total_turns: r.get::<i64, _>("turns") as u32,
+                })
+                .collect(),
             by_day,
             by_tool,
         })
@@ -588,14 +623,12 @@ impl SessionManager {
                 content.to_string()
             };
             // Only set if title is currently NULL (first message)
-            sqlx::query(
-                "UPDATE session_metadata SET title = ?2 WHERE id = ?1 AND title IS NULL",
-            )
-            .bind(session_id)
-            .bind(&title)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| StarpodError::Database(format!("Set title failed: {}", e)))?;
+            sqlx::query("UPDATE session_metadata SET title = ?2 WHERE id = ?1 AND title IS NULL")
+                .bind(session_id)
+                .bind(&title)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| StarpodError::Database(format!("Set title failed: {}", e)))?;
         }
 
         Ok(())
@@ -639,7 +672,9 @@ fn session_meta_from_row(row: &sqlx::sqlite::SqliteRow) -> SessionMeta {
         message_count: row.get("message_count"),
         channel: row.get("channel"),
         channel_session_key: row.get("channel_session_key"),
-        user_id: row.try_get("user_id").unwrap_or_else(|_| "admin".to_string()),
+        user_id: row
+            .try_get("user_id")
+            .unwrap_or_else(|_| "admin".to_string()),
         is_read: row.try_get::<i64, _>("is_read").unwrap_or(1) != 0,
         triggered_by: row.try_get("triggered_by").unwrap_or(None),
     }
@@ -762,7 +797,10 @@ mod tests {
     #[tokio::test]
     async fn test_create_and_get_session() {
         let (_tmp, mgr) = setup().await;
-        let id = mgr.create_session(&Channel::Main, "test-key").await.unwrap();
+        let id = mgr
+            .create_session(&Channel::Main, "test-key")
+            .await
+            .unwrap();
 
         let session = mgr.get_session(&id).await.unwrap().unwrap();
         assert_eq!(session.id, id);
@@ -775,19 +813,30 @@ mod tests {
     #[tokio::test]
     async fn test_close_session() {
         let (_tmp, mgr) = setup().await;
-        let id = mgr.create_session(&Channel::Main, "test-key").await.unwrap();
+        let id = mgr
+            .create_session(&Channel::Main, "test-key")
+            .await
+            .unwrap();
 
-        mgr.close_session(&id, "Discussed Rust memory management").await.unwrap();
+        mgr.close_session(&id, "Discussed Rust memory management")
+            .await
+            .unwrap();
 
         let session = mgr.get_session(&id).await.unwrap().unwrap();
         assert!(session.is_closed);
-        assert_eq!(session.summary.as_deref(), Some("Discussed Rust memory management"));
+        assert_eq!(
+            session.summary.as_deref(),
+            Some("Discussed Rust memory management")
+        );
     }
 
     #[tokio::test]
     async fn test_touch_session() {
         let (_tmp, mgr) = setup().await;
-        let id = mgr.create_session(&Channel::Main, "test-key").await.unwrap();
+        let id = mgr
+            .create_session(&Channel::Main, "test-key")
+            .await
+            .unwrap();
 
         mgr.touch_session(&id).await.unwrap();
         mgr.touch_session(&id).await.unwrap();
@@ -800,7 +849,11 @@ mod tests {
     async fn test_resolve_session_new_when_empty() {
         let (_tmp, mgr) = setup().await;
 
-        match mgr.resolve_session(&Channel::Main, "some-key", None).await.unwrap() {
+        match mgr
+            .resolve_session(&Channel::Main, "some-key", None)
+            .await
+            .unwrap()
+        {
             SessionDecision::New { .. } => {} // expected
             SessionDecision::Continue(_) => panic!("Should be New when no sessions exist"),
         }
@@ -812,7 +865,11 @@ mod tests {
         let id = mgr.create_session(&Channel::Main, "key-1").await.unwrap();
         mgr.touch_session(&id).await.unwrap();
 
-        match mgr.resolve_session(&Channel::Main, "key-1", None).await.unwrap() {
+        match mgr
+            .resolve_session(&Channel::Main, "key-1", None)
+            .await
+            .unwrap()
+        {
             SessionDecision::Continue(sid) => assert_eq!(sid, id),
             SessionDecision::New { .. } => panic!("Should continue recent session"),
         }
@@ -825,7 +882,11 @@ mod tests {
         mgr.touch_session(&id).await.unwrap();
         mgr.close_session(&id, "done").await.unwrap();
 
-        match mgr.resolve_session(&Channel::Main, "key-1", None).await.unwrap() {
+        match mgr
+            .resolve_session(&Channel::Main, "key-1", None)
+            .await
+            .unwrap()
+        {
             SessionDecision::New { .. } => {} // expected
             SessionDecision::Continue(_) => panic!("Should not continue closed session"),
         }
@@ -836,7 +897,9 @@ mod tests {
         let (_tmp, mgr) = setup().await;
         mgr.create_session(&Channel::Main, "k1").await.unwrap();
         mgr.create_session(&Channel::Main, "k2").await.unwrap();
-        mgr.create_session(&Channel::Telegram, "chat-1").await.unwrap();
+        mgr.create_session(&Channel::Telegram, "chat-1")
+            .await
+            .unwrap();
 
         let sessions = mgr.list_sessions(10).await.unwrap();
         assert_eq!(sessions.len(), 3);
@@ -845,7 +908,10 @@ mod tests {
     #[tokio::test]
     async fn test_record_and_query_usage() {
         let (_tmp, mgr) = setup().await;
-        let id = mgr.create_session(&Channel::Main, "test-key").await.unwrap();
+        let id = mgr
+            .create_session(&Channel::Main, "test-key")
+            .await
+            .unwrap();
 
         mgr.record_usage(
             &id,
@@ -891,19 +957,44 @@ mod tests {
     #[tokio::test]
     async fn test_usage_cache_breakdown() {
         let (_tmp, mgr) = setup().await;
-        let id = mgr.create_session(&Channel::Main, "cache-test").await.unwrap();
+        let id = mgr
+            .create_session(&Channel::Main, "cache-test")
+            .await
+            .unwrap();
 
         // Turn 1: cache miss — all tokens go to cache_write
-        mgr.record_usage(&id, &UsageRecord {
-            input_tokens: 500, output_tokens: 200, cache_read: 0, cache_write: 4000,
-            cost_usd: 0.05, model: "claude-sonnet".into(), user_id: "admin".into(),
-        }, 1).await.unwrap();
+        mgr.record_usage(
+            &id,
+            &UsageRecord {
+                input_tokens: 500,
+                output_tokens: 200,
+                cache_read: 0,
+                cache_write: 4000,
+                cost_usd: 0.05,
+                model: "claude-sonnet".into(),
+                user_id: "admin".into(),
+            },
+            1,
+        )
+        .await
+        .unwrap();
 
         // Turn 2: cache hit — most tokens served from cache
-        mgr.record_usage(&id, &UsageRecord {
-            input_tokens: 100, output_tokens: 300, cache_read: 4000, cache_write: 0,
-            cost_usd: 0.01, model: "claude-sonnet".into(), user_id: "admin".into(),
-        }, 2).await.unwrap();
+        mgr.record_usage(
+            &id,
+            &UsageRecord {
+                input_tokens: 100,
+                output_tokens: 300,
+                cache_read: 4000,
+                cache_write: 0,
+                cost_usd: 0.01,
+                model: "claude-sonnet".into(),
+                user_id: "admin".into(),
+            },
+            2,
+        )
+        .await
+        .unwrap();
 
         let summary = mgr.session_usage(&id).await.unwrap();
 
@@ -928,13 +1019,21 @@ mod tests {
         mgr.touch_session(&id).await.unwrap();
 
         // Same key → continue
-        match mgr.resolve_session(&Channel::Main, "abc", None).await.unwrap() {
+        match mgr
+            .resolve_session(&Channel::Main, "abc", None)
+            .await
+            .unwrap()
+        {
             SessionDecision::Continue(sid) => assert_eq!(sid, id),
             SessionDecision::New { .. } => panic!("Should continue with same key"),
         }
 
         // Different key → new
-        match mgr.resolve_session(&Channel::Main, "xyz", None).await.unwrap() {
+        match mgr
+            .resolve_session(&Channel::Main, "xyz", None)
+            .await
+            .unwrap()
+        {
             SessionDecision::New { .. } => {} // expected
             SessionDecision::Continue(_) => panic!("Different key should get new session"),
         }
@@ -946,11 +1045,18 @@ mod tests {
         let gap = Some(360); // 6h, as configured via [channels.telegram] gap_minutes
 
         // Create a telegram session
-        let id = mgr.create_session(&Channel::Telegram, "chat-123").await.unwrap();
+        let id = mgr
+            .create_session(&Channel::Telegram, "chat-123")
+            .await
+            .unwrap();
         mgr.touch_session(&id).await.unwrap();
 
         // Within 6h → continue
-        match mgr.resolve_session(&Channel::Telegram, "chat-123", gap).await.unwrap() {
+        match mgr
+            .resolve_session(&Channel::Telegram, "chat-123", gap)
+            .await
+            .unwrap()
+        {
             SessionDecision::Continue(sid) => assert_eq!(sid, id),
             SessionDecision::New { .. } => panic!("Should continue within gap"),
         }
@@ -965,7 +1071,11 @@ mod tests {
             .unwrap();
 
         // Beyond 6h → new (old session auto-closed)
-        match mgr.resolve_session(&Channel::Telegram, "chat-123", gap).await.unwrap() {
+        match mgr
+            .resolve_session(&Channel::Telegram, "chat-123", gap)
+            .await
+            .unwrap()
+        {
             SessionDecision::New { .. } => {} // expected
             SessionDecision::Continue(_) => panic!("Should start new session after 7h gap"),
         }
@@ -979,7 +1089,10 @@ mod tests {
     #[tokio::test]
     async fn test_record_compaction() {
         let (_tmp, mgr) = setup().await;
-        let id = mgr.create_session(&Channel::Main, "test-key").await.unwrap();
+        let id = mgr
+            .create_session(&Channel::Main, "test-key")
+            .await
+            .unwrap();
 
         mgr.record_compaction(&id, "auto", 150_000, "Summary of old messages", 12)
             .await
@@ -1005,7 +1118,10 @@ mod tests {
         let (_tmp, mgr) = setup().await;
 
         // Create a Telegram session
-        let id = mgr.create_session(&Channel::Telegram, "chat-gap").await.unwrap();
+        let id = mgr
+            .create_session(&Channel::Telegram, "chat-gap")
+            .await
+            .unwrap();
         mgr.touch_session(&id).await.unwrap();
 
         // Set last_message_at to 2 hours ago
@@ -1018,13 +1134,20 @@ mod tests {
             .unwrap();
 
         // gap_minutes=60 (1h) — 2h ago exceeds 1h → should be New
-        match mgr.resolve_session(&Channel::Telegram, "chat-gap", Some(60)).await.unwrap() {
+        match mgr
+            .resolve_session(&Channel::Telegram, "chat-gap", Some(60))
+            .await
+            .unwrap()
+        {
             SessionDecision::New { .. } => {} // expected
             SessionDecision::Continue(_) => panic!("Should start new session when 2h > 1h gap"),
         }
 
         // The old session was auto-closed, create a fresh one and backdate it again
-        let id2 = mgr.create_session(&Channel::Telegram, "chat-gap").await.unwrap();
+        let id2 = mgr
+            .create_session(&Channel::Telegram, "chat-gap")
+            .await
+            .unwrap();
         mgr.touch_session(&id2).await.unwrap();
         let two_hours_ago = (Utc::now() - Duration::hours(2)).to_rfc3339();
         sqlx::query("UPDATE session_metadata SET last_message_at = ?1 WHERE id = ?2")
@@ -1035,7 +1158,11 @@ mod tests {
             .unwrap();
 
         // gap_minutes=180 (3h) — 2h ago is within 3h → should Continue
-        match mgr.resolve_session(&Channel::Telegram, "chat-gap", Some(180)).await.unwrap() {
+        match mgr
+            .resolve_session(&Channel::Telegram, "chat-gap", Some(180))
+            .await
+            .unwrap()
+        {
             SessionDecision::Continue(sid) => assert_eq!(sid, id2),
             SessionDecision::New { .. } => panic!("Should continue session when 2h < 3h gap"),
         }
@@ -1046,13 +1173,22 @@ mod tests {
         let (_tmp, mgr) = setup().await;
 
         // Create a Main session
-        let id = mgr.create_session(&Channel::Main, "main-gap").await.unwrap();
+        let id = mgr
+            .create_session(&Channel::Main, "main-gap")
+            .await
+            .unwrap();
         mgr.touch_session(&id).await.unwrap();
 
         // Without a gap_minutes override, Main channel always continues (explicit)
-        match mgr.resolve_session(&Channel::Main, "main-gap", None).await.unwrap() {
+        match mgr
+            .resolve_session(&Channel::Main, "main-gap", None)
+            .await
+            .unwrap()
+        {
             SessionDecision::Continue(sid) => assert_eq!(sid, id),
-            SessionDecision::New { .. } => panic!("Main channel should always continue without gap override"),
+            SessionDecision::New { .. } => {
+                panic!("Main channel should always continue without gap override")
+            }
         }
 
         // Even backdating last_message_at to 24h ago, Main without gap override still continues
@@ -1075,17 +1211,31 @@ mod tests {
         let (_tmp, mgr) = setup().await;
 
         // Create sessions with same key on different channels
-        let main_id = mgr.create_session(&Channel::Main, "shared-key").await.unwrap();
-        let tg_id = mgr.create_session(&Channel::Telegram, "shared-key").await.unwrap();
+        let main_id = mgr
+            .create_session(&Channel::Main, "shared-key")
+            .await
+            .unwrap();
+        let tg_id = mgr
+            .create_session(&Channel::Telegram, "shared-key")
+            .await
+            .unwrap();
         mgr.touch_session(&main_id).await.unwrap();
         mgr.touch_session(&tg_id).await.unwrap();
 
         // Each channel resolves to its own session
-        match mgr.resolve_session(&Channel::Main, "shared-key", None).await.unwrap() {
+        match mgr
+            .resolve_session(&Channel::Main, "shared-key", None)
+            .await
+            .unwrap()
+        {
             SessionDecision::Continue(sid) => assert_eq!(sid, main_id),
             SessionDecision::New { .. } => panic!("Main should find its session"),
         }
-        match mgr.resolve_session(&Channel::Telegram, "shared-key", None).await.unwrap() {
+        match mgr
+            .resolve_session(&Channel::Telegram, "shared-key", None)
+            .await
+            .unwrap()
+        {
             SessionDecision::Continue(sid) => assert_eq!(sid, tg_id),
             SessionDecision::New { .. } => panic!("Telegram should find its session"),
         }
@@ -1097,10 +1247,15 @@ mod tests {
         let gap = Some(60); // 1h
 
         // Create and backdate a Telegram session
-        let id = mgr.create_session(&Channel::Telegram, "export-test").await.unwrap();
+        let id = mgr
+            .create_session(&Channel::Telegram, "export-test")
+            .await
+            .unwrap();
         mgr.touch_session(&id).await.unwrap();
         mgr.save_message(&id, "user", "Hello!").await.unwrap();
-        mgr.save_message(&id, "assistant", "Hi there!").await.unwrap();
+        mgr.save_message(&id, "assistant", "Hi there!")
+            .await
+            .unwrap();
 
         let two_hours_ago = (Utc::now() - Duration::hours(2)).to_rfc3339();
         sqlx::query("UPDATE session_metadata SET last_message_at = ?1 WHERE id = ?2")
@@ -1111,17 +1266,32 @@ mod tests {
             .unwrap();
 
         // Resolve should return New with the closed session's ID
-        match mgr.resolve_session(&Channel::Telegram, "export-test", gap).await.unwrap() {
+        match mgr
+            .resolve_session(&Channel::Telegram, "export-test", gap)
+            .await
+            .unwrap()
+        {
             SessionDecision::New { closed_session_id } => {
-                assert_eq!(closed_session_id, Some(id.clone()), "Should return the closed session ID");
+                assert_eq!(
+                    closed_session_id,
+                    Some(id.clone()),
+                    "Should return the closed session ID"
+                );
             }
             SessionDecision::Continue(_) => panic!("Should start new session after 2h > 1h gap"),
         }
 
         // First resolve with no prior session → New without closed ID
-        match mgr.resolve_session(&Channel::Main, "fresh-key", None).await.unwrap() {
+        match mgr
+            .resolve_session(&Channel::Main, "fresh-key", None)
+            .await
+            .unwrap()
+        {
             SessionDecision::New { closed_session_id } => {
-                assert!(closed_session_id.is_none(), "No prior session means no closed ID");
+                assert!(
+                    closed_session_id.is_none(),
+                    "No prior session means no closed ID"
+                );
             }
             SessionDecision::Continue(_) => panic!("Should be new"),
         }
@@ -1133,14 +1303,26 @@ mod tests {
         let gap = Some(60); // 1h
 
         // Create two Telegram sessions for different keys
-        let id_a = mgr.create_session(&Channel::Telegram, "chat-a").await.unwrap();
+        let id_a = mgr
+            .create_session(&Channel::Telegram, "chat-a")
+            .await
+            .unwrap();
         mgr.touch_session(&id_a).await.unwrap();
-        mgr.save_message(&id_a, "user", "Message in chat A").await.unwrap();
-        mgr.save_message(&id_a, "assistant", "Reply in chat A").await.unwrap();
+        mgr.save_message(&id_a, "user", "Message in chat A")
+            .await
+            .unwrap();
+        mgr.save_message(&id_a, "assistant", "Reply in chat A")
+            .await
+            .unwrap();
 
-        let id_b = mgr.create_session(&Channel::Telegram, "chat-b").await.unwrap();
+        let id_b = mgr
+            .create_session(&Channel::Telegram, "chat-b")
+            .await
+            .unwrap();
         mgr.touch_session(&id_b).await.unwrap();
-        mgr.save_message(&id_b, "user", "Message in chat B").await.unwrap();
+        mgr.save_message(&id_b, "user", "Message in chat B")
+            .await
+            .unwrap();
 
         // Backdate only chat-a beyond the gap
         let old_time = (Utc::now() - Duration::hours(2)).to_rfc3339();
@@ -1152,7 +1334,11 @@ mod tests {
             .unwrap();
 
         // Resolve chat-a → should auto-close and return its ID
-        match mgr.resolve_session(&Channel::Telegram, "chat-a", gap).await.unwrap() {
+        match mgr
+            .resolve_session(&Channel::Telegram, "chat-a", gap)
+            .await
+            .unwrap()
+        {
             SessionDecision::New { closed_session_id } => {
                 assert_eq!(
                     closed_session_id,
@@ -1170,7 +1356,11 @@ mod tests {
         assert_eq!(messages[1].content, "Reply in chat A");
 
         // Verify chat-b is unaffected (still open, still continuable)
-        match mgr.resolve_session(&Channel::Telegram, "chat-b", gap).await.unwrap() {
+        match mgr
+            .resolve_session(&Channel::Telegram, "chat-b", gap)
+            .await
+            .unwrap()
+        {
             SessionDecision::Continue(sid) => assert_eq!(sid, id_b),
             SessionDecision::New { .. } => panic!("chat-b should still be continuable"),
         }
@@ -1181,7 +1371,10 @@ mod tests {
         let (_tmp, mgr) = setup().await;
 
         // Create a Main session and backdate it far in the past
-        let id = mgr.create_session(&Channel::Main, "main-key").await.unwrap();
+        let id = mgr
+            .create_session(&Channel::Main, "main-key")
+            .await
+            .unwrap();
         mgr.touch_session(&id).await.unwrap();
 
         let old_time = (Utc::now() - Duration::hours(48)).to_rfc3339();
@@ -1193,13 +1386,21 @@ mod tests {
             .unwrap();
 
         // Main channel uses gap_minutes=None → never auto-closes
-        match mgr.resolve_session(&Channel::Main, "main-key", None).await.unwrap() {
+        match mgr
+            .resolve_session(&Channel::Main, "main-key", None)
+            .await
+            .unwrap()
+        {
             SessionDecision::Continue(sid) => assert_eq!(sid, id),
             SessionDecision::New { .. } => panic!("Main channel should never auto-close"),
         }
 
         // Even with a fresh key (no session), New should have closed_session_id=None
-        match mgr.resolve_session(&Channel::Main, "new-main-key", None).await.unwrap() {
+        match mgr
+            .resolve_session(&Channel::Main, "new-main-key", None)
+            .await
+            .unwrap()
+        {
             SessionDecision::New { closed_session_id } => {
                 assert!(
                     closed_session_id.is_none(),
@@ -1216,14 +1417,23 @@ mod tests {
         let gap = Some(60); // 1h
 
         // Create a Telegram session and manually close it
-        let id = mgr.create_session(&Channel::Telegram, "manual-close").await.unwrap();
+        let id = mgr
+            .create_session(&Channel::Telegram, "manual-close")
+            .await
+            .unwrap();
         mgr.touch_session(&id).await.unwrap();
         mgr.save_message(&id, "user", "Hello").await.unwrap();
-        mgr.close_session(&id, "Manually closed by user").await.unwrap();
+        mgr.close_session(&id, "Manually closed by user")
+            .await
+            .unwrap();
 
         // Resolve should return New with closed_session_id=None because
         // there's no open session to auto-close
-        match mgr.resolve_session(&Channel::Telegram, "manual-close", gap).await.unwrap() {
+        match mgr
+            .resolve_session(&Channel::Telegram, "manual-close", gap)
+            .await
+            .unwrap()
+        {
             SessionDecision::New { closed_session_id } => {
                 assert!(
                     closed_session_id.is_none(),
@@ -1250,23 +1460,59 @@ mod tests {
     #[tokio::test]
     async fn test_cost_overview_by_user() {
         let (_tmp, mgr) = setup().await;
-        let sid = mgr.create_session(&Channel::Main, "cost-test").await.unwrap();
+        let sid = mgr
+            .create_session(&Channel::Main, "cost-test")
+            .await
+            .unwrap();
 
         // Record usage for two different users
-        mgr.record_usage(&sid, &UsageRecord {
-            input_tokens: 1000, output_tokens: 500, cache_read: 0, cache_write: 0,
-            cost_usd: 0.05, model: "claude-sonnet".into(), user_id: "alice".into(),
-        }, 1).await.unwrap();
+        mgr.record_usage(
+            &sid,
+            &UsageRecord {
+                input_tokens: 1000,
+                output_tokens: 500,
+                cache_read: 0,
+                cache_write: 0,
+                cost_usd: 0.05,
+                model: "claude-sonnet".into(),
+                user_id: "alice".into(),
+            },
+            1,
+        )
+        .await
+        .unwrap();
 
-        mgr.record_usage(&sid, &UsageRecord {
-            input_tokens: 2000, output_tokens: 800, cache_read: 0, cache_write: 0,
-            cost_usd: 0.10, model: "claude-sonnet".into(), user_id: "bob".into(),
-        }, 2).await.unwrap();
+        mgr.record_usage(
+            &sid,
+            &UsageRecord {
+                input_tokens: 2000,
+                output_tokens: 800,
+                cache_read: 0,
+                cache_write: 0,
+                cost_usd: 0.10,
+                model: "claude-sonnet".into(),
+                user_id: "bob".into(),
+            },
+            2,
+        )
+        .await
+        .unwrap();
 
-        mgr.record_usage(&sid, &UsageRecord {
-            input_tokens: 500, output_tokens: 200, cache_read: 0, cache_write: 0,
-            cost_usd: 0.02, model: "claude-haiku".into(), user_id: "alice".into(),
-        }, 3).await.unwrap();
+        mgr.record_usage(
+            &sid,
+            &UsageRecord {
+                input_tokens: 500,
+                output_tokens: 200,
+                cache_read: 0,
+                cache_write: 0,
+                cost_usd: 0.02,
+                model: "claude-haiku".into(),
+                user_id: "alice".into(),
+            },
+            3,
+        )
+        .await
+        .unwrap();
 
         let overview = mgr.cost_overview(None).await.unwrap();
 
@@ -1296,13 +1542,27 @@ mod tests {
     #[tokio::test]
     async fn test_cost_overview_since_filter() {
         let (_tmp, mgr) = setup().await;
-        let sid = mgr.create_session(&Channel::Main, "cost-filter").await.unwrap();
+        let sid = mgr
+            .create_session(&Channel::Main, "cost-filter")
+            .await
+            .unwrap();
 
         // Record usage now
-        mgr.record_usage(&sid, &UsageRecord {
-            input_tokens: 1000, output_tokens: 500, cache_read: 0, cache_write: 0,
-            cost_usd: 0.05, model: "claude-sonnet".into(), user_id: "admin".into(),
-        }, 1).await.unwrap();
+        mgr.record_usage(
+            &sid,
+            &UsageRecord {
+                input_tokens: 1000,
+                output_tokens: 500,
+                cache_read: 0,
+                cache_write: 0,
+                cost_usd: 0.05,
+                model: "claude-sonnet".into(),
+                user_id: "admin".into(),
+            },
+            1,
+        )
+        .await
+        .unwrap();
 
         // "Since" far in the future should return nothing
         let future = (Utc::now() + Duration::hours(1)).to_rfc3339();
@@ -1320,12 +1580,26 @@ mod tests {
     #[tokio::test]
     async fn test_cost_overview_user_id_recorded() {
         let (_tmp, mgr) = setup().await;
-        let sid = mgr.create_session(&Channel::Main, "uid-test").await.unwrap();
+        let sid = mgr
+            .create_session(&Channel::Main, "uid-test")
+            .await
+            .unwrap();
 
-        mgr.record_usage(&sid, &UsageRecord {
-            input_tokens: 100, output_tokens: 50, cache_read: 0, cache_write: 0,
-            cost_usd: 0.01, model: "m".into(), user_id: "user-42".into(),
-        }, 1).await.unwrap();
+        mgr.record_usage(
+            &sid,
+            &UsageRecord {
+                input_tokens: 100,
+                output_tokens: 50,
+                cache_read: 0,
+                cache_write: 0,
+                cost_usd: 0.01,
+                model: "m".into(),
+                user_id: "user-42".into(),
+            },
+            1,
+        )
+        .await
+        .unwrap();
 
         let overview = mgr.cost_overview(None).await.unwrap();
         assert_eq!(overview.by_user.len(), 1);
@@ -1337,25 +1611,61 @@ mod tests {
     #[tokio::test]
     async fn test_cost_overview_cache_breakdown() {
         let (_tmp, mgr) = setup().await;
-        let sid = mgr.create_session(&Channel::Main, "cache-cost").await.unwrap();
+        let sid = mgr
+            .create_session(&Channel::Main, "cache-cost")
+            .await
+            .unwrap();
 
         // Alice: cache miss (writes to cache)
-        mgr.record_usage(&sid, &UsageRecord {
-            input_tokens: 200, output_tokens: 100, cache_read: 0, cache_write: 3000,
-            cost_usd: 0.04, model: "claude-sonnet".into(), user_id: "alice".into(),
-        }, 1).await.unwrap();
+        mgr.record_usage(
+            &sid,
+            &UsageRecord {
+                input_tokens: 200,
+                output_tokens: 100,
+                cache_read: 0,
+                cache_write: 3000,
+                cost_usd: 0.04,
+                model: "claude-sonnet".into(),
+                user_id: "alice".into(),
+            },
+            1,
+        )
+        .await
+        .unwrap();
 
         // Alice: cache hit (reads from cache)
-        mgr.record_usage(&sid, &UsageRecord {
-            input_tokens: 50, output_tokens: 150, cache_read: 3000, cache_write: 0,
-            cost_usd: 0.01, model: "claude-sonnet".into(), user_id: "alice".into(),
-        }, 2).await.unwrap();
+        mgr.record_usage(
+            &sid,
+            &UsageRecord {
+                input_tokens: 50,
+                output_tokens: 150,
+                cache_read: 3000,
+                cache_write: 0,
+                cost_usd: 0.01,
+                model: "claude-sonnet".into(),
+                user_id: "alice".into(),
+            },
+            2,
+        )
+        .await
+        .unwrap();
 
         // Bob: no caching
-        mgr.record_usage(&sid, &UsageRecord {
-            input_tokens: 800, output_tokens: 400, cache_read: 0, cache_write: 0,
-            cost_usd: 0.03, model: "claude-haiku".into(), user_id: "bob".into(),
-        }, 3).await.unwrap();
+        mgr.record_usage(
+            &sid,
+            &UsageRecord {
+                input_tokens: 800,
+                output_tokens: 400,
+                cache_read: 0,
+                cache_write: 0,
+                cost_usd: 0.03,
+                model: "claude-haiku".into(),
+                user_id: "bob".into(),
+            },
+            3,
+        )
+        .await
+        .unwrap();
 
         let overview = mgr.cost_overview(None).await.unwrap();
 
@@ -1367,22 +1677,38 @@ mod tests {
 
         // By user: alice first (higher cost)
         assert_eq!(overview.by_user.len(), 2);
-        let alice = overview.by_user.iter().find(|u| u.user_id == "alice").unwrap();
+        let alice = overview
+            .by_user
+            .iter()
+            .find(|u| u.user_id == "alice")
+            .unwrap();
         assert_eq!(alice.total_input_tokens, 6250); // (200+3000) + (50+3000)
         assert_eq!(alice.total_cache_read, 3000);
         assert_eq!(alice.total_cache_write, 3000);
 
-        let bob = overview.by_user.iter().find(|u| u.user_id == "bob").unwrap();
+        let bob = overview
+            .by_user
+            .iter()
+            .find(|u| u.user_id == "bob")
+            .unwrap();
         assert_eq!(bob.total_input_tokens, 800);
         assert_eq!(bob.total_cache_read, 0);
         assert_eq!(bob.total_cache_write, 0);
 
         // By model
-        let sonnet = overview.by_model.iter().find(|m| m.model == "claude-sonnet").unwrap();
+        let sonnet = overview
+            .by_model
+            .iter()
+            .find(|m| m.model == "claude-sonnet")
+            .unwrap();
         assert_eq!(sonnet.total_cache_read, 3000);
         assert_eq!(sonnet.total_cache_write, 3000);
 
-        let haiku = overview.by_model.iter().find(|m| m.model == "claude-haiku").unwrap();
+        let haiku = overview
+            .by_model
+            .iter()
+            .find(|m| m.model == "claude-haiku")
+            .unwrap();
         assert_eq!(haiku.total_cache_read, 0);
         assert_eq!(haiku.total_cache_write, 0);
     }
@@ -1395,7 +1721,10 @@ mod tests {
         let id = mgr.create_session(&Channel::Main, "key").await.unwrap();
 
         let session = mgr.get_session(&id).await.unwrap().unwrap();
-        assert!(session.is_read, "New sessions should default to is_read=true");
+        assert!(
+            session.is_read,
+            "New sessions should default to is_read=true"
+        );
     }
 
     #[tokio::test]
@@ -1406,7 +1735,10 @@ mod tests {
         mgr.mark_read(&id, false).await.unwrap();
 
         let session = mgr.get_session(&id).await.unwrap().unwrap();
-        assert!(!session.is_read, "Session should be unread after mark_read(false)");
+        assert!(
+            !session.is_read,
+            "Session should be unread after mark_read(false)"
+        );
     }
 
     #[tokio::test]
@@ -1419,7 +1751,10 @@ mod tests {
         mgr.mark_read(&id, true).await.unwrap();
 
         let session = mgr.get_session(&id).await.unwrap().unwrap();
-        assert!(session.is_read, "Session should be read after mark_read(true)");
+        assert!(
+            session.is_read,
+            "Session should be read after mark_read(true)"
+        );
     }
 
     #[tokio::test]
@@ -1466,20 +1801,33 @@ mod tests {
     #[tokio::test]
     async fn test_create_email_session() {
         let (_tmp, mgr) = setup().await;
-        let id = mgr.create_session(&Channel::Email, "user@example.com").await.unwrap();
+        let id = mgr
+            .create_session(&Channel::Email, "user@example.com")
+            .await
+            .unwrap();
 
         let session = mgr.get_session(&id).await.unwrap().unwrap();
         assert_eq!(session.channel, "email");
-        assert_eq!(session.channel_session_key.as_deref(), Some("user@example.com"));
+        assert_eq!(
+            session.channel_session_key.as_deref(),
+            Some("user@example.com")
+        );
     }
 
     #[tokio::test]
     async fn test_resolve_email_session_continues_for_same_sender() {
         let (_tmp, mgr) = setup().await;
-        let id = mgr.create_session(&Channel::Email, "sender@test.com").await.unwrap();
+        let id = mgr
+            .create_session(&Channel::Email, "sender@test.com")
+            .await
+            .unwrap();
         mgr.touch_session(&id).await.unwrap();
 
-        match mgr.resolve_session(&Channel::Email, "sender@test.com", None).await.unwrap() {
+        match mgr
+            .resolve_session(&Channel::Email, "sender@test.com", None)
+            .await
+            .unwrap()
+        {
             SessionDecision::Continue(sid) => assert_eq!(sid, id),
             SessionDecision::New { .. } => panic!("Should continue recent email session"),
         }
@@ -1488,20 +1836,35 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_email_session_new_for_different_sender() {
         let (_tmp, mgr) = setup().await;
-        let id = mgr.create_session(&Channel::Email, "sender-a@test.com").await.unwrap();
+        let id = mgr
+            .create_session(&Channel::Email, "sender-a@test.com")
+            .await
+            .unwrap();
         mgr.touch_session(&id).await.unwrap();
 
-        match mgr.resolve_session(&Channel::Email, "sender-b@test.com", None).await.unwrap() {
+        match mgr
+            .resolve_session(&Channel::Email, "sender-b@test.com", None)
+            .await
+            .unwrap()
+        {
             SessionDecision::New { .. } => {} // expected — different sender
-            SessionDecision::Continue(_) => panic!("Should not continue session for different sender"),
+            SessionDecision::Continue(_) => {
+                panic!("Should not continue session for different sender")
+            }
         }
     }
 
     #[tokio::test]
     async fn test_email_and_telegram_sessions_are_separate() {
         let (_tmp, mgr) = setup().await;
-        let email_id = mgr.create_session(&Channel::Email, "user@test.com").await.unwrap();
-        let tg_id = mgr.create_session(&Channel::Telegram, "user@test.com").await.unwrap();
+        let email_id = mgr
+            .create_session(&Channel::Email, "user@test.com")
+            .await
+            .unwrap();
+        let tg_id = mgr
+            .create_session(&Channel::Telegram, "user@test.com")
+            .await
+            .unwrap();
 
         assert_ne!(email_id, tg_id);
 
@@ -1509,11 +1872,19 @@ mod tests {
         mgr.touch_session(&email_id).await.unwrap();
         mgr.touch_session(&tg_id).await.unwrap();
 
-        match mgr.resolve_session(&Channel::Email, "user@test.com", None).await.unwrap() {
+        match mgr
+            .resolve_session(&Channel::Email, "user@test.com", None)
+            .await
+            .unwrap()
+        {
             SessionDecision::Continue(sid) => assert_eq!(sid, email_id),
             SessionDecision::New { .. } => panic!("Should continue email session"),
         }
-        match mgr.resolve_session(&Channel::Telegram, "user@test.com", None).await.unwrap() {
+        match mgr
+            .resolve_session(&Channel::Telegram, "user@test.com", None)
+            .await
+            .unwrap()
+        {
             SessionDecision::Continue(sid) => assert_eq!(sid, tg_id),
             SessionDecision::New { .. } => panic!("Should continue telegram session"),
         }
@@ -1526,13 +1897,19 @@ mod tests {
         let (_tmp, mgr) = setup().await;
 
         let overview = mgr.cost_overview(None).await.unwrap();
-        assert!(overview.by_tool.is_empty(), "No tool messages → empty by_tool");
+        assert!(
+            overview.by_tool.is_empty(),
+            "No tool messages → empty by_tool"
+        );
     }
 
     #[tokio::test]
     async fn test_cost_overview_by_tool_counts() {
         let (_tmp, mgr) = setup().await;
-        let sid = mgr.create_session(&Channel::Main, "tool-test").await.unwrap();
+        let sid = mgr
+            .create_session(&Channel::Main, "tool-test")
+            .await
+            .unwrap();
 
         // Simulate 3 MemorySearch invocations (all successful)
         for i in 0..3 {
@@ -1542,7 +1919,9 @@ mod tests {
                 "name": "MemorySearch",
                 "input": {"query": "test"}
             });
-            mgr.save_message(&sid, "tool_use", &tool_use.to_string()).await.unwrap();
+            mgr.save_message(&sid, "tool_use", &tool_use.to_string())
+                .await
+                .unwrap();
 
             let tool_result = serde_json::json!({
                 "type": "tool_result",
@@ -1550,7 +1929,9 @@ mod tests {
                 "content": "some result",
                 "is_error": false
             });
-            mgr.save_message(&sid, "tool_result", &tool_result.to_string()).await.unwrap();
+            mgr.save_message(&sid, "tool_result", &tool_result.to_string())
+                .await
+                .unwrap();
         }
 
         // Simulate 2 VaultGet invocations: 1 success, 1 error
@@ -1558,23 +1939,31 @@ mod tests {
             "type": "tool_use", "id": "tu_vault_0", "name": "VaultGet",
             "input": {"key": "api_key"}
         });
-        mgr.save_message(&sid, "tool_use", &tool_use.to_string()).await.unwrap();
+        mgr.save_message(&sid, "tool_use", &tool_use.to_string())
+            .await
+            .unwrap();
         let tool_result = serde_json::json!({
             "type": "tool_result", "tool_use_id": "tu_vault_0",
             "content": "secret-value", "is_error": false
         });
-        mgr.save_message(&sid, "tool_result", &tool_result.to_string()).await.unwrap();
+        mgr.save_message(&sid, "tool_result", &tool_result.to_string())
+            .await
+            .unwrap();
 
         let tool_use = serde_json::json!({
             "type": "tool_use", "id": "tu_vault_1", "name": "VaultGet",
             "input": {"key": "missing"}
         });
-        mgr.save_message(&sid, "tool_use", &tool_use.to_string()).await.unwrap();
+        mgr.save_message(&sid, "tool_use", &tool_use.to_string())
+            .await
+            .unwrap();
         let tool_result = serde_json::json!({
             "type": "tool_result", "tool_use_id": "tu_vault_1",
             "content": "key not found", "is_error": true
         });
-        mgr.save_message(&sid, "tool_result", &tool_result.to_string()).await.unwrap();
+        mgr.save_message(&sid, "tool_result", &tool_result.to_string())
+            .await
+            .unwrap();
 
         let overview = mgr.cost_overview(None).await.unwrap();
 
@@ -1591,13 +1980,18 @@ mod tests {
     #[tokio::test]
     async fn test_cost_overview_by_tool_since_filter() {
         let (_tmp, mgr) = setup().await;
-        let sid = mgr.create_session(&Channel::Main, "tool-filter").await.unwrap();
+        let sid = mgr
+            .create_session(&Channel::Main, "tool-filter")
+            .await
+            .unwrap();
 
         // Save a tool_use message now
         let tool_use = serde_json::json!({
             "type": "tool_use", "id": "tu_1", "name": "CronList", "input": {}
         });
-        mgr.save_message(&sid, "tool_use", &tool_use.to_string()).await.unwrap();
+        mgr.save_message(&sid, "tool_use", &tool_use.to_string())
+            .await
+            .unwrap();
 
         // "Since" far in the future should exclude it
         let future = (Utc::now() + Duration::hours(1)).to_rfc3339();
@@ -1615,18 +2009,26 @@ mod tests {
     #[tokio::test]
     async fn test_cost_overview_by_tool_without_result() {
         let (_tmp, mgr) = setup().await;
-        let sid = mgr.create_session(&Channel::Main, "tool-no-result").await.unwrap();
+        let sid = mgr
+            .create_session(&Channel::Main, "tool-no-result")
+            .await
+            .unwrap();
 
         // tool_use without a matching tool_result (e.g. stream interrupted)
         let tool_use = serde_json::json!({
             "type": "tool_use", "id": "tu_orphan", "name": "SkillList", "input": {}
         });
-        mgr.save_message(&sid, "tool_use", &tool_use.to_string()).await.unwrap();
+        mgr.save_message(&sid, "tool_use", &tool_use.to_string())
+            .await
+            .unwrap();
 
         let overview = mgr.cost_overview(None).await.unwrap();
         assert_eq!(overview.by_tool.len(), 1);
         assert_eq!(overview.by_tool[0].tool_name, "SkillList");
         assert_eq!(overview.by_tool[0].invocations, 1);
-        assert_eq!(overview.by_tool[0].errors, 0, "No result means no error, not an error");
+        assert_eq!(
+            overview.by_tool[0].errors, 0,
+            "No result means no error, not an error"
+        );
     }
 }

@@ -17,13 +17,13 @@ use notify_debouncer_mini::{new_debouncer, DebouncedEventKind};
 use rust_embed::Embed;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
 use agent_sdk::models::ModelRegistry;
 use agent_sdk::OllamaDiscovery;
 use starpod_agent::StarpodAgent;
 use starpod_auth::{AuthStore, RateLimiter};
-use starpod_core::{StarpodConfig, ResolvedPaths, reload_agent_config};
+use starpod_core::{reload_agent_config, ResolvedPaths, StarpodConfig};
 
 /// Event broadcast to connected WebSocket clients via a `tokio::sync::broadcast` channel.
 ///
@@ -87,7 +87,11 @@ impl AppState {
         }
 
         let config = self.config.read().unwrap().clone();
-        let enabled = config.channels.telegram.as_ref().map_or(false, |t| t.enabled);
+        let enabled = config
+            .channels
+            .telegram
+            .as_ref()
+            .map_or(false, |t| t.enabled);
         let token = config.resolved_telegram_token();
 
         match (enabled, token) {
@@ -95,7 +99,9 @@ impl AppState {
                 let agent = Arc::clone(&self.agent);
                 let auth = Arc::clone(&self.auth);
                 let h = tokio::spawn(async move {
-                    if let Err(e) = starpod_telegram::run_with_agent_and_auth(agent, auth, token).await {
+                    if let Err(e) =
+                        starpod_telegram::run_with_agent_and_auth(agent, auth, token).await
+                    {
                         tracing::error!(error = %e, "Telegram bot error");
                     }
                 });
@@ -152,13 +158,19 @@ async fn static_handler(
         }
         None => Response::builder()
             .status(StatusCode::NOT_FOUND)
-            .body(Body::from("Web UI not found. Run `npm run build` in web/ first."))
+            .body(Body::from(
+                "Web UI not found. Run `npm run build` in web/ first.",
+            ))
             .unwrap(),
     }
 }
 
 /// Read frontend.toml + starpod config and inject as `window.__STARPOD__` into the HTML.
-fn inject_frontend_config(html: &str, config_dir: &std::path::Path, starpod_config: &starpod_core::StarpodConfig) -> String {
+fn inject_frontend_config(
+    html: &str,
+    config_dir: &std::path::Path,
+    starpod_config: &starpod_core::StarpodConfig,
+) -> String {
     let frontend = starpod_core::FrontendConfig::load(config_dir);
     let merged = serde_json::json!({
         "greeting": frontend.greeting,
@@ -173,7 +185,10 @@ fn inject_frontend_config(html: &str, config_dir: &std::path::Path, starpod_conf
 
 /// Serve embedded docs under /docs, handling VitePress clean URLs.
 async fn docs_handler(uri: Uri) -> Response {
-    let path = uri.path().trim_start_matches("/docs").trim_start_matches('/');
+    let path = uri
+        .path()
+        .trim_start_matches("/docs")
+        .trim_start_matches('/');
 
     fn mime_from_path(path: &str) -> &'static str {
         match path.rsplit('.').next() {
@@ -253,7 +268,10 @@ pub async fn create_auth_store(paths: &ResolvedPaths) -> starpod_core::Result<Au
     let core_db = starpod_db::CoreDb::new(&paths.db_dir).await?;
     let auth = Arc::new(AuthStore::from_pool(core_db.pool().clone()));
     let admin_key = bootstrap_auth(&auth).await?;
-    Ok(AuthBootstrap { store: auth, admin_key })
+    Ok(AuthBootstrap {
+        store: auth,
+        admin_key,
+    })
 }
 
 /// Bootstrap the admin user and return the API key if newly created.
@@ -284,28 +302,30 @@ pub async fn serve_with_agent(
     let ws_tx = events_tx.clone();
     let notify_agent = agent.clone();
     let composed_notifier: Option<starpod_cron::NotificationSender> = {
-        Some(Arc::new(move |job_name: String, session_id: String, result_text: String, success: bool| {
-            let notifier = notifier.clone();
-            let ws_tx = ws_tx.clone();
-            let agent = notify_agent.clone();
-            Box::pin(async move {
-                // Mark the cron session as unread
-                if !session_id.is_empty() {
-                    let _ = agent.session_mgr().mark_read(&session_id, false).await;
-                }
-                // Broadcast to connected WS clients
-                let _ = ws_tx.send(GatewayEvent::CronComplete {
-                    job_name: job_name.clone(),
-                    session_id: session_id.clone(),
-                    result_preview: result_text.clone(),
-                    success,
-                });
-                // Forward to original notifier (Telegram) if present
-                if let Some(ref n) = notifier {
-                    (n)(job_name, session_id, result_text, success).await;
-                }
-            })
-        }))
+        Some(Arc::new(
+            move |job_name: String, session_id: String, result_text: String, success: bool| {
+                let notifier = notifier.clone();
+                let ws_tx = ws_tx.clone();
+                let agent = notify_agent.clone();
+                Box::pin(async move {
+                    // Mark the cron session as unread
+                    if !session_id.is_empty() {
+                        let _ = agent.session_mgr().mark_read(&session_id, false).await;
+                    }
+                    // Broadcast to connected WS clients
+                    let _ = ws_tx.send(GatewayEvent::CronComplete {
+                        job_name: job_name.clone(),
+                        session_id: session_id.clone(),
+                        result_preview: result_text.clone(),
+                        success,
+                    });
+                    // Forward to original notifier (Telegram) if present
+                    if let Some(ref n) = notifier {
+                        (n)(job_name, session_id, result_text, success).await;
+                    }
+                })
+            },
+        ))
     };
 
     // Start the cron scheduler in the background
@@ -391,9 +411,9 @@ pub async fn serve_with_agent(
     let app = build_router(state);
 
     let addr = &config.server_addr;
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .map_err(|e| starpod_core::StarpodError::Config(format!("Failed to bind {}: {}", addr, e)))?;
+    let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
+        starpod_core::StarpodError::Config(format!("Failed to bind {}: {}", addr, e))
+    })?;
 
     info!(addr = %addr, "Starpod gateway listening");
 
@@ -417,39 +437,51 @@ fn start_config_watcher(
     paths: &ResolvedPaths,
 ) -> Option<notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>> {
     let paths_clone = paths.clone();
-    let (watch_dir, watch_files, reload_fn): (PathBuf, Vec<PathBuf>, Box<dyn Fn() -> starpod_core::Result<StarpodConfig> + Send>) =
-        match &paths.mode {
-            starpod_core::Mode::Workspace { root, .. } => {
-                let watch_files = vec![
-                    root.join("starpod.toml"),
-                    paths.agent_toml.clone(),
-                ];
-                let watch = paths.config_dir.clone();
-                let p = paths_clone.clone();
-                (watch, watch_files, Box::new(move || {
+    let (watch_dir, watch_files, reload_fn): (
+        PathBuf,
+        Vec<PathBuf>,
+        Box<dyn Fn() -> starpod_core::Result<StarpodConfig> + Send>,
+    ) = match &paths.mode {
+        starpod_core::Mode::Workspace { root, .. } => {
+            let watch_files = vec![root.join("starpod.toml"), paths.agent_toml.clone()];
+            let watch = paths.config_dir.clone();
+            let p = paths_clone.clone();
+            (
+                watch,
+                watch_files,
+                Box::new(move || {
                     let agent_cfg = reload_agent_config(&p)?;
                     Ok(agent_cfg.into_starpod_config(&p))
-                }))
-            }
-            starpod_core::Mode::Instance { .. } => {
-                let watch = paths.config_dir.clone();
-                let agent_toml = paths.agent_toml.clone();
-                let p = paths_clone.clone();
-                (watch, vec![agent_toml], Box::new(move || {
+                }),
+            )
+        }
+        starpod_core::Mode::Instance { .. } => {
+            let watch = paths.config_dir.clone();
+            let agent_toml = paths.agent_toml.clone();
+            let p = paths_clone.clone();
+            (
+                watch,
+                vec![agent_toml],
+                Box::new(move || {
                     let agent_cfg = reload_agent_config(&p)?;
                     Ok(agent_cfg.into_starpod_config(&p))
-                }))
-            }
-            starpod_core::Mode::SingleAgent { .. } => {
-                let watch = paths.config_dir.clone();
-                let agent_toml = paths.agent_toml.clone();
-                let p = paths_clone.clone();
-                (watch, vec![agent_toml], Box::new(move || {
+                }),
+            )
+        }
+        starpod_core::Mode::SingleAgent { .. } => {
+            let watch = paths.config_dir.clone();
+            let agent_toml = paths.agent_toml.clone();
+            let p = paths_clone.clone();
+            (
+                watch,
+                vec![agent_toml],
+                Box::new(move || {
                     let agent_cfg = reload_agent_config(&p)?;
                     Ok(agent_cfg.into_starpod_config(&p))
-                }))
-            }
-        };
+                }),
+            )
+        }
+    };
 
     if !watch_dir.exists() {
         debug!(dir = %watch_dir.display(), "Watch directory not found, skipping config watcher");
@@ -467,10 +499,10 @@ fn start_config_watcher(
     };
 
     // Watch the directory for changes
-    if let Err(e) = debouncer.watcher().watch(
-        &watch_dir,
-        notify::RecursiveMode::NonRecursive,
-    ) {
+    if let Err(e) = debouncer
+        .watcher()
+        .watch(&watch_dir, notify::RecursiveMode::NonRecursive)
+    {
         warn!(error = %e, dir = %watch_dir.display(), "Failed to watch directory");
         return None;
     }
@@ -478,18 +510,16 @@ fn start_config_watcher(
     // If workspace or instance mode, also watch the workspace root for starpod.toml changes
     match &paths.mode {
         starpod_core::Mode::Workspace { root, .. } => {
-            let _ = debouncer.watcher().watch(
-                root,
-                notify::RecursiveMode::NonRecursive,
-            );
+            let _ = debouncer
+                .watcher()
+                .watch(root, notify::RecursiveMode::NonRecursive);
         }
         starpod_core::Mode::Instance { instance_root, .. } => {
             // Watch workspace root (grandparent of instance_root)
             if let Some(workspace_root) = instance_root.parent().and_then(|p| p.parent()) {
-                let _ = debouncer.watcher().watch(
-                    workspace_root,
-                    notify::RecursiveMode::NonRecursive,
-                );
+                let _ = debouncer
+                    .watcher()
+                    .watch(workspace_root, notify::RecursiveMode::NonRecursive);
             }
         }
         _ => {}
@@ -532,7 +562,8 @@ fn start_config_watcher(
                                 }
 
                                 // Check if Telegram config changed
-                                let tg_changed = old_config.channels.telegram != new_config.channels.telegram;
+                                let tg_changed =
+                                    old_config.channels.telegram != new_config.channels.telegram;
 
                                 // Update the agent's config (affects next chat request)
                                 state.agent.reload_config(new_config.clone());
@@ -582,7 +613,8 @@ mod tests {
         std::fs::write(
             dir.path().join("frontend.toml"),
             "greeting = \"Hi!\"\nprompts = [\"help me\"]\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let html = "<html><head><title>Test</title></head><body></body></html>";
         let cfg = test_starpod_config();
@@ -593,7 +625,10 @@ mod tests {
         assert!(result.contains("\"prompts\":[\"help me\"]"));
         assert!(result.contains("\"models\":[\"anthropic/claude-sonnet-4-6\"]"));
         assert!(result.contains("\"agent_name\":\"Aster\""));
-        assert!(result.contains("</head>"), "closing head tag should be preserved");
+        assert!(
+            result.contains("</head>"),
+            "closing head tag should be preserved"
+        );
     }
 
     #[test]
@@ -632,10 +667,8 @@ mod tests {
             result_preview: "Digest sent".into(),
             success: true,
         };
-        let json: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&event).unwrap(),
-        )
-        .unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&event).unwrap()).unwrap();
 
         assert_eq!(json["type"], "cron_complete");
         assert_eq!(json["job_name"], "daily-digest");
@@ -686,7 +719,9 @@ mod tests {
         std::fs::create_dir_all(&users_dir).unwrap();
         std::fs::create_dir_all(&home_dir).unwrap();
         starpod_core::ResolvedPaths {
-            mode: starpod_core::Mode::SingleAgent { starpod_dir: agent_home.clone() },
+            mode: starpod_core::Mode::SingleAgent {
+                starpod_dir: agent_home.clone(),
+            },
             agent_toml: config_dir.join("agent.toml"),
             agent_home,
             config_dir,
@@ -714,12 +749,22 @@ mod tests {
         assert_eq!(bootstrap.admin_key.as_deref(), Some("test-secret-key-123"));
 
         // Verify the key actually works for auth
-        let user = bootstrap.store.authenticate_api_key("test-secret-key-123").await.unwrap();
-        assert!(user.is_some(), "imported key should authenticate successfully");
+        let user = bootstrap
+            .store
+            .authenticate_api_key("test-secret-key-123")
+            .await
+            .unwrap();
+        assert!(
+            user.is_some(),
+            "imported key should authenticate successfully"
+        );
 
         // Second run: admin exists, returns None (this is why dev needs the fallback)
         let bootstrap2 = create_auth_store(&paths).await.unwrap();
-        assert!(bootstrap2.admin_key.is_none(), "should return None when admin already exists");
+        assert!(
+            bootstrap2.admin_key.is_none(),
+            "should return None when admin already exists"
+        );
 
         std::env::remove_var("STARPOD_API_KEY");
     }
@@ -736,7 +781,10 @@ mod tests {
 
         // Should auto-generate a key (may be env-provided if test runs parallel
         // with create_auth_store_uses_env_api_key, but must always return Some)
-        assert!(bootstrap.admin_key.is_some(), "should generate a key on first run");
+        assert!(
+            bootstrap.admin_key.is_some(),
+            "should generate a key on first run"
+        );
     }
 
     #[tokio::test]
@@ -752,6 +800,9 @@ mod tests {
 
         // Second run: admin already exists → returns None
         let bootstrap2 = create_auth_store(&paths).await.unwrap();
-        assert!(bootstrap2.admin_key.is_none(), "should return None when admin already exists");
+        assert!(
+            bootstrap2.admin_key.is_none(),
+            "should return None when admin already exists"
+        );
     }
 }

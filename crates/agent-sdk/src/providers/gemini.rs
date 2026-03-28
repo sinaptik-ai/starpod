@@ -279,7 +279,9 @@ fn parse_gemini_response(resp: &GeminiResponse, model: &str) -> Result<MessageRe
         }
     }
 
-    let has_tool_use = content.iter().any(|b| matches!(b, ApiContentBlock::ToolUse { .. }));
+    let has_tool_use = content
+        .iter()
+        .any(|b| matches!(b, ApiContentBlock::ToolUse { .. }));
     let stop_reason = if has_tool_use {
         Some("tool_use".to_string())
     } else {
@@ -474,7 +476,10 @@ impl LlmProvider for GeminiProvider {
         request: &CreateMessageRequest,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>> {
         let body = build_gemini_request(request);
-        let url = format!("{}?alt=sse", self.endpoint(&request.model, "streamGenerateContent"));
+        let url = format!(
+            "{}?alt=sse",
+            self.endpoint(&request.model, "streamGenerateContent")
+        );
 
         let mut attempt: u32 = 0;
         let response = loop {
@@ -819,7 +824,10 @@ mod tests {
 
         let body = build_gemini_request(&req);
         // 2048 <= 4096 => LOW
-        assert_eq!(body["generationConfig"]["thinkingConfig"]["thinkingLevel"], "LOW");
+        assert_eq!(
+            body["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "LOW"
+        );
     }
 
     #[test]
@@ -846,7 +854,10 @@ mod tests {
 
         let body = build_gemini_request(&req);
         // 32768 > 16384 => HIGH
-        assert_eq!(body["generationConfig"]["thinkingConfig"]["thinkingLevel"], "HIGH");
+        assert_eq!(
+            body["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "HIGH"
+        );
     }
 
     #[test]

@@ -33,17 +33,11 @@ pub enum HookError {
 
     /// Failed to parse a hook manifest file.
     #[error("Failed to parse hook manifest at {path}: {reason}")]
-    ManifestParse {
-        path: String,
-        reason: String,
-    },
+    ManifestParse { path: String, reason: String },
 
     /// Hook command execution failed.
     #[error("Hook command '{hook_name}' failed: {reason}")]
-    CommandExecution {
-        hook_name: String,
-        reason: String,
-    },
+    CommandExecution { hook_name: String, reason: String },
 
     /// IO error.
     #[error("IO error: {0}")]
@@ -98,7 +92,10 @@ mod tests {
     #[test]
     fn display_eligibility() {
         let err = HookError::Eligibility("missing binary: eslint".into());
-        assert_eq!(err.to_string(), "Eligibility check failed: missing binary: eslint");
+        assert_eq!(
+            err.to_string(),
+            "Eligibility check failed: missing binary: eslint"
+        );
     }
 
     #[test]

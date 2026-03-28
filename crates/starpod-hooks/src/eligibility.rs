@@ -66,7 +66,11 @@ impl fmt::Display for EligibilityError {
         match self {
             Self::MissingBinary(bin) => write!(f, "required binary not found: {}", bin),
             Self::NoMatchingBinary(bins) => {
-                write!(f, "none of the required binaries found: {}", bins.join(", "))
+                write!(
+                    f,
+                    "none of the required binaries found: {}",
+                    bins.join(", ")
+                )
             }
             Self::MissingEnvVar(var) => write!(f, "required env var not set: {}", var),
             Self::UnsupportedOs { current, required } => {

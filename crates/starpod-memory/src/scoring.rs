@@ -72,7 +72,9 @@ pub fn validate_path(name: &str, data_dir: &Path) -> Result<()> {
         resolved.canonicalize().unwrap_or(resolved)
     } else if let Some(parent) = resolved.parent() {
         let canonical_parent = if parent.exists() {
-            parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf())
+            parent
+                .canonicalize()
+                .unwrap_or_else(|_| parent.to_path_buf())
         } else {
             parent.to_path_buf()
         };
@@ -311,7 +313,11 @@ mod tests {
     fn decay_factor_today() {
         let today = Local::now().format("memory/%Y-%m-%d.md").to_string();
         let factor = decay_factor(&today, 30.0);
-        assert!((factor - 1.0).abs() < 0.01, "Today's factor should be ~1.0, got {}", factor);
+        assert!(
+            (factor - 1.0).abs() < 0.01,
+            "Today's factor should be ~1.0, got {}",
+            factor
+        );
     }
 
     #[test]
@@ -319,7 +325,11 @@ mod tests {
         let date = Local::now().date_naive() - chrono::Duration::days(30);
         let source = format!("memory/{}.md", date.format("%Y-%m-%d"));
         let factor = decay_factor(&source, 30.0);
-        assert!((factor - 0.5).abs() < 0.01, "30-day-old factor should be ~0.5, got {}", factor);
+        assert!(
+            (factor - 0.5).abs() < 0.01,
+            "30-day-old factor should be ~0.5, got {}",
+            factor
+        );
     }
 
     #[test]
@@ -327,7 +337,11 @@ mod tests {
         let date = Local::now().date_naive() - chrono::Duration::days(60);
         let source = format!("memory/{}.md", date.format("%Y-%m-%d"));
         let factor = decay_factor(&source, 30.0);
-        assert!((factor - 0.25).abs() < 0.01, "60-day-old factor should be ~0.25, got {}", factor);
+        assert!(
+            (factor - 0.25).abs() < 0.01,
+            "60-day-old factor should be ~0.25, got {}",
+            factor
+        );
     }
 
     #[test]
@@ -344,7 +358,12 @@ mod tests {
 
         let decayed = apply_decay(rank, &source, 30.0);
         // Multiplying -10.0 by 0.5 = -5.0 (less negative = worse rank)
-        assert!(decayed > rank, "Decayed rank should be less negative (worse): {} > {}", decayed, rank);
+        assert!(
+            decayed > rank,
+            "Decayed rank should be less negative (worse): {} > {}",
+            decayed,
+            rank
+        );
         assert!((decayed - (-5.0)).abs() < 0.1);
     }
 
@@ -388,22 +407,24 @@ mod tests {
         let query = vec![1.0, 0.0, 0.0];
         // Two near-identical candidates and one diverse one with moderate relevance
         let candidates = vec![
-            (vec![1.0, 0.0, 0.0], 0),  // identical to query
+            (vec![1.0, 0.0, 0.0], 0),   // identical to query
             (vec![0.99, 0.01, 0.0], 1), // near-duplicate of candidate 0
             (vec![0.7, 0.7, 0.0], 2),   // different direction but still relevant
         ];
         let selected = mmr_rerank(&query, &candidates, 3, 0.3); // lambda=0.3 = diversity-heavy
-        // First should be most relevant, second should be the diverse one
+                                                                // First should be most relevant, second should be the diverse one
         assert_eq!(selected[0], 0);
-        assert_eq!(selected[1], 2, "Diverse candidate should come before near-duplicate");
+        assert_eq!(
+            selected[1], 2,
+            "Diverse candidate should come before near-duplicate"
+        );
     }
 
     #[test]
     fn mmr_respects_limit() {
         let query = vec![1.0, 0.0];
-        let candidates: Vec<(Vec<f32>, usize)> = (0..10)
-            .map(|i| (vec![1.0, i as f32 * 0.1], i))
-            .collect();
+        let candidates: Vec<(Vec<f32>, usize)> =
+            (0..10).map(|i| (vec![1.0, i as f32 * 0.1], i)).collect();
         let selected = mmr_rerank(&query, &candidates, 3, 0.7);
         assert_eq!(selected.len(), 3);
     }
@@ -419,10 +440,7 @@ mod tests {
     fn mmr_preserves_original_indices() {
         let query = vec![1.0, 0.0, 0.0];
         // Indices 42 and 99 are the original result positions
-        let candidates = vec![
-            (vec![0.9, 0.1, 0.0], 42),
-            (vec![0.1, 0.9, 0.0], 99),
-        ];
+        let candidates = vec![(vec![0.9, 0.1, 0.0], 42), (vec![0.1, 0.9, 0.0], 99)];
         let selected = mmr_rerank(&query, &candidates, 2, 1.0);
         assert_eq!(selected[0], 42, "Should return original index 42");
         assert_eq!(selected[1], 99);
@@ -468,7 +486,11 @@ mod tests {
         let date = Local::now().date_naive() + chrono::Duration::days(5);
         let source = format!("memory/{}.md", date.format("%Y-%m-%d"));
         let factor = decay_factor(&source, 30.0);
-        assert!(factor >= 1.0, "Future date factor should be >= 1.0, got {}", factor);
+        assert!(
+            factor >= 1.0,
+            "Future date factor should be >= 1.0, got {}",
+            factor
+        );
     }
 
     #[test]
@@ -477,7 +499,11 @@ mod tests {
         let date = Local::now().date_naive() - chrono::Duration::days(7);
         let source = format!("memory/{}.md", date.format("%Y-%m-%d"));
         let factor = decay_factor(&source, 7.0);
-        assert!((factor - 0.5).abs() < 0.01, "7-day half-life, 7 days old should be ~0.5, got {}", factor);
+        assert!(
+            (factor - 0.5).abs() < 0.01,
+            "7-day half-life, 7 days old should be ~0.5, got {}",
+            factor
+        );
     }
 
     #[test]
@@ -485,7 +511,11 @@ mod tests {
         let date = Local::now().date_naive() - chrono::Duration::days(365);
         let source = format!("memory/{}.md", date.format("%Y-%m-%d"));
         let factor = decay_factor(&source, 30.0);
-        assert!(factor < 0.01, "365-day-old factor should be near 0, got {}", factor);
+        assert!(
+            factor < 0.01,
+            "365-day-old factor should be near 0, got {}",
+            factor
+        );
     }
 
     #[test]

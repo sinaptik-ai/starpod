@@ -94,8 +94,7 @@ impl Session {
     /// Get the file path for this session's transcript.
     pub fn transcript_path(&self) -> PathBuf {
         let home = self.home_override.clone().unwrap_or_else(home_dir_or_tmp);
-        Self::sessions_dir_with_home(&self.cwd, home)
-            .join(format!("{}.jsonl", self.id))
+        Self::sessions_dir_with_home(&self.cwd, home).join(format!("{}.jsonl", self.id))
     }
 
     /// Append a JSON message to the transcript file on disk.
@@ -177,10 +176,7 @@ impl Session {
 /// * `dir` - working directory whose sessions to list; if `None`, uses the
 ///   current working directory.
 /// * `limit` - maximum number of sessions to return; if `None`, returns all.
-pub async fn list_sessions(
-    dir: Option<&str>,
-    limit: Option<usize>,
-) -> Result<Vec<SessionInfo>> {
+pub async fn list_sessions(dir: Option<&str>, limit: Option<usize>) -> Result<Vec<SessionInfo>> {
     list_sessions_with_home(dir, limit, home_dir_or_tmp()).await
 }
 
@@ -359,7 +355,10 @@ pub async fn find_most_recent_session(dir: Option<&str>) -> Result<Option<Sessio
 }
 
 /// Like [`find_most_recent_session`] but with an explicit home directory.
-pub async fn find_most_recent_session_with_home(dir: Option<&str>, home: PathBuf) -> Result<Option<SessionInfo>> {
+pub async fn find_most_recent_session_with_home(
+    dir: Option<&str>,
+    home: PathBuf,
+) -> Result<Option<SessionInfo>> {
     let sessions = list_sessions_with_home(dir, Some(1), home).await?;
     Ok(sessions.into_iter().next())
 }
@@ -545,9 +544,11 @@ mod tests {
         let s1 = Session::with_id("session-1", cwd).with_home(&home);
         let s2 = Session::with_id("session-2", cwd).with_home(&home);
 
-        s1.append_message(&json!({"type": "user", "content": [{"type": "text", "text": "first prompt"}]}))
-            .await
-            .unwrap();
+        s1.append_message(
+            &json!({"type": "user", "content": [{"type": "text", "text": "first prompt"}]}),
+        )
+        .await
+        .unwrap();
 
         // Small delay so modified times differ.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -556,7 +557,9 @@ mod tests {
             .await
             .unwrap();
 
-        let sessions = list_sessions_with_home(Some(cwd), None, home.clone()).await.unwrap();
+        let sessions = list_sessions_with_home(Some(cwd), None, home.clone())
+            .await
+            .unwrap();
         assert_eq!(sessions.len(), 2);
 
         // Newest first.
@@ -564,12 +567,16 @@ mod tests {
         assert_eq!(sessions[1].session_id, "session-1");
 
         // Test limit.
-        let sessions = list_sessions_with_home(Some(cwd), Some(1), home.clone()).await.unwrap();
+        let sessions = list_sessions_with_home(Some(cwd), Some(1), home.clone())
+            .await
+            .unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].session_id, "session-2");
 
         // Test find_most_recent_session.
-        let recent = find_most_recent_session_with_home(Some(cwd), home.clone()).await.unwrap();
+        let recent = find_most_recent_session_with_home(Some(cwd), home.clone())
+            .await
+            .unwrap();
         assert!(recent.is_some());
         assert_eq!(recent.unwrap().session_id, "session-2");
     }
@@ -596,14 +603,17 @@ mod tests {
         assert_eq!(all.len(), 10);
 
         // With offset and limit.
-        let page = get_session_messages_with_home("paginated", Some(cwd), Some(3), Some(2), home.clone())
-            .await
-            .unwrap();
+        let page =
+            get_session_messages_with_home("paginated", Some(cwd), Some(3), Some(2), home.clone())
+                .await
+                .unwrap();
         assert_eq!(page.len(), 3);
         assert_eq!(page[0].message["content"], "msg 2");
 
         // Non-existent session.
-        let err = get_session_messages_with_home("nonexistent", Some(cwd), None, None, home.clone()).await;
+        let err =
+            get_session_messages_with_home("nonexistent", Some(cwd), None, None, home.clone())
+                .await;
         assert!(err.is_err());
     }
 }

@@ -148,6 +148,9 @@ mod tests {
         assert!(limiter.check("user1"));
         assert!(!limiter.check("user1"));
         std::thread::sleep(Duration::from_millis(20));
-        assert!(limiter.check("user1"), "should be allowed after window expires");
+        assert!(
+            limiter.check("user1"),
+            "should be allowed after window expires"
+        );
     }
 }

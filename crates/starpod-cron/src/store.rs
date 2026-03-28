@@ -6,7 +6,7 @@ use sqlx::{Row, SqlitePool};
 use tracing::warn;
 use uuid::Uuid;
 
-use starpod_core::{StarpodError, Result};
+use starpod_core::{Result, StarpodError};
 
 use crate::types::*;
 
@@ -22,7 +22,11 @@ impl CronStore {
     ///
     /// The pool should already have migrations applied (via `CoreDb`).
     pub fn from_pool(pool: SqlitePool) -> Self {
-        Self { pool, default_max_retries: 3, default_timeout_secs: 7200 }
+        Self {
+            pool,
+            default_max_retries: 3,
+            default_timeout_secs: 7200,
+        }
     }
 
     /// Set the default max retries for new jobs added via `add_job()`.
@@ -44,7 +48,18 @@ impl CronStore {
         delete_after_run: bool,
         user_tz: Option<&str>,
     ) -> Result<String> {
-        self.add_job_full(name, prompt, schedule, delete_after_run, user_tz, self.default_max_retries, self.default_timeout_secs as u32, SessionMode::Isolated, None).await
+        self.add_job_full(
+            name,
+            prompt,
+            schedule,
+            delete_after_run,
+            user_tz,
+            self.default_max_retries,
+            self.default_timeout_secs as u32,
+            SessionMode::Isolated,
+            None,
+        )
+        .await
     }
 
     /// Add a new cron job with full options. Returns the job ID.
@@ -343,14 +358,12 @@ impl CronStore {
 
     /// Mark a job as permanently failed (clear retry_at so it won't be picked up again).
     pub async fn mark_permanently_failed(&self, job_id: &str, error: &str) -> Result<()> {
-        sqlx::query(
-            "UPDATE cron_jobs SET retry_at = NULL, last_error = ?2 WHERE id = ?1",
-        )
-        .bind(job_id)
-        .bind(error)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| StarpodError::Cron(format!("Failed to mark permanently failed: {}", e)))?;
+        sqlx::query("UPDATE cron_jobs SET retry_at = NULL, last_error = ?2 WHERE id = ?1")
+            .bind(job_id)
+            .bind(error)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StarpodError::Cron(format!("Failed to mark permanently failed: {}", e)))?;
         Ok(())
     }
 
@@ -371,12 +384,10 @@ impl CronStore {
 
     /// Count total running runs across all jobs.
     pub async fn count_all_running(&self) -> Result<u32> {
-        let row = sqlx::query(
-            "SELECT COUNT(*) as cnt FROM cron_runs WHERE status = 'running'",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| StarpodError::Cron(format!("Failed to count all running: {}", e)))?;
+        let row = sqlx::query("SELECT COUNT(*) as cnt FROM cron_runs WHERE status = 'running'")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| StarpodError::Cron(format!("Failed to count all running: {}", e)))?;
 
         Ok(row.get::<i64, _>("cnt") as u32)
     }
@@ -409,7 +420,6 @@ impl CronStore {
 
     /// Update a job's fields dynamically (only provided fields are changed).
     pub async fn update_job(&self, id: &str, update: &JobUpdate) -> Result<()> {
-
         // Build dynamic SQL with parameterized queries.
         // We reserve ?1 for the WHERE clause (id), so SET params start at ?2.
         let mut set_clauses: Vec<String> = Vec::new();
@@ -447,7 +457,10 @@ impl CronStore {
             return Ok(()); // nothing to update
         }
 
-        let sql = format!("UPDATE cron_jobs SET {} WHERE id = ?1", set_clauses.join(", "));
+        let sql = format!(
+            "UPDATE cron_jobs SET {} WHERE id = ?1",
+            set_clauses.join(", ")
+        );
         let mut query = sqlx::query(&sql).bind(id.to_string());
         for param in &params {
             query = query.bind(param.clone());
@@ -555,20 +568,20 @@ pub fn compute_next_run(
             // Try RFC 3339 first (has explicit timezone offset)
             let dt_utc = if let Ok(dt) = DateTime::parse_from_rfc3339(at) {
                 dt.with_timezone(&Utc)
-            } else if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(at, "%Y-%m-%dT%H:%M:%S") {
+            } else if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(at, "%Y-%m-%dT%H:%M:%S")
+            {
                 // Naive timestamp (no offset) — interpret in user_tz if available, else UTC
                 match user_tz.and_then(|s| s.parse::<chrono_tz::Tz>().ok()) {
-                    Some(tz) => {
-                        match naive.and_local_timezone(tz) {
-                            chrono::LocalResult::Single(local) => local.with_timezone(&Utc),
-                            chrono::LocalResult::Ambiguous(earliest, _) => earliest.with_timezone(&Utc),
-                            chrono::LocalResult::None => {
-                                return Err(StarpodError::Cron(format!(
-                                    "Timestamp '{}' does not exist in timezone '{}'", at, tz
-                                )));
-                            }
+                    Some(tz) => match naive.and_local_timezone(tz) {
+                        chrono::LocalResult::Single(local) => local.with_timezone(&Utc),
+                        chrono::LocalResult::Ambiguous(earliest, _) => earliest.with_timezone(&Utc),
+                        chrono::LocalResult::None => {
+                            return Err(StarpodError::Cron(format!(
+                                "Timestamp '{}' does not exist in timezone '{}'",
+                                at, tz
+                            )));
                         }
-                    }
+                    },
                     None => {
                         warn!(
                             timestamp = %at,
@@ -602,13 +615,15 @@ pub fn compute_next_run(
                 expr.clone()
             };
 
-            let cron_schedule = cron::Schedule::from_str(&effective_expr)
-                .map_err(|e| StarpodError::Cron(format!("Invalid cron expression '{}': {}", expr, e)))?;
+            let cron_schedule = cron::Schedule::from_str(&effective_expr).map_err(|e| {
+                StarpodError::Cron(format!("Invalid cron expression '{}': {}", expr, e))
+            })?;
 
             let next_utc = match user_tz.and_then(|s| s.parse::<chrono_tz::Tz>().ok()) {
-                Some(tz) => {
-                    cron_schedule.upcoming(tz).next().map(|dt| dt.with_timezone(&Utc))
-                }
+                Some(tz) => cron_schedule
+                    .upcoming(tz)
+                    .next()
+                    .map(|dt| dt.with_timezone(&Utc)),
                 None => {
                     if user_tz.is_some() {
                         warn!(tz = ?user_tz, "Invalid timezone, falling back to UTC");
@@ -637,7 +652,13 @@ mod tests {
 
         let schedule = Schedule::Interval { every_ms: 60000 };
         let id = store
-            .add_job("check-deploy", "Check deploy status", &schedule, false, None)
+            .add_job(
+                "check-deploy",
+                "Check deploy status",
+                &schedule,
+                false,
+                None,
+            )
             .await
             .unwrap();
         assert!(!id.is_empty());
@@ -657,7 +678,10 @@ mod tests {
     async fn test_get_job_by_id() {
         let store = setup().await;
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let id = store.add_job("find-by-id", "test prompt", &schedule, false, None).await.unwrap();
+        let id = store
+            .add_job("find-by-id", "test prompt", &schedule, false, None)
+            .await
+            .unwrap();
 
         let job = store.get_job(&id).await.unwrap();
         assert_eq!(job.id, id);
@@ -678,7 +702,17 @@ mod tests {
 
         let schedule = Schedule::Interval { every_ms: 60000 };
         let id = store
-            .add_job_full("my-job", "Do stuff", &schedule, false, None, 5, 3600, SessionMode::Main, None)
+            .add_job_full(
+                "my-job",
+                "Do stuff",
+                &schedule,
+                false,
+                None,
+                5,
+                3600,
+                SessionMode::Main,
+                None,
+            )
             .await
             .unwrap();
         assert!(!id.is_empty());
@@ -694,7 +728,10 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let id = store.add_job("temp", "temp job", &schedule, false, None).await.unwrap();
+        let id = store
+            .add_job("temp", "temp job", &schedule, false, None)
+            .await
+            .unwrap();
 
         store.remove_job(&id).await.unwrap();
         assert_eq!(store.list_jobs().await.unwrap().len(), 0);
@@ -705,7 +742,10 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        store.add_job("my-job", "do stuff", &schedule, false, None).await.unwrap();
+        store
+            .add_job("my-job", "do stuff", &schedule, false, None)
+            .await
+            .unwrap();
 
         store.remove_job_by_name("my-job").await.unwrap();
         assert_eq!(store.list_jobs().await.unwrap().len(), 0);
@@ -716,7 +756,10 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        store.add_job("find-me", "find this", &schedule, false, None).await.unwrap();
+        store
+            .add_job("find-me", "find this", &schedule, false, None)
+            .await
+            .unwrap();
 
         let found = store.get_job_by_name("find-me").await.unwrap();
         assert!(found.is_some());
@@ -731,7 +774,10 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let job_id = store.add_job("test-job", "test", &schedule, false, None).await.unwrap();
+        let job_id = store
+            .add_job("test-job", "test", &schedule, false, None)
+            .await
+            .unwrap();
 
         let run_id = store.record_run_start(&job_id).await.unwrap();
 
@@ -754,11 +800,17 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let job_id = store.add_job("retry-job", "test", &schedule, false, None).await.unwrap();
+        let job_id = store
+            .add_job("retry-job", "test", &schedule, false, None)
+            .await
+            .unwrap();
 
         // Schedule a retry
         let retry_at = Utc::now().timestamp() + 30;
-        store.schedule_retry(&job_id, retry_at, "Connection refused").await.unwrap();
+        store
+            .schedule_retry(&job_id, retry_at, "Connection refused")
+            .await
+            .unwrap();
 
         let jobs = store.list_jobs().await.unwrap();
         assert_eq!(jobs[0].retry_count, 1);
@@ -779,7 +831,10 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let job_id = store.add_job("count-job", "test", &schedule, false, None).await.unwrap();
+        let job_id = store
+            .add_job("count-job", "test", &schedule, false, None)
+            .await
+            .unwrap();
 
         assert_eq!(store.count_running(&job_id).await.unwrap(), 0);
         assert_eq!(store.count_all_running().await.unwrap(), 0);
@@ -795,14 +850,23 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let id = store.add_job("update-me", "old prompt", &schedule, false, None).await.unwrap();
+        let id = store
+            .add_job("update-me", "old prompt", &schedule, false, None)
+            .await
+            .unwrap();
 
-        store.update_job(&id, &JobUpdate {
-            prompt: Some("new prompt".into()),
-            max_retries: Some(10),
-            session_mode: Some(SessionMode::Main),
-            ..Default::default()
-        }).await.unwrap();
+        store
+            .update_job(
+                &id,
+                &JobUpdate {
+                    prompt: Some("new prompt".into()),
+                    max_retries: Some(10),
+                    session_mode: Some(SessionMode::Main),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
 
         let job = store.get_job_by_name("update-me").await.unwrap().unwrap();
         assert_eq!(job.prompt, "new prompt");
@@ -846,7 +910,10 @@ mod tests {
             expr: "0 9 * * *".to_string(),
         };
         let next = compute_next_run(&schedule, None, None).unwrap();
-        assert!(next.is_some(), "5-field cron should be auto-expanded to 6 fields");
+        assert!(
+            next.is_some(),
+            "5-field cron should be auto-expanded to 6 fields"
+        );
     }
 
     #[tokio::test]
@@ -856,9 +923,14 @@ mod tests {
             expr: "0 0 23 * * *".to_string(),
         };
         let next_utc = compute_next_run(&schedule, None, None).unwrap().unwrap();
-        let next_rome = compute_next_run(&schedule, None, Some("Europe/Rome")).unwrap().unwrap();
+        let next_rome = compute_next_run(&schedule, None, Some("Europe/Rome"))
+            .unwrap()
+            .unwrap();
         // Rome is UTC+1 or UTC+2 (DST), so next_rome should differ
-        assert_ne!(next_utc, next_rome, "Timezone should affect computed next_run");
+        assert_ne!(
+            next_utc, next_rome,
+            "Timezone should affect computed next_run"
+        );
     }
 
     #[tokio::test]
@@ -901,7 +973,10 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let id = store.add_job("retry-test", "test", &schedule, false, None).await.unwrap();
+        let id = store
+            .add_job("retry-test", "test", &schedule, false, None)
+            .await
+            .unwrap();
 
         // No retry jobs yet
         assert!(store.get_retry_jobs().await.unwrap().is_empty());
@@ -920,7 +995,10 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let id = store.add_job("j", "p", &schedule, false, None).await.unwrap();
+        let id = store
+            .add_job("j", "p", &schedule, false, None)
+            .await
+            .unwrap();
 
         store.disable_job(&id).await.unwrap();
 
@@ -933,15 +1011,24 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let id = store.add_job("perm-fail", "test", &schedule, false, None).await.unwrap();
+        let id = store
+            .add_job("perm-fail", "test", &schedule, false, None)
+            .await
+            .unwrap();
 
         // Schedule a retry first
         let retry_at = Utc::now().timestamp() + 30;
-        store.schedule_retry(&id, retry_at, "transient error").await.unwrap();
+        store
+            .schedule_retry(&id, retry_at, "transient error")
+            .await
+            .unwrap();
         assert!(store.list_jobs().await.unwrap()[0].retry_at.is_some());
 
         // Mark permanently failed — should clear retry_at but keep last_error
-        store.mark_permanently_failed(&id, "fatal error").await.unwrap();
+        store
+            .mark_permanently_failed(&id, "fatal error")
+            .await
+            .unwrap();
 
         let job = store.get_job_by_name("perm-fail").await.unwrap().unwrap();
         assert!(job.retry_at.is_none(), "retry_at should be cleared");
@@ -955,7 +1042,17 @@ mod tests {
         // Create a job with a very short timeout
         let schedule = Schedule::Interval { every_ms: 60000 };
         let id = store
-            .add_job_full("timeout-job", "test", &schedule, false, None, 3, 1, SessionMode::Isolated, None)
+            .add_job_full(
+                "timeout-job",
+                "test",
+                &schedule,
+                false,
+                None,
+                3,
+                1,
+                SessionMode::Isolated,
+                None,
+            )
             .await
             .unwrap();
 
@@ -996,7 +1093,17 @@ mod tests {
         // Job with a generous timeout
         let schedule = Schedule::Interval { every_ms: 60000 };
         let id = store
-            .add_job_full("safe-job", "test", &schedule, false, None, 3, 7200, SessionMode::Isolated, None)
+            .add_job_full(
+                "safe-job",
+                "test",
+                &schedule,
+                false,
+                None,
+                3,
+                7200,
+                SessionMode::Isolated,
+                None,
+            )
             .await
             .unwrap();
 
@@ -1013,7 +1120,10 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let id = store.add_job("noop-update", "original", &schedule, false, None).await.unwrap();
+        let id = store
+            .add_job("noop-update", "original", &schedule, false, None)
+            .await
+            .unwrap();
 
         // Empty update should be a no-op
         store.update_job(&id, &JobUpdate::default()).await.unwrap();
@@ -1027,15 +1137,30 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let id = store.add_job("schedule-update", "test", &schedule, false, None).await.unwrap();
+        let id = store
+            .add_job("schedule-update", "test", &schedule, false, None)
+            .await
+            .unwrap();
 
-        let new_schedule = Schedule::Cron { expr: "0 0 9 * * *".into() };
-        store.update_job(&id, &JobUpdate {
-            schedule: Some(new_schedule),
-            ..Default::default()
-        }).await.unwrap();
+        let new_schedule = Schedule::Cron {
+            expr: "0 0 9 * * *".into(),
+        };
+        store
+            .update_job(
+                &id,
+                &JobUpdate {
+                    schedule: Some(new_schedule),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
 
-        let job = store.get_job_by_name("schedule-update").await.unwrap().unwrap();
+        let job = store
+            .get_job_by_name("schedule-update")
+            .await
+            .unwrap()
+            .unwrap();
         match job.schedule {
             Schedule::Cron { ref expr } => assert_eq!(expr, "0 0 9 * * *"),
             _ => panic!("Expected cron schedule"),
@@ -1047,22 +1172,37 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let id = store.add_job("toggle-job", "test", &schedule, false, None).await.unwrap();
+        let id = store
+            .add_job("toggle-job", "test", &schedule, false, None)
+            .await
+            .unwrap();
 
         // Disable via update
-        store.update_job(&id, &JobUpdate {
-            enabled: Some(false),
-            ..Default::default()
-        }).await.unwrap();
+        store
+            .update_job(
+                &id,
+                &JobUpdate {
+                    enabled: Some(false),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
 
         let job = store.get_job_by_name("toggle-job").await.unwrap().unwrap();
         assert!(!job.enabled);
 
         // Re-enable
-        store.update_job(&id, &JobUpdate {
-            enabled: Some(true),
-            ..Default::default()
-        }).await.unwrap();
+        store
+            .update_job(
+                &id,
+                &JobUpdate {
+                    enabled: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
 
         let job = store.get_job_by_name("toggle-job").await.unwrap().unwrap();
         assert!(job.enabled);
@@ -1073,14 +1213,27 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let id = store.add_job("timeout-update", "test", &schedule, false, None).await.unwrap();
+        let id = store
+            .add_job("timeout-update", "test", &schedule, false, None)
+            .await
+            .unwrap();
 
-        store.update_job(&id, &JobUpdate {
-            timeout_secs: Some(300),
-            ..Default::default()
-        }).await.unwrap();
+        store
+            .update_job(
+                &id,
+                &JobUpdate {
+                    timeout_secs: Some(300),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
 
-        let job = store.get_job_by_name("timeout-update").await.unwrap().unwrap();
+        let job = store
+            .get_job_by_name("timeout-update")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(job.timeout_secs, 300);
     }
 
@@ -1089,12 +1242,18 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let id = store.add_job("inc-retry", "test", &schedule, false, None).await.unwrap();
+        let id = store
+            .add_job("inc-retry", "test", &schedule, false, None)
+            .await
+            .unwrap();
 
         // Three successive retries
         for i in 0..3 {
             let retry_at = Utc::now().timestamp() + 30;
-            store.schedule_retry(&id, retry_at, &format!("error {}", i)).await.unwrap();
+            store
+                .schedule_retry(&id, retry_at, &format!("error {}", i))
+                .await
+                .unwrap();
         }
 
         let job = store.get_job_by_name("inc-retry").await.unwrap().unwrap();
@@ -1107,7 +1266,10 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let id = store.add_job("disabled-retry", "test", &schedule, false, None).await.unwrap();
+        let id = store
+            .add_job("disabled-retry", "test", &schedule, false, None)
+            .await
+            .unwrap();
 
         // Schedule a retry in the past
         let past = Utc::now().timestamp() - 10;
@@ -1127,10 +1289,20 @@ mod tests {
         store.set_default_max_retries(5);
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        store.add_job("retry-default", "test", &schedule, false, None).await.unwrap();
+        store
+            .add_job("retry-default", "test", &schedule, false, None)
+            .await
+            .unwrap();
 
-        let job = store.get_job_by_name("retry-default").await.unwrap().unwrap();
-        assert_eq!(job.max_retries, 5, "add_job should use the custom default_max_retries");
+        let job = store
+            .get_job_by_name("retry-default")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            job.max_retries, 5,
+            "add_job should use the custom default_max_retries"
+        );
     }
 
     #[tokio::test]
@@ -1139,10 +1311,20 @@ mod tests {
         store.set_default_timeout_secs(3600);
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        store.add_job("timeout-default", "test", &schedule, false, None).await.unwrap();
+        store
+            .add_job("timeout-default", "test", &schedule, false, None)
+            .await
+            .unwrap();
 
-        let job = store.get_job_by_name("timeout-default").await.unwrap().unwrap();
-        assert_eq!(job.timeout_secs, 3600, "add_job should use the custom default_timeout_secs");
+        let job = store
+            .get_job_by_name("timeout-default")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            job.timeout_secs, 3600,
+            "add_job should use the custom default_timeout_secs"
+        );
     }
 
     #[tokio::test]
@@ -1150,7 +1332,10 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let id = store.add_job("future-retry", "test", &schedule, false, None).await.unwrap();
+        let id = store
+            .add_job("future-retry", "test", &schedule, false, None)
+            .await
+            .unwrap();
 
         // Schedule a retry far in the future
         let future = Utc::now().timestamp() + 99999;
@@ -1166,8 +1351,14 @@ mod tests {
         let store = setup().await;
 
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let id1 = store.add_job("job-a", "test", &schedule, false, None).await.unwrap();
-        let id2 = store.add_job("job-b", "test", &schedule, false, None).await.unwrap();
+        let id1 = store
+            .add_job("job-a", "test", &schedule, false, None)
+            .await
+            .unwrap();
+        let id2 = store
+            .add_job("job-b", "test", &schedule, false, None)
+            .await
+            .unwrap();
 
         store.record_run_start(&id1).await.unwrap();
         store.record_run_start(&id2).await.unwrap();
@@ -1184,13 +1375,22 @@ mod tests {
     async fn test_update_job_with_sql_injection_in_prompt() {
         let store = setup().await;
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let id = store.add_job("inject-test", "original", &schedule, false, None).await.unwrap();
+        let id = store
+            .add_job("inject-test", "original", &schedule, false, None)
+            .await
+            .unwrap();
 
         // Attempt SQL injection via prompt — this would corrupt data with string formatting
-        store.update_job(&id, &JobUpdate {
-            prompt: Some("'); DROP TABLE cron_jobs; --".into()),
-            ..Default::default()
-        }).await.unwrap();
+        store
+            .update_job(
+                &id,
+                &JobUpdate {
+                    prompt: Some("'); DROP TABLE cron_jobs; --".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
 
         // Table should still exist and contain our job
         let jobs = store.list_jobs().await.unwrap();
@@ -1202,15 +1402,28 @@ mod tests {
     async fn test_update_job_with_special_chars_in_prompt() {
         let store = setup().await;
         let schedule = Schedule::Interval { every_ms: 60000 };
-        let id = store.add_job("special-chars", "original", &schedule, false, None).await.unwrap();
+        let id = store
+            .add_job("special-chars", "original", &schedule, false, None)
+            .await
+            .unwrap();
 
         let special = "Hello 'world' \"quotes\" \\ backslash; semicolon -- comment /* block */";
-        store.update_job(&id, &JobUpdate {
-            prompt: Some(special.into()),
-            ..Default::default()
-        }).await.unwrap();
+        store
+            .update_job(
+                &id,
+                &JobUpdate {
+                    prompt: Some(special.into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
 
-        let job = store.get_job_by_name("special-chars").await.unwrap().unwrap();
+        let job = store
+            .get_job_by_name("special-chars")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(job.prompt, special);
     }
 
@@ -1222,7 +1435,10 @@ mod tests {
         let future = (Utc::now() + Duration::hours(1)).to_rfc3339();
         let schedule = Schedule::OneShot { at: future };
         let next = compute_next_run(&schedule, None, None).unwrap();
-        assert!(next.is_some(), "Future RFC 3339 timestamp should be scheduled");
+        assert!(
+            next.is_some(),
+            "Future RFC 3339 timestamp should be scheduled"
+        );
     }
 
     #[tokio::test]
@@ -1243,7 +1459,10 @@ mod tests {
 
         let schedule = Schedule::OneShot { at: naive_str };
         let next = compute_next_run(&schedule, None, Some("Europe/Rome")).unwrap();
-        assert!(next.is_some(), "Naive timestamp with user_tz should be scheduled");
+        assert!(
+            next.is_some(),
+            "Naive timestamp with user_tz should be scheduled"
+        );
     }
 
     #[tokio::test]
@@ -1254,7 +1473,10 @@ mod tests {
 
         let schedule = Schedule::OneShot { at: naive_str };
         let next = compute_next_run(&schedule, None, None).unwrap();
-        assert!(next.is_some(), "Naive timestamp without user_tz should assume UTC");
+        assert!(
+            next.is_some(),
+            "Naive timestamp without user_tz should assume UTC"
+        );
     }
 
     #[tokio::test]
@@ -1274,7 +1496,8 @@ mod tests {
         assert!(next_utc.is_some());
         assert!(next_tokyo.is_some());
         assert_ne!(
-            next_utc.unwrap(), next_tokyo.unwrap(),
+            next_utc.unwrap(),
+            next_tokyo.unwrap(),
             "Same naive timestamp should produce different UTC epochs for different timezones"
         );
         // Tokyo interpretation should be 9 hours earlier in UTC
@@ -1320,7 +1543,9 @@ mod tests {
         let future_utc = Utc::now() + Duration::hours(1);
         let naive_str = future_utc.format("%Y-%m-%dT%H:%M:%S").to_string();
 
-        let schedule = Schedule::OneShot { at: naive_str.clone() };
+        let schedule = Schedule::OneShot {
+            at: naive_str.clone(),
+        };
         let next_bad_tz = compute_next_run(&schedule, None, Some("Not/A/Timezone")).unwrap();
         let next_no_tz = compute_next_run(&schedule, None, None).unwrap();
 
@@ -1337,7 +1562,11 @@ mod tests {
         let result = compute_next_run(&schedule, None, Some("Europe/Rome"));
         assert!(result.is_err(), "DST gap timestamp should return error");
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("does not exist"), "Error should mention the timestamp doesn't exist: {}", err_msg);
+        assert!(
+            err_msg.contains("does not exist"),
+            "Error should mention the timestamp doesn't exist: {}",
+            err_msg
+        );
     }
 
     #[tokio::test]
@@ -1347,7 +1576,10 @@ mod tests {
             at: "2026-10-25T02:30:00".to_string(),
         };
         let result = compute_next_run(&schedule, None, Some("Europe/Rome"));
-        assert!(result.is_ok(), "Ambiguous DST timestamp should succeed (use earliest)");
+        assert!(
+            result.is_ok(),
+            "Ambiguous DST timestamp should succeed (use earliest)"
+        );
         assert!(result.unwrap().is_some());
     }
 
@@ -1357,7 +1589,10 @@ mod tests {
         let future = (Utc::now() + Duration::hours(1)).to_rfc3339();
         let schedule = Schedule::OneShot { at: future };
         let next = compute_next_run(&schedule, Some(Utc::now()), None).unwrap();
-        assert!(next.is_none(), "OneShot with last_run=Some should return None");
+        assert!(
+            next.is_none(),
+            "OneShot with last_run=Some should return None"
+        );
     }
 
     #[tokio::test]
@@ -1367,15 +1602,45 @@ mod tests {
 
         // Add jobs for different users and an agent-level job
         store
-            .add_job_full("alice-job", "Alice's job", &schedule, false, None, 3, 7200, SessionMode::Isolated, Some("alice"))
+            .add_job_full(
+                "alice-job",
+                "Alice's job",
+                &schedule,
+                false,
+                None,
+                3,
+                7200,
+                SessionMode::Isolated,
+                Some("alice"),
+            )
             .await
             .unwrap();
         store
-            .add_job_full("bob-job", "Bob's job", &schedule, false, None, 3, 7200, SessionMode::Isolated, Some("bob"))
+            .add_job_full(
+                "bob-job",
+                "Bob's job",
+                &schedule,
+                false,
+                None,
+                3,
+                7200,
+                SessionMode::Isolated,
+                Some("bob"),
+            )
             .await
             .unwrap();
         store
-            .add_job_full("agent-job", "Agent job", &schedule, false, None, 3, 7200, SessionMode::Isolated, None)
+            .add_job_full(
+                "agent-job",
+                "Agent job",
+                &schedule,
+                false,
+                None,
+                3,
+                7200,
+                SessionMode::Isolated,
+                None,
+            )
             .await
             .unwrap();
 

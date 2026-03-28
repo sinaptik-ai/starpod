@@ -117,7 +117,10 @@ impl HookRegistry {
                     }
                 };
 
-                self.eligibility_cache.lock().unwrap().insert(name.clone(), eligible);
+                self.eligibility_cache
+                    .lock()
+                    .unwrap()
+                    .insert(name.clone(), eligible);
                 return eligible;
             }
 
@@ -492,9 +495,9 @@ mod tests {
     #[test]
     fn registry_get_returns_matchers() {
         let mut reg = HookRegistry::new();
-        let matcher = HookCallbackMatcher::new(vec![hook_fn(
-            |_i, _id, _c| async { Ok(HookOutput::default()) },
-        )])
+        let matcher = HookCallbackMatcher::new(vec![hook_fn(|_i, _id, _c| async {
+            Ok(HookOutput::default())
+        })])
         .with_matcher("Bash");
         reg.register(HookEvent::PostToolUse, vec![matcher]);
         let matchers = reg.get(&HookEvent::PostToolUse).unwrap();
@@ -553,17 +556,35 @@ mod tests {
         let mut reg = HookRegistry::new();
         reg.register(
             HookEvent::PostToolUse,
-            vec![HookCallbackMatcher::new(vec![hook_fn(move |_i, _id, _c| {
-                let counter = counter_clone.clone();
-                async move {
-                    counter.fetch_add(1, Ordering::SeqCst);
-                    Ok(HookOutput::default())
-                }
-            })])],
+            vec![HookCallbackMatcher::new(vec![hook_fn(
+                move |_i, _id, _c| {
+                    let counter = counter_clone.clone();
+                    async move {
+                        counter.fetch_add(1, Ordering::SeqCst);
+                        Ok(HookOutput::default())
+                    }
+                },
+            )])],
         );
 
-        reg.run_post_tool_use("Bash", &serde_json::json!({}), &serde_json::json!(""), "tu-1", "s", "/tmp").await;
-        reg.run_post_tool_use("Read", &serde_json::json!({}), &serde_json::json!(""), "tu-2", "s", "/tmp").await;
+        reg.run_post_tool_use(
+            "Bash",
+            &serde_json::json!({}),
+            &serde_json::json!(""),
+            "tu-1",
+            "s",
+            "/tmp",
+        )
+        .await;
+        reg.run_post_tool_use(
+            "Read",
+            &serde_json::json!({}),
+            &serde_json::json!(""),
+            "tu-2",
+            "s",
+            "/tmp",
+        )
+        .await;
         assert_eq!(counter.load(Ordering::SeqCst), 2);
     }
 
@@ -612,13 +633,15 @@ mod tests {
         let mut reg = HookRegistry::new();
         reg.register(
             HookEvent::SessionStart,
-            vec![HookCallbackMatcher::new(vec![hook_fn(move |_i, _id, _c| {
-                let counter = counter_clone.clone();
-                async move {
-                    counter.fetch_add(1, Ordering::SeqCst);
-                    Ok(HookOutput::default())
-                }
-            })])],
+            vec![HookCallbackMatcher::new(vec![hook_fn(
+                move |_i, _id, _c| {
+                    let counter = counter_clone.clone();
+                    async move {
+                        counter.fetch_add(1, Ordering::SeqCst);
+                        Ok(HookOutput::default())
+                    }
+                },
+            )])],
         );
 
         let input = HookInput::SessionStart {
@@ -662,8 +685,15 @@ mod tests {
             ])],
         );
 
-        reg.run_post_tool_use("Bash", &serde_json::json!({}), &serde_json::json!(""), "tu-1", "s", "/tmp")
-            .await;
+        reg.run_post_tool_use(
+            "Bash",
+            &serde_json::json!({}),
+            &serde_json::json!(""),
+            "tu-1",
+            "s",
+            "/tmp",
+        )
+        .await;
         // Second hook should have fired despite the first one erroring
         assert_eq!(counter.load(Ordering::SeqCst), 1);
     }
@@ -677,15 +707,26 @@ mod tests {
                 tokio::time::sleep(std::time::Duration::from_secs(10)).await;
                 Ok(HookOutput::default())
             })])
-            .with_timeout(1)],  // 1 second timeout
+            .with_timeout(1)], // 1 second timeout
         );
 
         let start = std::time::Instant::now();
-        reg.run_post_tool_use("Bash", &serde_json::json!({}), &serde_json::json!(""), "tu-1", "s", "/tmp")
-            .await;
+        reg.run_post_tool_use(
+            "Bash",
+            &serde_json::json!({}),
+            &serde_json::json!(""),
+            "tu-1",
+            "s",
+            "/tmp",
+        )
+        .await;
         let elapsed = start.elapsed();
         // Should complete in ~1s, not 10s
-        assert!(elapsed.as_secs() < 3, "hook should have timed out, took {:?}", elapsed);
+        assert!(
+            elapsed.as_secs() < 3,
+            "hook should have timed out, took {:?}",
+            elapsed
+        );
     }
 
     #[tokio::test]
@@ -700,16 +741,32 @@ mod tests {
             vec![
                 HookCallbackMatcher::new(vec![hook_fn(move |_i, _id, _c| {
                     let c = c1.clone();
-                    async move { c.fetch_add(1, Ordering::SeqCst); Ok(HookOutput::default()) }
-                })]).with_matcher("Bash"),
+                    async move {
+                        c.fetch_add(1, Ordering::SeqCst);
+                        Ok(HookOutput::default())
+                    }
+                })])
+                .with_matcher("Bash"),
                 HookCallbackMatcher::new(vec![hook_fn(move |_i, _id, _c| {
                     let c = c2.clone();
-                    async move { c.fetch_add(10, Ordering::SeqCst); Ok(HookOutput::default()) }
-                })]).with_matcher("Bash|Read"),
+                    async move {
+                        c.fetch_add(10, Ordering::SeqCst);
+                        Ok(HookOutput::default())
+                    }
+                })])
+                .with_matcher("Bash|Read"),
             ],
         );
 
-        reg.run_post_tool_use("Bash", &serde_json::json!({}), &serde_json::json!(""), "tu-1", "s", "/tmp").await;
+        reg.run_post_tool_use(
+            "Bash",
+            &serde_json::json!({}),
+            &serde_json::json!(""),
+            "tu-1",
+            "s",
+            "/tmp",
+        )
+        .await;
         assert_eq!(counter.load(Ordering::SeqCst), 11); // both matchers fired
     }
 
@@ -717,7 +774,15 @@ mod tests {
     async fn run_post_tool_use_noop_when_no_hooks_registered() {
         let reg = HookRegistry::new();
         // Should not panic or error
-        reg.run_post_tool_use("Bash", &serde_json::json!({}), &serde_json::json!(""), "tu-1", "s", "/tmp").await;
+        reg.run_post_tool_use(
+            "Bash",
+            &serde_json::json!({}),
+            &serde_json::json!(""),
+            "tu-1",
+            "s",
+            "/tmp",
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -746,15 +811,25 @@ mod tests {
         let mut reg = HookRegistry::new();
         reg.register(
             HookEvent::PostToolUse,
-            vec![HookCallbackMatcher::new(vec![hook_fn(move |input, tool_use_id, _c| {
-                let received = received_clone.clone();
-                async move {
-                    if let HookInput::PostToolUse { tool_name, base, .. } = &input {
-                        *received.lock().unwrap() = format!("{}:{}:{}", tool_name, base.session_id, tool_use_id.unwrap_or_default());
+            vec![HookCallbackMatcher::new(vec![hook_fn(
+                move |input, tool_use_id, _c| {
+                    let received = received_clone.clone();
+                    async move {
+                        if let HookInput::PostToolUse {
+                            tool_name, base, ..
+                        } = &input
+                        {
+                            *received.lock().unwrap() = format!(
+                                "{}:{}:{}",
+                                tool_name,
+                                base.session_id,
+                                tool_use_id.unwrap_or_default()
+                            );
+                        }
+                        Ok(HookOutput::default())
                     }
-                    Ok(HookOutput::default())
-                }
-            })])],
+                },
+            )])],
         );
 
         reg.run_post_tool_use(
@@ -764,7 +839,8 @@ mod tests {
             "tu-42",
             "sess-abc",
             "/projects/foo",
-        ).await;
+        )
+        .await;
 
         assert_eq!(*received_tool.lock().unwrap(), "Write:sess-abc:tu-42");
     }
@@ -774,18 +850,19 @@ mod tests {
         let mut reg = HookRegistry::new();
         reg.register(
             HookEvent::PreToolUse,
-            vec![HookCallbackMatcher::new(vec![hook_fn(
-                |_i, _id, _c| async {
-                    Ok(HookOutput::Sync(crate::output::SyncHookOutput {
-                        decision: Some(crate::output::HookDecision::Block),
-                        ..Default::default()
-                    }))
-                },
-            )]).with_matcher("Write")],
+            vec![HookCallbackMatcher::new(vec![hook_fn(|_i, _id, _c| async {
+                Ok(HookOutput::Sync(crate::output::SyncHookOutput {
+                    decision: Some(crate::output::HookDecision::Block),
+                    ..Default::default()
+                }))
+            })])
+            .with_matcher("Write")],
         );
 
         // "Bash" doesn't match "Write" regex
-        let output = reg.run_pre_tool_use("Bash", &serde_json::json!({}), "tu-1", "s", "/tmp").await;
+        let output = reg
+            .run_pre_tool_use("Bash", &serde_json::json!({}), "tu-1", "s", "/tmp")
+            .await;
         assert!(output.is_none());
     }
 
@@ -821,8 +898,24 @@ mod tests {
         );
 
         // First two calls — hook fires (and fails), recording failures
-        reg.run_post_tool_use("X", &serde_json::json!({}), &serde_json::json!(""), "t1", "s", "/tmp").await;
-        reg.run_post_tool_use("X", &serde_json::json!({}), &serde_json::json!(""), "t2", "s", "/tmp").await;
+        reg.run_post_tool_use(
+            "X",
+            &serde_json::json!({}),
+            &serde_json::json!(""),
+            "t1",
+            "s",
+            "/tmp",
+        )
+        .await;
+        reg.run_post_tool_use(
+            "X",
+            &serde_json::json!({}),
+            &serde_json::json!(""),
+            "t2",
+            "s",
+            "/tmp",
+        )
+        .await;
 
         // Now add a counter hook with the same name to verify it's skipped
         reg.register(
@@ -838,8 +931,20 @@ mod tests {
         );
 
         // Third call — breaker should be tripped, hook should be skipped
-        reg.run_post_tool_use("X", &serde_json::json!({}), &serde_json::json!(""), "t3", "s", "/tmp").await;
-        assert_eq!(counter.load(Ordering::SeqCst), 0, "hook should have been skipped by circuit breaker");
+        reg.run_post_tool_use(
+            "X",
+            &serde_json::json!({}),
+            &serde_json::json!(""),
+            "t3",
+            "s",
+            "/tmp",
+        )
+        .await;
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            0,
+            "hook should have been skipped by circuit breaker"
+        );
     }
 
     #[tokio::test]
@@ -869,9 +974,21 @@ mod tests {
 
         // Run 5 times — all should succeed, counter should be 5
         for i in 0..5 {
-            reg.run_post_tool_use("X", &serde_json::json!({}), &serde_json::json!(""), &format!("t{}", i), "s", "/tmp").await;
+            reg.run_post_tool_use(
+                "X",
+                &serde_json::json!({}),
+                &serde_json::json!(""),
+                &format!("t{}", i),
+                "s",
+                "/tmp",
+            )
+            .await;
         }
-        assert_eq!(counter.load(Ordering::SeqCst), 5, "all calls should have fired");
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            5,
+            "all calls should have fired"
+        );
     }
 
     #[tokio::test]
@@ -882,21 +999,35 @@ mod tests {
         let mut reg = HookRegistry::new();
         reg.register(
             HookEvent::PostToolUse,
-            vec![HookCallbackMatcher::new(vec![hook_fn(move |_i, _id, _c| {
-                let c = counter_clone.clone();
-                async move {
-                    c.fetch_add(1, Ordering::SeqCst);
-                    Err(crate::error::HookError::CallbackFailed("err".into()))
-                }
-            })])],
+            vec![HookCallbackMatcher::new(vec![hook_fn(
+                move |_i, _id, _c| {
+                    let c = counter_clone.clone();
+                    async move {
+                        c.fetch_add(1, Ordering::SeqCst);
+                        Err(crate::error::HookError::CallbackFailed("err".into()))
+                    }
+                },
+            )])],
             // No .with_name() — unnamed hooks should never be circuit-broken
         );
 
         // Run 10 times — unnamed hooks should always fire regardless of errors
         for i in 0..10 {
-            reg.run_post_tool_use("X", &serde_json::json!({}), &serde_json::json!(""), &format!("t{}", i), "s", "/tmp").await;
+            reg.run_post_tool_use(
+                "X",
+                &serde_json::json!({}),
+                &serde_json::json!(""),
+                &format!("t{}", i),
+                "s",
+                "/tmp",
+            )
+            .await;
         }
-        assert_eq!(counter.load(Ordering::SeqCst), 10, "unnamed hooks should always fire");
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            10,
+            "unnamed hooks should always fire"
+        );
     }
 
     #[tokio::test]
@@ -923,8 +1054,20 @@ mod tests {
             })],
         );
 
-        reg.run_post_tool_use("Bash", &serde_json::json!({}), &serde_json::json!(""), "t1", "s", "/tmp").await;
-        assert_eq!(counter.load(Ordering::SeqCst), 0, "hook should be skipped due to missing binary");
+        reg.run_post_tool_use(
+            "Bash",
+            &serde_json::json!({}),
+            &serde_json::json!(""),
+            "t1",
+            "s",
+            "/tmp",
+        )
+        .await;
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            0,
+            "hook should be skipped due to missing binary"
+        );
     }
 
     #[tokio::test]
@@ -954,8 +1097,20 @@ mod tests {
             })],
         );
 
-        reg.run_post_tool_use("Bash", &serde_json::json!({}), &serde_json::json!(""), "t1", "s", "/tmp").await;
-        assert_eq!(counter.load(Ordering::SeqCst), 1, "eligible hook should fire");
+        reg.run_post_tool_use(
+            "Bash",
+            &serde_json::json!({}),
+            &serde_json::json!(""),
+            "t1",
+            "s",
+            "/tmp",
+        )
+        .await;
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            1,
+            "eligible hook should fire"
+        );
     }
 
     #[tokio::test]
@@ -982,8 +1137,20 @@ mod tests {
             })],
         );
 
-        reg.run_post_tool_use("Bash", &serde_json::json!({}), &serde_json::json!(""), "t1", "s", "/tmp").await;
-        assert_eq!(counter.load(Ordering::SeqCst), 0, "hook should be skipped due to OS mismatch");
+        reg.run_post_tool_use(
+            "Bash",
+            &serde_json::json!({}),
+            &serde_json::json!(""),
+            "t1",
+            "s",
+            "/tmp",
+        )
+        .await;
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            0,
+            "hook should be skipped due to OS mismatch"
+        );
     }
 
     #[test]
@@ -991,18 +1158,18 @@ mod tests {
         let mut reg1 = HookRegistry::new();
         reg1.register(
             HookEvent::PostToolUse,
-            vec![HookCallbackMatcher::new(vec![hook_fn(
-                |_i, _id, _c| async { Ok(HookOutput::default()) },
-            )])
+            vec![HookCallbackMatcher::new(vec![hook_fn(|_i, _id, _c| async {
+                Ok(HookOutput::default())
+            })])
             .with_name("hook-a")],
         );
 
         let mut reg2 = HookRegistry::new();
         reg2.register(
             HookEvent::PostToolUse,
-            vec![HookCallbackMatcher::new(vec![hook_fn(
-                |_i, _id, _c| async { Ok(HookOutput::default()) },
-            )])
+            vec![HookCallbackMatcher::new(vec![hook_fn(|_i, _id, _c| async {
+                Ok(HookOutput::default())
+            })])
             .with_name("hook-b")],
         );
         reg2.register(

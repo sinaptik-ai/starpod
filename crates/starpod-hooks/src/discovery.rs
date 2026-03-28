@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::callback::{HookCallbackMatcher, HookCallback};
+use crate::callback::{HookCallback, HookCallbackMatcher};
 use crate::eligibility::HookRequirements;
 use crate::error::HookError;
 use crate::event::HookEvent;
@@ -107,29 +107,23 @@ impl HookDiscovery {
         })?;
 
         for entry in entries {
-            let path = entry.map_err(|e| {
-                HookError::Discovery(format!("Failed to read glob entry: {}", e))
-            })?;
+            let path = entry
+                .map_err(|e| HookError::Discovery(format!("Failed to read glob entry: {}", e)))?;
 
-            let content = std::fs::read_to_string(&path).map_err(|e| {
-                HookError::ManifestParse {
-                    path: path.display().to_string(),
-                    reason: e.to_string(),
-                }
+            let content = std::fs::read_to_string(&path).map_err(|e| HookError::ManifestParse {
+                path: path.display().to_string(),
+                reason: e.to_string(),
             })?;
 
             let manifest = parse_manifest(&content, &path)?;
 
             if let Some(ref command) = manifest.command {
                 let hook_dir = path.parent().unwrap_or(dir).to_path_buf();
-                let callback = build_command_callback(
-                    manifest.name.clone(),
-                    command.clone(),
-                    hook_dir,
-                );
+                let callback =
+                    build_command_callback(manifest.name.clone(), command.clone(), hook_dir);
 
-                let mut matcher = HookCallbackMatcher::new(vec![callback])
-                    .with_name(&manifest.name);
+                let mut matcher =
+                    HookCallbackMatcher::new(vec![callback]).with_name(&manifest.name);
 
                 if let Some(ref m) = manifest.matcher {
                     matcher = matcher.with_matcher(m);
@@ -186,20 +180,21 @@ fn parse_manifest(content: &str, path: &Path) -> crate::error::Result<HookManife
 
     // Find the closing +++
     let after_open = &trimmed[3..];
-    let close_pos = after_open.find("+++").ok_or_else(|| HookError::ManifestParse {
-        path: path.display().to_string(),
-        reason: "Missing closing +++ frontmatter delimiter".to_string(),
-    })?;
+    let close_pos = after_open
+        .find("+++")
+        .ok_or_else(|| HookError::ManifestParse {
+            path: path.display().to_string(),
+            reason: "Missing closing +++ frontmatter delimiter".to_string(),
+        })?;
 
     let toml_str = &after_open[..close_pos].trim();
     let body = after_open[close_pos + 3..].trim();
 
-    let mut manifest: HookManifest = toml::from_str(toml_str).map_err(|e| {
-        HookError::ManifestParse {
+    let mut manifest: HookManifest =
+        toml::from_str(toml_str).map_err(|e| HookError::ManifestParse {
             path: path.display().to_string(),
             reason: e.to_string(),
-        }
-    })?;
+        })?;
 
     if !body.is_empty() {
         manifest.description = Some(body.to_string());
@@ -217,69 +212,73 @@ fn build_command_callback(
     command: String,
     work_dir: std::path::PathBuf,
 ) -> HookCallback {
-    Arc::new(move |input: HookInput, _tool_use_id: Option<String>, _cancel| {
-        let hook_name = hook_name.clone();
-        let command = command.clone();
-        let work_dir = work_dir.clone();
+    Arc::new(
+        move |input: HookInput, _tool_use_id: Option<String>, _cancel| {
+            let hook_name = hook_name.clone();
+            let command = command.clone();
+            let work_dir = work_dir.clone();
 
-        Box::pin(async move {
-            let input_json = serde_json::to_string(&input)?;
+            Box::pin(async move {
+                let input_json = serde_json::to_string(&input)?;
 
-            let output = tokio::process::Command::new("sh")
-                .arg("-c")
-                .arg(&command)
-                .current_dir(&work_dir)
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .map_err(|e| HookError::CommandExecution {
-                    hook_name: hook_name.clone(),
-                    reason: e.to_string(),
-                })?;
-
-            use tokio::io::AsyncWriteExt;
-
-            let mut child = output;
-            if let Some(mut stdin) = child.stdin.take() {
-                stdin.write_all(input_json.as_bytes()).await.map_err(|e| {
-                    HookError::CommandExecution {
+                let output = tokio::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(&command)
+                    .current_dir(&work_dir)
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                    .map_err(|e| HookError::CommandExecution {
                         hook_name: hook_name.clone(),
-                        reason: format!("Failed to write to stdin: {}", e),
-                    }
-                })?;
-                // Drop stdin to close the pipe and signal EOF
-            }
+                        reason: e.to_string(),
+                    })?;
 
-            let result = child.wait_with_output().await.map_err(|e| {
-                HookError::CommandExecution {
-                    hook_name: hook_name.clone(),
-                    reason: e.to_string(),
+                use tokio::io::AsyncWriteExt;
+
+                let mut child = output;
+                if let Some(mut stdin) = child.stdin.take() {
+                    stdin.write_all(input_json.as_bytes()).await.map_err(|e| {
+                        HookError::CommandExecution {
+                            hook_name: hook_name.clone(),
+                            reason: format!("Failed to write to stdin: {}", e),
+                        }
+                    })?;
+                    // Drop stdin to close the pipe and signal EOF
                 }
-            })?;
 
-            let stdout = String::from_utf8_lossy(&result.stdout);
-            let stdout_trimmed = stdout.trim();
+                let result =
+                    child
+                        .wait_with_output()
+                        .await
+                        .map_err(|e| HookError::CommandExecution {
+                            hook_name: hook_name.clone(),
+                            reason: e.to_string(),
+                        })?;
 
-            if stdout_trimmed.is_empty() {
-                // No output — return default (continue)
-                return Ok(HookOutput::default());
-            }
+                let stdout = String::from_utf8_lossy(&result.stdout);
+                let stdout_trimmed = stdout.trim();
 
-            let hook_output: HookOutput =
-                serde_json::from_str(stdout_trimmed).map_err(|e| {
-                    HookError::CommandExecution {
-                        hook_name: hook_name.clone(),
-                        reason: format!(
-                            "Failed to parse stdout as HookOutput: {}. stdout: {}",
-                            e, stdout_trimmed
-                        ),
-                    }
-                })?;
+                if stdout_trimmed.is_empty() {
+                    // No output — return default (continue)
+                    return Ok(HookOutput::default());
+                }
 
-            Ok(hook_output)
-        })
-    })
+                let hook_output: HookOutput =
+                    serde_json::from_str(stdout_trimmed).map_err(|e| {
+                        HookError::CommandExecution {
+                            hook_name: hook_name.clone(),
+                            reason: format!(
+                                "Failed to parse stdout as HookOutput: {}. stdout: {}",
+                                e, stdout_trimmed
+                            ),
+                        }
+                    })?;
+
+                Ok(hook_output)
+            })
+        },
+    )
 }
 
 #[cfg(test)]
@@ -561,7 +560,11 @@ command = "echo '{}'"
         let tmp = tempdir();
 
         let script_path = tmp.join("bad.sh");
-        fs::write(&script_path, "#!/bin/sh\ncat - > /dev/null\necho 'not json'\n").unwrap();
+        fs::write(
+            &script_path,
+            "#!/bin/sh\ncat - > /dev/null\necho 'not json'\n",
+        )
+        .unwrap();
 
         #[cfg(unix)]
         {
@@ -569,11 +572,8 @@ command = "echo '{}'"
             fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
         }
 
-        let callback = build_command_callback(
-            "bad-cmd".to_string(),
-            "./bad.sh".to_string(),
-            tmp.clone(),
-        );
+        let callback =
+            build_command_callback("bad-cmd".to_string(), "./bad.sh".to_string(), tmp.clone());
 
         let input = HookInput::UserPromptSubmit {
             base: crate::input::BaseHookInput {

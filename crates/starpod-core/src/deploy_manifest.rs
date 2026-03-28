@@ -99,7 +99,7 @@ impl EnvSection {
 /// This mirrors the skill frontmatter env block without depending on starpod-skills.
 pub struct SkillEnvInput {
     pub name: String,
-    pub secrets: Vec<(String, bool, String)>,   // (key, required, description)
+    pub secrets: Vec<(String, bool, String)>, // (key, required, description)
     pub variables: Vec<(String, Option<String>, String)>, // (key, default, description)
 }
 
@@ -133,31 +133,44 @@ impl DeployManifest {
 
                     // Bedrock uses AWS credentials (access key + secret key), not a single API key
                     if provider == "bedrock" {
-                        agent.secrets.insert("AWS_ACCESS_KEY_ID".to_string(), SecretEntry {
-                            secret: "AWS_ACCESS_KEY_ID".to_string(),
-                            required: true,
-                            description: "AWS access key ID for Bedrock".to_string(),
-                        });
-                        agent.secrets.insert("AWS_SECRET_ACCESS_KEY".to_string(), SecretEntry {
-                            secret: "AWS_SECRET_ACCESS_KEY".to_string(),
-                            required: true,
-                            description: "AWS secret access key for Bedrock".to_string(),
-                        });
+                        agent.secrets.insert(
+                            "AWS_ACCESS_KEY_ID".to_string(),
+                            SecretEntry {
+                                secret: "AWS_ACCESS_KEY_ID".to_string(),
+                                required: true,
+                                description: "AWS access key ID for Bedrock".to_string(),
+                            },
+                        );
+                        agent.secrets.insert(
+                            "AWS_SECRET_ACCESS_KEY".to_string(),
+                            SecretEntry {
+                                secret: "AWS_SECRET_ACCESS_KEY".to_string(),
+                                required: true,
+                                description: "AWS secret access key for Bedrock".to_string(),
+                            },
+                        );
                     } else if provider == "vertex" {
                         // Vertex uses Google service account credentials
-                        agent.secrets.insert("GOOGLE_APPLICATION_CREDENTIALS".to_string(), SecretEntry {
-                            secret: "GOOGLE_APPLICATION_CREDENTIALS".to_string(),
-                            required: true,
-                            description: "Path to Google service account JSON for Vertex AI".to_string(),
-                        });
+                        agent.secrets.insert(
+                            "GOOGLE_APPLICATION_CREDENTIALS".to_string(),
+                            SecretEntry {
+                                secret: "GOOGLE_APPLICATION_CREDENTIALS".to_string(),
+                                required: true,
+                                description: "Path to Google service account JSON for Vertex AI"
+                                    .to_string(),
+                            },
+                        );
                     } else {
                         let key = format!("{}_API_KEY", provider.to_uppercase());
                         let desc = format!("{} API key", provider);
-                        agent.secrets.insert(key.clone(), SecretEntry {
-                            secret: key,
-                            required: !is_local,
-                            description: desc,
-                        });
+                        agent.secrets.insert(
+                            key.clone(),
+                            SecretEntry {
+                                secret: key,
+                                required: !is_local,
+                                description: desc,
+                            },
+                        );
                     }
                 }
             }
@@ -165,20 +178,26 @@ impl DeployManifest {
 
         // Telegram bot token if channel is enabled
         if config.telegram_enabled {
-            agent.secrets.insert("TELEGRAM_BOT_TOKEN".to_string(), SecretEntry {
-                secret: "TELEGRAM_BOT_TOKEN".to_string(),
-                required: true,
-                description: "Telegram bot token".to_string(),
-            });
+            agent.secrets.insert(
+                "TELEGRAM_BOT_TOKEN".to_string(),
+                SecretEntry {
+                    secret: "TELEGRAM_BOT_TOKEN".to_string(),
+                    required: true,
+                    description: "Telegram bot token".to_string(),
+                },
+            );
         }
 
         // Brave Search API key if internet/web search is enabled
         if config.internet_enabled {
-            agent.secrets.insert("BRAVE_API_KEY".to_string(), SecretEntry {
-                secret: "BRAVE_API_KEY".to_string(),
-                required: false,
-                description: "Brave Search API key for web search".to_string(),
-            });
+            agent.secrets.insert(
+                "BRAVE_API_KEY".to_string(),
+                SecretEntry {
+                    secret: "BRAVE_API_KEY".to_string(),
+                    required: false,
+                    description: "Brave Search API key for web search".to_string(),
+                },
+            );
         }
 
         // Build per-skill sections
@@ -186,10 +205,23 @@ impl DeployManifest {
         for skill_env in skill_envs {
             let mut section = EnvSection::default();
             for (key, required, description) in skill_env.secrets {
-                section.secrets.insert(key.clone(), SecretEntry { secret: key, required, description });
+                section.secrets.insert(
+                    key.clone(),
+                    SecretEntry {
+                        secret: key,
+                        required,
+                        description,
+                    },
+                );
             }
             for (key, default, description) in skill_env.variables {
-                section.variables.insert(key, VariableEntry { default, description });
+                section.variables.insert(
+                    key,
+                    VariableEntry {
+                        default,
+                        description,
+                    },
+                );
             }
             if !section.is_empty() {
                 skills.insert(skill_env.name, section);
@@ -209,10 +241,10 @@ impl DeployManifest {
         if !path.exists() {
             return Ok(None);
         }
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| StarpodError::Io(e))?;
+        let content = std::fs::read_to_string(path).map_err(|e| StarpodError::Io(e))?;
         // Strip comment lines before parsing
-        let body: String = content.lines()
+        let body: String = content
+            .lines()
             .filter(|l| !l.starts_with('#'))
             .collect::<Vec<_>>()
             .join("\n");
@@ -318,8 +350,7 @@ impl DeployManifest {
     /// Write the manifest to a file.
     pub fn write_to(&self, path: &Path) -> Result<()> {
         let content = self.to_toml()?;
-        std::fs::write(path, content)
-            .map_err(|e| StarpodError::Io(e))?;
+        std::fs::write(path, content).map_err(|e| StarpodError::Io(e))?;
         Ok(())
     }
 }
@@ -359,17 +390,15 @@ mod tests {
             telegram_enabled: false,
             internet_enabled: false,
         };
-        let skill_envs = vec![
-            SkillEnvInput {
-                name: "github-pr-review".to_string(),
-                secrets: vec![
-                    ("GITHUB_TOKEN".to_string(), true, "GitHub PAT".to_string()),
-                ],
-                variables: vec![
-                    ("GITHUB_ORG".to_string(), Some("".to_string()), "Default org".to_string()),
-                ],
-            },
-        ];
+        let skill_envs = vec![SkillEnvInput {
+            name: "github-pr-review".to_string(),
+            secrets: vec![("GITHUB_TOKEN".to_string(), true, "GitHub PAT".to_string())],
+            variables: vec![(
+                "GITHUB_ORG".to_string(),
+                Some("".to_string()),
+                "Default org".to_string(),
+            )],
+        }];
         let manifest = DeployManifest::generate(&config, skill_envs);
         assert!(manifest.skills.contains_key("github-pr-review"));
         let skill = &manifest.skills["github-pr-review"];
@@ -415,17 +444,19 @@ mod tests {
             telegram_enabled: false,
             internet_enabled: false,
         };
-        let skill_envs = vec![
-            SkillEnvInput {
-                name: "check-weather".to_string(),
-                secrets: vec![
-                    ("OPENWEATHER_API_KEY".to_string(), true, "OpenWeatherMap API key".to_string()),
-                ],
-                variables: vec![
-                    ("DEFAULT_CITY".to_string(), Some("Rome".to_string()), "Fallback city".to_string()),
-                ],
-            },
-        ];
+        let skill_envs = vec![SkillEnvInput {
+            name: "check-weather".to_string(),
+            secrets: vec![(
+                "OPENWEATHER_API_KEY".to_string(),
+                true,
+                "OpenWeatherMap API key".to_string(),
+            )],
+            variables: vec![(
+                "DEFAULT_CITY".to_string(),
+                Some("Rome".to_string()),
+                "Fallback city".to_string(),
+            )],
+        }];
         let manifest = DeployManifest::generate(&config, skill_envs);
         let toml = manifest.to_toml().unwrap();
 
@@ -500,7 +531,11 @@ mod tests {
             SkillEnvInput {
                 name: "mid-skill".to_string(),
                 secrets: vec![],
-                variables: vec![("M_VAR".to_string(), Some("default".to_string()), "M var".to_string())],
+                variables: vec![(
+                    "M_VAR".to_string(),
+                    Some("default".to_string()),
+                    "M var".to_string(),
+                )],
             },
         ];
         let manifest = DeployManifest::generate(&config, skill_envs);
@@ -517,13 +552,11 @@ mod tests {
             telegram_enabled: false,
             internet_enabled: false,
         };
-        let skill_envs = vec![
-            SkillEnvInput {
-                name: "empty-env".to_string(),
-                secrets: vec![],
-                variables: vec![],
-            },
-        ];
+        let skill_envs = vec![SkillEnvInput {
+            name: "empty-env".to_string(),
+            secrets: vec![],
+            variables: vec![],
+        }];
         let manifest = DeployManifest::generate(&config, skill_envs);
         // Skills with no secrets or variables should be omitted
         assert!(manifest.skills.is_empty());
@@ -536,15 +569,15 @@ mod tests {
             telegram_enabled: false,
             internet_enabled: false,
         };
-        let skill_envs = vec![
-            SkillEnvInput {
-                name: "terse".to_string(),
-                secrets: vec![("TOKEN".to_string(), true, String::new())],
-                variables: vec![],
-            },
-        ];
+        let skill_envs = vec![SkillEnvInput {
+            name: "terse".to_string(),
+            secrets: vec![("TOKEN".to_string(), true, String::new())],
+            variables: vec![],
+        }];
         let manifest = DeployManifest::generate(&config, skill_envs);
-        assert!(manifest.skills["terse"].secrets["TOKEN"].description.is_empty());
+        assert!(manifest.skills["terse"].secrets["TOKEN"]
+            .description
+            .is_empty());
         // Verify TOML output doesn't include empty description
         let toml = manifest.to_toml().unwrap();
         assert!(toml.contains("[skills.terse.secrets.TOKEN]"));
@@ -558,15 +591,15 @@ mod tests {
             telegram_enabled: false,
             internet_enabled: false,
         };
-        let skill_envs = vec![
-            SkillEnvInput {
-                name: "no-defaults".to_string(),
-                secrets: vec![],
-                variables: vec![("REGION".to_string(), None, "Cloud region".to_string())],
-            },
-        ];
+        let skill_envs = vec![SkillEnvInput {
+            name: "no-defaults".to_string(),
+            secrets: vec![],
+            variables: vec![("REGION".to_string(), None, "Cloud region".to_string())],
+        }];
         let manifest = DeployManifest::generate(&config, skill_envs);
-        assert!(manifest.skills["no-defaults"].variables["REGION"].default.is_none());
+        assert!(manifest.skills["no-defaults"].variables["REGION"]
+            .default
+            .is_none());
     }
 
     #[test]
@@ -576,30 +609,44 @@ mod tests {
             telegram_enabled: true,
             internet_enabled: false,
         };
-        let skill_envs = vec![
-            SkillEnvInput {
-                name: "my-skill".to_string(),
-                secrets: vec![("KEY".to_string(), true, "A key".to_string())],
-                variables: vec![("VAR".to_string(), Some("val".to_string()), "A var".to_string())],
-            },
-        ];
+        let skill_envs = vec![SkillEnvInput {
+            name: "my-skill".to_string(),
+            secrets: vec![("KEY".to_string(), true, "A key".to_string())],
+            variables: vec![(
+                "VAR".to_string(),
+                Some("val".to_string()),
+                "A var".to_string(),
+            )],
+        }];
         let manifest = DeployManifest::generate(&config, skill_envs);
         let toml_str = manifest.to_toml().unwrap();
 
         // Strip the header comment lines for parsing
-        let toml_body: String = toml_str.lines()
+        let toml_body: String = toml_str
+            .lines()
             .filter(|l| !l.starts_with('#'))
             .collect::<Vec<_>>()
             .join("\n");
         let parsed: DeployManifest = toml::from_str(&toml_body).unwrap();
         assert_eq!(parsed.version, 1);
         assert!(parsed.agent.secrets.contains_key("ANTHROPIC_API_KEY"));
-        assert_eq!(parsed.agent.secrets["ANTHROPIC_API_KEY"].secret, "ANTHROPIC_API_KEY");
+        assert_eq!(
+            parsed.agent.secrets["ANTHROPIC_API_KEY"].secret,
+            "ANTHROPIC_API_KEY"
+        );
         assert!(parsed.agent.secrets.contains_key("TELEGRAM_BOT_TOKEN"));
-        assert_eq!(parsed.agent.secrets["TELEGRAM_BOT_TOKEN"].secret, "TELEGRAM_BOT_TOKEN");
+        assert_eq!(
+            parsed.agent.secrets["TELEGRAM_BOT_TOKEN"].secret,
+            "TELEGRAM_BOT_TOKEN"
+        );
         assert!(parsed.skills["my-skill"].secrets.contains_key("KEY"));
         assert_eq!(parsed.skills["my-skill"].secrets["KEY"].secret, "KEY");
-        assert_eq!(parsed.skills["my-skill"].variables["VAR"].default.as_deref(), Some("val"));
+        assert_eq!(
+            parsed.skills["my-skill"].variables["VAR"]
+                .default
+                .as_deref(),
+            Some("val")
+        );
     }
 
     // ── Merge tests ───────────────────────────────────────────────────
@@ -615,25 +662,32 @@ mod tests {
     #[test]
     fn test_merge_preserves_secret_alias() {
         // User changed secret alias from GITHUB_TOKEN → GITHUB_TOKEN_PROD
-        let mut existing = DeployManifest::generate(&minimal_config(), vec![
-            SkillEnvInput {
+        let mut existing = DeployManifest::generate(
+            &minimal_config(),
+            vec![SkillEnvInput {
                 name: "my-skill".to_string(),
                 secrets: vec![("GITHUB_TOKEN".to_string(), true, "PAT".to_string())],
                 variables: vec![],
-            },
-        ]);
-        existing.skills.get_mut("my-skill").unwrap()
-            .secrets.get_mut("GITHUB_TOKEN").unwrap()
+            }],
+        );
+        existing
+            .skills
+            .get_mut("my-skill")
+            .unwrap()
+            .secrets
+            .get_mut("GITHUB_TOKEN")
+            .unwrap()
             .secret = "GITHUB_TOKEN_PROD".to_string();
 
         // Regenerate (would reset alias to GITHUB_TOKEN)
-        let generated = DeployManifest::generate(&minimal_config(), vec![
-            SkillEnvInput {
+        let generated = DeployManifest::generate(
+            &minimal_config(),
+            vec![SkillEnvInput {
                 name: "my-skill".to_string(),
                 secrets: vec![("GITHUB_TOKEN".to_string(), true, "Updated desc".to_string())],
                 variables: vec![],
-            },
-        ]);
+            }],
+        );
 
         let merged = generated.merge_with_existing(&existing);
         let entry = &merged.skills["my-skill"].secrets["GITHUB_TOKEN"];
@@ -645,25 +699,40 @@ mod tests {
 
     #[test]
     fn test_merge_preserves_variable_default_override() {
-        let mut existing = DeployManifest::generate(&minimal_config(), vec![
-            SkillEnvInput {
+        let mut existing = DeployManifest::generate(
+            &minimal_config(),
+            vec![SkillEnvInput {
                 name: "weather".to_string(),
                 secrets: vec![],
-                variables: vec![("CITY".to_string(), Some("Rome".to_string()), "City".to_string())],
-            },
-        ]);
+                variables: vec![(
+                    "CITY".to_string(),
+                    Some("Rome".to_string()),
+                    "City".to_string(),
+                )],
+            }],
+        );
         // User overrode default from Rome → Milan
-        existing.skills.get_mut("weather").unwrap()
-            .variables.get_mut("CITY").unwrap()
+        existing
+            .skills
+            .get_mut("weather")
+            .unwrap()
+            .variables
+            .get_mut("CITY")
+            .unwrap()
             .default = Some("Milan".to_string());
 
-        let generated = DeployManifest::generate(&minimal_config(), vec![
-            SkillEnvInput {
+        let generated = DeployManifest::generate(
+            &minimal_config(),
+            vec![SkillEnvInput {
                 name: "weather".to_string(),
                 secrets: vec![],
-                variables: vec![("CITY".to_string(), Some("Rome".to_string()), "Updated desc".to_string())],
-            },
-        ]);
+                variables: vec![(
+                    "CITY".to_string(),
+                    Some("Rome".to_string()),
+                    "Updated desc".to_string(),
+                )],
+            }],
+        );
 
         let merged = generated.merge_with_existing(&existing);
         let entry = &merged.skills["weather"].variables["CITY"];
@@ -676,62 +745,82 @@ mod tests {
     #[test]
     fn test_merge_preserves_agent_secret_alias() {
         let mut existing = DeployManifest::generate(&minimal_config(), vec![]);
-        existing.agent.secrets.get_mut("ANTHROPIC_API_KEY").unwrap()
+        existing
+            .agent
+            .secrets
+            .get_mut("ANTHROPIC_API_KEY")
+            .unwrap()
             .secret = "ANTHROPIC_API_KEY_STAGING".to_string();
 
         let generated = DeployManifest::generate(&minimal_config(), vec![]);
         let merged = generated.merge_with_existing(&existing);
 
-        assert_eq!(merged.agent.secrets["ANTHROPIC_API_KEY"].secret, "ANTHROPIC_API_KEY_STAGING");
+        assert_eq!(
+            merged.agent.secrets["ANTHROPIC_API_KEY"].secret,
+            "ANTHROPIC_API_KEY_STAGING"
+        );
     }
 
     #[test]
     fn test_merge_keeps_user_added_agent_entries() {
         let mut existing = DeployManifest::generate(&minimal_config(), vec![]);
         // User manually added a custom agent secret
-        existing.agent.secrets.insert("CUSTOM_API_KEY".to_string(), SecretEntry {
-            secret: "CUSTOM_API_KEY".to_string(),
-            required: false,
-            description: "User-added custom key".to_string(),
-        });
+        existing.agent.secrets.insert(
+            "CUSTOM_API_KEY".to_string(),
+            SecretEntry {
+                secret: "CUSTOM_API_KEY".to_string(),
+                required: false,
+                description: "User-added custom key".to_string(),
+            },
+        );
         // User manually added an agent variable
-        existing.agent.variables.insert("LOG_LEVEL".to_string(), VariableEntry {
-            default: Some("info".to_string()),
-            description: "Log level".to_string(),
-        });
+        existing.agent.variables.insert(
+            "LOG_LEVEL".to_string(),
+            VariableEntry {
+                default: Some("info".to_string()),
+                description: "Log level".to_string(),
+            },
+        );
 
         let generated = DeployManifest::generate(&minimal_config(), vec![]);
         let merged = generated.merge_with_existing(&existing);
 
         // User additions preserved
         assert!(merged.agent.secrets.contains_key("CUSTOM_API_KEY"));
-        assert_eq!(merged.agent.secrets["CUSTOM_API_KEY"].description, "User-added custom key");
+        assert_eq!(
+            merged.agent.secrets["CUSTOM_API_KEY"].description,
+            "User-added custom key"
+        );
         assert!(merged.agent.variables.contains_key("LOG_LEVEL"));
     }
 
     #[test]
     fn test_merge_removes_deleted_skill() {
-        let existing = DeployManifest::generate(&minimal_config(), vec![
-            SkillEnvInput {
-                name: "old-skill".to_string(),
-                secrets: vec![("OLD_KEY".to_string(), true, "Old".to_string())],
-                variables: vec![],
-            },
-            SkillEnvInput {
-                name: "kept-skill".to_string(),
-                secrets: vec![("KEPT_KEY".to_string(), true, "Kept".to_string())],
-                variables: vec![],
-            },
-        ]);
+        let existing = DeployManifest::generate(
+            &minimal_config(),
+            vec![
+                SkillEnvInput {
+                    name: "old-skill".to_string(),
+                    secrets: vec![("OLD_KEY".to_string(), true, "Old".to_string())],
+                    variables: vec![],
+                },
+                SkillEnvInput {
+                    name: "kept-skill".to_string(),
+                    secrets: vec![("KEPT_KEY".to_string(), true, "Kept".to_string())],
+                    variables: vec![],
+                },
+            ],
+        );
 
         // Regenerate without old-skill (it was deleted)
-        let generated = DeployManifest::generate(&minimal_config(), vec![
-            SkillEnvInput {
+        let generated = DeployManifest::generate(
+            &minimal_config(),
+            vec![SkillEnvInput {
                 name: "kept-skill".to_string(),
                 secrets: vec![("KEPT_KEY".to_string(), true, "Kept".to_string())],
                 variables: vec![],
-            },
-        ]);
+            }],
+        );
 
         let merged = generated.merge_with_existing(&existing);
         assert!(!merged.skills.contains_key("old-skill"));
@@ -740,25 +829,27 @@ mod tests {
 
     #[test]
     fn test_merge_removes_deleted_skill_key() {
-        let existing = DeployManifest::generate(&minimal_config(), vec![
-            SkillEnvInput {
+        let existing = DeployManifest::generate(
+            &minimal_config(),
+            vec![SkillEnvInput {
                 name: "my-skill".to_string(),
                 secrets: vec![
                     ("KEEP_KEY".to_string(), true, "Keep".to_string()),
                     ("DROP_KEY".to_string(), false, "Drop".to_string()),
                 ],
                 variables: vec![],
-            },
-        ]);
+            }],
+        );
 
         // Regenerate: DROP_KEY removed from frontmatter
-        let generated = DeployManifest::generate(&minimal_config(), vec![
-            SkillEnvInput {
+        let generated = DeployManifest::generate(
+            &minimal_config(),
+            vec![SkillEnvInput {
                 name: "my-skill".to_string(),
                 secrets: vec![("KEEP_KEY".to_string(), true, "Keep".to_string())],
                 variables: vec![],
-            },
-        ]);
+            }],
+        );
 
         let merged = generated.merge_with_existing(&existing);
         assert!(merged.skills["my-skill"].secrets.contains_key("KEEP_KEY"));
@@ -769,43 +860,52 @@ mod tests {
     fn test_merge_does_not_overwrite_unchanged_alias() {
         // If user never changed the alias (secret == key), regeneration should
         // use the new generated value (which is also key == key). No stale alias.
-        let existing = DeployManifest::generate(&minimal_config(), vec![
-            SkillEnvInput {
+        let existing = DeployManifest::generate(
+            &minimal_config(),
+            vec![SkillEnvInput {
                 name: "my-skill".to_string(),
                 secrets: vec![("TOKEN".to_string(), true, "Old desc".to_string())],
                 variables: vec![],
-            },
-        ]);
+            }],
+        );
         // secret == "TOKEN" (unchanged)
 
-        let generated = DeployManifest::generate(&minimal_config(), vec![
-            SkillEnvInput {
+        let generated = DeployManifest::generate(
+            &minimal_config(),
+            vec![SkillEnvInput {
                 name: "my-skill".to_string(),
                 secrets: vec![("TOKEN".to_string(), true, "New desc".to_string())],
                 variables: vec![],
-            },
-        ]);
+            }],
+        );
 
         let merged = generated.merge_with_existing(&existing);
         assert_eq!(merged.skills["my-skill"].secrets["TOKEN"].secret, "TOKEN");
-        assert_eq!(merged.skills["my-skill"].secrets["TOKEN"].description, "New desc");
+        assert_eq!(
+            merged.skills["my-skill"].secrets["TOKEN"].description,
+            "New desc"
+        );
     }
 
     #[test]
     fn test_merge_new_skill_added() {
         let existing = DeployManifest::generate(&minimal_config(), vec![]);
 
-        let generated = DeployManifest::generate(&minimal_config(), vec![
-            SkillEnvInput {
+        let generated = DeployManifest::generate(
+            &minimal_config(),
+            vec![SkillEnvInput {
                 name: "brand-new".to_string(),
                 secrets: vec![("NEW_KEY".to_string(), true, "New".to_string())],
                 variables: vec![],
-            },
-        ]);
+            }],
+        );
 
         let merged = generated.merge_with_existing(&existing);
         assert!(merged.skills.contains_key("brand-new"));
-        assert_eq!(merged.skills["brand-new"].secrets["NEW_KEY"].secret, "NEW_KEY");
+        assert_eq!(
+            merged.skills["brand-new"].secrets["NEW_KEY"].secret,
+            "NEW_KEY"
+        );
     }
 
     #[test]
@@ -816,45 +916,85 @@ mod tests {
         let config = minimal_config();
 
         // First generation
-        DeployManifest::generate_and_write(&config, vec![
-            SkillEnvInput {
+        DeployManifest::generate_and_write(
+            &config,
+            vec![SkillEnvInput {
                 name: "my-skill".to_string(),
                 secrets: vec![("TOKEN".to_string(), true, "A token".to_string())],
-                variables: vec![("TIMEOUT".to_string(), Some("30".to_string()), "Timeout".to_string())],
-            },
-        ], &path).unwrap();
+                variables: vec![(
+                    "TIMEOUT".to_string(),
+                    Some("30".to_string()),
+                    "Timeout".to_string(),
+                )],
+            }],
+            &path,
+        )
+        .unwrap();
 
         // User edits the file: change alias and default
         let mut manifest = DeployManifest::load(&path).unwrap().unwrap();
-        manifest.skills.get_mut("my-skill").unwrap()
-            .secrets.get_mut("TOKEN").unwrap()
+        manifest
+            .skills
+            .get_mut("my-skill")
+            .unwrap()
+            .secrets
+            .get_mut("TOKEN")
+            .unwrap()
             .secret = "TOKEN_PROD".to_string();
-        manifest.skills.get_mut("my-skill").unwrap()
-            .variables.get_mut("TIMEOUT").unwrap()
+        manifest
+            .skills
+            .get_mut("my-skill")
+            .unwrap()
+            .variables
+            .get_mut("TIMEOUT")
+            .unwrap()
             .default = Some("60".to_string());
         manifest.write_to(&path).unwrap();
 
         // Second generation (e.g. user added a new skill, description changed)
-        let result = DeployManifest::generate_and_write(&config, vec![
-            SkillEnvInput {
-                name: "my-skill".to_string(),
-                secrets: vec![("TOKEN".to_string(), true, "Updated desc".to_string())],
-                variables: vec![("TIMEOUT".to_string(), Some("30".to_string()), "Updated timeout desc".to_string())],
-            },
-            SkillEnvInput {
-                name: "new-skill".to_string(),
-                secrets: vec![("API_KEY".to_string(), true, "Key".to_string())],
-                variables: vec![],
-            },
-        ], &path).unwrap();
+        let result = DeployManifest::generate_and_write(
+            &config,
+            vec![
+                SkillEnvInput {
+                    name: "my-skill".to_string(),
+                    secrets: vec![("TOKEN".to_string(), true, "Updated desc".to_string())],
+                    variables: vec![(
+                        "TIMEOUT".to_string(),
+                        Some("30".to_string()),
+                        "Updated timeout desc".to_string(),
+                    )],
+                },
+                SkillEnvInput {
+                    name: "new-skill".to_string(),
+                    secrets: vec![("API_KEY".to_string(), true, "Key".to_string())],
+                    variables: vec![],
+                },
+            ],
+            &path,
+        )
+        .unwrap();
 
         // User's alias preserved
-        assert_eq!(result.skills["my-skill"].secrets["TOKEN"].secret, "TOKEN_PROD");
+        assert_eq!(
+            result.skills["my-skill"].secrets["TOKEN"].secret,
+            "TOKEN_PROD"
+        );
         // User's default preserved
-        assert_eq!(result.skills["my-skill"].variables["TIMEOUT"].default.as_deref(), Some("60"));
+        assert_eq!(
+            result.skills["my-skill"].variables["TIMEOUT"]
+                .default
+                .as_deref(),
+            Some("60")
+        );
         // Description updated from source of truth
-        assert_eq!(result.skills["my-skill"].secrets["TOKEN"].description, "Updated desc");
-        assert_eq!(result.skills["my-skill"].variables["TIMEOUT"].description, "Updated timeout desc");
+        assert_eq!(
+            result.skills["my-skill"].secrets["TOKEN"].description,
+            "Updated desc"
+        );
+        assert_eq!(
+            result.skills["my-skill"].variables["TIMEOUT"].description,
+            "Updated timeout desc"
+        );
         // New skill added
         assert!(result.skills.contains_key("new-skill"));
     }
@@ -882,13 +1022,14 @@ mod tests {
             skills: BTreeMap::new(),
         };
 
-        let generated = DeployManifest::generate(&minimal_config(), vec![
-            SkillEnvInput {
+        let generated = DeployManifest::generate(
+            &minimal_config(),
+            vec![SkillEnvInput {
                 name: "new-skill".to_string(),
                 secrets: vec![("KEY".to_string(), true, "K".to_string())],
                 variables: vec![],
-            },
-        ]);
+            }],
+        );
 
         let merged = generated.merge_with_existing(&existing);
         // Everything from generated comes through
@@ -899,25 +1040,32 @@ mod tests {
     #[test]
     fn test_merge_preserves_alias_while_updating_required() {
         // User changed alias AND skill author changed required: both should apply
-        let mut existing = DeployManifest::generate(&minimal_config(), vec![
-            SkillEnvInput {
+        let mut existing = DeployManifest::generate(
+            &minimal_config(),
+            vec![SkillEnvInput {
                 name: "my-skill".to_string(),
                 secrets: vec![("TOKEN".to_string(), false, "Old".to_string())],
                 variables: vec![],
-            },
-        ]);
-        existing.skills.get_mut("my-skill").unwrap()
-            .secrets.get_mut("TOKEN").unwrap()
+            }],
+        );
+        existing
+            .skills
+            .get_mut("my-skill")
+            .unwrap()
+            .secrets
+            .get_mut("TOKEN")
+            .unwrap()
             .secret = "TOKEN_STAGING".to_string();
 
         // Skill author changed required: false → true and updated description
-        let generated = DeployManifest::generate(&minimal_config(), vec![
-            SkillEnvInput {
+        let generated = DeployManifest::generate(
+            &minimal_config(),
+            vec![SkillEnvInput {
                 name: "my-skill".to_string(),
                 secrets: vec![("TOKEN".to_string(), true, "Now required".to_string())],
                 variables: vec![],
-            },
-        ]);
+            }],
+        );
 
         let merged = generated.merge_with_existing(&existing);
         let entry = &merged.skills["my-skill"].secrets["TOKEN"];
@@ -934,13 +1082,16 @@ mod tests {
         // File doesn't exist yet
         assert!(!path.exists());
 
-        let result = DeployManifest::generate_and_write(&minimal_config(), vec![
-            SkillEnvInput {
+        let result = DeployManifest::generate_and_write(
+            &minimal_config(),
+            vec![SkillEnvInput {
                 name: "my-skill".to_string(),
                 secrets: vec![("KEY".to_string(), true, "K".to_string())],
                 variables: vec![],
-            },
-        ], &path).unwrap();
+            }],
+            &path,
+        )
+        .unwrap();
 
         assert!(path.exists());
         assert!(result.skills.contains_key("my-skill"));
@@ -950,16 +1101,22 @@ mod tests {
     #[test]
     fn test_merge_preserves_user_added_agent_variable_default() {
         let mut existing = DeployManifest::generate(&minimal_config(), vec![]);
-        existing.agent.variables.insert("DEBUG".to_string(), VariableEntry {
-            default: Some("true".to_string()),
-            description: "Debug mode".to_string(),
-        });
+        existing.agent.variables.insert(
+            "DEBUG".to_string(),
+            VariableEntry {
+                default: Some("true".to_string()),
+                description: "Debug mode".to_string(),
+            },
+        );
 
         let generated = DeployManifest::generate(&minimal_config(), vec![]);
         let merged = generated.merge_with_existing(&existing);
 
         assert!(merged.agent.variables.contains_key("DEBUG"));
-        assert_eq!(merged.agent.variables["DEBUG"].default.as_deref(), Some("true"));
+        assert_eq!(
+            merged.agent.variables["DEBUG"].default.as_deref(),
+            Some("true")
+        );
     }
 
     // ── Bedrock provider tests ──────────────────────────────────────────
@@ -1038,7 +1195,10 @@ mod tests {
             internet_enabled: false,
         };
         let manifest = DeployManifest::generate(&config, vec![]);
-        assert!(manifest.agent.secrets.contains_key("GOOGLE_APPLICATION_CREDENTIALS"));
+        assert!(manifest
+            .agent
+            .secrets
+            .contains_key("GOOGLE_APPLICATION_CREDENTIALS"));
         assert!(manifest.agent.secrets["GOOGLE_APPLICATION_CREDENTIALS"].required);
         // Should NOT contain a VERTEX_API_KEY
         assert!(!manifest.agent.secrets.contains_key("VERTEX_API_KEY"));
@@ -1057,7 +1217,10 @@ mod tests {
         let manifest = DeployManifest::generate(&config, vec![]);
         // Only 1 secret (GOOGLE_APPLICATION_CREDENTIALS), not duplicated
         assert_eq!(manifest.agent.secrets.len(), 1);
-        assert!(manifest.agent.secrets.contains_key("GOOGLE_APPLICATION_CREDENTIALS"));
+        assert!(manifest
+            .agent
+            .secrets
+            .contains_key("GOOGLE_APPLICATION_CREDENTIALS"));
     }
 
     #[test]
@@ -1072,7 +1235,10 @@ mod tests {
             internet_enabled: false,
         };
         let manifest = DeployManifest::generate(&config, vec![]);
-        assert!(manifest.agent.secrets.contains_key("GOOGLE_APPLICATION_CREDENTIALS"));
+        assert!(manifest
+            .agent
+            .secrets
+            .contains_key("GOOGLE_APPLICATION_CREDENTIALS"));
         assert!(manifest.agent.secrets.contains_key("ANTHROPIC_API_KEY"));
         assert!(manifest.agent.secrets.contains_key("AWS_ACCESS_KEY_ID"));
         assert!(manifest.agent.secrets.contains_key("AWS_SECRET_ACCESS_KEY"));

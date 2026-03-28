@@ -17,11 +17,7 @@ async fn main() -> anyhow::Result<()> {
     let mut stream = query(
         "Analyze the auth module and suggest improvements",
         Options::builder()
-            .allowed_tools(vec![
-                "Read".into(),
-                "Glob".into(),
-                "Grep".into(),
-            ])
+            .allowed_tools(vec!["Read".into(), "Glob".into(), "Grep".into()])
             .build(),
     );
 

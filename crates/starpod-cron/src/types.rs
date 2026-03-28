@@ -192,7 +192,12 @@ mod tests {
 
     #[test]
     fn test_run_status_roundtrip() {
-        for status in &[RunStatus::Pending, RunStatus::Running, RunStatus::Success, RunStatus::Failed] {
+        for status in &[
+            RunStatus::Pending,
+            RunStatus::Running,
+            RunStatus::Success,
+            RunStatus::Failed,
+        ] {
             assert_eq!(&RunStatus::from_str(status.as_str()), status);
         }
         assert_eq!(RunStatus::from_str("garbage"), RunStatus::Pending);

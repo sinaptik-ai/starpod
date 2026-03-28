@@ -49,7 +49,8 @@ async fn ws_handler(
         match state.auth.authenticate_api_key(token).await {
             Ok(Some(user)) => {
                 let user = Some(user);
-                return ws.max_frame_size(1024 * 1024)
+                return ws
+                    .max_frame_size(1024 * 1024)
                     .max_message_size(1024 * 1024)
                     .on_upgrade(move |socket| handle_socket(socket, state, user))
                     .into_response();
@@ -203,11 +204,15 @@ async fn send_accumulated_attachments(
 ) {
     let items: Vec<Attachment> = attachments.lock().await.drain(..).collect();
     for att in items {
-        let _ = send_msg(sender, &ServerMessage::Attachment {
-            file_name: att.file_name,
-            mime_type: att.mime_type,
-            data: att.data,
-        }).await;
+        let _ = send_msg(
+            sender,
+            &ServerMessage::Attachment {
+                file_name: att.file_name,
+                mime_type: att.mime_type,
+                data: att.data,
+            },
+        )
+        .await;
     }
 }
 
@@ -223,7 +228,11 @@ async fn send_accumulated_attachments(
 /// frame and flushes the sink to ensure the underlying TCP connection is properly
 /// torn down. Without this, abrupt disconnects ("Connection reset by peer") can
 /// leave sockets lingering in the kernel, eventually exhausting file descriptors.
-async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_user: Option<starpod_auth::User>) {
+async fn handle_socket(
+    socket: WebSocket,
+    state: Arc<AppState>,
+    auth_user: Option<starpod_auth::User>,
+) {
     let (mut sender, mut receiver) = socket.split();
     let followup_mode = state.config.read().unwrap().followup_mode;
     let mut events_rx = state.events_tx.subscribe();
@@ -240,7 +249,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_user: Optio
         // start a new stream for the next queued message batch.
         if active_followup_tx.is_none() && !queued_messages.is_empty() {
             let batch = std::mem::take(&mut queued_messages);
-            let combined_text = batch.iter().map(|m| m.text.as_str()).collect::<Vec<_>>().join("\n\n");
+            let combined_text = batch
+                .iter()
+                .map(|m| m.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n");
             // Use the channel info from the first message
             let first = &batch[0];
             let chat_msg = starpod_core::ChatMessage {
@@ -253,27 +266,49 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_user: Optio
                 model: first.model.clone(),
             };
 
-            let (mut stream, session_id, _followup_tx, out_attachments) = match state.agent.chat_stream(&chat_msg).await {
-                Ok(s) => s,
-                Err(e) => {
-                    let _ = send_msg(&mut sender, &ServerMessage::Error {
-                        message: format!("Chat error: {}", e),
-                    }).await;
-                    continue;
-                }
-            };
+            let (mut stream, session_id, _followup_tx, out_attachments) =
+                match state.agent.chat_stream(&chat_msg).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        let _ = send_msg(
+                            &mut sender,
+                            &ServerMessage::Error {
+                                message: format!("Chat error: {}", e),
+                            },
+                        )
+                        .await;
+                        continue;
+                    }
+                };
 
-            let _ = state.agent.session_mgr().save_message(&session_id, "user", &combined_text).await;
+            let _ = state
+                .agent
+                .session_mgr()
+                .save_message(&session_id, "user", &combined_text)
+                .await;
 
-            if !send_msg(&mut sender, &ServerMessage::StreamStart {
-                session_id: session_id.clone(),
-            }).await {
+            if !send_msg(
+                &mut sender,
+                &ServerMessage::StreamStart {
+                    session_id: session_id.clone(),
+                },
+            )
+            .await
+            {
                 break;
             }
 
             // Consume this queued batch stream (no followup injection needed here
             // since we're replaying buffered messages after the main stream finished).
-            process_stream(&mut stream, &mut sender, &state, &session_id, &combined_text, chat_msg.user_id.as_deref()).await;
+            process_stream(
+                &mut stream,
+                &mut sender,
+                &state,
+                &session_id,
+                &combined_text,
+                chat_msg.user_id.as_deref(),
+            )
+            .await;
 
             // Deliver any files the agent attached during this stream
             send_accumulated_attachments(&mut sender, &out_attachments).await;
@@ -318,9 +353,13 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_user: Optio
         let client_msg: ClientMessage = match serde_json::from_str(&msg) {
             Ok(m) => m,
             Err(e) => {
-                let _ = send_msg(&mut sender, &ServerMessage::Error {
-                    message: format!("Invalid message format: {}", e),
-                }).await;
+                let _ = send_msg(
+                    &mut sender,
+                    &ServerMessage::Error {
+                        message: format!("Invalid message format: {}", e),
+                    },
+                )
+                .await;
                 continue;
             }
         };
@@ -341,11 +380,8 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_user: Optio
                 for att in attachments {
                     let raw_size = att.data.len() * 3 / 4;
                     if let Err(reason) = att_config.validate(&att.file_name, raw_size) {
-                        let _ = send_msg(
-                            &mut sender,
-                            &ServerMessage::Error { message: reason },
-                        )
-                        .await;
+                        let _ =
+                            send_msg(&mut sender, &ServerMessage::Error { message: reason }).await;
                         continue;
                     }
                     chat_attachments.push(starpod_core::Attachment {
@@ -388,18 +424,31 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_user: Optio
                     match state.agent.chat_stream(&chat_msg).await {
                         Ok(s) => s,
                         Err(e) => {
-                            let _ = send_msg(&mut sender, &ServerMessage::Error {
-                                message: format!("Chat error: {}", e),
-                            }).await;
+                            let _ = send_msg(
+                                &mut sender,
+                                &ServerMessage::Error {
+                                    message: format!("Chat error: {}", e),
+                                },
+                            )
+                            .await;
                             continue;
                         }
                     };
 
-                let _ = state.agent.session_mgr().save_message(&session_id, "user", &text).await;
+                let _ = state
+                    .agent
+                    .session_mgr()
+                    .save_message(&session_id, "user", &text)
+                    .await;
 
-                if !send_msg(&mut sender, &ServerMessage::StreamStart {
-                    session_id: session_id.clone(),
-                }).await {
+                if !send_msg(
+                    &mut sender,
+                    &ServerMessage::StreamStart {
+                        session_id: session_id.clone(),
+                    },
+                )
+                .await
+                {
                     break;
                 }
 
@@ -419,7 +468,8 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_user: Optio
                     &auth_user,
                     &mut queued_messages,
                     chat_msg.user_id.as_deref(),
-                ).await;
+                )
+                .await;
 
                 active_followup_tx = None;
 
@@ -602,9 +652,14 @@ async fn handle_stream_message(
                     if let Some(text) = delta.get("text").and_then(|t| t.as_str()) {
                         if !text.is_empty() {
                             *streamed_text = true;
-                            if !send_msg(sender, &ServerMessage::TextDelta {
-                                text: text.to_string(),
-                            }).await {
+                            if !send_msg(
+                                sender,
+                                &ServerMessage::TextDelta {
+                                    text: text.to_string(),
+                                },
+                            )
+                            .await
+                            {
                                 return StreamAction::Disconnected;
                             }
                         }
@@ -630,9 +685,11 @@ async fn handle_stream_message(
 
             // Save assistant text to DB and track result_text
             if !turn_text.is_empty() {
-                let _ = state.agent.session_mgr().save_message(
-                    session_id, "assistant", &turn_text,
-                ).await;
+                let _ = state
+                    .agent
+                    .session_mgr()
+                    .save_message(session_id, "assistant", &turn_text)
+                    .await;
 
                 if !result_text.is_empty() {
                     result_text.push('\n');
@@ -641,9 +698,7 @@ async fn handle_stream_message(
 
                 // Only send as TextDelta if text wasn't already streamed token-by-token
                 if !*streamed_text {
-                    if !send_msg(sender, &ServerMessage::TextDelta {
-                        text: turn_text,
-                    }).await {
+                    if !send_msg(sender, &ServerMessage::TextDelta { text: turn_text }).await {
                         return StreamAction::Disconnected;
                     }
                 }
@@ -661,16 +716,26 @@ async fn handle_stream_message(
                         "name": name,
                         "input": input,
                     });
-                    let _ = state.agent.session_mgr().save_message(
-                        session_id, "tool_use",
-                        &serde_json::to_string(&tool_json).unwrap_or_default(),
-                    ).await;
+                    let _ = state
+                        .agent
+                        .session_mgr()
+                        .save_message(
+                            session_id,
+                            "tool_use",
+                            &serde_json::to_string(&tool_json).unwrap_or_default(),
+                        )
+                        .await;
 
-                    if !send_msg(sender, &ServerMessage::ToolUse {
-                        id: id.clone(),
-                        name: name.clone(),
-                        input: input.clone(),
-                    }).await {
+                    if !send_msg(
+                        sender,
+                        &ServerMessage::ToolUse {
+                            id: id.clone(),
+                            name: name.clone(),
+                            input: input.clone(),
+                        },
+                    )
+                    .await
+                    {
                         return StreamAction::Disconnected;
                     }
                 }
@@ -678,7 +743,12 @@ async fn handle_stream_message(
         }
         Message::User(user) => {
             for block in &user.content {
-                if let ContentBlock::ToolResult { tool_use_id, content, is_error } = block {
+                if let ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error,
+                } = block
+                {
                     let content_str = content
                         .as_str()
                         .map(|s| s.to_string())
@@ -686,7 +756,9 @@ async fn handle_stream_message(
 
                     let preview = if content_str.len() > 500 {
                         let mut end = 500;
-                        while end > 0 && !content_str.is_char_boundary(end) { end -= 1; }
+                        while end > 0 && !content_str.is_char_boundary(end) {
+                            end -= 1;
+                        }
                         format!("{}...", &content_str[..end])
                     } else {
                         content_str
@@ -698,16 +770,26 @@ async fn handle_stream_message(
                         "content": &preview,
                         "is_error": is_error.unwrap_or(false),
                     });
-                    let _ = state.agent.session_mgr().save_message(
-                        session_id, "tool_result",
-                        &serde_json::to_string(&tool_result_json).unwrap_or_default(),
-                    ).await;
+                    let _ = state
+                        .agent
+                        .session_mgr()
+                        .save_message(
+                            session_id,
+                            "tool_result",
+                            &serde_json::to_string(&tool_result_json).unwrap_or_default(),
+                        )
+                        .await;
 
-                    if !send_msg(sender, &ServerMessage::ToolResult {
-                        tool_use_id: tool_use_id.clone(),
-                        content: preview,
-                        is_error: is_error.unwrap_or(false),
-                    }).await {
+                    if !send_msg(
+                        sender,
+                        &ServerMessage::ToolResult {
+                            tool_use_id: tool_use_id.clone(),
+                            content: preview,
+                            is_error: is_error.unwrap_or(false),
+                        },
+                    )
+                    .await
+                    {
                         return StreamAction::Disconnected;
                     }
                 }
@@ -724,17 +806,37 @@ async fn handle_stream_message(
             }
 
             // Send StreamEnd immediately so the client stops showing the loading state.
-            let _ = send_msg(sender, &ServerMessage::StreamEnd {
-                session_id: session_id.to_string(),
-                num_turns: result.num_turns,
-                cost_usd: result.total_cost_usd,
-                input_tokens: result.usage.as_ref().map(|u| u.input_tokens + u.cache_creation_input_tokens + u.cache_read_input_tokens).unwrap_or(0),
-                output_tokens: result.usage.as_ref().map(|u| u.output_tokens).unwrap_or(0),
-                cache_read_input_tokens: result.usage.as_ref().map(|u| u.cache_read_input_tokens).unwrap_or(0),
-                cache_creation_input_tokens: result.usage.as_ref().map(|u| u.cache_creation_input_tokens).unwrap_or(0),
-                is_error: result.is_error,
-                errors: result.errors.clone(),
-            }).await;
+            let _ = send_msg(
+                sender,
+                &ServerMessage::StreamEnd {
+                    session_id: session_id.to_string(),
+                    num_turns: result.num_turns,
+                    cost_usd: result.total_cost_usd,
+                    input_tokens: result
+                        .usage
+                        .as_ref()
+                        .map(|u| {
+                            u.input_tokens
+                                + u.cache_creation_input_tokens
+                                + u.cache_read_input_tokens
+                        })
+                        .unwrap_or(0),
+                    output_tokens: result.usage.as_ref().map(|u| u.output_tokens).unwrap_or(0),
+                    cache_read_input_tokens: result
+                        .usage
+                        .as_ref()
+                        .map(|u| u.cache_read_input_tokens)
+                        .unwrap_or(0),
+                    cache_creation_input_tokens: result
+                        .usage
+                        .as_ref()
+                        .map(|u| u.cache_creation_input_tokens)
+                        .unwrap_or(0),
+                    is_error: result.is_error,
+                    errors: result.errors.clone(),
+                },
+            )
+            .await;
 
             // Finalize in background so we don't block the client.
             // Assistant text is already saved per-turn in the Assistant handler,
@@ -746,9 +848,14 @@ async fn handle_stream_message(
             let uid = user_id.map(|s| s.to_string());
             let save_final_text = result_text_from_result;
             tokio::spawn(async move {
-                agent.finalize_chat(&sid, &ut, &rt, &result, uid.as_deref()).await;
+                agent
+                    .finalize_chat(&sid, &ut, &rt, &result, uid.as_deref())
+                    .await;
                 if save_final_text && !rt.is_empty() {
-                    let _ = agent.session_mgr().save_message(&sid, "assistant", &rt).await;
+                    let _ = agent
+                        .session_mgr()
+                        .save_message(&sid, "assistant", &rt)
+                        .await;
                 }
             });
 
@@ -774,8 +881,16 @@ async fn process_stream(
         match msg_result {
             Ok(msg) => {
                 let action = handle_stream_message(
-                    msg, sender, state, session_id, user_text, &mut result_text, user_id, &mut streamed_text,
-                ).await;
+                    msg,
+                    sender,
+                    state,
+                    session_id,
+                    user_text,
+                    &mut result_text,
+                    user_id,
+                    &mut streamed_text,
+                )
+                .await;
                 match action {
                     StreamAction::Continue => {}
                     StreamAction::Done | StreamAction::Disconnected => return,
@@ -784,34 +899,42 @@ async fn process_stream(
             Err(e) => {
                 error!(error = %e, "Stream error");
                 // Assistant text is already saved per-turn.
-                let _ = send_msg(sender, &ServerMessage::StreamEnd {
-                    session_id: session_id.to_string(),
-                    num_turns: 0,
-                    cost_usd: 0.0,
-                    input_tokens: 0,
-                    output_tokens: 0,
-                    cache_read_input_tokens: 0,
-                    cache_creation_input_tokens: 0,
-                    is_error: true,
-                    errors: vec![format!("Stream error: {}", e)],
-                }).await;
+                let _ = send_msg(
+                    sender,
+                    &ServerMessage::StreamEnd {
+                        session_id: session_id.to_string(),
+                        num_turns: 0,
+                        cost_usd: 0.0,
+                        input_tokens: 0,
+                        output_tokens: 0,
+                        cache_read_input_tokens: 0,
+                        cache_creation_input_tokens: 0,
+                        is_error: true,
+                        errors: vec![format!("Stream error: {}", e)],
+                    },
+                )
+                .await;
                 return;
             }
         }
     }
     // Stream ended without a Result message — notify client so the UI
     // cursor stops. Assistant text is already saved per-turn.
-    let _ = send_msg(sender, &ServerMessage::StreamEnd {
-        session_id: session_id.to_string(),
-        num_turns: 0,
-        cost_usd: 0.0,
-        input_tokens: 0,
-        output_tokens: 0,
-        cache_read_input_tokens: 0,
-        cache_creation_input_tokens: 0,
-        is_error: false,
-        errors: Vec::new(),
-    }).await;
+    let _ = send_msg(
+        sender,
+        &ServerMessage::StreamEnd {
+            session_id: session_id.to_string(),
+            num_turns: 0,
+            cost_usd: 0.0,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+            is_error: false,
+            errors: Vec::new(),
+        },
+    )
+    .await;
 }
 
 #[cfg(test)]
@@ -825,10 +948,8 @@ mod tests {
             name: "Read".into(),
             input: serde_json::json!({"path": "/tmp/file.txt"}),
         };
-        let json: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&msg).unwrap(),
-        )
-        .unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&msg).unwrap()).unwrap();
 
         assert_eq!(json["type"], "tool_use");
         assert_eq!(json["id"], "toolu_abc123");
@@ -843,10 +964,8 @@ mod tests {
             content: "file contents here".into(),
             is_error: false,
         };
-        let json: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&msg).unwrap(),
-        )
-        .unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&msg).unwrap()).unwrap();
 
         assert_eq!(json["type"], "tool_result");
         assert_eq!(json["tool_use_id"], "toolu_abc123");
@@ -861,10 +980,8 @@ mod tests {
             content: "permission denied".into(),
             is_error: true,
         };
-        let json: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&msg).unwrap(),
-        )
-        .unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&msg).unwrap()).unwrap();
 
         assert_eq!(json["type"], "tool_result");
         assert_eq!(json["tool_use_id"], "toolu_xyz789");
@@ -921,10 +1038,8 @@ mod tests {
             result_preview: "No critical errors found today.".into(),
             success: true,
         };
-        let json: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&msg).unwrap(),
-        )
-        .unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&msg).unwrap()).unwrap();
 
         assert_eq!(json["type"], "notification");
         assert_eq!(json["job_name"], "daily-summary");
@@ -946,10 +1061,8 @@ mod tests {
             is_error: false,
             errors: Vec::new(),
         };
-        let json: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&msg).unwrap(),
-        )
-        .unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&msg).unwrap()).unwrap();
 
         assert_eq!(json["type"], "stream_end");
         assert_eq!(json["session_id"], "sess-123");
@@ -976,10 +1089,8 @@ mod tests {
             is_error: true,
             errors: vec!["Stream error: timeout".into()],
         };
-        let json: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&msg).unwrap(),
-        )
-        .unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&msg).unwrap()).unwrap();
 
         assert_eq!(json["type"], "stream_end");
         assert_eq!(json["is_error"], true);
@@ -996,10 +1107,8 @@ mod tests {
             result_preview: "connection refused".into(),
             success: false,
         };
-        let json: serde_json::Value = serde_json::from_str(
-            &serde_json::to_string(&msg).unwrap(),
-        )
-        .unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&msg).unwrap()).unwrap();
 
         assert_eq!(json["type"], "notification");
         assert_eq!(json["job_name"], "broken-job");

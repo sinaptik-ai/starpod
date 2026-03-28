@@ -108,9 +108,7 @@ pub enum ContentBlock {
 
     /// Thinking block (extended thinking).
     #[serde(rename = "thinking")]
-    Thinking {
-        thinking: String,
-    },
+    Thinking { thinking: String },
 }
 
 /// Assistant response message.

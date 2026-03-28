@@ -50,9 +50,10 @@ impl LocalEmbedder {
 
     /// Get or initialize the fastembed model.
     fn get_or_init(&self) -> Result<std::sync::MutexGuard<'_, Option<fastembed::TextEmbedding>>> {
-        let mut guard = self.model.lock().map_err(|e| {
-            StarpodError::Agent(format!("Embedder lock poisoned: {}", e))
-        })?;
+        let mut guard = self
+            .model
+            .lock()
+            .map_err(|e| StarpodError::Agent(format!("Embedder lock poisoned: {}", e)))?;
         if guard.is_none() {
             let model = fastembed::TextEmbedding::try_new(
                 fastembed::InitOptions::new(fastembed::EmbeddingModel::BGESmallENV15)
@@ -158,7 +159,11 @@ mod tests {
         let a: Vec<f32> = (0..384).map(|i| (i as f32).sin()).collect();
         let b = a.clone();
         let sim = cosine_similarity(&a, &b);
-        assert!((sim - 1.0).abs() < 1e-5, "Identical 384-dim vectors should have sim ~1.0, got {}", sim);
+        assert!(
+            (sim - 1.0).abs() < 1e-5,
+            "Identical 384-dim vectors should have sim ~1.0, got {}",
+            sim
+        );
     }
 
     #[test]
@@ -176,6 +181,9 @@ mod tests {
         let a = vec![1.0, 2.0, 3.0];
         let b = vec![2.0, 4.0, 6.0]; // same direction, 2x magnitude
         let sim = cosine_similarity(&a, &b);
-        assert!((sim - 1.0).abs() < 1e-6, "Scaled vectors should have similarity 1.0");
+        assert!(
+            (sim - 1.0).abs() < 1e-6,
+            "Scaled vectors should have similarity 1.0"
+        );
     }
 }

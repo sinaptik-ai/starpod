@@ -1,8 +1,8 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
-use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::hooks::{HookCallbackMatcher, HookEvent};
@@ -74,9 +74,7 @@ pub enum ThinkingConfig {
     Disabled,
     /// Enabled with a specific budget.
     #[serde(rename = "enabled")]
-    Enabled {
-        budget_tokens: u64,
-    },
+    Enabled { budget_tokens: u64 },
 }
 
 /// System prompt configuration.
@@ -331,9 +329,7 @@ pub struct QueryAttachment {
 /// Receives the messages about to be discarded, allowing the host to
 /// extract and persist important information before it's lost.
 pub type PreCompactHandlerFn = Box<
-    dyn Fn(
-            Vec<crate::client::ApiMessage>,
-        ) -> Pin<Box<dyn Future<Output = ()> + Send>>
+    dyn Fn(Vec<crate::client::ApiMessage>) -> Pin<Box<dyn Future<Output = ()> + Send>>
         + Send
         + Sync,
 >;
@@ -345,10 +341,7 @@ pub type PreCompactHandlerFn = Box<
 /// This allows embedding custom tools (e.g. MemorySearch, VaultGet) alongside
 /// the built-in tools (Read, Write, Bash, etc.).
 pub type ExternalToolHandlerFn = Box<
-    dyn Fn(
-            String,
-            serde_json::Value,
-        ) -> Pin<Box<dyn Future<Output = Option<ToolResult>> + Send>>
+    dyn Fn(String, serde_json::Value) -> Pin<Box<dyn Future<Output = Option<ToolResult>> + Send>>
         + Send
         + Sync,
 >;
@@ -700,9 +693,7 @@ mod tests {
 
     #[test]
     fn builder_api_key_sets_field() {
-        let opts = Options::builder()
-            .api_key("sk-ant-test-key")
-            .build();
+        let opts = Options::builder().api_key("sk-ant-test-key").build();
         assert_eq!(opts.api_key.as_deref(), Some("sk-ant-test-key"));
     }
 
@@ -781,12 +772,8 @@ mod tests {
 
     #[test]
     fn builder_pre_compact_handler_sets_field() {
-        let handler: PreCompactHandlerFn = Box::new(|_msgs| {
-            Box::pin(async {})
-        });
-        let opts = Options::builder()
-            .pre_compact_handler(handler)
-            .build();
+        let handler: PreCompactHandlerFn = Box::new(|_msgs| Box::pin(async {}));
+        let opts = Options::builder().pre_compact_handler(handler).build();
         assert!(opts.pre_compact_handler.is_some());
     }
 

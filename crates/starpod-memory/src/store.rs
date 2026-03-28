@@ -7,12 +7,12 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
 use tracing::debug;
 
-use starpod_core::{StarpodError, Result};
+use starpod_core::{Result, StarpodError};
 
 use crate::defaults;
 use crate::embedder::{self, Embedder};
 use crate::fusion;
-use crate::indexer::{self, reindex_source, CHUNK_SIZE, CHUNK_OVERLAP};
+use crate::indexer::{self, reindex_source, CHUNK_OVERLAP, CHUNK_SIZE};
 use crate::schema;
 use crate::scoring;
 
@@ -92,23 +92,19 @@ impl MemoryStore {
     /// - `db_dir`: the `.starpod/db/` directory (contains memory.db)
     pub async fn new(agent_home: &Path, config_dir: &Path, db_dir: &Path) -> Result<Self> {
         // Ensure directories exist
-        std::fs::create_dir_all(agent_home)
-            .map_err(StarpodError::Io)?;
-        std::fs::create_dir_all(config_dir)
-            .map_err(StarpodError::Io)?;
-        std::fs::create_dir_all(db_dir)
-            .map_err(StarpodError::Io)?;
+        std::fs::create_dir_all(agent_home).map_err(StarpodError::Io)?;
+        std::fs::create_dir_all(config_dir).map_err(StarpodError::Io)?;
+        std::fs::create_dir_all(db_dir).map_err(StarpodError::Io)?;
 
         // Open SQLite pool — 2 connections (one writer + one reader).
         // SQLite serialises writes, so extra connections only waste memory.
         let db_path = db_dir.join("memory.db");
-        let opts = SqliteConnectOptions::from_str(
-            &format!("sqlite://{}?mode=rwc", db_path.display()),
-        )
-        .map_err(|e| StarpodError::Database(format!("Invalid DB path: {}", e)))?
-        .pragma("journal_mode", "WAL")
-        .pragma("busy_timeout", "5000")
-        .pragma("synchronous", "NORMAL");
+        let opts =
+            SqliteConnectOptions::from_str(&format!("sqlite://{}?mode=rwc", db_path.display()))
+                .map_err(|e| StarpodError::Database(format!("Invalid DB path: {}", e)))?
+                .pragma("journal_mode", "WAL")
+                .pragma("busy_timeout", "5000")
+                .pragma("synchronous", "NORMAL");
 
         let pool = SqlitePoolOptions::new()
             .max_connections(2)
@@ -151,14 +147,12 @@ impl MemoryStore {
     ///
     /// Any existing `.md` files in `user_dir` are indexed on creation.
     pub async fn new_user(user_dir: &Path) -> Result<Self> {
-        std::fs::create_dir_all(user_dir)
-            .map_err(StarpodError::Io)?;
+        std::fs::create_dir_all(user_dir).map_err(StarpodError::Io)?;
 
         let db_path = user_dir.join("memory.db");
-        let opts = SqliteConnectOptions::from_str(
-            &format!("sqlite://{}?mode=rwc", db_path.display()),
-        )
-        .map_err(|e| StarpodError::Database(format!("Invalid DB path: {}", e)))?;
+        let opts =
+            SqliteConnectOptions::from_str(&format!("sqlite://{}?mode=rwc", db_path.display()))
+                .map_err(|e| StarpodError::Database(format!("Invalid DB path: {}", e)))?;
 
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
@@ -232,9 +226,7 @@ impl MemoryStore {
     }
 
     /// Blueprint-managed file names that live in config_dir.
-    const CONFIG_FILES: &[&str] = &[
-        "SOUL.md", "HEARTBEAT.md", "BOOT.md", "BOOTSTRAP.md",
-    ];
+    const CONFIG_FILES: &[&str] = &["SOUL.md", "HEARTBEAT.md", "BOOT.md", "BOOTSTRAP.md"];
 
     /// Resolve a file path: config files go to config_dir, everything else to agent_home.
     fn resolve_path(&self, name: &str) -> PathBuf {
@@ -272,7 +264,9 @@ impl MemoryStore {
         let content = self.read_file("SOUL.md")?;
         let capped = if content.len() > self.bootstrap_file_cap {
             let mut end = self.bootstrap_file_cap;
-            while end > 0 && !content.is_char_boundary(end) { end -= 1; }
+            while end > 0 && !content.is_char_boundary(end) {
+                end -= 1;
+            }
             &content[..end]
         } else {
             &content
@@ -343,7 +337,11 @@ impl MemoryStore {
             .collect();
 
         // Re-sort by adjusted rank (more negative = better)
-        results.sort_by(|a, b| a.rank.partial_cmp(&b.rank).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            a.rank
+                .partial_cmp(&b.rank)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(limit);
 
         Ok(results)
@@ -364,9 +362,7 @@ impl MemoryStore {
         };
 
         // Embed the query
-        let query_vecs = embedder
-            .embed(&[query.to_string()])
-            .await?;
+        let query_vecs = embedder.embed(&[query.to_string()]).await?;
         let query_vec = match query_vecs.first() {
             Some(v) => v,
             None => return Ok(Vec::new()),
@@ -377,7 +373,7 @@ impl MemoryStore {
             "SELECT v.source, v.embedding, v.line_start, v.line_end, f.chunk_text
              FROM memory_vectors v
              LEFT JOIN memory_fts f ON f.source = v.source
-                 AND f.line_start = v.line_start AND f.line_end = v.line_end"
+                 AND f.line_start = v.line_start AND f.line_end = v.line_end",
         )
         .fetch_all(&self.pool)
         .await
@@ -392,13 +388,16 @@ impl MemoryStore {
             let source: String = row.get("source");
             let text: String = row.try_get("chunk_text").unwrap_or_default();
 
-            scored.push((similarity, SearchResult {
-                source,
-                text,
-                line_start: row.get::<i64, _>("line_start") as usize,
-                line_end: row.get::<i64, _>("line_end") as usize,
-                rank: -(similarity as f64), // negative similarity so more negative = better
-            }));
+            scored.push((
+                similarity,
+                SearchResult {
+                    source,
+                    text,
+                    line_start: row.get::<i64, _>("line_start") as usize,
+                    line_end: row.get::<i64, _>("line_end") as usize,
+                    rank: -(similarity as f64), // negative similarity so more negative = better
+                },
+            ));
         }
 
         // Sort by similarity descending
@@ -442,7 +441,11 @@ impl MemoryStore {
         }
 
         // Re-sort by decayed rank
-        fused.sort_by(|a, b| a.rank.partial_cmp(&b.rank).unwrap_or(std::cmp::Ordering::Equal));
+        fused.sort_by(|a, b| {
+            a.rank
+                .partial_cmp(&b.rank)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Apply MMR for diversity: embed top candidates, then re-rank
         let mmr_pool_size = (limit * 2).min(fused.len());
@@ -579,7 +582,14 @@ impl MemoryStore {
         std::fs::write(&path, content)?;
 
         // Reindex this file (FTS5 + vectors)
-        reindex_source(&self.pool, name, content, self.chunk_size, self.chunk_overlap).await?;
+        reindex_source(
+            &self.pool,
+            name,
+            content,
+            self.chunk_size,
+            self.chunk_overlap,
+        )
+        .await?;
         self.embed_and_store_source(name, content).await?;
 
         Ok(())
@@ -609,7 +619,14 @@ impl MemoryStore {
         std::fs::write(&path, &content)?;
 
         // Reindex the daily file (FTS5 + vectors)
-        reindex_source(&self.pool, &filename, &content, self.chunk_size, self.chunk_overlap).await?;
+        reindex_source(
+            &self.pool,
+            &filename,
+            &content,
+            self.chunk_size,
+            self.chunk_overlap,
+        )
+        .await?;
         self.embed_and_store_source(&filename, &content).await?;
 
         Ok(())
@@ -645,7 +662,14 @@ impl MemoryStore {
                     // Skip config files (already indexed from config_dir)
                     if !Self::CONFIG_FILES.iter().any(|&f| f == filename) {
                         let content = std::fs::read_to_string(&path)?;
-                        reindex_source(&self.pool, &filename, &content, self.chunk_size, self.chunk_overlap).await?;
+                        reindex_source(
+                            &self.pool,
+                            &filename,
+                            &content,
+                            self.chunk_size,
+                            self.chunk_overlap,
+                        )
+                        .await?;
                         self.embed_and_store_source(&filename, &content).await?;
                     }
                 }
@@ -666,7 +690,14 @@ impl MemoryStore {
                 let filename = entry.file_name().to_string_lossy().to_string();
                 let source = format!("{}{}", prefix, filename);
                 let content = std::fs::read_to_string(&path)?;
-                reindex_source(&self.pool, &source, &content, self.chunk_size, self.chunk_overlap).await?;
+                reindex_source(
+                    &self.pool,
+                    &source,
+                    &content,
+                    self.chunk_size,
+                    self.chunk_overlap,
+                )
+                .await?;
                 self.embed_and_store_source(&source, &content).await?;
             }
         }
@@ -704,7 +735,9 @@ mod tests {
         let agent_home = tmp.path().join("agent_home");
         let config_dir = tmp.path().join("agent_home").join("config");
         let db_dir = tmp.path().join("db");
-        MemoryStore::new(&agent_home, &config_dir, &db_dir).await.unwrap()
+        MemoryStore::new(&agent_home, &config_dir, &db_dir)
+            .await
+            .unwrap()
     }
 
     // ── Existing tests ──────────────────────────────────────────────────
@@ -739,7 +772,10 @@ mod tests {
         let store = test_store(&tmp).await;
 
         store
-            .write_file("test-content.md", "Rust is a systems programming language focused on safety and performance.")
+            .write_file(
+                "test-content.md",
+                "Rust is a systems programming language focused on safety and performance.",
+            )
             .await
             .unwrap();
 
@@ -757,8 +793,14 @@ mod tests {
         // Create memory/ dir for the test (normally done by UserMemoryView)
         std::fs::create_dir_all(agent_home.join("memory")).unwrap();
 
-        store.append_daily("Had a great conversation about Rust.").await.unwrap();
-        store.append_daily("Discussed memory management.").await.unwrap();
+        store
+            .append_daily("Had a great conversation about Rust.")
+            .await
+            .unwrap();
+        store
+            .append_daily("Discussed memory management.")
+            .await
+            .unwrap();
 
         let today = Local::now().format("%Y-%m-%d").to_string();
         let content = store.read_file(&format!("memory/{}.md", today)).unwrap();
@@ -858,7 +900,10 @@ mod tests {
         let store = test_store(&tmp).await;
         let exact = "x".repeat(scoring::MAX_WRITE_SIZE);
         let result = store.write_file("exact.md", &exact).await;
-        assert!(result.is_ok(), "write_file should accept content at exactly 1 MB");
+        assert!(
+            result.is_ok(),
+            "write_file should accept content at exactly 1 MB"
+        );
     }
 
     // ── Setter tests ────────────────────────────────────────────────────
@@ -939,7 +984,10 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = test_store(&tmp).await;
         let results = store.vector_search("anything", 10).await.unwrap();
-        assert!(results.is_empty(), "vector_search should return empty without embedder");
+        assert!(
+            results.is_empty(),
+            "vector_search should return empty without embedder"
+        );
     }
 
     #[tokio::test]
@@ -948,13 +996,19 @@ mod tests {
         let store = test_store(&tmp).await;
 
         store
-            .write_file("test-elephants.md", "Unique test content about elephants in Africa.")
+            .write_file(
+                "test-elephants.md",
+                "Unique test content about elephants in Africa.",
+            )
             .await
             .unwrap();
 
         // hybrid_search should still work (falling back to FTS-only)
         let results = store.hybrid_search("elephants Africa", 5).await.unwrap();
-        assert!(!results.is_empty(), "hybrid_search should fall back to FTS without embedder");
+        assert!(
+            !results.is_empty(),
+            "hybrid_search should fall back to FTS without embedder"
+        );
         assert!(results[0].text.contains("elephants"));
     }
 
@@ -968,23 +1022,26 @@ mod tests {
     #[async_trait::async_trait]
     impl Embedder for MockEmbedder {
         async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-            Ok(texts.iter().map(|t| {
-                let mut vec = vec![0.0f32; 8];
-                for ch in t.chars() {
-                    let idx = (ch.to_ascii_lowercase() as usize).wrapping_sub('a' as usize);
-                    if idx < 8 {
-                        vec[idx] += 1.0;
+            Ok(texts
+                .iter()
+                .map(|t| {
+                    let mut vec = vec![0.0f32; 8];
+                    for ch in t.chars() {
+                        let idx = (ch.to_ascii_lowercase() as usize).wrapping_sub('a' as usize);
+                        if idx < 8 {
+                            vec[idx] += 1.0;
+                        }
                     }
-                }
-                // Normalize
-                let norm: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
-                if norm > 0.0 {
-                    for v in &mut vec {
-                        *v /= norm;
+                    // Normalize
+                    let norm: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
+                    if norm > 0.0 {
+                        for v in &mut vec {
+                            *v /= norm;
+                        }
                     }
-                }
-                vec
-            }).collect())
+                    vec
+                })
+                .collect())
         }
 
         fn dimensions(&self) -> usize {
@@ -999,16 +1056,23 @@ mod tests {
         store.set_embedder(Arc::new(MockEmbedder));
 
         store
-            .write_file("test-cats.md", "Cats are wonderful animals that love to sleep.")
+            .write_file(
+                "test-cats.md",
+                "Cats are wonderful animals that love to sleep.",
+            )
             .await
             .unwrap();
 
         // Verify vectors were stored
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memory_vectors WHERE source = 'test-cats.md'")
-            .fetch_one(&store.pool)
-            .await
-            .unwrap();
-        assert!(count > 0, "Vectors should be stored after write_file with embedder");
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM memory_vectors WHERE source = 'test-cats.md'")
+                .fetch_one(&store.pool)
+                .await
+                .unwrap();
+        assert!(
+            count > 0,
+            "Vectors should be stored after write_file with embedder"
+        );
     }
 
     #[tokio::test]
@@ -1017,12 +1081,21 @@ mod tests {
         let mut store = test_store(&tmp).await;
         store.set_embedder(Arc::new(MockEmbedder));
 
-        store.write_file("test-abc.md", "aaa bbb ccc abc").await.unwrap();
-        store.write_file("test-def.md", "ddd eee fff def").await.unwrap();
+        store
+            .write_file("test-abc.md", "aaa bbb ccc abc")
+            .await
+            .unwrap();
+        store
+            .write_file("test-def.md", "ddd eee fff def")
+            .await
+            .unwrap();
 
         // Search for something similar to "abc" content
         let results = store.vector_search("aaa abc", 5).await.unwrap();
-        assert!(!results.is_empty(), "vector_search should return results with embedder");
+        assert!(
+            !results.is_empty(),
+            "vector_search should return results with embedder"
+        );
     }
 
     #[tokio::test]
@@ -1031,11 +1104,20 @@ mod tests {
         let mut store = test_store(&tmp).await;
         store.set_embedder(Arc::new(MockEmbedder));
 
-        store.write_file("test-alpha.md", "Alpha beta gamma delta").await.unwrap();
-        store.write_file("test-beta.md", "Beta epsilon zeta eta").await.unwrap();
+        store
+            .write_file("test-alpha.md", "Alpha beta gamma delta")
+            .await
+            .unwrap();
+        store
+            .write_file("test-beta.md", "Beta epsilon zeta eta")
+            .await
+            .unwrap();
 
         let results = store.hybrid_search("alpha beta", 5).await.unwrap();
-        assert!(!results.is_empty(), "hybrid_search should return results with embedder");
+        assert!(
+            !results.is_empty(),
+            "hybrid_search should return results with embedder"
+        );
     }
 
     #[tokio::test]
@@ -1044,7 +1126,10 @@ mod tests {
         let mut store = test_store(&tmp).await;
         store.set_embedder(Arc::new(MockEmbedder));
 
-        store.write_file("test-vectors.md", "Test content here").await.unwrap();
+        store
+            .write_file("test-vectors.md", "Test content here")
+            .await
+            .unwrap();
 
         // Count vectors before reindex
         let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memory_vectors")
@@ -1115,9 +1200,15 @@ mod tests {
         std::fs::write(&old_path, content).unwrap();
         store.reindex().await.unwrap();
 
-        let results = store.search("quantum physics relativity", 10).await.unwrap();
+        let results = store
+            .search("quantum physics relativity", 10)
+            .await
+            .unwrap();
         // Should find the evergreen file at minimum
-        assert!(!results.is_empty(), "Should find at least the evergreen file");
+        assert!(
+            !results.is_empty(),
+            "Should find at least the evergreen file"
+        );
     }
 
     #[tokio::test]
@@ -1129,7 +1220,10 @@ mod tests {
         // Do NOT create memory/ dir — append_daily should create it
         assert!(!agent_home.join("memory").exists());
 
-        store.append_daily("First entry without pre-existing dir.").await.unwrap();
+        store
+            .append_daily("First entry without pre-existing dir.")
+            .await
+            .unwrap();
 
         assert!(agent_home.join("memory").exists());
         let today = Local::now().format("%Y-%m-%d").to_string();
@@ -1150,7 +1244,9 @@ mod tests {
         let soul = "# Soul\n".to_string() + &"café 🌟 ".repeat(5000);
         std::fs::write(config_dir.join("SOUL.md"), &soul).unwrap();
 
-        let store = MemoryStore::new(&agent_home, &config_dir, &db_dir).await.unwrap();
+        let store = MemoryStore::new(&agent_home, &config_dir, &db_dir)
+            .await
+            .unwrap();
         // Should not panic even though the cap likely falls mid-character
         let ctx = store.bootstrap_context().unwrap();
         assert!(ctx.contains("SOUL.md"));
@@ -1167,7 +1263,10 @@ mod tests {
         let config_dir = tmp.path().join("agent_home").join("config");
 
         // Writing SOUL.md should go to config_dir
-        store.write_file("SOUL.md", "# Soul\nCustom soul.").await.unwrap();
+        store
+            .write_file("SOUL.md", "# Soul\nCustom soul.")
+            .await
+            .unwrap();
         assert!(config_dir.join("SOUL.md").is_file());
         let content = std::fs::read_to_string(config_dir.join("SOUL.md")).unwrap();
         assert!(content.contains("Custom soul"));
@@ -1200,18 +1299,30 @@ mod tests {
         let store = test_store(&tmp).await;
 
         // Write a config file (SOUL.md → config_dir)
-        store.write_file("SOUL.md", "Soul content about quantum.").await.unwrap();
+        store
+            .write_file("SOUL.md", "Soul content about quantum.")
+            .await
+            .unwrap();
 
         // Write a runtime file (notes.md → agent_home)
-        store.write_file("notes.md", "Notes about quantum.").await.unwrap();
+        store
+            .write_file("notes.md", "Notes about quantum.")
+            .await
+            .unwrap();
 
         // Reindex should pick up both
         store.reindex().await.unwrap();
 
         let results = store.search("quantum", 10).await.unwrap();
         let sources: Vec<&str> = results.iter().map(|r| r.source.as_str()).collect();
-        assert!(sources.contains(&"SOUL.md"), "SOUL.md from config_dir should be indexed");
-        assert!(sources.contains(&"notes.md"), "notes.md from agent_home should be indexed");
+        assert!(
+            sources.contains(&"SOUL.md"),
+            "SOUL.md from config_dir should be indexed"
+        );
+        assert!(
+            sources.contains(&"notes.md"),
+            "notes.md from agent_home should be indexed"
+        );
     }
 
     #[tokio::test]
@@ -1220,10 +1331,16 @@ mod tests {
         let store = test_store(&tmp).await;
 
         // Overwrite SOUL.md in config_dir
-        store.write_file("SOUL.md", "# Soul\nI am ConfigBot.").await.unwrap();
+        store
+            .write_file("SOUL.md", "# Soul\nI am ConfigBot.")
+            .await
+            .unwrap();
 
         let ctx = store.bootstrap_context().unwrap();
-        assert!(ctx.contains("ConfigBot"), "bootstrap should read from config_dir");
+        assert!(
+            ctx.contains("ConfigBot"),
+            "bootstrap should read from config_dir"
+        );
     }
 
     #[tokio::test]
@@ -1233,15 +1350,28 @@ mod tests {
         let config_dir = tmp.path().join("agent_home").join("config");
 
         // Default BOOTSTRAP.md should be empty
-        assert!(!store.has_bootstrap(), "Default BOOTSTRAP.md should be empty");
+        assert!(
+            !store.has_bootstrap(),
+            "Default BOOTSTRAP.md should be empty"
+        );
 
         // Write content to BOOTSTRAP.md in config_dir
-        std::fs::write(config_dir.join("BOOTSTRAP.md"), "Do something on first run.").unwrap();
-        assert!(store.has_bootstrap(), "BOOTSTRAP.md with content should be detected");
+        std::fs::write(
+            config_dir.join("BOOTSTRAP.md"),
+            "Do something on first run.",
+        )
+        .unwrap();
+        assert!(
+            store.has_bootstrap(),
+            "BOOTSTRAP.md with content should be detected"
+        );
 
         // Clear it
         store.clear_bootstrap().unwrap();
-        assert!(!store.has_bootstrap(), "Cleared BOOTSTRAP.md should not be detected");
+        assert!(
+            !store.has_bootstrap(),
+            "Cleared BOOTSTRAP.md should not be detected"
+        );
     }
 
     // ── new_user tests ─────────────────────────────────────────────
@@ -1253,7 +1383,10 @@ mod tests {
 
         let _store = MemoryStore::new_user(&user_dir).await.unwrap();
 
-        assert!(user_dir.join("memory.db").exists(), "memory.db should be in user_dir");
+        assert!(
+            user_dir.join("memory.db").exists(),
+            "memory.db should be in user_dir"
+        );
     }
 
     #[tokio::test]
@@ -1264,8 +1397,14 @@ mod tests {
         let _store = MemoryStore::new_user(&user_dir).await.unwrap();
 
         // new_user should NOT create SOUL.md, HEARTBEAT.md, etc.
-        assert!(!user_dir.join("SOUL.md").exists(), "new_user should not seed SOUL.md");
-        assert!(!user_dir.join("HEARTBEAT.md").exists(), "new_user should not seed HEARTBEAT.md");
+        assert!(
+            !user_dir.join("SOUL.md").exists(),
+            "new_user should not seed SOUL.md"
+        );
+        assert!(
+            !user_dir.join("HEARTBEAT.md").exists(),
+            "new_user should not seed HEARTBEAT.md"
+        );
     }
 
     #[tokio::test]
@@ -1278,14 +1417,20 @@ mod tests {
         std::fs::write(
             user_dir.join("MEMORY.md"),
             "# Memory\n\nCarol likes functional programming.\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let store = MemoryStore::new_user(&user_dir).await.unwrap();
 
         // The existing file should be indexed and searchable
         let results = store.search("functional programming", 5).await.unwrap();
-        assert!(!results.is_empty(), "Pre-existing file should be indexed on startup");
-        assert!(results.iter().any(|r| r.text.contains("functional programming")));
+        assert!(
+            !results.is_empty(),
+            "Pre-existing file should be indexed on startup"
+        );
+        assert!(results
+            .iter()
+            .any(|r| r.text.contains("functional programming")));
     }
 
     #[tokio::test]
@@ -1295,7 +1440,8 @@ mod tests {
 
         let store = MemoryStore::new_user(&user_dir).await.unwrap();
 
-        store.write_file("MEMORY.md", "# Memory\n\nDave prefers dark theme.\n")
+        store
+            .write_file("MEMORY.md", "# Memory\n\nDave prefers dark theme.\n")
             .await
             .unwrap();
 
@@ -1311,7 +1457,10 @@ mod tests {
 
         let store = MemoryStore::new_user(&user_dir).await.unwrap();
 
-        store.append_daily("Discussed API design patterns").await.unwrap();
+        store
+            .append_daily("Discussed API design patterns")
+            .await
+            .unwrap();
 
         let results = store.search("API design", 5).await.unwrap();
         assert!(!results.is_empty(), "Daily log should be searchable");

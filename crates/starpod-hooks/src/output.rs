@@ -1,8 +1,8 @@
 //! Hook output types — the data returned by hook callbacks to control agent behavior.
 
+use crate::permissions::{PermissionDecision, PermissionUpdate};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::permissions::{PermissionDecision, PermissionUpdate};
 
 /// Hook return value — either async (fire-and-forget) or sync (blocking).
 ///

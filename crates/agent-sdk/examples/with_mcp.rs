@@ -4,16 +4,16 @@
 //! GITHUB_TOKEN=your_token cargo run --example with_mcp
 //! ```
 
-use agent_sdk::{query, McpServerConfig, Message, Options};
 use agent_sdk::mcp::McpStdioServerConfig;
+use agent_sdk::{query, McpServerConfig, Message, Options};
 use tokio_stream::StreamExt;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let github_token = std::env::var("GITHUB_TOKEN")
-        .expect("GITHUB_TOKEN environment variable required");
+    let github_token =
+        std::env::var("GITHUB_TOKEN").expect("GITHUB_TOKEN environment variable required");
 
     let mut stream = query(
         "List the 3 most recent issues in anthropics/claude-code",

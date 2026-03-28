@@ -38,7 +38,11 @@ pub async fn run_with_agent_and_auth(
     token: String,
 ) -> starpod_core::Result<()> {
     let stream_cfg = StreamConfig {
-        stream_mode: agent.config().channels.telegram.as_ref()
+        stream_mode: agent
+            .config()
+            .channels
+            .telegram
+            .as_ref()
             .map(|t| t.stream_mode.clone())
             .unwrap_or_else(|| "final_only".to_string()),
     };
@@ -63,10 +67,7 @@ pub async fn run_with_agent_and_auth(
 }
 
 /// Download a Telegram file by file_id and return its bytes.
-async fn download_telegram_file(
-    bot: &Bot,
-    file_id: &str,
-) -> std::result::Result<Vec<u8>, String> {
+async fn download_telegram_file(bot: &Bot, file_id: &str) -> std::result::Result<Vec<u8>, String> {
     let file = bot
         .get_file(file_id)
         .await
@@ -189,7 +190,10 @@ async fn handle_message(
     // /start always works — it shows the user their Telegram ID for linking
     if text == "/start" {
         let name = &agent_name.0;
-        let mut greeting = format!("Hello\\! I'm {}, your personal AI assistant\\.", escape_md(name));
+        let mut greeting = format!(
+            "Hello\\! I'm {}, your personal AI assistant\\.",
+            escape_md(name)
+        );
         if let Some(id) = telegram_id {
             greeting.push_str(&format!("\n\nYour Telegram ID: `{}`", id));
         }
@@ -317,15 +321,16 @@ async fn handle_final_only(
 ) -> Result<(), teloxide::RequestError> {
     let uid = user_id_str.clone();
     let chat_msg = build_chat_msg(text, user_id_str, chat_id, attachments);
-    let (mut stream, session_id, _followup_tx, out_attachments) = match agent.chat_stream(&chat_msg).await {
-        Ok(s) => s,
-        Err(e) => {
-            error!(error = %e, "Failed to start stream");
-            bot.send_message(chat_id, format!("Sorry, an error occurred: {}", e))
-                .await?;
-            return Ok(());
-        }
-    };
+    let (mut stream, session_id, _followup_tx, out_attachments) =
+        match agent.chat_stream(&chat_msg).await {
+            Ok(s) => s,
+            Err(e) => {
+                error!(error = %e, "Failed to start stream");
+                bot.send_message(chat_id, format!("Sorry, an error occurred: {}", e))
+                    .await?;
+                return Ok(());
+            }
+        };
 
     let mut last_assistant_text = String::new();
     let mut all_text = String::new();
@@ -374,7 +379,9 @@ async fn handle_final_only(
 
     // Finalize (record usage, daily log)
     if let Some(ref result) = result_msg {
-        agent.finalize_chat(&session_id, text, &all_text, result, uid.as_deref()).await;
+        agent
+            .finalize_chat(&session_id, text, &all_text, result, uid.as_deref())
+            .await;
     }
 
     Ok(())
@@ -392,15 +399,16 @@ async fn handle_all_messages(
 ) -> Result<(), teloxide::RequestError> {
     let uid = user_id_str.clone();
     let chat_msg = build_chat_msg(text, user_id_str, chat_id, attachments);
-    let (mut stream, session_id, _followup_tx, out_attachments) = match agent.chat_stream(&chat_msg).await {
-        Ok(s) => s,
-        Err(e) => {
-            error!(error = %e, "Failed to start stream");
-            bot.send_message(chat_id, format!("Sorry, an error occurred: {}", e))
-                .await?;
-            return Ok(());
-        }
-    };
+    let (mut stream, session_id, _followup_tx, out_attachments) =
+        match agent.chat_stream(&chat_msg).await {
+            Ok(s) => s,
+            Err(e) => {
+                error!(error = %e, "Failed to start stream");
+                bot.send_message(chat_id, format!("Sorry, an error occurred: {}", e))
+                    .await?;
+                return Ok(());
+            }
+        };
 
     let mut all_text = String::new();
     let mut result_msg = None;
@@ -446,7 +454,9 @@ async fn handle_all_messages(
 
     // Finalize (record usage, daily log)
     if let Some(ref result) = result_msg {
-        agent.finalize_chat(&session_id, text, &all_text, result, uid.as_deref()).await;
+        agent
+            .finalize_chat(&session_id, text, &all_text, result, uid.as_deref())
+            .await;
     }
 
     Ok(())
@@ -697,7 +707,9 @@ fn markdown_to_telegram_html(input: &str) -> String {
 
 /// Escape special characters for MarkdownV2.
 fn escape_md(text: &str) -> String {
-    let special = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
+    let special = [
+        '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!',
+    ];
     let mut result = String::with_capacity(text.len());
     for c in text.chars() {
         if special.contains(&c) {
@@ -726,12 +738,12 @@ fn split_message(text: &str, max_len: usize) -> Vec<String> {
 
         // Find a safe byte boundary for slicing
         let mut safe_max = max_len;
-        while safe_max > 0 && !remaining.is_char_boundary(safe_max) { safe_max -= 1; }
+        while safe_max > 0 && !remaining.is_char_boundary(safe_max) {
+            safe_max -= 1;
+        }
 
         // Find a good split point (newline before max_len)
-        let split_at = remaining[..safe_max]
-            .rfind('\n')
-            .unwrap_or(safe_max);
+        let split_at = remaining[..safe_max].rfind('\n').unwrap_or(safe_max);
 
         let (chunk, rest) = remaining.split_at(split_at);
         chunks.push(chunk.to_string());
@@ -770,7 +782,10 @@ mod tests {
     #[test]
     fn test_split_message_long() {
         let line = "x".repeat(100);
-        let text: String = (0..50).map(|_| line.as_str()).collect::<Vec<_>>().join("\n");
+        let text: String = (0..50)
+            .map(|_| line.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
         let chunks = split_message(&text, 4096);
         assert!(chunks.len() > 1);
         for chunk in &chunks {
@@ -866,7 +881,10 @@ mod tests {
     fn test_md_to_html_bullet_not_italic() {
         let input = "* item one\n* item two";
         let html = markdown_to_telegram_html(input);
-        assert!(!html.contains("<i>"), "Bullet points should not become italic");
+        assert!(
+            !html.contains("<i>"),
+            "Bullet points should not become italic"
+        );
         assert!(html.contains("* item one"));
     }
 

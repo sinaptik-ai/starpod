@@ -42,20 +42,35 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/api/frame-check", get(frame_check_handler))
         .route("/api/sessions", get(list_sessions_handler))
         .route("/api/sessions/{id}", get(get_session_handler))
-        .route("/api/sessions/{id}/messages", get(get_session_messages_handler))
+        .route(
+            "/api/sessions/{id}/messages",
+            get(get_session_messages_handler),
+        )
         .route("/api/sessions/{id}/read", post(mark_session_read_handler))
         .route("/api/memory/search", get(memory_search_handler))
         .route("/api/memory/reindex", post(reindex_handler))
         .route("/api/instances", get(list_instances_handler))
         .route("/api/instances", post(create_instance_handler))
         .route("/api/instances/{id}", get(get_instance_handler))
-        .route("/api/instances/{id}", axum::routing::delete(delete_instance_handler))
+        .route(
+            "/api/instances/{id}",
+            axum::routing::delete(delete_instance_handler),
+        )
         .route("/api/instances/{id}/pause", post(pause_instance_handler))
-        .route("/api/instances/{id}/restart", post(restart_instance_handler))
+        .route(
+            "/api/instances/{id}/restart",
+            post(restart_instance_handler),
+        )
         .route("/api/instances/{id}/health", get(instance_health_handler))
         .route("/api/health", get(health_handler))
-        .route("/api/cron/jobs", get(list_cron_jobs_handler).post(create_cron_job_handler))
-        .route("/api/cron/jobs/{id}", axum::routing::put(update_cron_job_handler).delete(delete_cron_job_handler))
+        .route(
+            "/api/cron/jobs",
+            get(list_cron_jobs_handler).post(create_cron_job_handler),
+        )
+        .route(
+            "/api/cron/jobs/{id}",
+            axum::routing::put(update_cron_job_handler).delete(delete_cron_job_handler),
+        )
         .merge(crate::settings::settings_routes(state))
         .merge(crate::files::files_routes())
 }
@@ -91,12 +106,20 @@ async fn verify_handler(
 ) -> Json<VerifyResponse> {
     let has_users = state.auth.has_users().await.unwrap_or(false);
     if !has_users {
-        return Json(VerifyResponse { authenticated: true, auth_disabled: true, user: None });
+        return Json(VerifyResponse {
+            authenticated: true,
+            auth_disabled: true,
+            user: None,
+        });
     }
 
     let key = headers.get("x-api-key").and_then(|v| v.to_str().ok());
     let Some(key) = key else {
-        return Json(VerifyResponse { authenticated: false, auth_disabled: false, user: None });
+        return Json(VerifyResponse {
+            authenticated: false,
+            auth_disabled: false,
+            user: None,
+        });
     };
 
     match state.auth.authenticate_api_key(key).await {
@@ -110,7 +133,11 @@ async fn verify_handler(
                 filesystem_enabled: u.filesystem_enabled,
             }),
         }),
-        _ => Json(VerifyResponse { authenticated: false, auth_disabled: false, user: None }),
+        _ => Json(VerifyResponse {
+            authenticated: false,
+            auth_disabled: false,
+            user: None,
+        }),
     }
 }
 
@@ -140,14 +167,21 @@ async fn frame_check_handler(
 
     // Validate URL scheme — only allow http and https.
     let parsed_url = reqwest::Url::parse(&params.url).map_err(|_| {
-        (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "Invalid URL".into() }))
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid URL".into(),
+            }),
+        )
     })?;
     match parsed_url.scheme() {
         "http" | "https" => {}
         _ => {
             return Err((
                 StatusCode::BAD_REQUEST,
-                Json(ErrorResponse { error: "Only http and https URLs are allowed".into() }),
+                Json(ErrorResponse {
+                    error: "Only http and https URLs are allowed".into(),
+                }),
             ));
         }
     }
@@ -155,21 +189,26 @@ async fn frame_check_handler(
     // Resolve hostname and block private/internal IP ranges.
     if let Some(host) = parsed_url.host_str() {
         let port = parsed_url.port_or_known_default().unwrap_or(80);
-        let addrs: Vec<std::net::SocketAddr> = match tokio::net::lookup_host(format!("{}:{}", host, port)).await {
-            Ok(iter) => iter.collect(),
-            Err(_) => Vec::new(),
-        };
+        let addrs: Vec<std::net::SocketAddr> =
+            match tokio::net::lookup_host(format!("{}:{}", host, port)).await {
+                Ok(iter) => iter.collect(),
+                Err(_) => Vec::new(),
+            };
         if addrs.is_empty() {
             return Err((
                 StatusCode::BAD_REQUEST,
-                Json(ErrorResponse { error: "Could not resolve hostname".into() }),
+                Json(ErrorResponse {
+                    error: "Could not resolve hostname".into(),
+                }),
             ));
         }
         for addr in &addrs {
             if is_private_ip(addr.ip()) {
                 return Err((
                     StatusCode::FORBIDDEN,
-                    Json(ErrorResponse { error: "Requests to private/internal addresses are not allowed".into() }),
+                    Json(ErrorResponse {
+                        error: "Requests to private/internal addresses are not allowed".into(),
+                    }),
                 ));
             }
         }
@@ -230,10 +269,16 @@ async fn frame_check_handler(
 
     if !frameable {
         if let Ok(html) = resp.text().await {
-            if let Some(caps) = RE_OG_IMAGE.captures(&html).or_else(|| RE_OG_IMAGE2.captures(&html)) {
+            if let Some(caps) = RE_OG_IMAGE
+                .captures(&html)
+                .or_else(|| RE_OG_IMAGE2.captures(&html))
+            {
                 og_image = caps[1].to_string();
             }
-            if let Some(caps) = RE_OG_TITLE.captures(&html).or_else(|| RE_OG_TITLE2.captures(&html)) {
+            if let Some(caps) = RE_OG_TITLE
+                .captures(&html)
+                .or_else(|| RE_OG_TITLE2.captures(&html))
+            {
                 og_title = caps[1].to_string();
             }
         }
@@ -254,7 +299,7 @@ fn is_private_ip(ip: IpAddr) -> bool {
             v4.is_loopback()              // 127.0.0.0/8
                 || v4.is_private()         // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
                 || v4.is_link_local()      // 169.254.0.0/16
-                || v4.is_unspecified()     // 0.0.0.0
+                || v4.is_unspecified() // 0.0.0.0
         }
         IpAddr::V6(v6) => {
             v6.is_loopback()              // ::1
@@ -493,16 +538,21 @@ pub(crate) struct ErrorResponse {
 
 // ── Instance routes ──────────────────────────────────────────────────────
 
-fn get_instance_client(state: &AppState) -> Result<starpod_instances::InstanceClient, (StatusCode, Json<ErrorResponse>)> {
+fn get_instance_client(
+    state: &AppState,
+) -> Result<starpod_instances::InstanceClient, (StatusCode, Json<ErrorResponse>)> {
     let config = state.config.read().unwrap();
-    let backend_url = std::env::var("STARPOD_INSTANCE_BACKEND_URL").ok().ok_or_else(|| {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(ErrorResponse {
-                error: "Instance backend not configured (set STARPOD_INSTANCE_BACKEND_URL)".into(),
-            }),
-        )
-    })?;
+    let backend_url = std::env::var("STARPOD_INSTANCE_BACKEND_URL")
+        .ok()
+        .ok_or_else(|| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorResponse {
+                    error: "Instance backend not configured (set STARPOD_INSTANCE_BACKEND_URL)"
+                        .into(),
+                }),
+            )
+        })?;
     let api_key = config.resolved_api_key();
     starpod_instances::InstanceClient::new(&backend_url, api_key).map_err(|e| {
         (
@@ -541,14 +591,18 @@ async fn create_instance_handler(
     authenticate_request(&state, &headers).await?;
     let client = get_instance_client(&state)?;
 
-    client.create_instance(&req).await.map(|inst| (StatusCode::CREATED, Json(inst))).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("Create instance error: {}", e),
-            }),
-        )
-    })
+    client
+        .create_instance(&req)
+        .await
+        .map(|inst| (StatusCode::CREATED, Json(inst)))
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Create instance error: {}", e),
+                }),
+            )
+        })
 }
 
 /// Get instance — GET /api/instances/:id
@@ -579,14 +633,18 @@ async fn delete_instance_handler(
     authenticate_request(&state, &headers).await?;
     let client = get_instance_client(&state)?;
 
-    client.destroy_instance(&id).await.map(|_| StatusCode::NO_CONTENT).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("Destroy instance error: {}", e),
-            }),
-        )
-    })
+    client
+        .destroy_instance(&id)
+        .await
+        .map(|_| StatusCode::NO_CONTENT)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Destroy instance error: {}", e),
+                }),
+            )
+        })
 }
 
 /// Pause instance — POST /api/instances/:id/pause
@@ -598,14 +656,18 @@ async fn pause_instance_handler(
     authenticate_request(&state, &headers).await?;
     let client = get_instance_client(&state)?;
 
-    client.stop_instance(&id).await.map(|_| Json(serde_json::json!({"status": "stopped"}))).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("Stop instance error: {}", e),
-            }),
-        )
-    })
+    client
+        .stop_instance(&id)
+        .await
+        .map(|_| Json(serde_json::json!({"status": "stopped"})))
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Stop instance error: {}", e),
+                }),
+            )
+        })
 }
 
 /// Restart instance — POST /api/instances/:id/restart
@@ -617,14 +679,18 @@ async fn restart_instance_handler(
     authenticate_request(&state, &headers).await?;
     let client = get_instance_client(&state)?;
 
-    client.restart_instance(&id).await.map(|_| Json(serde_json::json!({"status": "restarted"}))).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("Restart instance error: {}", e),
-            }),
-        )
-    })
+    client
+        .restart_instance(&id)
+        .await
+        .map(|_| Json(serde_json::json!({"status": "restarted"})))
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Restart instance error: {}", e),
+                }),
+            )
+        })
 }
 
 /// Instance health — GET /api/instances/:id/health
@@ -659,10 +725,10 @@ mod tests {
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
+    use crate::{build_router, GatewayEvent};
     use starpod_agent::StarpodAgent;
     use starpod_auth::{AuthStore, RateLimiter as AuthRateLimiter};
-    use starpod_core::{ResolvedPaths, StarpodConfig, Mode};
-    use crate::{build_router, GatewayEvent};
+    use starpod_core::{Mode, ResolvedPaths, StarpodConfig};
 
     /// Build a test AppState with real auth store.
     async fn test_app_state() -> (tempfile::TempDir, Arc<AppState>) {
@@ -678,7 +744,11 @@ mod tests {
         std::fs::create_dir_all(&db_dir).unwrap();
         std::fs::create_dir_all(&users_dir).unwrap();
         std::fs::create_dir_all(&skills_dir).unwrap();
-        std::fs::write(&agent_toml, "models = [\"anthropic/test\"]\nagent_name = \"Test\"\n").unwrap();
+        std::fs::write(
+            &agent_toml,
+            "models = [\"anthropic/test\"]\nagent_name = \"Test\"\n",
+        )
+        .unwrap();
 
         let config = StarpodConfig {
             db_dir: db_dir.clone(),
@@ -693,7 +763,9 @@ mod tests {
         let (events_tx, _) = tokio::sync::broadcast::channel::<GatewayEvent>(16);
 
         let paths = ResolvedPaths {
-            mode: Mode::SingleAgent { starpod_dir: starpod_dir.clone() },
+            mode: Mode::SingleAgent {
+                starpod_dir: starpod_dir.clone(),
+            },
             agent_toml,
             agent_home: starpod_dir.clone(),
             config_dir,
@@ -745,7 +817,11 @@ mod tests {
     async fn missing_api_key_rejected_after_bootstrap() {
         let (_tmp, state) = test_app_state().await;
         // Create a user so auth is enforced
-        state.auth.create_user(None, None, starpod_auth::Role::Admin).await.unwrap();
+        state
+            .auth
+            .create_user(None, None, starpod_auth::Role::Admin)
+            .await
+            .unwrap();
 
         let app = build_router(Arc::clone(&state));
         let req = Request::builder()
@@ -764,13 +840,20 @@ mod tests {
     #[tokio::test]
     async fn invalid_api_key_rejected() {
         let (_tmp, state) = test_app_state().await;
-        state.auth.create_user(None, None, starpod_auth::Role::Admin).await.unwrap();
+        state
+            .auth
+            .create_user(None, None, starpod_auth::Role::Admin)
+            .await
+            .unwrap();
 
         let app = build_router(Arc::clone(&state));
         let req = Request::builder()
             .method("GET")
             .uri("/api/sessions")
-            .header("x-api-key", "sp_live_0000000000000000000000000000000000000000")
+            .header(
+                "x-api-key",
+                "sp_live_0000000000000000000000000000000000000000",
+            )
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
@@ -784,7 +867,11 @@ mod tests {
     #[tokio::test]
     async fn valid_api_key_accepted() {
         let (_tmp, state) = test_app_state().await;
-        let user = state.auth.create_user(None, None, starpod_auth::Role::Admin).await.unwrap();
+        let user = state
+            .auth
+            .create_user(None, None, starpod_auth::Role::Admin)
+            .await
+            .unwrap();
         let key = state.auth.create_api_key(&user.id, None).await.unwrap();
 
         let app = build_router(Arc::clone(&state));
@@ -801,7 +888,11 @@ mod tests {
     #[tokio::test]
     async fn rate_limiting_returns_429() {
         let (_tmp, state) = test_app_state().await;
-        let user = state.auth.create_user(None, None, starpod_auth::Role::Admin).await.unwrap();
+        let user = state
+            .auth
+            .create_user(None, None, starpod_auth::Role::Admin)
+            .await
+            .unwrap();
         let key = state.auth.create_api_key(&user.id, None).await.unwrap();
 
         // Replace rate limiter with strict limit
@@ -843,7 +934,11 @@ mod tests {
     #[tokio::test]
     async fn chat_injects_authenticated_user_id() {
         let (_tmp, state) = test_app_state().await;
-        let user = state.auth.create_user(None, Some("Alice"), starpod_auth::Role::User).await.unwrap();
+        let user = state
+            .auth
+            .create_user(None, Some("Alice"), starpod_auth::Role::User)
+            .await
+            .unwrap();
         let key = state.auth.create_api_key(&user.id, None).await.unwrap();
 
         // Send a chat request with a different user_id — it should be overridden
@@ -909,7 +1004,11 @@ mod tests {
     #[tokio::test]
     async fn verify_missing_key_returns_unauthenticated() {
         let (_tmp, state) = test_app_state().await;
-        state.auth.create_user(None, None, starpod_auth::Role::Admin).await.unwrap();
+        state
+            .auth
+            .create_user(None, None, starpod_auth::Role::Admin)
+            .await
+            .unwrap();
 
         let app = build_router(Arc::clone(&state));
         let req = Request::builder()
@@ -929,13 +1028,20 @@ mod tests {
     #[tokio::test]
     async fn verify_invalid_key_returns_unauthenticated() {
         let (_tmp, state) = test_app_state().await;
-        state.auth.create_user(None, None, starpod_auth::Role::Admin).await.unwrap();
+        state
+            .auth
+            .create_user(None, None, starpod_auth::Role::Admin)
+            .await
+            .unwrap();
 
         let app = build_router(Arc::clone(&state));
         let req = Request::builder()
             .method("GET")
             .uri("/api/auth/verify")
-            .header("x-api-key", "sp_live_0000000000000000000000000000000000000000")
+            .header(
+                "x-api-key",
+                "sp_live_0000000000000000000000000000000000000000",
+            )
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
@@ -949,7 +1055,11 @@ mod tests {
     #[tokio::test]
     async fn verify_valid_key_returns_user() {
         let (_tmp, state) = test_app_state().await;
-        let user = state.auth.create_user(None, Some("Alice"), starpod_auth::Role::Admin).await.unwrap();
+        let user = state
+            .auth
+            .create_user(None, Some("Alice"), starpod_auth::Role::Admin)
+            .await
+            .unwrap();
         let key = state.auth.create_api_key(&user.id, None).await.unwrap();
 
         let app = build_router(Arc::clone(&state));
@@ -975,32 +1085,44 @@ mod tests {
 
     #[test]
     fn private_ipv4_loopback() {
-        assert!(is_private_ip(IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))));
+        assert!(is_private_ip(IpAddr::V4(std::net::Ipv4Addr::new(
+            127, 0, 0, 1
+        ))));
     }
 
     #[test]
     fn private_ipv4_10_range() {
-        assert!(is_private_ip(IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 1))));
+        assert!(is_private_ip(IpAddr::V4(std::net::Ipv4Addr::new(
+            10, 0, 0, 1
+        ))));
     }
 
     #[test]
     fn private_ipv4_172_range() {
-        assert!(is_private_ip(IpAddr::V4(std::net::Ipv4Addr::new(172, 16, 0, 1))));
+        assert!(is_private_ip(IpAddr::V4(std::net::Ipv4Addr::new(
+            172, 16, 0, 1
+        ))));
     }
 
     #[test]
     fn private_ipv4_192_range() {
-        assert!(is_private_ip(IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 1))));
+        assert!(is_private_ip(IpAddr::V4(std::net::Ipv4Addr::new(
+            192, 168, 1, 1
+        ))));
     }
 
     #[test]
     fn private_ipv4_link_local() {
-        assert!(is_private_ip(IpAddr::V4(std::net::Ipv4Addr::new(169, 254, 1, 1))));
+        assert!(is_private_ip(IpAddr::V4(std::net::Ipv4Addr::new(
+            169, 254, 1, 1
+        ))));
     }
 
     #[test]
     fn public_ipv4_allowed() {
-        assert!(!is_private_ip(IpAddr::V4(std::net::Ipv4Addr::new(8, 8, 8, 8))));
+        assert!(!is_private_ip(IpAddr::V4(std::net::Ipv4Addr::new(
+            8, 8, 8, 8
+        ))));
     }
 
     #[test]
@@ -1011,13 +1133,19 @@ mod tests {
     #[test]
     fn private_ipv6_unique_local() {
         // fc00::1 is in the fc00::/7 range
-        assert!(is_private_ip(IpAddr::V6(std::net::Ipv6Addr::new(0xfc00, 0, 0, 0, 0, 0, 0, 1))));
-        assert!(is_private_ip(IpAddr::V6(std::net::Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1))));
+        assert!(is_private_ip(IpAddr::V6(std::net::Ipv6Addr::new(
+            0xfc00, 0, 0, 0, 0, 0, 0, 1
+        ))));
+        assert!(is_private_ip(IpAddr::V6(std::net::Ipv6Addr::new(
+            0xfd00, 0, 0, 0, 0, 0, 0, 1
+        ))));
     }
 
     #[test]
     fn public_ipv6_allowed() {
-        assert!(!is_private_ip(IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888))));
+        assert!(!is_private_ip(IpAddr::V6(std::net::Ipv6Addr::new(
+            0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888
+        ))));
     }
 
     // ── Mark-read endpoint tests ────────────────────────────────────────
@@ -1088,7 +1216,11 @@ mod tests {
     async fn mark_session_read_requires_auth() {
         let (_tmp, state) = test_app_state().await;
         // Create a user so auth is enforced
-        state.auth.create_user(None, None, starpod_auth::Role::Admin).await.unwrap();
+        state
+            .auth
+            .create_user(None, None, starpod_auth::Role::Admin)
+            .await
+            .unwrap();
 
         let app = build_router(Arc::clone(&state));
         let body = serde_json::json!({ "is_read": true });
@@ -1109,7 +1241,12 @@ mod tests {
         let (_tmp, state) = test_app_state().await;
         // Add a cron job before any users exist
         let schedule = starpod_cron::Schedule::Interval { every_ms: 60000 };
-        state.agent.cron().add_job("test-job", "do stuff", &schedule, false, None).await.unwrap();
+        state
+            .agent
+            .cron()
+            .add_job("test-job", "do stuff", &schedule, false, None)
+            .await
+            .unwrap();
 
         let app = build_router(Arc::clone(&state));
         let req = Request::builder()
@@ -1129,19 +1266,47 @@ mod tests {
     #[tokio::test]
     async fn cron_jobs_admin_sees_all() {
         let (_tmp, state) = test_app_state().await;
-        let admin = state.auth.create_user(None, None, starpod_auth::Role::Admin).await.unwrap();
+        let admin = state
+            .auth
+            .create_user(None, None, starpod_auth::Role::Admin)
+            .await
+            .unwrap();
         let key = state.auth.create_api_key(&admin.id, None).await.unwrap();
 
         // Add jobs for different users
         let schedule = starpod_cron::Schedule::Interval { every_ms: 60000 };
-        state.agent.cron()
-            .add_job_full("admin-job", "admin prompt", &schedule, false, None, 3, 7200,
-                starpod_cron::SessionMode::Isolated, Some(&admin.id))
-            .await.unwrap();
-        state.agent.cron()
-            .add_job_full("other-job", "other prompt", &schedule, false, None, 3, 7200,
-                starpod_cron::SessionMode::Isolated, Some("other-user"))
-            .await.unwrap();
+        state
+            .agent
+            .cron()
+            .add_job_full(
+                "admin-job",
+                "admin prompt",
+                &schedule,
+                false,
+                None,
+                3,
+                7200,
+                starpod_cron::SessionMode::Isolated,
+                Some(&admin.id),
+            )
+            .await
+            .unwrap();
+        state
+            .agent
+            .cron()
+            .add_job_full(
+                "other-job",
+                "other prompt",
+                &schedule,
+                false,
+                None,
+                3,
+                7200,
+                starpod_cron::SessionMode::Isolated,
+                Some("other-user"),
+            )
+            .await
+            .unwrap();
 
         let app = build_router(Arc::clone(&state));
         let req = Request::builder()
@@ -1162,23 +1327,67 @@ mod tests {
     async fn cron_jobs_user_sees_only_own() {
         let (_tmp, state) = test_app_state().await;
         // Need an admin first so auth is enabled
-        state.auth.create_user(None, None, starpod_auth::Role::Admin).await.unwrap();
-        let user = state.auth.create_user(None, None, starpod_auth::Role::User).await.unwrap();
+        state
+            .auth
+            .create_user(None, None, starpod_auth::Role::Admin)
+            .await
+            .unwrap();
+        let user = state
+            .auth
+            .create_user(None, None, starpod_auth::Role::User)
+            .await
+            .unwrap();
         let key = state.auth.create_api_key(&user.id, None).await.unwrap();
 
         let schedule = starpod_cron::Schedule::Interval { every_ms: 60000 };
-        state.agent.cron()
-            .add_job_full("my-job", "my prompt", &schedule, false, None, 3, 7200,
-                starpod_cron::SessionMode::Isolated, Some(&user.id))
-            .await.unwrap();
-        state.agent.cron()
-            .add_job_full("other-job", "other prompt", &schedule, false, None, 3, 7200,
-                starpod_cron::SessionMode::Isolated, Some("someone-else"))
-            .await.unwrap();
-        state.agent.cron()
-            .add_job_full("agent-job", "agent prompt", &schedule, false, None, 3, 7200,
-                starpod_cron::SessionMode::Isolated, None)
-            .await.unwrap();
+        state
+            .agent
+            .cron()
+            .add_job_full(
+                "my-job",
+                "my prompt",
+                &schedule,
+                false,
+                None,
+                3,
+                7200,
+                starpod_cron::SessionMode::Isolated,
+                Some(&user.id),
+            )
+            .await
+            .unwrap();
+        state
+            .agent
+            .cron()
+            .add_job_full(
+                "other-job",
+                "other prompt",
+                &schedule,
+                false,
+                None,
+                3,
+                7200,
+                starpod_cron::SessionMode::Isolated,
+                Some("someone-else"),
+            )
+            .await
+            .unwrap();
+        state
+            .agent
+            .cron()
+            .add_job_full(
+                "agent-job",
+                "agent prompt",
+                &schedule,
+                false,
+                None,
+                3,
+                7200,
+                starpod_cron::SessionMode::Isolated,
+                None,
+            )
+            .await
+            .unwrap();
 
         let app = build_router(Arc::clone(&state));
         let req = Request::builder()
@@ -1226,7 +1435,12 @@ mod tests {
     async fn update_cron_job_via_api() {
         let (_tmp, state) = test_app_state().await;
         let schedule = starpod_cron::Schedule::Interval { every_ms: 60000 };
-        let id = state.agent.cron().add_job("update-test", "old prompt", &schedule, false, None).await.unwrap();
+        let id = state
+            .agent
+            .cron()
+            .add_job("update-test", "old prompt", &schedule, false, None)
+            .await
+            .unwrap();
 
         let app = build_router(Arc::clone(&state));
         let body = serde_json::json!({
@@ -1252,7 +1466,12 @@ mod tests {
     async fn delete_cron_job_via_api() {
         let (_tmp, state) = test_app_state().await;
         let schedule = starpod_cron::Schedule::Interval { every_ms: 60000 };
-        let id = state.agent.cron().add_job("delete-me", "prompt", &schedule, false, None).await.unwrap();
+        let id = state
+            .agent
+            .cron()
+            .add_job("delete-me", "prompt", &schedule, false, None)
+            .await
+            .unwrap();
 
         let app = build_router(Arc::clone(&state));
         let req = Request::builder()
@@ -1271,15 +1490,35 @@ mod tests {
     #[tokio::test]
     async fn delete_cron_job_user_cannot_delete_others() {
         let (_tmp, state) = test_app_state().await;
-        let _admin = state.auth.create_user(None, None, starpod_auth::Role::Admin).await.unwrap();
-        let user = state.auth.create_user(None, None, starpod_auth::Role::User).await.unwrap();
+        let _admin = state
+            .auth
+            .create_user(None, None, starpod_auth::Role::Admin)
+            .await
+            .unwrap();
+        let user = state
+            .auth
+            .create_user(None, None, starpod_auth::Role::User)
+            .await
+            .unwrap();
         let key = state.auth.create_api_key(&user.id, None).await.unwrap();
 
         let schedule = starpod_cron::Schedule::Interval { every_ms: 60000 };
-        let id = state.agent.cron()
-            .add_job_full("other-job", "not yours", &schedule, false, None, 3, 7200,
-                starpod_cron::SessionMode::Isolated, Some("someone-else"))
-            .await.unwrap();
+        let id = state
+            .agent
+            .cron()
+            .add_job_full(
+                "other-job",
+                "not yours",
+                &schedule,
+                false,
+                None,
+                3,
+                7200,
+                starpod_cron::SessionMode::Isolated,
+                Some("someone-else"),
+            )
+            .await
+            .unwrap();
 
         let app = build_router(Arc::clone(&state));
         let req = Request::builder()
@@ -1295,15 +1534,35 @@ mod tests {
     #[tokio::test]
     async fn update_cron_job_user_cannot_update_others() {
         let (_tmp, state) = test_app_state().await;
-        let _admin = state.auth.create_user(None, None, starpod_auth::Role::Admin).await.unwrap();
-        let user = state.auth.create_user(None, None, starpod_auth::Role::User).await.unwrap();
+        let _admin = state
+            .auth
+            .create_user(None, None, starpod_auth::Role::Admin)
+            .await
+            .unwrap();
+        let user = state
+            .auth
+            .create_user(None, None, starpod_auth::Role::User)
+            .await
+            .unwrap();
         let key = state.auth.create_api_key(&user.id, None).await.unwrap();
 
         let schedule = starpod_cron::Schedule::Interval { every_ms: 60000 };
-        let id = state.agent.cron()
-            .add_job_full("other-job", "not yours", &schedule, false, None, 3, 7200,
-                starpod_cron::SessionMode::Isolated, Some("someone-else"))
-            .await.unwrap();
+        let id = state
+            .agent
+            .cron()
+            .add_job_full(
+                "other-job",
+                "not yours",
+                &schedule,
+                false,
+                None,
+                3,
+                7200,
+                starpod_cron::SessionMode::Isolated,
+                Some("someone-else"),
+            )
+            .await
+            .unwrap();
 
         let app = build_router(Arc::clone(&state));
         let body = serde_json::json!({ "prompt": "hacked" });
@@ -1336,9 +1595,7 @@ pub(crate) async fn authenticate_request(
         return Ok(None);
     }
 
-    let provided = headers
-        .get("x-api-key")
-        .and_then(|v| v.to_str().ok());
+    let provided = headers.get("x-api-key").and_then(|v| v.to_str().ok());
 
     let key = match provided {
         Some(k) => k,
@@ -1507,14 +1764,19 @@ async fn update_cron_job_handler(
         ..Default::default()
     };
 
-    state.agent.cron().update_job(&id, &update).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: format!("Failed to update cron job: {}", e),
-            }),
-        )
-    })?;
+    state
+        .agent
+        .cron()
+        .update_job(&id, &update)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to update cron job: {}", e),
+                }),
+            )
+        })?;
 
     let job = state.agent.cron().get_job(&id).await.map_err(|e| {
         (
@@ -1568,4 +1830,3 @@ async fn delete_cron_job_handler(
 
     Ok(StatusCode::NO_CONTENT)
 }
-

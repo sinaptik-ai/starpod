@@ -8,8 +8,7 @@ use crate::client::InstanceClient;
 use crate::types::{HealthInfo, InstanceStatus};
 
 /// Callback invoked when an instance's health status changes.
-pub type HealthCallback =
-    Arc<dyn Fn(String, InstanceStatus, Option<HealthInfo>) + Send + Sync>;
+pub type HealthCallback = Arc<dyn Fn(String, InstanceStatus, Option<HealthInfo>) + Send + Sync>;
 
 /// Background health monitor that periodically checks all instances.
 pub struct HealthMonitor {
@@ -102,11 +101,7 @@ impl HealthMonitor {
                         );
 
                         if let Some(ref cb) = self.on_status_change {
-                            cb(
-                                inst.id.clone(),
-                                InstanceStatus::Error,
-                                Some(health.clone()),
-                            );
+                            cb(inst.id.clone(), InstanceStatus::Error, Some(health.clone()));
                         }
 
                         if let Err(e) = self.client.restart_instance(&inst.id).await {
@@ -188,8 +183,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let monitor = HealthMonitor::new(client)
-            .with_heartbeat_timeout(Duration::from_secs(60));
+        let monitor = HealthMonitor::new(client).with_heartbeat_timeout(Duration::from_secs(60));
 
         monitor.check_all().await;
         // The mock expectation verifies restart was called
@@ -231,8 +225,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let monitor = HealthMonitor::new(client)
-            .with_heartbeat_timeout(Duration::from_secs(60));
+        let monitor = HealthMonitor::new(client).with_heartbeat_timeout(Duration::from_secs(60));
 
         monitor.check_all().await;
     }

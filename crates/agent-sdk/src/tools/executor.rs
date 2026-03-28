@@ -62,10 +62,10 @@ async fn drain_pipe<R: tokio::io::AsyncRead + Unpin>(handle: Option<R>) -> Vec<u
     let mut chunk = [0u8; 65536];
     loop {
         match tokio::time::timeout(Duration::from_millis(10), reader.read(&mut chunk)).await {
-            Ok(Ok(0)) => break,                // EOF — pipe fully closed
+            Ok(Ok(0)) => break, // EOF — pipe fully closed
             Ok(Ok(n)) => buf.extend_from_slice(&chunk[..n]),
-            Ok(Err(_)) => break,               // read error
-            Err(_) => break,                   // no data within 10ms — pipe held by bg process
+            Ok(Err(_)) => break, // read error
+            Err(_) => break,     // no data within 10ms — pipe held by bg process
         }
     }
     buf
@@ -158,10 +158,7 @@ impl PathBoundary {
         loop {
             if ancestor.exists() {
                 let base = ancestor.canonicalize().map_err(|_| {
-                    ToolResult::err(format!(
-                        "Access denied: cannot resolve {}",
-                        path.display()
-                    ))
+                    ToolResult::err(format!("Access denied: cannot resolve {}", path.display()))
                 })?;
 
                 // Re-append remaining components — only Normal segments allowed.
@@ -541,10 +538,8 @@ impl ToolExecutor {
                 // Shell exited — drain whatever data is already buffered in
                 // the pipe without blocking. Background processes (`cmd &`)
                 // may hold inherited pipe fds, so we must not wait for EOF.
-                let (stdout_bytes, stderr_bytes) = tokio::join!(
-                    drain_pipe(stdout_handle),
-                    drain_pipe(stderr_handle),
-                );
+                let (stdout_bytes, stderr_bytes) =
+                    tokio::join!(drain_pipe(stdout_handle), drain_pipe(stderr_handle),);
 
                 let stdout = String::from_utf8_lossy(&stdout_bytes);
                 let stderr = String::from_utf8_lossy(&stderr_bytes);
@@ -562,10 +557,7 @@ impl ToolExecutor {
 
                 let is_error = !status.success();
                 if is_error && combined.is_empty() {
-                    combined = format!(
-                        "Process exited with code {}",
-                        status.code().unwrap_or(-1)
-                    );
+                    combined = format!("Process exited with code {}", status.code().unwrap_or(-1));
                 }
 
                 Ok(ToolResult {
@@ -601,23 +593,25 @@ impl ToolExecutor {
         let pattern_str = full_pattern.to_string_lossy().to_string();
 
         // Glob matching is CPU-bound; run on the blocking pool.
-        let result = tokio::task::spawn_blocking(move || -> std::result::Result<Vec<String>, String> {
-            let entries = glob_match(&pattern_str).map_err(|e| format!("Invalid glob pattern: {e}"))?;
+        let result =
+            tokio::task::spawn_blocking(move || -> std::result::Result<Vec<String>, String> {
+                let entries =
+                    glob_match(&pattern_str).map_err(|e| format!("Invalid glob pattern: {e}"))?;
 
-            let mut paths: Vec<String> = Vec::new();
-            for entry in entries {
-                match entry {
-                    Ok(p) => paths.push(p.to_string_lossy().to_string()),
-                    Err(e) => {
-                        warn!("glob entry error: {e}");
+                let mut paths: Vec<String> = Vec::new();
+                for entry in entries {
+                    match entry {
+                        Ok(p) => paths.push(p.to_string_lossy().to_string()),
+                        Err(e) => {
+                            warn!("glob entry error: {e}");
+                        }
                     }
                 }
-            }
-            paths.sort();
-            Ok(paths)
-        })
-        .await
-        .map_err(|e| AgentError::ToolExecution(format!("glob task panicked: {e}")))?;
+                paths.sort();
+                Ok(paths)
+            })
+            .await
+            .map_err(|e| AgentError::ToolExecution(format!("glob task panicked: {e}")))?;
 
         match result {
             Ok(paths) => {
@@ -688,7 +682,11 @@ fn extensions_for_type(file_type: &str) -> Option<Vec<&'static str>> {
 }
 
 /// Check whether a file path matches the glob filter or type filter.
-fn matches_file_filter(path: &Path, glob_filter: &Option<glob::Pattern>, type_exts: &Option<Vec<&str>>) -> bool {
+fn matches_file_filter(
+    path: &Path,
+    glob_filter: &Option<glob::Pattern>,
+    type_exts: &Option<Vec<&str>>,
+) -> bool {
     if let Some(pat) = glob_filter {
         let name = path.file_name().unwrap_or_default().to_string_lossy();
         if !pat.matches(&name) {
@@ -778,12 +776,14 @@ fn grep_sync(input: &GrepInput, cwd: &Path) -> Result<ToolResult> {
     };
 
     // Compile optional filters.
-    let glob_filter = input.glob.as_ref().map(|g| {
-        glob::Pattern::new(g).unwrap_or_else(|_| glob::Pattern::new("*").unwrap())
-    });
-    let type_exts = input.file_type.as_ref().and_then(|t| {
-        extensions_for_type(t).map(|v| v.into_iter().collect::<Vec<_>>())
-    });
+    let glob_filter = input
+        .glob
+        .as_ref()
+        .map(|g| glob::Pattern::new(g).unwrap_or_else(|_| glob::Pattern::new("*").unwrap()));
+    let type_exts = input
+        .file_type
+        .as_ref()
+        .and_then(|t| extensions_for_type(t).map(|v| v.into_iter().collect::<Vec<_>>()));
 
     // Collect files to search.
     let files = if search_path.is_file() {
@@ -1045,7 +1045,9 @@ mod tests {
         let data = block["source"]["data"].as_str().unwrap();
         assert!(!data.is_empty());
         use base64::Engine;
-        let decoded = base64::engine::general_purpose::STANDARD.decode(data).unwrap();
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .unwrap();
         assert_eq!(decoded, png_bytes);
     }
 
@@ -1144,7 +1146,10 @@ mod tests {
             .unwrap();
 
         assert!(!result.is_error);
-        assert!(result.raw_content.is_none(), "csv should not be treated as image");
+        assert!(
+            result.raw_content.is_none(),
+            "csv should not be treated as image"
+        );
         assert!(result.content.contains("a,b,c"));
     }
 
@@ -1363,7 +1368,11 @@ mod tests {
             .execute("Bash", json!({ "command": "cat ~/marker.txt" }))
             .await
             .unwrap();
-        assert!(!result.is_error, "Should read file via ~: {}", result.content);
+        assert!(
+            !result.is_error,
+            "Should read file via ~: {}",
+            result.content
+        );
         assert!(result.content.contains("found"), "~ should resolve to cwd");
     }
 
@@ -1371,17 +1380,26 @@ mod tests {
     async fn bash_env_blocklist_strips_vars() {
         let tmp = TempDir::new().unwrap();
         // Set a test env var in the process
-        unsafe { std::env::set_var("STARPOD_TEST_SECRET", "leaked"); }
+        unsafe {
+            std::env::set_var("STARPOD_TEST_SECRET", "leaked");
+        }
 
         let executor = ToolExecutor::new(tmp.path().to_path_buf())
             .with_env_blocklist(vec!["STARPOD_TEST_SECRET".to_string()]);
 
         let result = executor
-            .execute("Bash", json!({ "command": "echo \"val=${STARPOD_TEST_SECRET}\"" }))
+            .execute(
+                "Bash",
+                json!({ "command": "echo \"val=${STARPOD_TEST_SECRET}\"" }),
+            )
             .await
             .unwrap();
         assert!(!result.is_error);
-        assert_eq!(result.content.trim(), "val=", "Blocked env var should not be visible to child process");
+        assert_eq!(
+            result.content.trim(),
+            "val=",
+            "Blocked env var should not be visible to child process"
+        );
 
         // Cleanup
         std::env::remove_var("STARPOD_TEST_SECRET");
@@ -1402,7 +1420,10 @@ mod tests {
             .execute("Bash", json!({ "command": "echo $STARPOD_TEST_ALLOWED" }))
             .await
             .unwrap();
-        assert!(result.content.contains("visible"), "Non-blocked vars should still be inherited");
+        assert!(
+            result.content.contains("visible"),
+            "Non-blocked vars should still be inherited"
+        );
 
         // Cleanup
         std::env::remove_var("STARPOD_TEST_ALLOWED");

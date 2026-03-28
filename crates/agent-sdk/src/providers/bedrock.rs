@@ -177,10 +177,7 @@ impl BedrockProvider {
     ///
     /// Same as Anthropic Messages API but with `anthropic_version` in the body
     /// instead of as a header, and without the `model` field (model is in the URL).
-    fn build_body(
-        &self,
-        request: &CreateMessageRequest,
-    ) -> Result<serde_json::Value> {
+    fn build_body(&self, request: &CreateMessageRequest) -> Result<serde_json::Value> {
         let mut req = request.clone();
         req.stream = false; // Will be removed; streaming is controlled by endpoint URL
         strip_tool_result_names(&mut req);
@@ -204,11 +201,7 @@ impl BedrockProvider {
     }
 
     /// Send a signed POST request to Bedrock with retry logic.
-    async fn send_signed(
-        &self,
-        url: &str,
-        body: &[u8],
-    ) -> Result<reqwest::Response> {
+    async fn send_signed(&self, url: &str, body: &[u8]) -> Result<reqwest::Response> {
         let mut attempt: u32 = 0;
 
         loop {
@@ -224,10 +217,7 @@ impl BedrockProvider {
             let base_headers = vec![
                 ("content-type".to_string(), "application/json".to_string()),
                 ("host".to_string(), host.to_string()),
-                (
-                    "x-amz-content-sha256".to_string(),
-                    payload_hash.to_string(),
-                ),
+                ("x-amz-content-sha256".to_string(), payload_hash.to_string()),
             ];
 
             // Sign the request
@@ -292,10 +282,7 @@ impl BedrockProvider {
 
     fn backoff_duration(&self, attempt: u32) -> Duration {
         let secs = self.retry_config.initial_backoff.as_secs_f64()
-            * self
-                .retry_config
-                .backoff_multiplier
-                .powi(attempt as i32);
+            * self.retry_config.backoff_multiplier.powi(attempt as i32);
         let max_secs = self.retry_config.max_backoff.as_secs_f64();
         Duration::from_secs_f64(secs.min(max_secs))
     }
@@ -537,51 +524,76 @@ fn parse_event_stream_headers(mut data: &[u8], event_type: &mut String) {
 /// The JSON has the same structure as Anthropic SSE events, with an additional
 /// `"type"` field that mirrors the SSE `event:` line.
 fn parse_bedrock_event(event_type: &str, json: &str) -> Result<StreamEvent> {
-    use crate::client::{
-        ApiContentBlock, ApiUsage, ContentDelta, MessageDelta, MessageResponse,
-    };
+    use crate::client::{ApiContentBlock, ApiUsage, ContentDelta, MessageDelta, MessageResponse};
 
     match event_type {
         "message_start" => {
             #[derive(serde::Deserialize)]
-            struct Wrapper { message: MessageResponse }
+            struct Wrapper {
+                message: MessageResponse,
+            }
             let w: Wrapper = serde_json::from_str(json)?;
             Ok(StreamEvent::MessageStart { message: w.message })
         }
         "content_block_start" => {
             #[derive(serde::Deserialize)]
-            struct Wrapper { index: usize, content_block: ApiContentBlock }
+            struct Wrapper {
+                index: usize,
+                content_block: ApiContentBlock,
+            }
             let w: Wrapper = serde_json::from_str(json)?;
-            Ok(StreamEvent::ContentBlockStart { index: w.index, content_block: w.content_block })
+            Ok(StreamEvent::ContentBlockStart {
+                index: w.index,
+                content_block: w.content_block,
+            })
         }
         "content_block_delta" => {
             #[derive(serde::Deserialize)]
-            struct Wrapper { index: usize, delta: ContentDelta }
+            struct Wrapper {
+                index: usize,
+                delta: ContentDelta,
+            }
             let w: Wrapper = serde_json::from_str(json)?;
-            Ok(StreamEvent::ContentBlockDelta { index: w.index, delta: w.delta })
+            Ok(StreamEvent::ContentBlockDelta {
+                index: w.index,
+                delta: w.delta,
+            })
         }
         "content_block_stop" => {
             #[derive(serde::Deserialize)]
-            struct Wrapper { index: usize }
+            struct Wrapper {
+                index: usize,
+            }
             let w: Wrapper = serde_json::from_str(json)?;
             Ok(StreamEvent::ContentBlockStop { index: w.index })
         }
         "message_delta" => {
             #[derive(serde::Deserialize)]
-            struct Wrapper { delta: MessageDelta, usage: ApiUsage }
+            struct Wrapper {
+                delta: MessageDelta,
+                usage: ApiUsage,
+            }
             let w: Wrapper = serde_json::from_str(json)?;
-            Ok(StreamEvent::MessageDelta { delta: w.delta, usage: w.usage })
+            Ok(StreamEvent::MessageDelta {
+                delta: w.delta,
+                usage: w.usage,
+            })
         }
         "message_stop" => Ok(StreamEvent::MessageStop),
         "ping" => Ok(StreamEvent::Ping),
         "error" => {
             #[derive(serde::Deserialize)]
-            struct Wrapper { error: crate::client::ApiError }
+            struct Wrapper {
+                error: crate::client::ApiError,
+            }
             let w: Wrapper = serde_json::from_str(json)?;
             Ok(StreamEvent::Error { error: w.error })
         }
         other => {
-            debug!(event_type = other, "Unknown Bedrock event type, treating as ping");
+            debug!(
+                event_type = other,
+                "Unknown Bedrock event type, treating as ping"
+            );
             Ok(StreamEvent::Ping)
         }
     }
@@ -593,12 +605,7 @@ mod tests {
 
     #[test]
     fn invoke_url_format() {
-        let provider = BedrockProvider::new(
-            "AKIATEST",
-            "secret",
-            None,
-            "us-east-1",
-        );
+        let provider = BedrockProvider::new("AKIATEST", "secret", None, "us-east-1");
         assert_eq!(
             provider.invoke_url("us.anthropic.claude-sonnet-4-6-20250514-v1:0"),
             "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-6-20250514-v1:0/invoke"
@@ -607,12 +614,7 @@ mod tests {
 
     #[test]
     fn invoke_stream_url_format() {
-        let provider = BedrockProvider::new(
-            "AKIATEST",
-            "secret",
-            None,
-            "eu-west-1",
-        );
+        let provider = BedrockProvider::new("AKIATEST", "secret", None, "eu-west-1");
         assert_eq!(
             provider.invoke_stream_url("anthropic.claude-3-5-haiku-20241022-v1:0"),
             "https://bedrock-runtime.eu-west-1.amazonaws.com/model/anthropic.claude-3-5-haiku-20241022-v1:0/invoke-with-response-stream"
@@ -621,12 +623,7 @@ mod tests {
 
     #[test]
     fn build_body_removes_model_and_adds_version() {
-        let provider = BedrockProvider::new(
-            "AKIATEST",
-            "secret",
-            None,
-            "us-east-1",
-        );
+        let provider = BedrockProvider::new("AKIATEST", "secret", None, "us-east-1");
 
         let request = CreateMessageRequest {
             model: "us.anthropic.claude-sonnet-4-6-20250514-v1:0".to_string(),
@@ -652,12 +649,7 @@ mod tests {
 
     #[test]
     fn cost_rates_match_anthropic() {
-        let provider = BedrockProvider::new(
-            "AKIATEST",
-            "secret",
-            None,
-            "us-east-1",
-        );
+        let provider = BedrockProvider::new("AKIATEST", "secret", None, "us-east-1");
 
         let sonnet = provider.cost_rates("us.anthropic.claude-sonnet-4-6-20250514-v1:0");
         assert!((sonnet.input_per_million - 3.0).abs() < 1e-9);
@@ -773,7 +765,11 @@ mod tests {
 
     #[test]
     fn invoke_url_different_regions() {
-        for (region, prefix) in [("us-east-1", "us"), ("eu-west-1", "eu"), ("ap-northeast-1", "apac")] {
+        for (region, prefix) in [
+            ("us-east-1", "us"),
+            ("eu-west-1", "eu"),
+            ("ap-northeast-1", "apac"),
+        ] {
             let provider = BedrockProvider::new("AKIATEST", "secret", None, region);
             let url = provider.invoke_url(&format!("{prefix}.anthropic.claude-sonnet-4-6"));
             assert!(url.contains(&format!("bedrock-runtime.{region}.amazonaws.com")));
@@ -896,7 +892,8 @@ mod tests {
 
     #[test]
     fn parse_bedrock_event_unknown_type_returns_ping() {
-        let event = parse_bedrock_event("some_future_event", r#"{"type":"some_future_event"}"#).unwrap();
+        let event =
+            parse_bedrock_event("some_future_event", r#"{"type":"some_future_event"}"#).unwrap();
         assert!(matches!(event, StreamEvent::Ping));
     }
 
@@ -946,15 +943,14 @@ mod tests {
         use tokio_stream::StreamExt;
 
         // Build a content_block_delta event
-        let inner_json = r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}"#;
+        let inner_json =
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}"#;
         let b64 = base64::engine::general_purpose::STANDARD.encode(inner_json);
         let payload = serde_json::to_vec(&serde_json::json!({"bytes": b64})).unwrap();
         let frame = build_event_frame("chunk", &payload);
 
         let byte_stream = tokio_stream::once(Ok::<_, reqwest::Error>(bytes::Bytes::from(frame)));
-        let mut events: Vec<_> = aws_event_stream(byte_stream)
-            .collect::<Vec<_>>()
-            .await;
+        let mut events: Vec<_> = aws_event_stream(byte_stream).collect::<Vec<_>>().await;
 
         assert_eq!(events.len(), 1);
         let event = events.remove(0).unwrap();
@@ -988,15 +984,23 @@ mod tests {
             all_frames.extend_from_slice(&build_event_frame("chunk", &payload));
         }
 
-        let byte_stream = tokio_stream::once(Ok::<_, reqwest::Error>(bytes::Bytes::from(all_frames)));
-        let events: Vec<_> = aws_event_stream(byte_stream)
-            .collect::<Vec<_>>()
-            .await;
+        let byte_stream =
+            tokio_stream::once(Ok::<_, reqwest::Error>(bytes::Bytes::from(all_frames)));
+        let events: Vec<_> = aws_event_stream(byte_stream).collect::<Vec<_>>().await;
 
         assert_eq!(events.len(), 3);
-        assert!(matches!(events[0].as_ref().unwrap(), StreamEvent::MessageStart { .. }));
-        assert!(matches!(events[1].as_ref().unwrap(), StreamEvent::ContentBlockDelta { .. }));
-        assert!(matches!(events[2].as_ref().unwrap(), StreamEvent::MessageStop));
+        assert!(matches!(
+            events[0].as_ref().unwrap(),
+            StreamEvent::MessageStart { .. }
+        ));
+        assert!(matches!(
+            events[1].as_ref().unwrap(),
+            StreamEvent::ContentBlockDelta { .. }
+        ));
+        assert!(matches!(
+            events[2].as_ref().unwrap(),
+            StreamEvent::MessageStop
+        ));
     }
 
     #[tokio::test]
@@ -1014,14 +1018,9 @@ mod tests {
         let chunk1 = bytes::Bytes::from(frame[..mid].to_vec());
         let chunk2 = bytes::Bytes::from(frame[mid..].to_vec());
 
-        let byte_stream = tokio_stream::iter(vec![
-            Ok::<_, reqwest::Error>(chunk1),
-            Ok(chunk2),
-        ]);
+        let byte_stream = tokio_stream::iter(vec![Ok::<_, reqwest::Error>(chunk1), Ok(chunk2)]);
 
-        let events: Vec<_> = aws_event_stream(byte_stream)
-            .collect::<Vec<_>>()
-            .await;
+        let events: Vec<_> = aws_event_stream(byte_stream).collect::<Vec<_>>().await;
 
         assert_eq!(events.len(), 1);
         match events[0].as_ref().unwrap() {
@@ -1037,10 +1036,9 @@ mod tests {
     async fn aws_event_stream_empty_stream() {
         use tokio_stream::StreamExt;
 
-        let byte_stream = tokio_stream::empty::<std::result::Result<bytes::Bytes, reqwest::Error>>();
-        let events: Vec<_> = aws_event_stream(byte_stream)
-            .collect::<Vec<_>>()
-            .await;
+        let byte_stream =
+            tokio_stream::empty::<std::result::Result<bytes::Bytes, reqwest::Error>>();
+        let events: Vec<_> = aws_event_stream(byte_stream).collect::<Vec<_>>().await;
 
         assert!(events.is_empty());
     }

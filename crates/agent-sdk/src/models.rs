@@ -165,7 +165,9 @@ impl ModelRegistry {
                     pricing: CostRates {
                         input_per_million: me.input,
                         output_per_million: me.output,
-                        cache_read_multiplier: me.cache_read_multiplier.or(pe.cache_read_multiplier),
+                        cache_read_multiplier: me
+                            .cache_read_multiplier
+                            .or(pe.cache_read_multiplier),
                         cache_creation_multiplier: me
                             .cache_creation_multiplier
                             .or(pe.cache_creation_multiplier),
@@ -378,7 +380,9 @@ mod tests {
     #[test]
     fn fuzzy_match_longer_model_id() {
         let reg = ModelRegistry::with_defaults();
-        let info = reg.get_fuzzy("anthropic", "claude-sonnet-4-5-20250514").unwrap();
+        let info = reg
+            .get_fuzzy("anthropic", "claude-sonnet-4-5-20250514")
+            .unwrap();
         assert!((info.pricing.input_per_million - 3.0).abs() < 1e-9);
     }
 
@@ -386,33 +390,39 @@ mod tests {
     fn fuzzy_match_picks_most_specific() {
         let mut reg = ModelRegistry::new();
         let short_key = make_key("test", "claude-sonnet");
-        reg.models.insert(short_key, ModelInfo {
-            id: "claude-sonnet".into(),
-            provider: "test".into(),
-            pricing: CostRates {
-                input_per_million: 1.0,
-                output_per_million: 5.0,
-                cache_read_multiplier: None,
-                cache_creation_multiplier: None,
+        reg.models.insert(
+            short_key,
+            ModelInfo {
+                id: "claude-sonnet".into(),
+                provider: "test".into(),
+                pricing: CostRates {
+                    input_per_million: 1.0,
+                    output_per_million: 5.0,
+                    cache_read_multiplier: None,
+                    cache_creation_multiplier: None,
+                },
+                context_window: None,
+                supports_tool_use: true,
+                supports_vision: false,
             },
-            context_window: None,
-            supports_tool_use: true,
-            supports_vision: false,
-        });
+        );
         let long_key = make_key("test", "claude-sonnet-4-5");
-        reg.models.insert(long_key, ModelInfo {
-            id: "claude-sonnet-4-5".into(),
-            provider: "test".into(),
-            pricing: CostRates {
-                input_per_million: 3.0,
-                output_per_million: 15.0,
-                cache_read_multiplier: None,
-                cache_creation_multiplier: None,
+        reg.models.insert(
+            long_key,
+            ModelInfo {
+                id: "claude-sonnet-4-5".into(),
+                provider: "test".into(),
+                pricing: CostRates {
+                    input_per_million: 3.0,
+                    output_per_million: 15.0,
+                    cache_read_multiplier: None,
+                    cache_creation_multiplier: None,
+                },
+                context_window: None,
+                supports_tool_use: true,
+                supports_vision: false,
             },
-            context_window: None,
-            supports_tool_use: true,
-            supports_vision: false,
-        });
+        );
         let info = reg.get_fuzzy("test", "claude-sonnet-4-5-20250514").unwrap();
         assert!((info.pricing.input_per_million - 3.0).abs() < 1e-9);
     }
@@ -427,11 +437,14 @@ mod tests {
     #[test]
     fn merge_overrides() {
         let mut base = ModelRegistry::with_defaults();
-        let overrides = ModelRegistry::from_toml(r#"
+        let overrides = ModelRegistry::from_toml(
+            r#"
 [anthropic.models.claude-sonnet-4-5]
 input = 99.0
 output = 99.0
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         base.merge(overrides);
         let info = base.get("anthropic", "claude-sonnet-4-5").unwrap();
         assert!((info.pricing.input_per_million - 99.0).abs() < 1e-9);
@@ -568,19 +581,23 @@ cache_read_multiplier = 0.05
     #[test]
     fn register_makes_model_visible_via_get() {
         let mut reg = ModelRegistry::new();
-        reg.register("ollama", "qwen3.5:9b", ModelInfo {
-            id: "qwen3.5:9b".into(),
-            provider: "ollama".into(),
-            pricing: CostRates {
-                input_per_million: 0.0,
-                output_per_million: 0.0,
-                cache_read_multiplier: None,
-                cache_creation_multiplier: None,
+        reg.register(
+            "ollama",
+            "qwen3.5:9b",
+            ModelInfo {
+                id: "qwen3.5:9b".into(),
+                provider: "ollama".into(),
+                pricing: CostRates {
+                    input_per_million: 0.0,
+                    output_per_million: 0.0,
+                    cache_read_multiplier: None,
+                    cache_creation_multiplier: None,
+                },
+                context_window: Some(262_144),
+                supports_tool_use: true,
+                supports_vision: true,
             },
-            context_window: Some(262_144),
-            supports_tool_use: true,
-            supports_vision: true,
-        });
+        );
         let info = reg.get("ollama", "qwen3.5:9b").unwrap();
         assert_eq!(info.context_window, Some(262_144));
         assert!(info.supports_vision);
@@ -591,19 +608,23 @@ cache_read_multiplier = 0.05
         let mut reg = ModelRegistry::with_defaults();
         assert!(reg.models_for_provider("ollama").is_empty());
 
-        reg.register("ollama", "llama3:8b", ModelInfo {
-            id: "llama3:8b".into(),
-            provider: "ollama".into(),
-            pricing: CostRates {
-                input_per_million: 0.0,
-                output_per_million: 0.0,
-                cache_read_multiplier: None,
-                cache_creation_multiplier: None,
+        reg.register(
+            "ollama",
+            "llama3:8b",
+            ModelInfo {
+                id: "llama3:8b".into(),
+                provider: "ollama".into(),
+                pricing: CostRates {
+                    input_per_million: 0.0,
+                    output_per_million: 0.0,
+                    cache_read_multiplier: None,
+                    cache_creation_multiplier: None,
+                },
+                context_window: Some(131_072),
+                supports_tool_use: true,
+                supports_vision: false,
             },
-            context_window: Some(131_072),
-            supports_tool_use: true,
-            supports_vision: false,
-        });
+        );
         let models = reg.models_for_provider("ollama");
         assert_eq!(models, vec!["llama3:8b"]);
     }
@@ -614,19 +635,23 @@ cache_read_multiplier = 0.05
         let original = reg.get("anthropic", "claude-haiku-4-5").unwrap();
         assert!(original.pricing.input_per_million > 0.0);
 
-        reg.register("anthropic", "claude-haiku-4-5", ModelInfo {
-            id: "claude-haiku-4-5".into(),
-            provider: "anthropic".into(),
-            pricing: CostRates {
-                input_per_million: 99.0,
-                output_per_million: 99.0,
-                cache_read_multiplier: None,
-                cache_creation_multiplier: None,
+        reg.register(
+            "anthropic",
+            "claude-haiku-4-5",
+            ModelInfo {
+                id: "claude-haiku-4-5".into(),
+                provider: "anthropic".into(),
+                pricing: CostRates {
+                    input_per_million: 99.0,
+                    output_per_million: 99.0,
+                    cache_read_multiplier: None,
+                    cache_creation_multiplier: None,
+                },
+                context_window: Some(200_000),
+                supports_tool_use: true,
+                supports_vision: true,
             },
-            context_window: Some(200_000),
-            supports_tool_use: true,
-            supports_vision: true,
-        });
+        );
         let updated = reg.get("anthropic", "claude-haiku-4-5").unwrap();
         assert!((updated.pricing.input_per_million - 99.0).abs() < 1e-9);
     }

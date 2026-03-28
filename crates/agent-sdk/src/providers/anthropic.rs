@@ -102,10 +102,7 @@ impl AnthropicProvider {
 
     fn backoff_duration(&self, attempt: u32) -> Duration {
         let secs = self.retry_config.initial_backoff.as_secs_f64()
-            * self
-                .retry_config
-                .backoff_multiplier
-                .powi(attempt as i32);
+            * self.retry_config.backoff_multiplier.powi(attempt as i32);
         let max_secs = self.retry_config.max_backoff.as_secs_f64();
         Duration::from_secs_f64(secs.min(max_secs))
     }
@@ -131,10 +128,7 @@ impl AnthropicProvider {
     }
 
     /// Internal helper: send a POST with retry on 429/529.
-    async fn send_with_retry(
-        &self,
-        body: &serde_json::Value,
-    ) -> Result<reqwest::Response> {
+    async fn send_with_retry(&self, body: &serde_json::Value) -> Result<reqwest::Response> {
         let mut attempt: u32 = 0;
         loop {
             let response = self
@@ -488,8 +482,7 @@ mod tests {
         );
         assert!(matches!(err, AgentError::AuthenticationFailed(_)));
 
-        let err =
-            AnthropicProvider::status_to_error(StatusCode::TOO_MANY_REQUESTS, "rate limited");
+        let err = AnthropicProvider::status_to_error(StatusCode::TOO_MANY_REQUESTS, "rate limited");
         assert!(matches!(err, AgentError::RateLimited(_)));
 
         let err = AnthropicProvider::status_to_error(StatusCode::BAD_REQUEST, "invalid");

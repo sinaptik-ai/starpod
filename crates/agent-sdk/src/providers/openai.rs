@@ -17,8 +17,8 @@ use tokio_stream::StreamExt;
 use tracing::{debug, warn};
 
 use crate::client::{
-    ApiContentBlock, ApiMessage, ApiUsage, CreateMessageRequest, ContentDelta,
-    MessageDelta, MessageResponse, RetryConfig, StreamEvent,
+    ApiContentBlock, ApiMessage, ApiUsage, ContentDelta, CreateMessageRequest, MessageDelta,
+    MessageResponse, RetryConfig, StreamEvent,
 };
 use crate::error::{AgentError, Result};
 use crate::models::ModelRegistry;
@@ -136,7 +136,11 @@ fn build_openai_request(request: &CreateMessageRequest) -> serde_json::Value {
 
     // System prompt
     if let Some(system_blocks) = &request.system {
-        let system_text: String = system_blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>().join("\n");
+        let system_text: String = system_blocks
+            .iter()
+            .map(|b| b.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
         if !system_text.is_empty() {
             messages.push(serde_json::json!({
                 "role": "system",
@@ -394,7 +398,9 @@ where
 }
 
 /// Same as [`deserialize_arguments`] but for `Option<String>` (streaming deltas).
-fn deserialize_arguments_opt<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
+fn deserialize_arguments_opt<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -485,12 +491,42 @@ impl LlmProvider for OpenAiProvider {
         // Hardcoded fallback
         let cache = (Some(0.1), Some(1.0));
         match model {
-            "gpt-4.1" => CostRates { input_per_million: 2.0, output_per_million: 8.0, cache_read_multiplier: cache.0, cache_creation_multiplier: cache.1 },
-            "gpt-4o" => CostRates { input_per_million: 2.5, output_per_million: 10.0, cache_read_multiplier: cache.0, cache_creation_multiplier: cache.1 },
-            "gpt-4o-mini" => CostRates { input_per_million: 0.15, output_per_million: 0.6, cache_read_multiplier: cache.0, cache_creation_multiplier: cache.1 },
-            "o3" => CostRates { input_per_million: 2.0, output_per_million: 8.0, cache_read_multiplier: cache.0, cache_creation_multiplier: cache.1 },
-            "o4-mini" => CostRates { input_per_million: 1.1, output_per_million: 4.4, cache_read_multiplier: cache.0, cache_creation_multiplier: cache.1 },
-            _ => CostRates { input_per_million: 2.0, output_per_million: 8.0, cache_read_multiplier: cache.0, cache_creation_multiplier: cache.1 },
+            "gpt-4.1" => CostRates {
+                input_per_million: 2.0,
+                output_per_million: 8.0,
+                cache_read_multiplier: cache.0,
+                cache_creation_multiplier: cache.1,
+            },
+            "gpt-4o" => CostRates {
+                input_per_million: 2.5,
+                output_per_million: 10.0,
+                cache_read_multiplier: cache.0,
+                cache_creation_multiplier: cache.1,
+            },
+            "gpt-4o-mini" => CostRates {
+                input_per_million: 0.15,
+                output_per_million: 0.6,
+                cache_read_multiplier: cache.0,
+                cache_creation_multiplier: cache.1,
+            },
+            "o3" => CostRates {
+                input_per_million: 2.0,
+                output_per_million: 8.0,
+                cache_read_multiplier: cache.0,
+                cache_creation_multiplier: cache.1,
+            },
+            "o4-mini" => CostRates {
+                input_per_million: 1.1,
+                output_per_million: 4.4,
+                cache_read_multiplier: cache.0,
+                cache_creation_multiplier: cache.1,
+            },
+            _ => CostRates {
+                input_per_million: 2.0,
+                output_per_million: 8.0,
+                cache_read_multiplier: cache.0,
+                cache_creation_multiplier: cache.1,
+            },
         }
     }
 
@@ -1136,19 +1172,27 @@ data: {\"id\":\"chat-1\",\"model\":\"qwen3:8b\",\"choices\":[{\"delta\":{\"tool_
 data: {\"id\":\"chat-1\",\"model\":\"qwen3:8b\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5}}\n\n\
 data: [DONE]\n\n";
 
-        let bytes_stream = futures::stream::once(async move {
-            Ok::<_, reqwest::Error>(bytes::Bytes::from(sse_data))
-        });
+        let bytes_stream =
+            futures::stream::once(
+                async move { Ok::<_, reqwest::Error>(bytes::Bytes::from(sse_data)) },
+            );
 
-        let raw: Vec<Result<StreamEvent>> = openai_sse_stream(bytes_stream)
-            .collect()
-            .await;
+        let raw: Vec<Result<StreamEvent>> = openai_sse_stream(bytes_stream).collect().await;
         let events: Vec<StreamEvent> = raw.into_iter().map(|r| r.unwrap()).collect();
 
         // Should contain: MessageStart, ContentBlockStart (tool), ContentBlockStop, MessageDelta, MessageStop
-        let tool_event = events.iter().find(|e| matches!(e, StreamEvent::ContentBlockStart { .. }));
-        assert!(tool_event.is_some(), "expected a tool ContentBlockStart event");
-        if let StreamEvent::ContentBlockStart { content_block: ApiContentBlock::ToolUse { name, input, .. }, .. } = tool_event.unwrap() {
+        let tool_event = events
+            .iter()
+            .find(|e| matches!(e, StreamEvent::ContentBlockStart { .. }));
+        assert!(
+            tool_event.is_some(),
+            "expected a tool ContentBlockStart event"
+        );
+        if let StreamEvent::ContentBlockStart {
+            content_block: ApiContentBlock::ToolUse { name, input, .. },
+            ..
+        } = tool_event.unwrap()
+        {
             assert_eq!(name, "FileRead");
             assert_eq!(input["path"], "/tmp/foo");
         } else {
@@ -1169,18 +1213,26 @@ data: {\"id\":\"chat-2\",\"model\":\"gpt-4.1\",\"choices\":[{\"delta\":{\"tool_c
 data: {\"id\":\"chat-2\",\"model\":\"gpt-4.1\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":20,\"completion_tokens\":10}}\n\n\
 data: [DONE]\n\n";
 
-        let bytes_stream = futures::stream::once(async move {
-            Ok::<_, reqwest::Error>(bytes::Bytes::from(sse_data))
-        });
+        let bytes_stream =
+            futures::stream::once(
+                async move { Ok::<_, reqwest::Error>(bytes::Bytes::from(sse_data)) },
+            );
 
-        let raw: Vec<Result<StreamEvent>> = openai_sse_stream(bytes_stream)
-            .collect()
-            .await;
+        let raw: Vec<Result<StreamEvent>> = openai_sse_stream(bytes_stream).collect().await;
         let events: Vec<StreamEvent> = raw.into_iter().map(|r| r.unwrap()).collect();
 
-        let tool_event = events.iter().find(|e| matches!(e, StreamEvent::ContentBlockStart { .. }));
-        assert!(tool_event.is_some(), "expected a tool ContentBlockStart event");
-        if let StreamEvent::ContentBlockStart { content_block: ApiContentBlock::ToolUse { name, input, .. }, .. } = tool_event.unwrap() {
+        let tool_event = events
+            .iter()
+            .find(|e| matches!(e, StreamEvent::ContentBlockStart { .. }));
+        assert!(
+            tool_event.is_some(),
+            "expected a tool ContentBlockStart event"
+        );
+        if let StreamEvent::ContentBlockStart {
+            content_block: ApiContentBlock::ToolUse { name, input, .. },
+            ..
+        } = tool_event.unwrap()
+        {
             assert_eq!(name, "Bash");
             assert_eq!(input["command"], "ls");
         } else {
@@ -1204,7 +1256,10 @@ data: [DONE]\n\n";
         assert_eq!(result.len(), 1);
         assert_eq!(result[0]["role"], "assistant");
         // When there are tool_calls but no text, content must be null
-        assert!(result[0]["content"].is_null(), "content should be null when assistant has only tool_calls");
+        assert!(
+            result[0]["content"].is_null(),
+            "content should be null when assistant has only tool_calls"
+        );
         assert!(result[0]["tool_calls"].is_array());
         assert_eq!(result[0]["tool_calls"][0]["id"], "call_99");
         assert_eq!(result[0]["tool_calls"][0]["function"]["name"], "Read");

@@ -127,7 +127,10 @@ mod tests {
     fn test_chunk_text_large() {
         // Create text larger than CHUNK_SIZE
         let line = "x".repeat(200);
-        let text: String = (0..20).map(|_| line.as_str()).collect::<Vec<_>>().join("\n");
+        let text: String = (0..20)
+            .map(|_| line.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
         let chunks = chunk_text("big.md", &text, CHUNK_SIZE, CHUNK_OVERLAP);
         assert!(chunks.len() > 1, "Should produce multiple chunks");
         // Every chunk should have content
@@ -140,7 +143,10 @@ mod tests {
     fn test_chunk_text_custom_sizes() {
         // Build a long text (~4000 chars): 20 lines of 200 chars each
         let line = "a".repeat(200);
-        let long_text: String = (0..20).map(|_| line.as_str()).collect::<Vec<_>>().join("\n");
+        let long_text: String = (0..20)
+            .map(|_| line.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
 
         let chunks_default = chunk_text("test.md", &long_text, CHUNK_SIZE, CHUNK_OVERLAP);
         let chunks_small = chunk_text("test.md", &long_text, 200, 50);

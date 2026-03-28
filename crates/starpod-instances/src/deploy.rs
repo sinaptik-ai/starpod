@@ -458,10 +458,8 @@ impl DeployClient {
         debug!(agent_id = %agent_id, secret_id = %secret_id, "Deleting agent secret");
         let resp = self
             .auth(
-                self.client.delete(self.url(&format!(
-                    "/agents/{}/secrets/{}",
-                    agent_id, secret_id
-                ))),
+                self.client
+                    .delete(self.url(&format!("/agents/{}/secrets/{}", agent_id, secret_id))),
             )
             .send()
             .await
@@ -598,14 +596,8 @@ impl DeployClient {
             match inst.status.as_str() {
                 "running" => return Ok(inst),
                 "error" => {
-                    let msg = inst
-                        .error_message
-                        .as_deref()
-                        .unwrap_or("unknown error");
-                    return Err(StarpodError::Channel(format!(
-                        "Instance failed: {}",
-                        msg
-                    )));
+                    let msg = inst.error_message.as_deref().unwrap_or("unknown error");
+                    return Err(StarpodError::Channel(format!("Instance failed: {}", msg)));
                 }
                 "deleted" | "deleting" => {
                     return Err(StarpodError::Channel(
@@ -671,18 +663,20 @@ impl DeployClient {
         // Step 5: Optionally create instance and wait for it to become ready
         let instance = if opts.create_instance {
             let created = self
-                .create_instance(agent_id, opts.instance_name, opts.instance_description, opts.zone, opts.machine_type)
+                .create_instance(
+                    agent_id,
+                    opts.instance_name,
+                    opts.instance_description,
+                    opts.zone,
+                    opts.machine_type,
+                )
                 .await?;
 
             let on_poll = opts.on_instance_poll.unwrap_or_else(|| Box::new(|_| {}));
 
             // Wait up to 15 minutes for the instance to reach "running"
             let ready = self
-                .wait_for_instance_ready(
-                    &created.id,
-                    Duration::from_secs(900),
-                    on_poll,
-                )
+                .wait_for_instance_ready(&created.id, Duration::from_secs(900), on_poll)
                 .await?;
 
             Some(ready)
@@ -733,20 +727,14 @@ impl DeployClient {
     }
 
     /// Download a single file from the agent.
-    pub async fn download_file(
-        &self,
-        agent_id: &str,
-        file_path: &str,
-    ) -> Result<Vec<u8>> {
+    pub async fn download_file(&self, agent_id: &str, file_path: &str) -> Result<Vec<u8>> {
         debug!(agent_id = %agent_id, path = %file_path, "Downloading file");
         let resp = self
-            .auth(
-                self.client.get(self.url(&format!(
-                    "/agents/{}/files/{}",
-                    agent_id,
-                    urlencoding::encode(file_path)
-                ))),
-            )
+            .auth(self.client.get(self.url(&format!(
+                "/agents/{}/files/{}",
+                agent_id,
+                urlencoding::encode(file_path)
+            ))))
             .send()
             .await
             .map_err(|e| StarpodError::Channel(format!("Failed to download file: {}", e)))?;
@@ -767,20 +755,14 @@ impl DeployClient {
     }
 
     /// Delete a single file from the agent on the backend.
-    pub async fn delete_file(
-        &self,
-        agent_id: &str,
-        file_path: &str,
-    ) -> Result<()> {
+    pub async fn delete_file(&self, agent_id: &str, file_path: &str) -> Result<()> {
         debug!(agent_id = %agent_id, path = %file_path, "Deleting remote file");
         let resp = self
-            .auth(
-                self.client.delete(self.url(&format!(
-                    "/agents/{}/files/{}",
-                    agent_id,
-                    urlencoding::encode(file_path)
-                ))),
-            )
+            .auth(self.client.delete(self.url(&format!(
+                "/agents/{}/files/{}",
+                agent_id,
+                urlencoding::encode(file_path)
+            ))))
             .send()
             .await
             .map_err(|e| StarpodError::Channel(format!("Failed to delete file: {}", e)))?;
@@ -876,11 +858,7 @@ impl DeployClient {
     }
 
     /// Pull remote agent files to the local workspace, downloading only changed files.
-    pub async fn pull_agent(
-        &self,
-        agent_name: &str,
-        agent_dir: &Path,
-    ) -> Result<SyncSummary> {
+    pub async fn pull_agent(&self, agent_name: &str, agent_dir: &Path) -> Result<SyncSummary> {
         let agents = self.list_agents().await?;
         let agent = agents
             .into_iter()
@@ -910,9 +888,8 @@ impl DeployClient {
                     StarpodError::Config(format!("Failed to create dir {:?}: {}", parent, e))
                 })?;
             }
-            std::fs::write(&dest, data).map_err(|e| {
-                StarpodError::Config(format!("Failed to write {:?}: {}", dest, e))
-            })?;
+            std::fs::write(&dest, data)
+                .map_err(|e| StarpodError::Config(format!("Failed to write {:?}: {}", dest, e)))?;
         }
 
         // Delete local files no longer on remote
@@ -925,8 +902,8 @@ impl DeployClient {
             }
         }
 
-        let total_remote = diff.to_download.len()
-            + (manifest.files.len() - diff.to_delete_local.len());
+        let total_remote =
+            diff.to_download.len() + (manifest.files.len() - diff.to_delete_local.len());
         let unchanged = total_remote.saturating_sub(diff.to_download.len());
         Ok(SyncSummary {
             uploaded: 0,
@@ -958,14 +935,12 @@ fn collect_files_recursive(
         return Ok(());
     }
 
-    let entries = std::fs::read_dir(dir).map_err(|e| {
-        StarpodError::Config(format!("Failed to read directory {:?}: {}", dir, e))
-    })?;
+    let entries = std::fs::read_dir(dir)
+        .map_err(|e| StarpodError::Config(format!("Failed to read directory {:?}: {}", dir, e)))?;
 
     for entry in entries {
-        let entry = entry.map_err(|e| {
-            StarpodError::Config(format!("Failed to read dir entry: {}", e))
-        })?;
+        let entry =
+            entry.map_err(|e| StarpodError::Config(format!("Failed to read dir entry: {}", e)))?;
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
 
@@ -1007,9 +982,8 @@ fn compute_manifest(files: &[(String, Vec<u8>)]) -> SyncManifestRequest {
 
 /// Parse a .env file into a key-value map. Handles KEY=VALUE lines, ignoring comments and empty lines.
 pub fn parse_env_file(path: &Path) -> Result<HashMap<String, String>> {
-    let content = std::fs::read_to_string(path).map_err(|e| {
-        StarpodError::Config(format!("Failed to read {:?}: {}", path, e))
-    })?;
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| StarpodError::Config(format!("Failed to read {:?}: {}", path, e)))?;
 
     let mut env = HashMap::new();
     for line in content.lines() {
@@ -1201,7 +1175,10 @@ mod tests {
         std::fs::create_dir_all(&agent_dir).unwrap();
         std::fs::write(agent_dir.join("SOUL.md"), "hello world").unwrap();
 
-        let summary = client.push_agent("test-agent", &agent_dir, None).await.unwrap();
+        let summary = client
+            .push_agent("test-agent", &agent_dir, None)
+            .await
+            .unwrap();
         assert_eq!(summary.uploaded, 1);
         assert_eq!(summary.deleted_remote, 1);
         assert_eq!(summary.downloaded, 0);
@@ -1314,7 +1291,11 @@ mod tests {
     fn parse_env_value_with_equals_sign() {
         let tmp = tempfile::tempdir().unwrap();
         let env_path = tmp.path().join(".env");
-        std::fs::write(&env_path, "DATABASE_URL=postgres://user:pass@host/db?opt=1\n").unwrap();
+        std::fs::write(
+            &env_path,
+            "DATABASE_URL=postgres://user:pass@host/db?opt=1\n",
+        )
+        .unwrap();
 
         let env = parse_env_file(&env_path).unwrap();
         assert_eq!(
@@ -1340,7 +1321,9 @@ mod tests {
 
         let names: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
         assert!(names.contains(&"visible.txt"));
-        assert!(!names.iter().any(|n| n.contains("hidden") || n.contains(".git")));
+        assert!(!names
+            .iter()
+            .any(|n| n.contains("hidden") || n.contains(".git")));
     }
 
     #[test]
@@ -1428,7 +1411,10 @@ mod tests {
         assert_eq!(config.version, 1);
         assert_eq!(config.variables.len(), 1);
         assert_eq!(config.variables[0].key, "MODEL");
-        assert_eq!(config.variables[0].default.as_deref(), Some("claude-sonnet"));
+        assert_eq!(
+            config.variables[0].default.as_deref(),
+            Some("claude-sonnet")
+        );
         assert_eq!(config.secrets.len(), 1);
         assert!(config.secrets[0].present);
         assert!(config.missing_required.is_empty());
@@ -1518,7 +1504,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let secret = client.set_user_secret("MY_SECRET", "my-value").await.unwrap();
+        let secret = client
+            .set_user_secret("MY_SECRET", "my-value")
+            .await
+            .unwrap();
         assert_eq!(secret.key, "MY_SECRET");
         assert_eq!(secret.id, "s-new");
     }
@@ -1548,7 +1537,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        client.delete_agent_secret("agent-123", "s-456").await.unwrap();
+        client
+            .delete_agent_secret("agent-123", "s-456")
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1579,7 +1571,9 @@ mod tests {
             .mount(&server)
             .await;
 
-        let manifest = SyncManifestRequest { files: HashMap::new() };
+        let manifest = SyncManifestRequest {
+            files: HashMap::new(),
+        };
         let result = client.sync_manifest("agent-123", &manifest).await;
         assert!(result.is_err());
     }
@@ -1719,7 +1713,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let diff = client.diff_agent("test-agent", tmp.path(), None).await.unwrap();
+        let diff = client
+            .diff_agent("test-agent", tmp.path(), None)
+            .await
+            .unwrap();
 
         // Verify we got the diff back correctly
         assert_eq!(diff.to_upload, vec!["SOUL.md"]);
@@ -1731,7 +1728,11 @@ mod tests {
         // Verify NO upload or delete requests were made
         // (only GET /agents and POST /agents/agent-123/sync should have been called)
         let received = server.received_requests().await.unwrap();
-        assert_eq!(received.len(), 2, "diff_agent should only make 2 requests (list agents + sync)");
+        assert_eq!(
+            received.len(),
+            2,
+            "diff_agent should only make 2 requests (list agents + sync)"
+        );
     }
 
     #[tokio::test]
@@ -1769,7 +1770,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let diff = client.diff_agent("skill-agent", tmp.path(), Some(&skills_dir)).await.unwrap();
+        let diff = client
+            .diff_agent("skill-agent", tmp.path(), Some(&skills_dir))
+            .await
+            .unwrap();
         assert_eq!(diff.to_upload, vec!["skills/my-skill.md"]);
     }
 
@@ -1787,7 +1791,10 @@ mod tests {
         }
     }
 
-    fn make_readiness(secrets: Vec<SecretStatusInfo>, missing_required: Vec<&str>) -> DeployReadiness {
+    fn make_readiness(
+        secrets: Vec<SecretStatusInfo>,
+        missing_required: Vec<&str>,
+    ) -> DeployReadiness {
         DeployReadiness {
             version: 1,
             variables: vec![],
@@ -1822,22 +1829,17 @@ mod tests {
 
     #[test]
     fn missing_optional_in_env_empty_when_no_env() {
-        let readiness = make_readiness(
-            vec![make_secret("OPT", false, false)],
-            vec![],
-        );
+        let readiness = make_readiness(vec![make_secret("OPT", false, false)], vec![]);
         let local_env = HashMap::new();
         assert!(readiness.missing_optional_in_env(&local_env).is_empty());
     }
 
     #[test]
     fn missing_optional_in_env_ignores_required() {
-        let readiness = make_readiness(
-            vec![make_secret("REQ", true, false)],
-            vec!["REQ"],
-        );
-        let local_env: HashMap<String, String> =
-            [("REQ".to_string(), "val".to_string())].into_iter().collect();
+        let readiness = make_readiness(vec![make_secret("REQ", true, false)], vec!["REQ"]);
+        let local_env: HashMap<String, String> = [("REQ".to_string(), "val".to_string())]
+            .into_iter()
+            .collect();
         assert!(readiness.missing_optional_in_env(&local_env).is_empty());
     }
 
@@ -1850,8 +1852,9 @@ mod tests {
             ],
             vec!["REQ_A", "REQ_B"],
         );
-        let local_env: HashMap<String, String> =
-            [("REQ_A".to_string(), "val".to_string())].into_iter().collect();
+        let local_env: HashMap<String, String> = [("REQ_A".to_string(), "val".to_string())]
+            .into_iter()
+            .collect();
 
         let result = readiness.missing_required_in_env(&local_env);
         assert_eq!(result, vec!["REQ_A"]);
@@ -1859,10 +1862,7 @@ mod tests {
 
     #[test]
     fn missing_required_in_env_empty_when_no_match() {
-        let readiness = make_readiness(
-            vec![make_secret("REQ", true, false)],
-            vec!["REQ"],
-        );
+        let readiness = make_readiness(vec![make_secret("REQ", true, false)], vec!["REQ"]);
         let local_env = HashMap::new();
         assert!(readiness.missing_required_in_env(&local_env).is_empty());
     }

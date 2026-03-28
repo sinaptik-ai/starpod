@@ -235,8 +235,7 @@ mod tests {
 
     #[test]
     fn matcher_debug_shows_hook_count() {
-        let m = HookCallbackMatcher::new(vec![noop_hook(), noop_hook()])
-            .with_matcher("test");
+        let m = HookCallbackMatcher::new(vec![noop_hook(), noop_hook()]).with_matcher("test");
         let debug = format!("{:?}", m);
         assert!(debug.contains("hooks_count: 2"));
         assert!(debug.contains("test"));
@@ -249,8 +248,16 @@ mod tests {
             .with_name("my-hook")
             .with_requirements(HookRequirements::default());
         let debug = format!("{:?}", m);
-        assert!(debug.contains("my-hook"), "debug should contain name: {}", debug);
-        assert!(debug.contains("requires"), "debug should contain requires: {}", debug);
+        assert!(
+            debug.contains("my-hook"),
+            "debug should contain name: {}",
+            debug
+        );
+        assert!(
+            debug.contains("requires"),
+            "debug should contain requires: {}",
+            debug
+        );
     }
 
     #[tokio::test]

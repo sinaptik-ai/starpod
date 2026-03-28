@@ -12,8 +12,8 @@ use tracing::{debug, warn};
 
 use crate::error::Result;
 use crate::hooks::{HookCallbackMatcher, HookEvent, HookInput, HookOutput};
-use starpod_hooks::{BaseHookInput, HookSpecificOutput, PermissionDecision};
 use crate::options::{Options, PermissionMode};
+use starpod_hooks::{BaseHookInput, HookSpecificOutput, PermissionDecision};
 
 /// Result of permission evaluation.
 #[derive(Debug, Clone)]
@@ -55,7 +55,14 @@ impl<'a> PermissionEvaluator<'a> {
         // Step 1: Run PreToolUse hooks
         if let Some(matchers) = self.options.hooks.get(&HookEvent::PreToolUse) {
             let verdict = self
-                .run_pre_tool_use_hooks(matchers, tool_name, tool_input, tool_use_id, session_id, cwd)
+                .run_pre_tool_use_hooks(
+                    matchers,
+                    tool_name,
+                    tool_input,
+                    tool_use_id,
+                    session_id,
+                    cwd,
+                )
                 .await?;
             if let Some(v) = verdict {
                 return Ok(v);
@@ -73,7 +80,10 @@ impl<'a> PermissionEvaluator<'a> {
         // Step 3: Apply permission mode
         match self.options.permission_mode {
             PermissionMode::BypassPermissions => {
-                warn!(tool = tool_name, "Tool approved by bypassPermissions mode — all permission checks bypassed");
+                warn!(
+                    tool = tool_name,
+                    "Tool approved by bypassPermissions mode — all permission checks bypassed"
+                );
                 return Ok(PermissionVerdict::Allow);
             }
             PermissionMode::AcceptEdits => {
@@ -91,7 +101,10 @@ impl<'a> PermissionEvaluator<'a> {
             PermissionMode::DontAsk => {
                 // Only pre-approved tools pass; everything else is denied
                 if self.is_allowed(tool_name) {
-                    debug!(tool = tool_name, "Tool approved by allowed_tools in dontAsk mode");
+                    debug!(
+                        tool = tool_name,
+                        "Tool approved by allowed_tools in dontAsk mode"
+                    );
                     return Ok(PermissionVerdict::Allow);
                 }
                 return Ok(PermissionVerdict::Deny {
@@ -120,10 +133,7 @@ impl<'a> PermissionEvaluator<'a> {
 
         // Default: deny
         Ok(PermissionVerdict::Deny {
-            reason: format!(
-                "Tool '{}' not approved by any permission rule",
-                tool_name
-            ),
+            reason: format!("Tool '{}' not approved by any permission rule", tool_name),
         })
     }
 
@@ -175,12 +185,8 @@ impl<'a> PermissionEvaluator<'a> {
             let cancel = tokio_util::sync::CancellationToken::new();
 
             for hook in &matcher.hooks {
-                let output = hook(
-                    input.clone(),
-                    Some(tool_use_id.to_string()),
-                    cancel.clone(),
-                )
-                .await?;
+                let output =
+                    hook(input.clone(), Some(tool_use_id.to_string()), cancel.clone()).await?;
 
                 match output {
                     HookOutput::Sync(sync_output) => {
@@ -205,8 +211,7 @@ impl<'a> PermissionEvaluator<'a> {
                                     debug!(tool = tool_name, "Tool approved by PreToolUse hook");
                                     if let Some(new_input) = updated_input {
                                         return Ok(Some(PermissionVerdict::AllowWithUpdatedInput(
-                                            serde_json::to_value(new_input)
-                                                .unwrap_or_default(),
+                                            serde_json::to_value(new_input).unwrap_or_default(),
                                         )));
                                     }
                                     return Ok(Some(PermissionVerdict::Allow));
@@ -250,9 +255,7 @@ fn tool_matches(tool_name: &str, pattern: &str) -> bool {
 
     // Handle wildcard patterns
     if pattern.contains('*') {
-        let regex_pattern = pattern
-            .replace('.', "\\.")
-            .replace('*', ".*");
+        let regex_pattern = pattern.replace('.', "\\.").replace('*', ".*");
         if let Ok(re) = Regex::new(&format!("^{}$", regex_pattern)) {
             return re.is_match(tool_name);
         }
@@ -263,10 +266,7 @@ fn tool_matches(tool_name: &str, pattern: &str) -> bool {
 
 /// Check if a tool is a file operation (for acceptEdits mode).
 fn is_file_operation(tool_name: &str) -> bool {
-    matches!(
-        tool_name,
-        "Edit" | "Write" | "NotebookEdit"
-    )
+    matches!(tool_name, "Edit" | "Write" | "NotebookEdit")
 }
 
 #[cfg(test)]

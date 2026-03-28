@@ -40,7 +40,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
 use tracing::{debug, info};
 
-use starpod_core::{StarpodError, Result};
+use starpod_core::{Result, StarpodError};
 
 /// Unified database for sessions, cron, and auth.
 ///
@@ -106,14 +106,13 @@ impl CoreDb {
 
     /// Open (or create) the database file and run migrations.
     async fn open_and_migrate(db_path: &Path) -> Result<SqlitePool> {
-        let opts = SqliteConnectOptions::from_str(
-            &format!("sqlite://{}?mode=rwc", db_path.display()),
-        )
-        .map_err(|e| StarpodError::Database(format!("Invalid DB path: {}", e)))?
-        .pragma("journal_mode", "WAL")
-        .pragma("foreign_keys", "ON")
-        .pragma("busy_timeout", "5000")
-        .pragma("synchronous", "NORMAL");
+        let opts =
+            SqliteConnectOptions::from_str(&format!("sqlite://{}?mode=rwc", db_path.display()))
+                .map_err(|e| StarpodError::Database(format!("Invalid DB path: {}", e)))?
+                .pragma("journal_mode", "WAL")
+                .pragma("foreign_keys", "ON")
+                .pragma("busy_timeout", "5000")
+                .pragma("synchronous", "NORMAL");
 
         let pool = SqlitePoolOptions::new()
             .max_connections(2)
@@ -171,45 +170,65 @@ mod tests {
 
         // Auth tables
         let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
-            .fetch_one(pool).await.unwrap();
+            .fetch_one(pool)
+            .await
+            .unwrap();
         assert_eq!(row.0, 0);
 
         let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM api_keys")
-            .fetch_one(pool).await.unwrap();
+            .fetch_one(pool)
+            .await
+            .unwrap();
         assert_eq!(row.0, 0);
 
         let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM telegram_links")
-            .fetch_one(pool).await.unwrap();
+            .fetch_one(pool)
+            .await
+            .unwrap();
         assert_eq!(row.0, 0);
 
         let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM auth_audit_log")
-            .fetch_one(pool).await.unwrap();
+            .fetch_one(pool)
+            .await
+            .unwrap();
         assert_eq!(row.0, 0);
 
         // Session tables
         let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM session_metadata")
-            .fetch_one(pool).await.unwrap();
+            .fetch_one(pool)
+            .await
+            .unwrap();
         assert_eq!(row.0, 0);
 
         let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM session_messages")
-            .fetch_one(pool).await.unwrap();
+            .fetch_one(pool)
+            .await
+            .unwrap();
         assert_eq!(row.0, 0);
 
         let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM usage_stats")
-            .fetch_one(pool).await.unwrap();
+            .fetch_one(pool)
+            .await
+            .unwrap();
         assert_eq!(row.0, 0);
 
         let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM compaction_log")
-            .fetch_one(pool).await.unwrap();
+            .fetch_one(pool)
+            .await
+            .unwrap();
         assert_eq!(row.0, 0);
 
         // Cron tables
         let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM cron_jobs")
-            .fetch_one(pool).await.unwrap();
+            .fetch_one(pool)
+            .await
+            .unwrap();
         assert_eq!(row.0, 0);
 
         let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM cron_runs")
-            .fetch_one(pool).await.unwrap();
+            .fetch_one(pool)
+            .await
+            .unwrap();
         assert_eq!(row.0, 0);
     }
 
@@ -221,7 +240,9 @@ mod tests {
         assert!(tmp.path().join("core.db").exists());
 
         let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
-            .fetch_one(db.pool()).await.unwrap();
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
         assert_eq!(row.0, 0);
     }
 
@@ -243,14 +264,19 @@ mod tests {
         let db1 = CoreDb::new(tmp.path()).await.unwrap();
         sqlx::query(
             "INSERT INTO users (id, email, display_name, role, is_active, created_at, updated_at) \
-             VALUES ('u1', 'a@b.com', 'A', 'admin', 1, '2024-01-01', '2024-01-01')"
-        ).execute(db1.pool()).await.unwrap();
+             VALUES ('u1', 'a@b.com', 'A', 'admin', 1, '2024-01-01', '2024-01-01')",
+        )
+        .execute(db1.pool())
+        .await
+        .unwrap();
         drop(db1);
 
         // Second open — should find existing data, not recreate
         let db2 = CoreDb::new(tmp.path()).await.unwrap();
         let row: (String,) = sqlx::query_as("SELECT email FROM users WHERE id = 'u1'")
-            .fetch_one(db2.pool()).await.unwrap();
+            .fetch_one(db2.pool())
+            .await
+            .unwrap();
         assert_eq!(row.0, "a@b.com");
     }
 
@@ -262,10 +288,15 @@ mod tests {
 
         let result = sqlx::query(
             "INSERT INTO api_keys (id, user_id, prefix, key_hash, created_at) \
-             VALUES ('k1', 'nonexistent', 'sp_', 'hash', '2024-01-01')"
-        ).execute(db.pool()).await;
+             VALUES ('k1', 'nonexistent', 'sp_', 'hash', '2024-01-01')",
+        )
+        .execute(db.pool())
+        .await;
 
-        assert!(result.is_err(), "FK should reject api_key with invalid user_id");
+        assert!(
+            result.is_err(),
+            "FK should reject api_key with invalid user_id"
+        );
     }
 
     #[tokio::test]
@@ -274,10 +305,15 @@ mod tests {
 
         let result = sqlx::query(
             "INSERT INTO telegram_links (telegram_id, user_id, username, linked_at) \
-             VALUES (123, 'nonexistent', 'bob', '2024-01-01')"
-        ).execute(db.pool()).await;
+             VALUES (123, 'nonexistent', 'bob', '2024-01-01')",
+        )
+        .execute(db.pool())
+        .await;
 
-        assert!(result.is_err(), "FK should reject telegram_link with invalid user_id");
+        assert!(
+            result.is_err(),
+            "FK should reject telegram_link with invalid user_id"
+        );
     }
 
     #[tokio::test]
@@ -286,10 +322,15 @@ mod tests {
 
         let result = sqlx::query(
             "INSERT INTO session_messages (session_id, role, content, timestamp) \
-             VALUES ('nonexistent', 'user', 'hello', '2024-01-01')"
-        ).execute(db.pool()).await;
+             VALUES ('nonexistent', 'user', 'hello', '2024-01-01')",
+        )
+        .execute(db.pool())
+        .await;
 
-        assert!(result.is_err(), "FK should reject message with invalid session_id");
+        assert!(
+            result.is_err(),
+            "FK should reject message with invalid session_id"
+        );
     }
 
     #[tokio::test]
@@ -298,10 +339,15 @@ mod tests {
 
         let result = sqlx::query(
             "INSERT INTO cron_runs (id, job_id, started_at, status) \
-             VALUES ('r1', 'nonexistent', 1000, 'pending')"
-        ).execute(db.pool()).await;
+             VALUES ('r1', 'nonexistent', 1000, 'pending')",
+        )
+        .execute(db.pool())
+        .await;
 
-        assert!(result.is_err(), "FK should reject cron_run with invalid job_id");
+        assert!(
+            result.is_err(),
+            "FK should reject cron_run with invalid job_id"
+        );
     }
 
     // ── CASCADE deletes ─────────────────────────────────────────────
@@ -313,26 +359,39 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO users (id, email, role, is_active, created_at, updated_at) \
-             VALUES ('u1', 'a@b.com', 'admin', 1, '2024-01-01', '2024-01-01')"
-        ).execute(pool).await.unwrap();
+             VALUES ('u1', 'a@b.com', 'admin', 1, '2024-01-01', '2024-01-01')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
 
         sqlx::query(
             "INSERT INTO api_keys (id, user_id, prefix, key_hash, created_at) \
-             VALUES ('k1', 'u1', 'sp_', 'hash1', '2024-01-01')"
-        ).execute(pool).await.unwrap();
+             VALUES ('k1', 'u1', 'sp_', 'hash1', '2024-01-01')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
 
         sqlx::query(
             "INSERT INTO api_keys (id, user_id, prefix, key_hash, created_at) \
-             VALUES ('k2', 'u1', 'sp_', 'hash2', '2024-01-01')"
-        ).execute(pool).await.unwrap();
+             VALUES ('k2', 'u1', 'sp_', 'hash2', '2024-01-01')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
 
         // Delete user
         sqlx::query("DELETE FROM users WHERE id = 'u1'")
-            .execute(pool).await.unwrap();
+            .execute(pool)
+            .await
+            .unwrap();
 
         // API keys should be gone
         let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM api_keys")
-            .fetch_one(pool).await.unwrap();
+            .fetch_one(pool)
+            .await
+            .unwrap();
         assert_eq!(row.0, 0);
     }
 
@@ -343,19 +402,29 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO users (id, role, is_active, created_at, updated_at) \
-             VALUES ('u1', 'admin', 1, '2024-01-01', '2024-01-01')"
-        ).execute(pool).await.unwrap();
+             VALUES ('u1', 'admin', 1, '2024-01-01', '2024-01-01')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
 
         sqlx::query(
             "INSERT INTO telegram_links (telegram_id, user_id, username, linked_at) \
-             VALUES (999, 'u1', 'bob', '2024-01-01')"
-        ).execute(pool).await.unwrap();
+             VALUES (999, 'u1', 'bob', '2024-01-01')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
 
         sqlx::query("DELETE FROM users WHERE id = 'u1'")
-            .execute(pool).await.unwrap();
+            .execute(pool)
+            .await
+            .unwrap();
 
         let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM telegram_links")
-            .fetch_one(pool).await.unwrap();
+            .fetch_one(pool)
+            .await
+            .unwrap();
         assert_eq!(row.0, 0);
     }
 
@@ -366,28 +435,43 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO session_metadata (id, created_at, last_message_at) \
-             VALUES ('s1', '2024-01-01', '2024-01-01')"
-        ).execute(pool).await.unwrap();
+             VALUES ('s1', '2024-01-01', '2024-01-01')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
 
         sqlx::query(
             "INSERT INTO session_messages (session_id, role, content, timestamp) \
-             VALUES ('s1', 'user', 'hi', '2024-01-01')"
-        ).execute(pool).await.unwrap();
+             VALUES ('s1', 'user', 'hi', '2024-01-01')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
 
         sqlx::query(
             "INSERT INTO compaction_log (session_id, timestamp, trigger, pre_tokens, summary) \
-             VALUES ('s1', '2024-01-01', 'auto', 1000, 'summary')"
-        ).execute(pool).await.unwrap();
+             VALUES ('s1', '2024-01-01', 'auto', 1000, 'summary')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
 
         sqlx::query("DELETE FROM session_metadata WHERE id = 's1'")
-            .execute(pool).await.unwrap();
+            .execute(pool)
+            .await
+            .unwrap();
 
         let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM session_messages")
-            .fetch_one(pool).await.unwrap();
+            .fetch_one(pool)
+            .await
+            .unwrap();
         assert_eq!(row.0, 0);
 
         let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM compaction_log")
-            .fetch_one(pool).await.unwrap();
+            .fetch_one(pool)
+            .await
+            .unwrap();
         assert_eq!(row.0, 0);
     }
 
@@ -398,19 +482,29 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO cron_jobs (id, name, prompt, schedule_type, schedule_value, created_at) \
-             VALUES ('j1', 'test', 'do stuff', 'interval', '60000', 1000)"
-        ).execute(pool).await.unwrap();
+             VALUES ('j1', 'test', 'do stuff', 'interval', '60000', 1000)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
 
         sqlx::query(
             "INSERT INTO cron_runs (id, job_id, started_at, status) \
-             VALUES ('r1', 'j1', 2000, 'success')"
-        ).execute(pool).await.unwrap();
+             VALUES ('r1', 'j1', 2000, 'success')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
 
         sqlx::query("DELETE FROM cron_jobs WHERE id = 'j1'")
-            .execute(pool).await.unwrap();
+            .execute(pool)
+            .await
+            .unwrap();
 
         let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM cron_runs")
-            .fetch_one(pool).await.unwrap();
+            .fetch_one(pool)
+            .await
+            .unwrap();
         assert_eq!(row.0, 0);
     }
 
@@ -424,14 +518,20 @@ mod tests {
         // Create a user
         sqlx::query(
             "INSERT INTO users (id, email, role, is_active, created_at, updated_at) \
-             VALUES ('u1', 'alice@test.com', 'admin', 1, '2024-01-01', '2024-01-01')"
-        ).execute(pool).await.unwrap();
+             VALUES ('u1', 'alice@test.com', 'admin', 1, '2024-01-01', '2024-01-01')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
 
         // Create sessions for this user
         sqlx::query(
             "INSERT INTO session_metadata (id, created_at, last_message_at, user_id) \
-             VALUES ('s1', '2024-01-01', '2024-01-01', 'u1')"
-        ).execute(pool).await.unwrap();
+             VALUES ('s1', '2024-01-01', '2024-01-01', 'u1')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
 
         // Record usage
         sqlx::query(
@@ -444,8 +544,11 @@ mod tests {
             "SELECT u.email, SUM(us.cost_usd) as total_cost \
              FROM users u \
              JOIN usage_stats us ON us.user_id = u.id \
-             GROUP BY u.id"
-        ).fetch_one(pool).await.unwrap();
+             GROUP BY u.id",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
 
         assert_eq!(row.0, "alice@test.com");
         assert!((row.1 - 0.01).abs() < 0.001);
@@ -458,13 +561,18 @@ mod tests {
         // Insert on original pool
         sqlx::query(
             "INSERT INTO users (id, role, is_active, created_at, updated_at) \
-             VALUES ('u1', 'admin', 1, '2024-01-01', '2024-01-01')"
-        ).execute(db.pool()).await.unwrap();
+             VALUES ('u1', 'admin', 1, '2024-01-01', '2024-01-01')",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
 
         // Read from cloned pool (simulates what stores do)
         let pool2 = db.pool().clone();
         let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
-            .fetch_one(&pool2).await.unwrap();
+            .fetch_one(&pool2)
+            .await
+            .unwrap();
         assert_eq!(row.0, 1);
     }
 }

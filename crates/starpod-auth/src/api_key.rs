@@ -13,8 +13,8 @@
 //! - Each hash uses a unique random salt, so identical keys produce different hashes.
 //! - Verification is constant-time (provided by the argon2 library).
 
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use argon2::password_hash::SaltString;
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use rand::Rng;
 
 /// API key prefix: `sp_live_`
@@ -77,7 +77,9 @@ mod tests {
         assert!(key.starts_with("sp_live_"));
         assert_eq!(key.len(), KEY_PREFIX.len() + 40);
         // All chars after prefix should be hex
-        assert!(key[KEY_PREFIX.len()..].chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(key[KEY_PREFIX.len()..]
+            .chars()
+            .all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]
@@ -112,7 +114,10 @@ mod tests {
         let key = generate_key();
         let hash = hash_key(&key).unwrap();
         assert!(verify_key(&key, &hash));
-        assert!(!verify_key("sp_live_wrong_key_here_0000000000000000", &hash));
+        assert!(!verify_key(
+            "sp_live_wrong_key_here_0000000000000000",
+            &hash
+        ));
     }
 
     #[test]
@@ -120,7 +125,10 @@ mod tests {
         let key = generate_key();
         let h1 = hash_key(&key).unwrap();
         let h2 = hash_key(&key).unwrap();
-        assert_ne!(h1, h2, "Same key should produce different hashes (random salt)");
+        assert_ne!(
+            h1, h2,
+            "Same key should produce different hashes (random salt)"
+        );
         // Both should verify
         assert!(verify_key(&key, &h1));
         assert!(verify_key(&key, &h2));

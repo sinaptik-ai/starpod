@@ -35,8 +35,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use starpod_auth::Role;
-use starpod_core::{FrontendConfig, FollowupMode, ReasoningEffort, reload_agent_config};
-
+use starpod_core::{reload_agent_config, FollowupMode, FrontendConfig, ReasoningEffort};
 
 use crate::routes::{authenticate_request, ErrorResponse};
 use crate::AppState;
@@ -322,9 +321,15 @@ pub fn settings_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/api/settings/models", get(get_models))
         .route("/api/settings/memory", get(get_memory).put(put_memory))
         .route("/api/settings/cron", get(get_cron).put(put_cron))
-        .route("/api/settings/frontend", get(get_frontend).put(put_frontend))
+        .route(
+            "/api/settings/frontend",
+            get(get_frontend).put(put_frontend),
+        )
         .route("/api/settings/browser", get(get_browser).put(put_browser))
-        .route("/api/settings/heartbeat", get(get_heartbeat).put(put_heartbeat))
+        .route(
+            "/api/settings/heartbeat",
+            get(get_heartbeat).put(put_heartbeat),
+        )
         .route("/api/settings/files/{name}", get(get_file).put(put_file))
         .route("/api/settings/users", get(list_users).post(create_user))
         .route(
@@ -332,50 +337,80 @@ pub fn settings_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             get(get_user).put(update_user).delete(delete_user),
         )
         .route("/api/settings/skills", get(list_skills).post(create_skill))
-        .route("/api/settings/skills/generate", axum::routing::post(generate_skill))
+        .route(
+            "/api/settings/skills/generate",
+            axum::routing::post(generate_skill),
+        )
         .route(
             "/api/settings/skills/{name}",
             get(get_skill).put(update_skill).delete(delete_skill),
         )
         // Auth user management
-        .route("/api/settings/auth/users", get(list_auth_users).post(create_auth_user))
+        .route(
+            "/api/settings/auth/users",
+            get(list_auth_users).post(create_auth_user),
+        )
         .route(
             "/api/settings/auth/users/{id}",
             get(get_auth_user).put(update_auth_user),
         )
-        .route("/api/settings/auth/users/{id}/deactivate", axum::routing::post(deactivate_auth_user))
-        .route("/api/settings/auth/users/{id}/activate", axum::routing::post(activate_auth_user))
+        .route(
+            "/api/settings/auth/users/{id}/deactivate",
+            axum::routing::post(deactivate_auth_user),
+        )
+        .route(
+            "/api/settings/auth/users/{id}/activate",
+            axum::routing::post(activate_auth_user),
+        )
         .route(
             "/api/settings/auth/users/{id}/api-keys",
             get(list_auth_api_keys).post(create_auth_api_key),
         )
-        .route("/api/settings/auth/api-keys/{id}/revoke", axum::routing::post(revoke_auth_api_key))
+        .route(
+            "/api/settings/auth/api-keys/{id}/revoke",
+            axum::routing::post(revoke_auth_api_key),
+        )
         // Compaction
-        .route("/api/settings/compaction", get(get_compaction).put(put_compaction))
+        .route(
+            "/api/settings/compaction",
+            get(get_compaction).put(put_compaction),
+        )
         // Vault
         .route("/api/settings/vault", get(get_vault))
-        .route("/api/settings/vault/{key}", axum::routing::put(put_vault).delete(delete_vault))
+        .route(
+            "/api/settings/vault/{key}",
+            axum::routing::put(put_vault).delete(delete_vault),
+        )
         // Internet
-        .route("/api/settings/internet", get(get_internet).put(put_internet))
+        .route(
+            "/api/settings/internet",
+            get(get_internet).put(put_internet),
+        )
         // Channels
-        .route("/api/settings/channels", get(get_channels).put(put_channels))
+        .route(
+            "/api/settings/channels",
+            get(get_channels).put(put_channels),
+        )
         // Costs
         .route("/api/settings/costs", get(get_costs))
         // Telegram linking per user
         .route(
             "/api/settings/auth/users/{id}/telegram",
-            get(get_user_telegram).put(put_user_telegram).delete(delete_user_telegram),
+            get(get_user_telegram)
+                .put(put_user_telegram)
+                .delete(delete_user_telegram),
         )
         // Apply admin middleware to ALL settings routes.
         // route_layer runs only for matched routes, not 404s.
-        .route_layer(axum::middleware::from_fn_with_state(state, require_admin_middleware))
+        .route_layer(axum::middleware::from_fn_with_state(
+            state,
+            require_admin_middleware,
+        ))
 }
 
 // ── General ─────────────────────────────────────────────────────────────
 
-async fn get_general(
-    State(state): State<Arc<AppState>>,
-) -> ApiResult<GeneralSettings> {
+async fn get_general(State(state): State<Arc<AppState>>) -> ApiResult<GeneralSettings> {
     let cfg = state.config.read().unwrap();
     Ok(Json(GeneralSettings {
         models: cfg.models.clone(),
@@ -400,7 +435,10 @@ async fn put_general(
     }
     for spec in &settings.models {
         if starpod_core::parse_model_spec(spec).is_none() {
-            return Err(bad_request(&format!("invalid model spec: '{}' — expected 'provider/model'", spec)));
+            return Err(bad_request(&format!(
+                "invalid model spec: '{}' — expected 'provider/model'",
+                spec
+            )));
         }
     }
     if settings.max_turns == 0 {
@@ -408,14 +446,32 @@ async fn put_general(
     }
 
     let mut doc = read_agent_toml(&state)?;
-    let table = doc.as_table_mut().ok_or_else(|| internal("agent.toml is not a table"))?;
+    let table = doc
+        .as_table_mut()
+        .ok_or_else(|| internal("agent.toml is not a table"))?;
 
-    let models_arr: Vec<toml::Value> = settings.models.into_iter().map(toml::Value::String).collect();
+    let models_arr: Vec<toml::Value> = settings
+        .models
+        .into_iter()
+        .map(toml::Value::String)
+        .collect();
     table.insert("models".into(), toml::Value::Array(models_arr));
-    table.insert("max_turns".into(), toml::Value::Integer(settings.max_turns as i64));
-    table.insert("max_tokens".into(), toml::Value::Integer(settings.max_tokens as i64));
-    table.insert("agent_name".into(), toml::Value::String(settings.agent_name));
-    table.insert("server_addr".into(), toml::Value::String(settings.server_addr));
+    table.insert(
+        "max_turns".into(),
+        toml::Value::Integer(settings.max_turns as i64),
+    );
+    table.insert(
+        "max_tokens".into(),
+        toml::Value::Integer(settings.max_tokens as i64),
+    );
+    table.insert(
+        "agent_name".into(),
+        toml::Value::String(settings.agent_name),
+    );
+    table.insert(
+        "server_addr".into(),
+        toml::Value::String(settings.server_addr),
+    );
 
     set_or_remove_string(table, "timezone", settings.timezone);
     set_or_remove_string(table, "compaction_model", settings.compaction_model);
@@ -429,7 +485,9 @@ async fn put_general(
             };
             table.insert("reasoning_effort".into(), toml::Value::String(val.into()));
         }
-        None => { table.remove("reasoning_effort"); }
+        None => {
+            table.remove("reasoning_effort");
+        }
     }
 
     let fm = match settings.followup_mode {
@@ -438,7 +496,10 @@ async fn put_general(
     };
     table.insert("followup_mode".into(), toml::Value::String(fm.into()));
 
-    table.insert("self_improve".into(), toml::Value::Boolean(settings.self_improve));
+    table.insert(
+        "self_improve".into(),
+        toml::Value::Boolean(settings.self_improve),
+    );
 
     write_agent_toml(&state, &doc)?;
     Ok(ok_json())
@@ -446,17 +507,15 @@ async fn put_general(
 
 // ── Models ──────────────────────────────────────────────────────────────
 
-async fn get_models(
-    State(state): State<Arc<AppState>>,
-) -> ApiResult<ModelsResponse> {
-    Ok(Json(ModelsResponse { models: state.model_registry.models_by_provider() }))
+async fn get_models(State(state): State<Arc<AppState>>) -> ApiResult<ModelsResponse> {
+    Ok(Json(ModelsResponse {
+        models: state.model_registry.models_by_provider(),
+    }))
 }
 
 // ── Memory ──────────────────────────────────────────────────────────────
 
-async fn get_memory(
-    State(state): State<Arc<AppState>>,
-) -> ApiResult<MemorySettings> {
+async fn get_memory(State(state): State<Arc<AppState>>) -> ApiResult<MemorySettings> {
     let cfg = state.config.read().unwrap();
     Ok(Json(MemorySettings {
         half_life_days: cfg.memory.half_life_days,
@@ -473,7 +532,9 @@ async fn put_memory(
     Json(settings): Json<MemorySettings>,
 ) -> ApiResult<serde_json::Value> {
     let mut doc = read_agent_toml(&state)?;
-    let table = doc.as_table_mut().ok_or_else(|| internal("agent.toml is not a table"))?;
+    let table = doc
+        .as_table_mut()
+        .ok_or_else(|| internal("agent.toml is not a table"))?;
 
     let mem = table
         .entry("memory")
@@ -481,12 +542,27 @@ async fn put_memory(
         .as_table_mut()
         .ok_or_else(|| internal("[memory] is not a table"))?;
 
-    mem.insert("half_life_days".into(), toml::Value::Float(settings.half_life_days));
+    mem.insert(
+        "half_life_days".into(),
+        toml::Value::Float(settings.half_life_days),
+    );
     mem.insert("mmr_lambda".into(), toml::Value::Float(settings.mmr_lambda));
-    mem.insert("vector_search".into(), toml::Value::Boolean(settings.vector_search));
-    mem.insert("chunk_size".into(), toml::Value::Integer(settings.chunk_size as i64));
-    mem.insert("chunk_overlap".into(), toml::Value::Integer(settings.chunk_overlap as i64));
-    mem.insert("export_sessions".into(), toml::Value::Boolean(settings.export_sessions));
+    mem.insert(
+        "vector_search".into(),
+        toml::Value::Boolean(settings.vector_search),
+    );
+    mem.insert(
+        "chunk_size".into(),
+        toml::Value::Integer(settings.chunk_size as i64),
+    );
+    mem.insert(
+        "chunk_overlap".into(),
+        toml::Value::Integer(settings.chunk_overlap as i64),
+    );
+    mem.insert(
+        "export_sessions".into(),
+        toml::Value::Boolean(settings.export_sessions),
+    );
 
     write_agent_toml(&state, &doc)?;
     Ok(ok_json())
@@ -494,9 +570,7 @@ async fn put_memory(
 
 // ── Cron ────────────────────────────────────────────────────────────────
 
-async fn get_cron(
-    State(state): State<Arc<AppState>>,
-) -> ApiResult<CronSettings> {
+async fn get_cron(State(state): State<Arc<AppState>>) -> ApiResult<CronSettings> {
     let cfg = state.config.read().unwrap();
     Ok(Json(CronSettings {
         default_max_retries: cfg.cron.default_max_retries,
@@ -510,9 +584,10 @@ async fn put_cron(
     State(state): State<Arc<AppState>>,
     Json(settings): Json<CronSettings>,
 ) -> ApiResult<serde_json::Value> {
-
     let mut doc = read_agent_toml(&state)?;
-    let table = doc.as_table_mut().ok_or_else(|| internal("agent.toml is not a table"))?;
+    let table = doc
+        .as_table_mut()
+        .ok_or_else(|| internal("agent.toml is not a table"))?;
 
     let cron = table
         .entry("cron")
@@ -520,10 +595,22 @@ async fn put_cron(
         .as_table_mut()
         .ok_or_else(|| internal("[cron] is not a table"))?;
 
-    cron.insert("default_max_retries".into(), toml::Value::Integer(settings.default_max_retries as i64));
-    cron.insert("default_timeout_secs".into(), toml::Value::Integer(settings.default_timeout_secs as i64));
-    cron.insert("max_concurrent_runs".into(), toml::Value::Integer(settings.max_concurrent_runs as i64));
-    cron.insert("heartbeat_interval_minutes".into(), toml::Value::Integer(settings.heartbeat_interval_minutes.max(1) as i64));
+    cron.insert(
+        "default_max_retries".into(),
+        toml::Value::Integer(settings.default_max_retries as i64),
+    );
+    cron.insert(
+        "default_timeout_secs".into(),
+        toml::Value::Integer(settings.default_timeout_secs as i64),
+    );
+    cron.insert(
+        "max_concurrent_runs".into(),
+        toml::Value::Integer(settings.max_concurrent_runs as i64),
+    );
+    cron.insert(
+        "heartbeat_interval_minutes".into(),
+        toml::Value::Integer(settings.heartbeat_interval_minutes.max(1) as i64),
+    );
 
     write_agent_toml(&state, &doc)?;
     Ok(ok_json())
@@ -531,9 +618,7 @@ async fn put_cron(
 
 // ── Browser config ──────────────────────────────────────────────────────
 
-async fn get_browser(
-    State(state): State<Arc<AppState>>,
-) -> ApiResult<BrowserSettings> {
+async fn get_browser(State(state): State<Arc<AppState>>) -> ApiResult<BrowserSettings> {
     let cfg = state.config.read().unwrap();
     Ok(Json(BrowserSettings {
         enabled: cfg.browser.enabled,
@@ -547,7 +632,9 @@ async fn put_browser(
     Json(settings): Json<BrowserSettings>,
 ) -> ApiResult<serde_json::Value> {
     let mut doc = read_agent_toml(&state)?;
-    let table = doc.as_table_mut().ok_or_else(|| internal("agent.toml is not a table"))?;
+    let table = doc
+        .as_table_mut()
+        .ok_or_else(|| internal("agent.toml is not a table"))?;
 
     let browser = table
         .entry("browser")
@@ -556,7 +643,10 @@ async fn put_browser(
         .ok_or_else(|| internal("[browser] is not a table"))?;
 
     browser.insert("enabled".into(), toml::Value::Boolean(settings.enabled));
-    browser.insert("startup_timeout_secs".into(), toml::Value::Integer(settings.startup_timeout_secs.max(1) as i64));
+    browser.insert(
+        "startup_timeout_secs".into(),
+        toml::Value::Integer(settings.startup_timeout_secs.max(1) as i64),
+    );
 
     // Handle optional cdp_url: remove the key if None, set if Some
     match settings.cdp_url {
@@ -574,9 +664,7 @@ async fn put_browser(
 
 // ── Frontend config ─────────────────────────────────────────────────────
 
-async fn get_frontend(
-    State(state): State<Arc<AppState>>,
-) -> ApiResult<FrontendSettings> {
+async fn get_frontend(State(state): State<Arc<AppState>>) -> ApiResult<FrontendSettings> {
     let cfg = FrontendConfig::load(&state.paths.config_dir);
     Ok(Json(FrontendSettings {
         greeting: cfg.greeting,
@@ -601,15 +689,21 @@ async fn put_frontend(
 
 // ── Heartbeat ────────────────────────────────────────────────────────────
 
-async fn get_heartbeat(
-    State(state): State<Arc<AppState>>,
-) -> ApiResult<HeartbeatSettings> {
-    let content = state.agent.memory().read_file("HEARTBEAT.md").unwrap_or_default();
+async fn get_heartbeat(State(state): State<Arc<AppState>>) -> ApiResult<HeartbeatSettings> {
+    let content = state
+        .agent
+        .memory()
+        .read_file("HEARTBEAT.md")
+        .unwrap_or_default();
     let enabled = !content.trim().is_empty();
     let cfg = state.config.read().unwrap();
     let interval_minutes = cfg.cron.heartbeat_interval_minutes;
 
-    Ok(Json(HeartbeatSettings { enabled, interval_minutes, content }))
+    Ok(Json(HeartbeatSettings {
+        enabled,
+        interval_minutes,
+        content,
+    }))
 }
 
 async fn put_heartbeat(
@@ -620,13 +714,18 @@ async fn put_heartbeat(
     let interval = settings.interval_minutes.max(1);
     {
         let mut doc = read_agent_toml(&state)?;
-        let table = doc.as_table_mut().ok_or_else(|| internal("agent.toml is not a table"))?;
+        let table = doc
+            .as_table_mut()
+            .ok_or_else(|| internal("agent.toml is not a table"))?;
         let cron = table
             .entry("cron")
             .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
             .as_table_mut()
             .ok_or_else(|| internal("[cron] is not a table"))?;
-        cron.insert("heartbeat_interval_minutes".into(), toml::Value::Integer(interval as i64));
+        cron.insert(
+            "heartbeat_interval_minutes".into(),
+            toml::Value::Integer(interval as i64),
+        );
         write_agent_toml(&state, &doc)?;
     }
 
@@ -634,28 +733,53 @@ async fn put_heartbeat(
         // Save content and ensure cron job exists
         let content = if settings.content.trim().is_empty() {
             // Enabled but no content — keep a placeholder so the job stays alive
-            return Err(bad_request("Heartbeat content cannot be empty when enabled"));
+            return Err(bad_request(
+                "Heartbeat content cannot be empty when enabled",
+            ));
         } else {
             settings.content
         };
 
-        state.agent.memory().write_file("HEARTBEAT.md", &content).await.map_err(|e| internal(e))?;
+        state
+            .agent
+            .memory()
+            .write_file("HEARTBEAT.md", &content)
+            .await
+            .map_err(|e| internal(e))?;
 
         // Create the cron job if it doesn't exist
         let cron_store = state.agent.cron();
-        if cron_store.get_job_by_name("__heartbeat__").await.map_err(|e| internal(e))?.is_none() {
+        if cron_store
+            .get_job_by_name("__heartbeat__")
+            .await
+            .map_err(|e| internal(e))?
+            .is_none()
+        {
             let resolved_tz = state.config.read().unwrap().resolved_timezone();
             let schedule = starpod_cron::Schedule::Cron {
                 expr: format!("0 */{interval} * * * *"),
             };
-            cron_store.add_job_full(
-                "__heartbeat__", &content, &schedule,
-                false, resolved_tz.as_deref(), 3, 7200,
-                starpod_cron::SessionMode::Main, None,
-            ).await.map_err(|e| internal(e))?;
+            cron_store
+                .add_job_full(
+                    "__heartbeat__",
+                    &content,
+                    &schedule,
+                    false,
+                    resolved_tz.as_deref(),
+                    3,
+                    7200,
+                    starpod_cron::SessionMode::Main,
+                    None,
+                )
+                .await
+                .map_err(|e| internal(e))?;
         } else {
             // Update the schedule if the interval changed
-            let job = cron_store.get_job_by_name("__heartbeat__").await.map_err(|e| internal(e))?.unwrap();
+            let job = cron_store
+                .get_job_by_name("__heartbeat__")
+                .await
+                .map_err(|e| internal(e))?
+                .unwrap();
             let new_schedule = starpod_cron::Schedule::Cron {
                 expr: format!("0 */{interval} * * * *"),
             };
@@ -663,11 +787,19 @@ async fn put_heartbeat(
                 schedule: Some(new_schedule),
                 ..Default::default()
             };
-            cron_store.update_job(&job.id, &update).await.map_err(|e| internal(e))?;
+            cron_store
+                .update_job(&job.id, &update)
+                .await
+                .map_err(|e| internal(e))?;
         }
     } else {
         // Disabled: clear the file and remove the cron job
-        state.agent.memory().write_file("HEARTBEAT.md", "").await.map_err(|e| internal(e))?;
+        state
+            .agent
+            .memory()
+            .write_file("HEARTBEAT.md", "")
+            .await
+            .map_err(|e| internal(e))?;
 
         let cron_store = state.agent.cron();
         // Remove the job if it exists (ignore errors — may not exist)
@@ -721,8 +853,13 @@ fn validate_user_id(id: &str) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
     if id.is_empty() || id.len() > 32 {
         return Err(bad_request("User ID must be 1-32 characters"));
     }
-    if !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        return Err(bad_request("User ID must be alphanumeric, hyphens, or underscores"));
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(bad_request(
+            "User ID must be alphanumeric, hyphens, or underscores",
+        ));
     }
     if id.contains("..") || id.contains('/') || id.contains('\\') {
         return Err(bad_request("Invalid user ID"));
@@ -740,19 +877,13 @@ fn count_daily_logs(user_dir: &std::path::Path) -> usize {
         .map(|entries| {
             entries
                 .filter_map(|e| e.ok())
-                .filter(|e| {
-                    e.path()
-                        .extension()
-                        .is_some_and(|ext| ext == "md")
-                })
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
                 .count()
         })
         .unwrap_or(0)
 }
 
-async fn list_users(
-    State(state): State<Arc<AppState>>,
-) -> ApiResult<Vec<UserInfo>> {
+async fn list_users(State(state): State<Arc<AppState>>) -> ApiResult<Vec<UserInfo>> {
     let users_dir = &state.paths.users_dir;
     let mut users = Vec::new();
 
@@ -792,7 +923,8 @@ async fn create_user(
     // Create user directory + seed defaults
     std::fs::create_dir_all(user_dir.join("memory")).map_err(|e| internal(e))?;
 
-    let default_user_md = "# User Profile\n\n## Name\n\n## Role\n\n## Expertise\n\n## Preferences\n\n## Context\n";
+    let default_user_md =
+        "# User Profile\n\n## Name\n\n## Role\n\n## Expertise\n\n## Preferences\n\n## Context\n";
     std::fs::write(user_dir.join("USER.md"), default_user_md).map_err(|e| internal(e))?;
     std::fs::write(
         user_dir.join("MEMORY.md"),
@@ -819,7 +951,10 @@ async fn get_user(
 
     let user_dir = state.paths.users_dir.join(&id);
     if !user_dir.is_dir() {
-        return Err(err(StatusCode::NOT_FOUND, format!("User '{}' not found", id)));
+        return Err(err(
+            StatusCode::NOT_FOUND,
+            format!("User '{}' not found", id),
+        ));
     }
 
     let user_md = std::fs::read_to_string(user_dir.join("USER.md")).unwrap_or_default();
@@ -842,7 +977,10 @@ async fn update_user(
 
     let user_dir = state.paths.users_dir.join(&id);
     if !user_dir.is_dir() {
-        return Err(err(StatusCode::NOT_FOUND, format!("User '{}' not found", id)));
+        return Err(err(
+            StatusCode::NOT_FOUND,
+            format!("User '{}' not found", id),
+        ));
     }
 
     std::fs::write(user_dir.join("USER.md"), &body.content).map_err(|e| internal(e))?;
@@ -858,7 +996,10 @@ async fn delete_user(
 
     let user_dir = state.paths.users_dir.join(&id);
     if !user_dir.is_dir() {
-        return Err(err(StatusCode::NOT_FOUND, format!("User '{}' not found", id)));
+        return Err(err(
+            StatusCode::NOT_FOUND,
+            format!("User '{}' not found", id),
+        ));
     }
 
     std::fs::remove_dir_all(&user_dir).map_err(|e| internal(e))?;
@@ -868,13 +1009,13 @@ async fn delete_user(
 
 // ── Skills ──────────────────────────────────────────────────────────────
 
-fn skill_store(state: &AppState) -> Result<starpod_skills::SkillStore, (StatusCode, Json<ErrorResponse>)> {
+fn skill_store(
+    state: &AppState,
+) -> Result<starpod_skills::SkillStore, (StatusCode, Json<ErrorResponse>)> {
     starpod_skills::SkillStore::new(&state.paths.skills_dir).map_err(|e| internal(e))
 }
 
-async fn list_skills(
-    State(state): State<Arc<AppState>>,
-) -> ApiResult<Vec<SkillInfo>> {
+async fn list_skills(State(state): State<Arc<AppState>>) -> ApiResult<Vec<SkillInfo>> {
     let store = skill_store(&state)?;
     let skills = store.list().map_err(|e| internal(e))?;
     Ok(Json(
@@ -951,7 +1092,9 @@ async fn delete_skill(
     Path(name): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
     let store = skill_store(&state)?;
-    store.delete(&name).map_err(|e| bad_request(e.to_string()))?;
+    store
+        .delete(&name)
+        .map_err(|e| bad_request(e.to_string()))?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1045,16 +1188,15 @@ async fn generate_skill(
         }
     }
 
-    let result = result_msg
-        .ok_or_else(|| internal("No result from AI"))?;
+    let result = result_msg.ok_or_else(|| internal("No result from AI"))?;
 
     if result.is_error {
         return Err(internal(result.errors.join("; ")));
     }
 
-    let result_text = result.result.ok_or_else(|| {
-        internal("No text returned from AI")
-    })?;
+    let result_text = result
+        .result
+        .ok_or_else(|| internal("No text returned from AI"))?;
 
     #[derive(serde::Deserialize)]
     struct SkillGen {
@@ -1074,9 +1216,7 @@ async fn generate_skill(
 
 // ── Auth user management ─────────────────────────────────────────────────
 
-async fn list_auth_users(
-    State(state): State<Arc<AppState>>,
-) -> ApiResult<Vec<starpod_auth::User>> {
+async fn list_auth_users(State(state): State<Arc<AppState>>) -> ApiResult<Vec<starpod_auth::User>> {
     state
         .auth
         .list_users()
@@ -1126,7 +1266,13 @@ async fn update_auth_user(
 
     state
         .auth
-        .update_user(&id, req.email.as_deref(), req.display_name.as_deref(), req.role, req.filesystem_enabled)
+        .update_user(
+            &id,
+            req.email.as_deref(),
+            req.display_name.as_deref(),
+            req.role,
+            req.filesystem_enabled,
+        )
         .await
         .map_err(|e| internal(e))?;
 
@@ -1223,9 +1369,7 @@ async fn revoke_auth_api_key(
 
 // ── Compaction ──────────────────────────────────────────────────────────
 
-async fn get_compaction(
-    State(state): State<Arc<AppState>>,
-) -> ApiResult<CompactionSettings> {
+async fn get_compaction(State(state): State<Arc<AppState>>) -> ApiResult<CompactionSettings> {
     let cfg = state.config.read().unwrap();
     Ok(Json(CompactionSettings {
         context_budget: cfg.compaction.context_budget,
@@ -1253,13 +1397,34 @@ async fn put_compaction(
         .as_table_mut()
         .ok_or_else(|| internal("[compaction] is not a table"))?;
 
-    compaction.insert("context_budget".into(), toml::Value::Integer(settings.context_budget as i64));
-    compaction.insert("summary_max_tokens".into(), toml::Value::Integer(settings.summary_max_tokens as i64));
-    compaction.insert("min_keep_messages".into(), toml::Value::Integer(settings.min_keep_messages as i64));
-    compaction.insert("max_tool_result_bytes".into(), toml::Value::Integer(settings.max_tool_result_bytes as i64));
-    compaction.insert("prune_threshold_pct".into(), toml::Value::Integer(settings.prune_threshold_pct as i64));
-    compaction.insert("prune_tool_result_max_chars".into(), toml::Value::Integer(settings.prune_tool_result_max_chars as i64));
-    compaction.insert("memory_flush".into(), toml::Value::Boolean(settings.memory_flush));
+    compaction.insert(
+        "context_budget".into(),
+        toml::Value::Integer(settings.context_budget as i64),
+    );
+    compaction.insert(
+        "summary_max_tokens".into(),
+        toml::Value::Integer(settings.summary_max_tokens as i64),
+    );
+    compaction.insert(
+        "min_keep_messages".into(),
+        toml::Value::Integer(settings.min_keep_messages as i64),
+    );
+    compaction.insert(
+        "max_tool_result_bytes".into(),
+        toml::Value::Integer(settings.max_tool_result_bytes as i64),
+    );
+    compaction.insert(
+        "prune_threshold_pct".into(),
+        toml::Value::Integer(settings.prune_threshold_pct as i64),
+    );
+    compaction.insert(
+        "prune_tool_result_max_chars".into(),
+        toml::Value::Integer(settings.prune_tool_result_max_chars as i64),
+    );
+    compaction.insert(
+        "memory_flush".into(),
+        toml::Value::Boolean(settings.memory_flush),
+    );
 
     write_agent_toml(&state, &doc)?;
 
@@ -1268,12 +1433,15 @@ async fn put_compaction(
 
 // ── Internet ────────────────────────────────────────────────────────────
 
-async fn get_internet(
-    State(state): State<Arc<AppState>>,
-) -> ApiResult<InternetSettings> {
+async fn get_internet(State(state): State<Arc<AppState>>) -> ApiResult<InternetSettings> {
     let (enabled, timeout_secs, max_fetch_bytes, max_text_chars) = {
         let cfg = state.config.read().unwrap();
-        (cfg.internet.enabled, cfg.internet.timeout_secs, cfg.internet.max_fetch_bytes, cfg.internet.max_text_chars)
+        (
+            cfg.internet.enabled,
+            cfg.internet.timeout_secs,
+            cfg.internet.max_fetch_bytes,
+            cfg.internet.max_text_chars,
+        )
     };
     let brave_api_key = read_vault_key(&state, "BRAVE_API_KEY").await;
     Ok(Json(InternetSettings {
@@ -1318,7 +1486,12 @@ async fn put_internet(
 
     // Write Brave API key to vault
     if let Some(ref key) = settings.brave_api_key {
-        write_vault_key(&state, "BRAVE_API_KEY", if key.is_empty() { None } else { Some(key) }).await?;
+        write_vault_key(
+            &state,
+            "BRAVE_API_KEY",
+            if key.is_empty() { None } else { Some(key) },
+        )
+        .await?;
     }
 
     Ok(ok_json())
@@ -1326,9 +1499,7 @@ async fn put_internet(
 
 // ── Channels ────────────────────────────────────────────────────────────
 
-async fn get_channels(
-    State(state): State<Arc<AppState>>,
-) -> ApiResult<ChannelsSettings> {
+async fn get_channels(State(state): State<Arc<AppState>>) -> ApiResult<ChannelsSettings> {
     let tg = {
         let cfg = state.config.read().unwrap();
         cfg.channels.telegram.clone().unwrap_or_default()
@@ -1355,7 +1526,9 @@ async fn put_channels(
     Json(settings): Json<ChannelsSettings>,
 ) -> ApiResult<serde_json::Value> {
     let mut doc = read_agent_toml(&state)?;
-    let table = doc.as_table_mut().ok_or_else(|| internal("agent.toml is not a table"))?;
+    let table = doc
+        .as_table_mut()
+        .ok_or_else(|| internal("agent.toml is not a table"))?;
 
     let channels = table
         .entry("channels")
@@ -1369,7 +1542,10 @@ async fn put_channels(
         .as_table_mut()
         .ok_or_else(|| internal("channels.telegram is not a table"))?;
 
-    tg.insert("enabled".into(), toml::Value::Boolean(settings.telegram.enabled));
+    tg.insert(
+        "enabled".into(),
+        toml::Value::Boolean(settings.telegram.enabled),
+    );
     if let Some(gap) = settings.telegram.gap_minutes {
         tg.insert("gap_minutes".into(), toml::Value::Integer(gap));
     } else {
@@ -1383,7 +1559,12 @@ async fn put_channels(
 
     // Write bot token to vault
     if let Some(ref token) = settings.telegram.bot_token {
-        write_vault_key(&state, "TELEGRAM_BOT_TOKEN", if token.is_empty() { None } else { Some(token) }).await?;
+        write_vault_key(
+            &state,
+            "TELEGRAM_BOT_TOKEN",
+            if token.is_empty() { None } else { Some(token) },
+        )
+        .await?;
     }
 
     // Hot-reload config so restart_telegram sees the updated enabled/stream_mode
@@ -1464,7 +1645,10 @@ async fn put_user_telegram(
 ) -> ApiResult<serde_json::Value> {
     // Require at least one identifier
     if req.telegram_id.is_none() && req.username.as_ref().map_or(true, |u| u.trim().is_empty()) {
-        return Err(err(StatusCode::BAD_REQUEST, "Provide a Telegram ID or username"));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "Provide a Telegram ID or username",
+        ));
     }
 
     // Verify user exists
@@ -1517,8 +1701,13 @@ fn write_agent_toml(
 ) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
     let toml_str = toml::to_string_pretty(doc)
         .map_err(|e| internal(format!("Failed to serialize TOML: {}", e)))?;
-    std::fs::write(&state.paths.agent_toml, &toml_str)
-        .map_err(|e| internal(format!("Failed to write {}: {}", state.paths.agent_toml.display(), e)))?;
+    std::fs::write(&state.paths.agent_toml, &toml_str).map_err(|e| {
+        internal(format!(
+            "Failed to write {}: {}",
+            state.paths.agent_toml.display(),
+            e
+        ))
+    })?;
 
     // Update in-memory config immediately so subsequent reads don't return
     // stale data (the file-watcher has a 2-second debounce).
@@ -1532,10 +1721,18 @@ fn write_agent_toml(
 }
 
 /// Insert a string value into a TOML table, or remove the key if the value is `None` or empty.
-fn set_or_remove_string(table: &mut toml::map::Map<String, toml::Value>, key: &str, val: Option<String>) {
+fn set_or_remove_string(
+    table: &mut toml::map::Map<String, toml::Value>,
+    key: &str,
+    val: Option<String>,
+) {
     match val {
-        Some(v) if !v.is_empty() => { table.insert(key.into(), toml::Value::String(v)); }
-        _ => { table.remove(key); }
+        Some(v) if !v.is_empty() => {
+            table.insert(key.into(), toml::Value::String(v));
+        }
+        _ => {
+            table.remove(key);
+        }
     }
 }
 
@@ -1567,15 +1764,26 @@ struct VaultPutBody {
     value: String,
 }
 
-async fn get_vault(
-    State(state): State<Arc<AppState>>,
-) -> ApiResult<VaultListResponse> {
-    let vault = state.vault.as_ref().ok_or_else(|| internal("vault not available"))?;
-    let keys = vault.list_keys().await.map_err(|e| internal(format!("vault list: {e}")))?;
-    let entries = keys.into_iter().map(|key| {
-        let is_system = starpod_vault::is_system_key(&key);
-        VaultEntry { key, has_value: true, is_system }
-    }).collect();
+async fn get_vault(State(state): State<Arc<AppState>>) -> ApiResult<VaultListResponse> {
+    let vault = state
+        .vault
+        .as_ref()
+        .ok_or_else(|| internal("vault not available"))?;
+    let keys = vault
+        .list_keys()
+        .await
+        .map_err(|e| internal(format!("vault list: {e}")))?;
+    let entries = keys
+        .into_iter()
+        .map(|key| {
+            let is_system = starpod_vault::is_system_key(&key);
+            VaultEntry {
+                key,
+                has_value: true,
+                is_system,
+            }
+        })
+        .collect();
     Ok(Json(VaultListResponse { entries }))
 }
 
@@ -1590,8 +1798,13 @@ async fn put_vault(
     if body.value.is_empty() {
         return Err(bad_request("value cannot be empty"));
     }
-    let vault = state.vault.as_ref().ok_or_else(|| internal("vault not available"))?;
-    vault.set(&key, &body.value, None).await
+    let vault = state
+        .vault
+        .as_ref()
+        .ok_or_else(|| internal("vault not available"))?;
+    vault
+        .set(&key, &body.value, None)
+        .await
         .map_err(|e| internal(format!("vault set {key}: {e}")))?;
     // Keep process env in sync for system keys
     if starpod_vault::is_system_key(&key) {
@@ -1604,8 +1817,13 @@ async fn delete_vault(
     State(state): State<Arc<AppState>>,
     Path(key): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    let vault = state.vault.as_ref().ok_or_else(|| internal("vault not available"))?;
-    vault.delete(&key, None).await
+    let vault = state
+        .vault
+        .as_ref()
+        .ok_or_else(|| internal("vault not available"))?;
+    vault
+        .delete(&key, None)
+        .await
         .map_err(|e| internal(format!("vault delete {key}: {e}")))?;
     // Keep process env in sync for system keys
     if starpod_vault::is_system_key(&key) {
@@ -1631,15 +1849,22 @@ async fn write_vault_key(
     key: &str,
     value: Option<&str>,
 ) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
-    let vault = state.vault.as_ref().ok_or_else(|| internal("vault not available"))?;
+    let vault = state
+        .vault
+        .as_ref()
+        .ok_or_else(|| internal("vault not available"))?;
     match value {
         Some(v) => {
-            vault.set(key, v, None).await
+            vault
+                .set(key, v, None)
+                .await
                 .map_err(|e| internal(format!("vault set {key}: {e}")))?;
             std::env::set_var(key, v);
         }
         None => {
-            vault.delete(key, None).await
+            vault
+                .delete(key, None)
+                .await
                 .map_err(|e| internal(format!("vault delete {key}: {e}")))?;
             std::env::remove_var(key);
         }
@@ -1660,10 +1885,10 @@ mod tests {
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
+    use crate::{build_router, GatewayEvent};
     use starpod_agent::StarpodAgent;
     use starpod_auth::{AuthStore, RateLimiter};
-    use starpod_core::{ResolvedPaths, StarpodConfig, Mode};
-    use crate::{build_router, GatewayEvent};
+    use starpod_core::{Mode, ResolvedPaths, StarpodConfig};
 
     // ── Test fixtures ───────────────────────────────────────────────────
 
@@ -1683,7 +1908,11 @@ mod tests {
         std::fs::create_dir_all(&skills_dir).unwrap();
 
         // Write a minimal agent.toml
-        std::fs::write(&agent_toml, "models = [\"anthropic/test-model\"]\nagent_name = \"TestBot\"\n").unwrap();
+        std::fs::write(
+            &agent_toml,
+            "models = [\"anthropic/test-model\"]\nagent_name = \"TestBot\"\n",
+        )
+        .unwrap();
 
         let config = StarpodConfig {
             db_dir: db_dir.clone(),
@@ -1698,7 +1927,9 @@ mod tests {
         let (events_tx, _) = tokio::sync::broadcast::channel::<GatewayEvent>(16);
 
         let paths = ResolvedPaths {
-            mode: Mode::SingleAgent { starpod_dir: starpod_dir.clone() },
+            mode: Mode::SingleAgent {
+                starpod_dir: starpod_dir.clone(),
+            },
             agent_toml,
             agent_home: starpod_dir.clone(),
             config_dir,
@@ -1746,7 +1977,11 @@ mod tests {
     }
 
     /// Make a PUT request with JSON body and return (status, body json).
-    async fn put_json(state: Arc<AppState>, path: &str, body: serde_json::Value) -> (StatusCode, serde_json::Value) {
+    async fn put_json(
+        state: Arc<AppState>,
+        path: &str,
+        body: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value) {
         let app = build_router(state);
         let req = Request::builder()
             .method("PUT")
@@ -1762,7 +1997,11 @@ mod tests {
     }
 
     /// Make a POST request with JSON body and return (status, body json).
-    async fn post_json(state: Arc<AppState>, path: &str, body: serde_json::Value) -> (StatusCode, serde_json::Value) {
+    async fn post_json(
+        state: Arc<AppState>,
+        path: &str,
+        body: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value) {
         let app = build_router(state);
         let req = Request::builder()
             .method("POST")
@@ -2054,7 +2293,8 @@ mod tests {
                 "server_addr": "0.0.0.0:8080",
                 "followup_mode": "queue"
             }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(json["status"], "ok");
 
@@ -2066,7 +2306,10 @@ mod tests {
 
         // Verify round-trip: read it back
         let parsed: toml::Value = toml::from_str(&content).unwrap();
-        assert_eq!(parsed["models"].as_array().unwrap()[0].as_str(), Some("openai/gpt-4o"));
+        assert_eq!(
+            parsed["models"].as_array().unwrap()[0].as_str(),
+            Some("openai/gpt-4o")
+        );
         assert_eq!(parsed["max_turns"].as_integer(), Some(50));
     }
 
@@ -2080,7 +2323,8 @@ mod tests {
                 "models": [], "max_turns": 1,
                 "max_tokens": 1024, "agent_name": "x", "server_addr": "x"
             }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(json["error"].as_str().unwrap().contains("models"));
     }
@@ -2096,7 +2340,8 @@ mod tests {
                 "models": ["gpt-4o"], "max_turns": 1,
                 "max_tokens": 1024, "agent_name": "x", "server_addr": "x"
             }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(json["error"].as_str().unwrap().contains("provider/model"));
     }
@@ -2111,7 +2356,8 @@ mod tests {
                 "models": ["anthropic/claude-sonnet-4-6", "invalid-no-slash"], "max_turns": 1,
                 "max_tokens": 1024, "agent_name": "x", "server_addr": "x"
             }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(json["error"].as_str().unwrap().contains("invalid-no-slash"));
     }
@@ -2126,7 +2372,8 @@ mod tests {
                 "models": ["anthropic/claude-sonnet-4-6", "openai/gpt-4o"], "max_turns": 1,
                 "max_tokens": 1024, "agent_name": "x", "server_addr": "x"
             }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
 
         // Verify both models are in agent.toml
@@ -2148,7 +2395,8 @@ mod tests {
                 "models": ["anthropic/m"], "max_turns": 0,
                 "max_tokens": 1024, "agent_name": "x", "server_addr": "x"
             }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
@@ -2165,7 +2413,8 @@ mod tests {
                 "max_tokens": 1024, "agent_name": "x", "server_addr": "x",
                 "timezone": "UTC"
             }),
-        ).await;
+        )
+        .await;
 
         // Then clear it
         let _ = put_json(
@@ -2176,7 +2425,8 @@ mod tests {
                 "max_tokens": 1024, "agent_name": "x", "server_addr": "x",
                 "timezone": null
             }),
-        ).await;
+        )
+        .await;
 
         let content = std::fs::read_to_string(&state.paths.agent_toml).unwrap();
         assert!(!content.contains("timezone"));
@@ -2202,7 +2452,8 @@ mod tests {
                 "half_life_days": 14.0, "mmr_lambda": 0.5, "vector_search": false,
                 "chunk_size": 800, "chunk_overlap": 160, "export_sessions": false
             }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
 
         let content = std::fs::read_to_string(&state.paths.agent_toml).unwrap();
@@ -2276,7 +2527,8 @@ mod tests {
                 "interval_minutes": 15,
                 "content": "Do something"
             }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
 
         // Verify it reads back as enabled
@@ -2288,10 +2540,18 @@ mod tests {
         // Verify interval was persisted to TOML
         let content = std::fs::read_to_string(&state.paths.agent_toml).unwrap();
         let parsed: toml::Value = toml::from_str(&content).unwrap();
-        assert_eq!(parsed["cron"]["heartbeat_interval_minutes"].as_integer(), Some(15));
+        assert_eq!(
+            parsed["cron"]["heartbeat_interval_minutes"].as_integer(),
+            Some(15)
+        );
 
         // Verify cron job was created
-        let job = state.agent.cron().get_job_by_name("__heartbeat__").await.unwrap();
+        let job = state
+            .agent
+            .cron()
+            .get_job_by_name("__heartbeat__")
+            .await
+            .unwrap();
         assert!(job.is_some());
 
         // Disable heartbeat
@@ -2303,7 +2563,8 @@ mod tests {
                 "interval_minutes": 15,
                 "content": ""
             }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
 
         // Verify it reads back as disabled
@@ -2312,7 +2573,12 @@ mod tests {
         assert_eq!(json["enabled"], false);
 
         // Verify cron job was removed
-        let job = state.agent.cron().get_job_by_name("__heartbeat__").await.unwrap();
+        let job = state
+            .agent
+            .cron()
+            .get_job_by_name("__heartbeat__")
+            .await
+            .unwrap();
         assert!(job.is_none());
     }
 
@@ -2327,7 +2593,8 @@ mod tests {
                 "interval_minutes": 30,
                 "content": "   "
             }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(json["error"].as_str().unwrap().contains("empty"));
     }
@@ -2341,7 +2608,8 @@ mod tests {
             Arc::clone(&state),
             "/api/settings/frontend",
             serde_json::json!({ "greeting": "Hi!", "prompts": ["help", "joke"] }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
 
         // Read back
@@ -2367,7 +2635,8 @@ mod tests {
             Arc::clone(&state),
             "/api/settings/files/SOUL.md",
             serde_json::json!({ "content": "# Soul\nYou are Nova." }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
 
         // Read back
@@ -2399,16 +2668,32 @@ mod tests {
             Arc::clone(&state),
             "/api/settings/users",
             serde_json::json!({ "id": "testuser" }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::CREATED);
         assert_eq!(json["id"], "testuser");
         assert_eq!(json["has_user_md"], true);
         assert_eq!(json["has_memory_md"], true);
 
         // Verify filesystem
-        assert!(state.paths.users_dir.join("testuser").join("USER.md").exists());
-        assert!(state.paths.users_dir.join("testuser").join("MEMORY.md").exists());
-        assert!(state.paths.users_dir.join("testuser").join("memory").is_dir());
+        assert!(state
+            .paths
+            .users_dir
+            .join("testuser")
+            .join("USER.md")
+            .exists());
+        assert!(state
+            .paths
+            .users_dir
+            .join("testuser")
+            .join("MEMORY.md")
+            .exists());
+        assert!(state
+            .paths
+            .users_dir
+            .join("testuser")
+            .join("memory")
+            .is_dir());
 
         // List again
         let (_, json) = get_json(Arc::clone(&state), "/api/settings/users").await;
@@ -2425,13 +2710,14 @@ mod tests {
             Arc::clone(&state),
             "/api/settings/users/testuser",
             serde_json::json!({ "content": "# User\nAlice is a developer." }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
 
         // Read back
-        let content = std::fs::read_to_string(
-            state.paths.users_dir.join("testuser").join("USER.md"),
-        ).unwrap();
+        let content =
+            std::fs::read_to_string(state.paths.users_dir.join("testuser").join("USER.md"))
+                .unwrap();
         assert!(content.contains("Alice is a developer"));
 
         // Delete
@@ -2452,13 +2738,15 @@ mod tests {
             Arc::clone(&state),
             "/api/settings/users",
             serde_json::json!({ "id": "dup" }),
-        ).await;
+        )
+        .await;
 
         let (status, json) = post_json(
             state,
             "/api/settings/users",
             serde_json::json!({ "id": "dup" }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(json["error"].as_str().unwrap().contains("already exists"));
     }
@@ -2471,14 +2759,16 @@ mod tests {
             Arc::clone(&state),
             "/api/settings/users",
             serde_json::json!({ "id": "bad user!" }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
 
         let (status, _) = post_json(
             state,
             "/api/settings/users",
             serde_json::json!({ "id": "" }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
@@ -2536,7 +2826,8 @@ mod tests {
             Arc::clone(&state),
             "/api/settings/skills/greet",
             serde_json::json!({ "description": "Updated desc", "body": "Say hi!" }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(json["status"], "ok");
 
@@ -2562,13 +2853,15 @@ mod tests {
             Arc::clone(&state),
             "/api/settings/skills",
             serde_json::json!({ "name": "dup", "description": "", "body": "" }),
-        ).await;
+        )
+        .await;
 
         let (status, json) = post_json(
             state,
             "/api/settings/skills",
             serde_json::json!({ "name": "dup", "description": "", "body": "" }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(json["error"].as_str().unwrap().contains("already exists"));
     }
@@ -2594,7 +2887,8 @@ mod tests {
             state,
             "/api/settings/skills/nonexistent",
             serde_json::json!({ "description": "x", "body": "y" }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(json["error"].as_str().unwrap().contains("does not exist"));
     }
@@ -2606,9 +2900,14 @@ mod tests {
             state,
             "/api/settings/skills",
             serde_json::json!({ "name": "../evil", "description": "", "body": "" }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(json["error"].as_str().unwrap().to_lowercase().contains("invalid"));
+        assert!(json["error"]
+            .as_str()
+            .unwrap()
+            .to_lowercase()
+            .contains("invalid"));
     }
 
     #[test]
@@ -2646,7 +2945,8 @@ mod tests {
             "name": "my-skill",
             "description": "Do stuff",
             "prompt": "Extra context"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(req.name, "my-skill");
         assert_eq!(req.description.as_deref(), Some("Do stuff"));
         assert_eq!(req.prompt.as_deref(), Some("Extra context"));
@@ -2654,7 +2954,8 @@ mod tests {
         // Only required field
         let req: GenerateSkillRequest = serde_json::from_value(serde_json::json!({
             "name": "minimal"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(req.name, "minimal");
         assert!(req.description.is_none());
         assert!(req.prompt.is_none());
@@ -2680,7 +2981,10 @@ mod tests {
         // With bare ``` fence
         assert_eq!(strip_json_fence("```\n{\"a\": 1}\n```"), "{\"a\": 1}");
         // With whitespace
-        assert_eq!(strip_json_fence("  ```json\n{\"a\": 1}\n```  "), "{\"a\": 1}");
+        assert_eq!(
+            strip_json_fence("  ```json\n{\"a\": 1}\n```  "),
+            "{\"a\": 1}"
+        );
     }
 
     // ── TOML preservation tests ─────────────────────────────────────────
@@ -2703,12 +3007,16 @@ mod tests {
                 "models": ["anthropic/new-model"], "max_turns": 10,
                 "max_tokens": 4096, "agent_name": "New", "server_addr": "x"
             }),
-        ).await;
+        )
+        .await;
 
         // [memory] section should be preserved
         let content = std::fs::read_to_string(&state.paths.agent_toml).unwrap();
         let parsed: toml::Value = toml::from_str(&content).unwrap();
-        assert_eq!(parsed["models"].as_array().unwrap()[0].as_str(), Some("anthropic/new-model"));
+        assert_eq!(
+            parsed["models"].as_array().unwrap()[0].as_str(),
+            Some("anthropic/new-model")
+        );
         assert_eq!(parsed["memory"]["half_life_days"].as_float(), Some(7.0));
     }
 
@@ -2719,8 +3027,16 @@ mod tests {
         let (_tmp, state) = test_app_state().await;
 
         // Create an admin user and API key
-        let admin = state.auth.create_user(None, Some("Admin"), starpod_auth::Role::Admin).await.unwrap();
-        let created = state.auth.create_api_key(&admin.id, Some("test key")).await.unwrap();
+        let admin = state
+            .auth
+            .create_user(None, Some("Admin"), starpod_auth::Role::Admin)
+            .await
+            .unwrap();
+        let created = state
+            .auth
+            .create_api_key(&admin.id, Some("test key"))
+            .await
+            .unwrap();
 
         // Request without key → 401
         let (status, _) = get_json(Arc::clone(&state), "/api/settings/general").await;
@@ -2743,7 +3059,11 @@ mod tests {
         let (_tmp, state) = test_app_state().await;
 
         // Create a regular user and API key
-        let user = state.auth.create_user(None, Some("User"), starpod_auth::Role::User).await.unwrap();
+        let user = state
+            .auth
+            .create_user(None, Some("User"), starpod_auth::Role::User)
+            .await
+            .unwrap();
         let created = state.auth.create_api_key(&user.id, None).await.unwrap();
 
         // Request with non-admin key → 403
@@ -2787,9 +3107,18 @@ mod tests {
         // Verify it was written to the file
         let content = std::fs::read_to_string(&state.paths.agent_toml).unwrap();
         let parsed: toml::Value = toml::from_str(&content).unwrap();
-        assert_eq!(parsed["channels"]["telegram"]["enabled"].as_bool(), Some(true));
-        assert_eq!(parsed["channels"]["telegram"]["gap_minutes"].as_integer(), Some(120));
-        assert_eq!(parsed["channels"]["telegram"]["stream_mode"].as_str(), Some("all_messages"));
+        assert_eq!(
+            parsed["channels"]["telegram"]["enabled"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            parsed["channels"]["telegram"]["gap_minutes"].as_integer(),
+            Some(120)
+        );
+        assert_eq!(
+            parsed["channels"]["telegram"]["stream_mode"].as_str(),
+            Some("all_messages")
+        );
     }
 
     #[tokio::test]
@@ -2809,7 +3138,11 @@ mod tests {
     // ── Telegram linking ────────────────────────────────────────────────
 
     /// Helper: make an authenticated GET request with API key header.
-    async fn get_json_authed(state: Arc<AppState>, path: &str, key: &str) -> (StatusCode, serde_json::Value) {
+    async fn get_json_authed(
+        state: Arc<AppState>,
+        path: &str,
+        key: &str,
+    ) -> (StatusCode, serde_json::Value) {
         let app = build_router(state);
         let req = Request::builder()
             .method("GET")
@@ -2825,7 +3158,12 @@ mod tests {
     }
 
     /// Helper: make an authenticated PUT request with API key header.
-    async fn put_json_authed(state: Arc<AppState>, path: &str, key: &str, body: serde_json::Value) -> (StatusCode, serde_json::Value) {
+    async fn put_json_authed(
+        state: Arc<AppState>,
+        path: &str,
+        key: &str,
+        body: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value) {
         let app = build_router(state);
         let req = Request::builder()
             .method("PUT")
@@ -2857,15 +3195,28 @@ mod tests {
     async fn telegram_link_crud() {
         let (_tmp, state) = test_app_state().await;
         // Create an admin user with API key (this enables auth)
-        let admin = state.auth.create_user(None, Some("Admin"), starpod_auth::Role::Admin).await.unwrap();
+        let admin = state
+            .auth
+            .create_user(None, Some("Admin"), starpod_auth::Role::Admin)
+            .await
+            .unwrap();
         let admin_key = state.auth.create_api_key(&admin.id, None).await.unwrap();
         let key = &admin_key.key;
         // Create a regular user to link
-        let user = state.auth.create_user(None, Some("Alice"), starpod_auth::Role::User).await.unwrap();
+        let user = state
+            .auth
+            .create_user(None, Some("Alice"), starpod_auth::Role::User)
+            .await
+            .unwrap();
         let uid = user.id.clone();
 
         // GET: no link yet
-        let (status, json) = get_json_authed(Arc::clone(&state), &format!("/api/settings/auth/users/{}/telegram", uid), key).await;
+        let (status, json) = get_json_authed(
+            Arc::clone(&state),
+            &format!("/api/settings/auth/users/{}/telegram", uid),
+            key,
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         assert!(json.get("telegram_id").is_none(), "No link initially");
 
@@ -2875,22 +3226,38 @@ mod tests {
             &format!("/api/settings/auth/users/{}/telegram", uid),
             key,
             serde_json::json!({ "telegram_id": 12345, "username": "alice_tg" }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(json["telegram_id"], 12345);
         assert_eq!(json["username"], "alice_tg");
 
         // GET: link exists
-        let (status, json) = get_json_authed(Arc::clone(&state), &format!("/api/settings/auth/users/{}/telegram", uid), key).await;
+        let (status, json) = get_json_authed(
+            Arc::clone(&state),
+            &format!("/api/settings/auth/users/{}/telegram", uid),
+            key,
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(json["telegram_id"], 12345);
 
         // DELETE: unlink
-        let status = delete_authed(Arc::clone(&state), &format!("/api/settings/auth/users/{}/telegram", uid), key).await;
+        let status = delete_authed(
+            Arc::clone(&state),
+            &format!("/api/settings/auth/users/{}/telegram", uid),
+            key,
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
 
         // GET: link gone
-        let (_, json) = get_json_authed(state, &format!("/api/settings/auth/users/{}/telegram", uid), key).await;
+        let (_, json) = get_json_authed(
+            state,
+            &format!("/api/settings/auth/users/{}/telegram", uid),
+            key,
+        )
+        .await;
         assert!(json.get("telegram_id").is_none());
     }
 
@@ -2901,17 +3268,26 @@ mod tests {
             state,
             "/api/settings/auth/users/nonexistent/telegram",
             serde_json::json!({ "telegram_id": 999 }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
     async fn telegram_link_username_only_via_api() {
         let (_tmp, state) = test_app_state().await;
-        let admin = state.auth.create_user(None, Some("Admin"), starpod_auth::Role::Admin).await.unwrap();
+        let admin = state
+            .auth
+            .create_user(None, Some("Admin"), starpod_auth::Role::Admin)
+            .await
+            .unwrap();
         let admin_key = state.auth.create_api_key(&admin.id, None).await.unwrap();
         let key = &admin_key.key;
-        let user = state.auth.create_user(None, Some("Alice"), starpod_auth::Role::User).await.unwrap();
+        let user = state
+            .auth
+            .create_user(None, Some("Alice"), starpod_auth::Role::User)
+            .await
+            .unwrap();
         let uid = user.id.clone();
 
         // PUT: link with username only (no telegram_id)
@@ -2920,13 +3296,22 @@ mod tests {
             &format!("/api/settings/auth/users/{}/telegram", uid),
             key,
             serde_json::json!({ "username": "alice_tg" }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
-        assert!(json["telegram_id"].is_null(), "telegram_id should be null for username-only link");
+        assert!(
+            json["telegram_id"].is_null(),
+            "telegram_id should be null for username-only link"
+        );
         assert_eq!(json["username"], "alice_tg");
 
         // GET: link exists with username but no ID
-        let (status, json) = get_json_authed(state, &format!("/api/settings/auth/users/{}/telegram", uid), key).await;
+        let (status, json) = get_json_authed(
+            state,
+            &format!("/api/settings/auth/users/{}/telegram", uid),
+            key,
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         assert!(json["telegram_id"].is_null());
         assert_eq!(json["username"], "alice_tg");
@@ -2935,10 +3320,18 @@ mod tests {
     #[tokio::test]
     async fn telegram_link_rejects_empty_body() {
         let (_tmp, state) = test_app_state().await;
-        let admin = state.auth.create_user(None, Some("Admin"), starpod_auth::Role::Admin).await.unwrap();
+        let admin = state
+            .auth
+            .create_user(None, Some("Admin"), starpod_auth::Role::Admin)
+            .await
+            .unwrap();
         let admin_key = state.auth.create_api_key(&admin.id, None).await.unwrap();
         let key = &admin_key.key;
-        let user = state.auth.create_user(None, Some("Alice"), starpod_auth::Role::User).await.unwrap();
+        let user = state
+            .auth
+            .create_user(None, Some("Alice"), starpod_auth::Role::User)
+            .await
+            .unwrap();
         let uid = user.id.clone();
 
         // PUT: neither telegram_id nor username → should fail
@@ -2947,7 +3340,8 @@ mod tests {
             &format!("/api/settings/auth/users/{}/telegram", uid),
             key,
             serde_json::json!({}),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
@@ -3143,12 +3537,9 @@ mod tests {
     async fn test_app_state_with_vault() -> (tempfile::TempDir, Arc<AppState>) {
         let (tmp, state) = test_app_state().await;
         let master_key = [0u8; 32];
-        let vault = starpod_vault::Vault::new(
-            &state.paths.db_dir.join("vault.db"),
-            &master_key,
-        )
-        .await
-        .unwrap();
+        let vault = starpod_vault::Vault::new(&state.paths.db_dir.join("vault.db"), &master_key)
+            .await
+            .unwrap();
         let state = Arc::new(AppState {
             agent: Arc::clone(&state.agent),
             auth: Arc::clone(&state.auth),
@@ -3175,7 +3566,10 @@ mod tests {
     async fn write_vault_key_fails_without_vault() {
         let (_tmp, state) = test_app_state().await;
         let result = super::write_vault_key(&state, "TEST_KEY", Some("val")).await;
-        assert!(result.is_err(), "write_vault_key should fail when vault is None");
+        assert!(
+            result.is_err(),
+            "write_vault_key should fail when vault is None"
+        );
     }
 
     #[tokio::test]
@@ -3187,7 +3581,9 @@ mod tests {
         assert!(val.is_none());
 
         // Set a value
-        super::write_vault_key(&state, "TEST_SECRET", Some("s3cret")).await.unwrap();
+        super::write_vault_key(&state, "TEST_SECRET", Some("s3cret"))
+            .await
+            .unwrap();
         let val = super::read_vault_key(&state, "TEST_SECRET").await;
         assert_eq!(val.as_deref(), Some("s3cret"));
 
@@ -3195,7 +3591,9 @@ mod tests {
         assert_eq!(std::env::var("TEST_SECRET").ok().as_deref(), Some("s3cret"));
 
         // Delete
-        super::write_vault_key(&state, "TEST_SECRET", None).await.unwrap();
+        super::write_vault_key(&state, "TEST_SECRET", None)
+            .await
+            .unwrap();
         let val = super::read_vault_key(&state, "TEST_SECRET").await;
         assert!(val.is_none());
         assert!(std::env::var("TEST_SECRET").is_err());
@@ -3278,7 +3676,8 @@ mod tests {
             Arc::clone(&state),
             "/api/settings/vault/MY_SECRET",
             serde_json::json!({ "value": "hunter2" }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
 
         // GET should list it
@@ -3296,7 +3695,8 @@ mod tests {
             Arc::clone(&state),
             "/api/settings/vault/MY_SECRET",
             serde_json::json!({ "value": "new_secret" }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
 
         // DELETE the key
@@ -3317,17 +3717,24 @@ mod tests {
             Arc::clone(&state),
             "/api/settings/vault/ANTHROPIC_API_KEY",
             serde_json::json!({ "value": "sk-ant-test" }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
 
         // Should be flagged as system
         let (_, json) = get_json(Arc::clone(&state), "/api/settings/vault").await;
         let entries = json["entries"].as_array().unwrap();
-        let entry = entries.iter().find(|e| e["key"] == "ANTHROPIC_API_KEY").unwrap();
+        let entry = entries
+            .iter()
+            .find(|e| e["key"] == "ANTHROPIC_API_KEY")
+            .unwrap();
         assert_eq!(entry["is_system"], true);
 
         // System key should sync to process env
-        assert_eq!(std::env::var("ANTHROPIC_API_KEY").ok().as_deref(), Some("sk-ant-test"));
+        assert_eq!(
+            std::env::var("ANTHROPIC_API_KEY").ok().as_deref(),
+            Some("sk-ant-test")
+        );
 
         // Clean up env
         let status = delete_json(state, "/api/settings/vault/ANTHROPIC_API_KEY").await;
@@ -3342,7 +3749,8 @@ mod tests {
             state,
             "/api/settings/vault/SOME_KEY",
             serde_json::json!({ "value": "" }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
@@ -3358,7 +3766,10 @@ mod tests {
         let (_tmp, state) = test_app_state_with_vault().await;
         // First set a token
         let vault = state.vault.as_ref().unwrap();
-        vault.set("TELEGRAM_BOT_TOKEN", "old-token", None).await.unwrap();
+        vault
+            .set("TELEGRAM_BOT_TOKEN", "old-token", None)
+            .await
+            .unwrap();
 
         // Then send empty token to clear it
         let body = serde_json::json!({

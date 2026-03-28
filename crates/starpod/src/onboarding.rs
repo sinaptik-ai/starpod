@@ -4,7 +4,7 @@ use std::sync::LazyLock;
 
 use agent_sdk::models::ModelRegistry;
 use colored::Colorize;
-use dialoguer::{Input, Password, Select, theme::ColorfulTheme};
+use dialoguer::{theme::ColorfulTheme, Input, Password, Select};
 
 /// Shared model registry (embedded defaults).
 static REGISTRY: LazyLock<ModelRegistry> = LazyLock::new(ModelRegistry::with_defaults);
@@ -16,7 +16,9 @@ pub fn providers() -> Vec<&'static str> {
 
 /// Default model for a provider, from the model registry.
 pub fn default_model(provider: &str) -> &str {
-    REGISTRY.default_model(provider).unwrap_or("claude-haiku-4-5")
+    REGISTRY
+        .default_model(provider)
+        .unwrap_or("claude-haiku-4-5")
 }
 
 /// Environment variable name for a provider's API key, from the model registry.
@@ -81,7 +83,11 @@ pub fn run_wizard() -> Option<InitAnswers> {
                 .allow_empty_password(true)
                 .interact()
                 .ok()?;
-            if key.is_empty() { None } else { Some(key) }
+            if key.is_empty() {
+                None
+            } else {
+                Some(key)
+            }
         }
     } else {
         None
@@ -115,7 +121,11 @@ pub fn run_wizard() -> Option<InitAnswers> {
                 .allow_empty_password(true)
                 .interact()
                 .ok()?;
-            if key.is_empty() { None } else { Some(key) }
+            if key.is_empty() {
+                None
+            } else {
+                Some(key)
+            }
         } else {
             None
         }
@@ -248,7 +258,6 @@ pub fn generate_env_content_full(
     out
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,8 +267,8 @@ mod tests {
     #[test]
     fn workspace_config_is_valid_toml() {
         let config_str = generate_workspace_config();
-        let val: toml::Value = toml::from_str(&config_str)
-            .expect("Generated workspace config must be valid TOML");
+        let val: toml::Value =
+            toml::from_str(&config_str).expect("Generated workspace config must be valid TOML");
         let table = val.as_table().unwrap();
         let models = table["models"].as_array().unwrap();
         assert_eq!(models[0].as_str(), Some("anthropic/claude-haiku-4-5"));
@@ -278,8 +287,8 @@ mod tests {
     #[test]
     fn custom_workspace_config_is_valid_toml() {
         let config_str = generate_workspace_config_with("openai", "gpt-4o");
-        let val: toml::Value = toml::from_str(&config_str)
-            .expect("Generated workspace config must be valid TOML");
+        let val: toml::Value =
+            toml::from_str(&config_str).expect("Generated workspace config must be valid TOML");
         let table = val.as_table().unwrap();
         let models = table["models"].as_array().unwrap();
         assert_eq!(models[0].as_str(), Some("openai/gpt-4o"));
@@ -290,8 +299,10 @@ mod tests {
         for &provider in &providers() {
             let model = default_model(provider);
             let config_str = generate_workspace_config_with(provider, model);
-            let config: starpod_core::AgentConfig = toml::from_str(&config_str)
-                .unwrap_or_else(|e| panic!("Config for provider '{}' failed to parse: {}", provider, e));
+            let config: starpod_core::AgentConfig =
+                toml::from_str(&config_str).unwrap_or_else(|e| {
+                    panic!("Config for provider '{}' failed to parse: {}", provider, e)
+                });
             assert_eq!(config.models, vec![format!("{provider}/{model}")]);
             assert_eq!(config.max_turns, 30);
             assert_eq!(config.server_addr, "127.0.0.1:3000");
@@ -327,15 +338,30 @@ mod tests {
 
     #[test]
     fn env_content_every_keyed_provider() {
-        let keyed = ["anthropic", "openai", "gemini", "groq", "deepseek", "openrouter"];
+        let keyed = [
+            "anthropic",
+            "openai",
+            "gemini",
+            "groq",
+            "deepseek",
+            "openrouter",
+        ];
         for provider in keyed {
             let env_name = env_key_for_provider(provider).unwrap();
             // with key
             let env = generate_env_content(provider, Some("test-key"));
-            assert!(env.contains(&format!("{}=test-key", env_name)), "provider: {}", provider);
+            assert!(
+                env.contains(&format!("{}=test-key", env_name)),
+                "provider: {}",
+                provider
+            );
             // without key
             let env = generate_env_content(provider, None);
-            assert!(env.starts_with(&format!("# {}=", env_name)), "provider: {}", provider);
+            assert!(
+                env.starts_with(&format!("# {}=", env_name)),
+                "provider: {}",
+                provider
+            );
         }
     }
 
@@ -352,7 +378,11 @@ mod tests {
     fn every_provider_has_a_default_model() {
         for provider in &providers() {
             let model = default_model(provider);
-            assert!(!model.is_empty(), "provider '{}' has no default model", provider);
+            assert!(
+                !model.is_empty(),
+                "provider '{}' has no default model",
+                provider
+            );
         }
     }
 
@@ -371,7 +401,10 @@ mod tests {
         assert_eq!(env_key_for_provider("gemini"), Some("GEMINI_API_KEY"));
         assert_eq!(env_key_for_provider("groq"), Some("GROQ_API_KEY"));
         assert_eq!(env_key_for_provider("deepseek"), Some("DEEPSEEK_API_KEY"));
-        assert_eq!(env_key_for_provider("openrouter"), Some("OPENROUTER_API_KEY"));
+        assert_eq!(
+            env_key_for_provider("openrouter"),
+            Some("OPENROUTER_API_KEY")
+        );
         assert_eq!(env_key_for_provider("ollama"), None);
     }
 

@@ -5,14 +5,14 @@ use std::path::Path;
 use std::str::FromStr;
 
 use aes_gcm::aead::{Aead, KeyInit, OsRng};
-use aes_gcm::{Aes256Gcm, AeadCore, Nonce};
+use aes_gcm::{AeadCore, Aes256Gcm, Nonce};
 use chrono::Utc;
 use rand::RngCore;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
 use tracing::debug;
 
-use starpod_core::{StarpodError, Result};
+use starpod_core::{Result, StarpodError};
 
 // ── System keys ──────────────────────────────────────────────────────────────
 
@@ -76,13 +76,12 @@ impl Vault {
             std::fs::create_dir_all(parent)?;
         }
 
-        let opts = SqliteConnectOptions::from_str(
-            &format!("sqlite://{}?mode=rwc", db_path.display()),
-        )
-        .map_err(|e| StarpodError::Database(format!("Invalid DB path: {}", e)))?
-        .pragma("journal_mode", "WAL")
-        .pragma("busy_timeout", "5000")
-        .pragma("synchronous", "NORMAL");
+        let opts =
+            SqliteConnectOptions::from_str(&format!("sqlite://{}?mode=rwc", db_path.display()))
+                .map_err(|e| StarpodError::Database(format!("Invalid DB path: {}", e)))?
+                .pragma("journal_mode", "WAL")
+                .pragma("busy_timeout", "5000")
+                .pragma("synchronous", "NORMAL");
 
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
@@ -109,13 +108,11 @@ impl Vault {
 
     /// Retrieve and decrypt a value by key. Returns `None` if the key doesn't exist.
     pub async fn get(&self, key: &str, user_id: Option<&str>) -> Result<Option<String>> {
-        let row = sqlx::query(
-            "SELECT encrypted_value, nonce FROM vault_entries WHERE key = ?1",
-        )
-        .bind(key)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| StarpodError::Database(format!("Query failed: {}", e)))?;
+        let row = sqlx::query("SELECT encrypted_value, nonce FROM vault_entries WHERE key = ?1")
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| StarpodError::Database(format!("Query failed: {}", e)))?;
 
         let row = match row {
             Some(r) => r,
@@ -200,14 +197,16 @@ impl Vault {
     /// Append an entry to the audit log.
     pub async fn audit(&self, key: &str, action: &str, user_id: Option<&str>) -> Result<()> {
         let now = Utc::now().to_rfc3339();
-        sqlx::query("INSERT INTO vault_audit (key, action, timestamp, user_id) VALUES (?1, ?2, ?3, ?4)")
-            .bind(key)
-            .bind(action)
-            .bind(&now)
-            .bind(user_id)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| StarpodError::Database(format!("Audit log failed: {}", e)))?;
+        sqlx::query(
+            "INSERT INTO vault_audit (key, action, timestamp, user_id) VALUES (?1, ?2, ?3, ?4)",
+        )
+        .bind(key)
+        .bind(action)
+        .bind(&now)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StarpodError::Database(format!("Audit log failed: {}", e)))?;
         Ok(())
     }
 
@@ -364,7 +363,10 @@ mod tests {
         assert_eq!(rows[0], ("set".to_string(), Some("alice".to_string())));
         assert_eq!(rows[1], ("get".to_string(), Some("bob".to_string())));
         assert_eq!(rows[2], ("delete".to_string(), None));
-        assert_eq!(rows[3], ("env_read".to_string(), Some("charlie".to_string())));
+        assert_eq!(
+            rows[3],
+            ("env_read".to_string(), Some("charlie".to_string()))
+        );
     }
 
     // ── derive_master_key tests ───────────────────────────────────
