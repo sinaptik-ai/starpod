@@ -284,18 +284,19 @@ fn init_lifecycle_files_are_empty() {
     }
 }
 
-// ── deploy stub ───────────────────────────────────────────────────────
+// ── deploy ────────────────────────────────────────────────────────────
 
 #[test]
-fn deploy_prints_coming_soon() {
+fn deploy_requires_auth() {
     let output = starpod()
         .args(["deploy"])
         .output()
         .unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Deploy should fail because we're not logged in
     assert!(
-        stdout.contains("coming soon") || stdout.contains("Coming soon"),
-        "deploy should print coming soon, got:\n{stdout}"
+        !output.status.success(),
+        "deploy without auth should fail"
     );
 }
 

@@ -38,7 +38,8 @@ impl std::fmt::Display for InstanceStatus {
 pub struct Instance {
     pub id: String,
     pub status: InstanceStatus,
-    pub agent_id: String,
+    #[serde(default)]
+    pub agent_id: Option<String>,
     #[serde(default)]
     pub organization_id: Option<String>,
     #[serde(default)]
@@ -184,7 +185,8 @@ pub struct SshInfo {
 /// Request body for creating an instance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateInstanceRequest {
-    pub agent_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

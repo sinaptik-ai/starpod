@@ -10,6 +10,7 @@
 //! - `starpod auth`  — login/logout/status for remote deployment
 
 mod auth;
+mod deploy;
 mod onboarding;
 
 use std::sync::Arc;
@@ -90,8 +91,21 @@ enum Commands {
     /// Start the agent in production mode.
     Serve,
 
-    /// Deploy the agent to a remote instance (coming soon).
-    Deploy,
+    /// Deploy the agent to a remote instance.
+    Deploy {
+        /// Instance display name.
+        #[arg(long)]
+        name: Option<String>,
+        /// GCP zone (e.g. europe-west4-a).
+        #[arg(long)]
+        zone: Option<String>,
+        /// Machine size: small, medium, large, xlarge.
+        #[arg(long, default_value = "small")]
+        machine_type: String,
+        /// Skip interactive prompts (use defaults: secrets=yes, memory=yes, home=no).
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
 
     /// Start an interactive REPL session.
     Repl,
@@ -624,19 +638,9 @@ async fn main() -> anyhow::Result<()> {
             starpod_gateway::serve_with_agent(agent, config, cron_notifier, paths, auth).await?;
         }
 
-        // ── Deploy: stub ────────────────────────────────────────────
-        Commands::Deploy => {
-            println!();
-            println!(
-                "  {} Deploy is coming soon.",
-                "ℹ".bright_cyan().bold()
-            );
-            println!(
-                "  {} Use {} for local development.",
-                "→".dimmed(),
-                "starpod dev".bright_white()
-            );
-            println!();
+        // ── Deploy ──────────────────────────────────────────────────
+        Commands::Deploy { name, zone, machine_type, yes } => {
+            deploy::run_deploy(name, zone, machine_type, yes).await?;
         }
 
         // ── Repl ────────────────────────────────────────────────────
@@ -679,7 +683,7 @@ async fn main() -> anyhow::Result<()> {
                 triggered_by: None,
                 model: None,
             };
-            let (mut stream, session_id, _followup_tx) = agent.chat_stream(&chat_msg).await?;
+            let (mut stream, session_id, _followup_tx, _attachments) = agent.chat_stream(&chat_msg).await?;
             let (result_text, result_msg) = process_stream(&mut stream, &start).await?;
 
             if let Some(ref result) = result_msg {
@@ -870,7 +874,7 @@ async fn run_repl(agent: StarpodAgent, name: &str) -> anyhow::Result<()> {
             triggered_by: None,
             model: None,
         };
-        let (mut stream, session_id, _followup_tx) = agent.chat_stream(&chat_msg).await?;
+        let (mut stream, session_id, _followup_tx, _attachments) = agent.chat_stream(&chat_msg).await?;
         let (result_text, result_msg) = process_stream(&mut stream, &start).await?;
 
         if let Some(ref result) = result_msg {

@@ -371,7 +371,7 @@ mod tests {
         Instance {
             id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890".to_string(),
             status: InstanceStatus::Running,
-            agent_id: "f0e1d2c3-b4a5-6789-0fed-cba987654321".to_string(),
+            agent_id: Some("f0e1d2c3-b4a5-6789-0fed-cba987654321".to_string()),
             organization_id: None,
             name: None,
             description: None,
@@ -402,7 +402,7 @@ mod tests {
             .await;
 
         let req = CreateInstanceRequest {
-            agent_id: "f0e1d2c3-b4a5-6789-0fed-cba987654321".into(),
+            agent_id: Some("f0e1d2c3-b4a5-6789-0fed-cba987654321".into()),
             name: None,
             description: None,
             zone: None,
@@ -556,7 +556,7 @@ mod tests {
             .await;
 
         let req = CreateInstanceRequest {
-            agent_id: "test-agent".into(),
+            agent_id: Some("test-agent".into()),
             name: None,
             description: None,
             zone: None,
