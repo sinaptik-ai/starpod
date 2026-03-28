@@ -95,8 +95,6 @@ If the compaction model fails, it falls back to the primary model.
 
 All messages (user, assistant, tool use/results) are saved to the session database. The web UI loads full history when revisiting a session.
 
-## CLI
+## Viewing Sessions
 
-```bash
-starpod sessions list --limit 10
-```
+Sessions can be viewed through the web UI sidebar or via the API (`GET /api/sessions`).

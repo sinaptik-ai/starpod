@@ -75,7 +75,8 @@ pub struct SecretResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstanceResponse {
     pub id: String,
-    pub agent_id: String,
+    #[serde(default)]
+    pub agent_id: Option<String>,
     pub status: String,
     #[serde(default)]
     pub name: Option<String>,
@@ -94,6 +95,12 @@ pub struct InstanceResponse {
     pub created_at: String,
 }
 
+/// Response from the deploy endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeployResponse {
+    pub instance: InstanceResponse,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateAgentRequest {
     pub name: String,
@@ -107,7 +114,8 @@ pub struct CreateSecretRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateInstanceRequest {
-    pub agent_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -225,6 +233,7 @@ impl DeployClient {
         req.header("Authorization", format!("Bearer {}", self.api_key))
     }
 
+    // DEPRECATED(2026-05-28): agent CRUD — replaced by direct tarball deploy
     // ── Agent CRUD ────────────────────────────────────────────────────
 
     /// Create a new agent on the backend.
@@ -528,7 +537,7 @@ impl DeployClient {
         let resp = self
             .auth(self.client.post(self.url("/instances")))
             .json(&CreateInstanceRequest {
-                agent_id: agent_id.to_string(),
+                agent_id: Some(agent_id.to_string()),
                 name: name.map(String::from),
                 description: description.map(String::from),
                 zone: zone.map(String::from),
@@ -620,8 +629,69 @@ impl DeployClient {
         }
     }
 
-    // ── High-level deploy ─────────────────────────────────────────────
+    // ── Direct tarball deploy ──────────────────────────────────────────
 
+    /// Deploy a pre-built `.starpod/` directory as a tarball.
+    ///
+    /// Uploads the tarball to the platform, which creates an instance directly
+    /// without requiring an agent blueprint.
+    pub async fn deploy_tarball(
+        &self,
+        tarball: Vec<u8>,
+        secrets: Option<HashMap<String, String>>,
+        name: Option<String>,
+        zone: Option<String>,
+        machine_type: Option<String>,
+    ) -> Result<DeployResponse> {
+        debug!("Deploying tarball ({} bytes)", tarball.len());
+
+        let mut form = multipart::Form::new().part(
+            "tarball",
+            multipart::Part::bytes(tarball)
+                .file_name("bundle.tar.gz")
+                .mime_str("application/gzip")
+                .map_err(|e| StarpodError::Config(format!("mime error: {e}")))?,
+        );
+
+        if let Some(ref secrets_map) = secrets {
+            let json = serde_json::to_string(secrets_map)
+                .map_err(|e| StarpodError::Config(format!("serialize secrets: {e}")))?;
+            form = form.text("secrets", json);
+        }
+
+        if let Some(name) = name {
+            form = form.text("name", name);
+        }
+        if let Some(zone) = zone {
+            form = form.text("zone", zone);
+        }
+        if let Some(mt) = machine_type {
+            form = form.text("machine_type", mt);
+        }
+
+        let resp = self
+            .auth(self.client.post(self.url("/deploy")))
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| StarpodError::Channel(format!("Deploy request failed: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(StarpodError::Channel(format!(
+                "Deploy failed ({status}): {body}"
+            )));
+        }
+
+        resp.json::<DeployResponse>()
+            .await
+            .map_err(|e| StarpodError::Channel(format!("Invalid deploy response: {e}")))
+    }
+
+    // ── High-level deploy (legacy) ──────────────────────────────────────
+
+    // DEPRECATED(2026-05-28): agent-based deploy replaced by deploy_tarball
     /// Deploy an agent from a local workspace directory.
     ///
     /// 1. Collects agent files from `agent_dir` (agent.toml, SOUL.md, etc.)
@@ -694,6 +764,7 @@ impl DeployClient {
         })
     }
 
+    // DEPRECATED(2026-05-28): agent file sync replaced by single tarball upload
     // ── Sync ──────────────────────────────────────────────────────────
 
     /// Compute the diff between a local manifest and remote state.

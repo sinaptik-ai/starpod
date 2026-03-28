@@ -130,7 +130,7 @@ mod tests {
         Instance {
             id: id.to_string(),
             status: InstanceStatus::Running,
-            agent_id: "test-agent".to_string(),
+            agent_id: Some("test-agent".to_string()),
             organization_id: None,
             name: None,
             description: None,
@@ -238,7 +238,7 @@ mod tests {
         let instances = vec![Instance {
             id: "inst-paused".to_string(),
             status: InstanceStatus::Stopped,
-            agent_id: "test-agent".to_string(),
+            agent_id: Some("test-agent".to_string()),
             organization_id: None,
             name: None,
             description: None,

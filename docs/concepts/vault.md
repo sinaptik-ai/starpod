@@ -5,18 +5,19 @@ The vault provides **AES-256-GCM encrypted credential storage** with audit loggi
 ## How It Works
 
 - Credentials are encrypted with AES-256-GCM before being stored in SQLite
-- A master key (derived from your API key) encrypts/decrypts values
+- A master key (derived deterministically) encrypts/decrypts values
 - All access is audit-logged (with optional `user_id` tracking)
 
-## Environment Variable Flow
+## Secrets Flow
 
-Secrets flow through a three-stage pipeline:
+Secrets enter the vault through two paths:
 
-1. **Build time** — `.env` values are validated against `deploy.toml` declarations, then encrypted into the vault via `populate_vault()`
-2. **Serve time** — `inject_env_from_vault()` decrypts declared secrets and calls `std::env::set_var()` to load them into the process environment
-3. **Runtime** — The agent accesses them two ways:
-   - **`EnvGet` tool** — reads `std::env::var()`, blocks system keys, audit-logs each read
-   - **Bash/SSH commands** — child processes inherit the process environment automatically
+1. **At init time** — `starpod init --env KEY=VAL` seeds secrets directly into the vault
+2. **Via the web UI** — the Settings page provides a UI for managing vault entries
+
+At startup (`starpod dev`, `starpod serve`, `starpod repl`, `starpod chat`), all vault secrets are decrypted and injected into the process environment via `std::env::set_var()`. The agent accesses them two ways:
+- **`EnvGet` tool** — reads `std::env::var()`, blocks system keys, audit-logs each read
+- **Bash/SSH commands** — child processes inherit the process environment automatically
 
 The system prompt dynamically lists which non-system env vars are available, so the agent knows what credentials it can use.
 
@@ -31,7 +32,7 @@ See the [starpod-vault crate docs](/crates/starpod-vault) for the full list of s
 
 ## Programmatic Use
 
-The vault is available as a Rust library (`starpod_vault::Vault`). System keys (API keys, bot tokens) are stored in the vault and managed via the Settings UI. For local development, secrets can be placed in `.env` — they are populated into the vault at startup via `populate_vault()`. The agent accesses secrets via the `EnvGet` tool.
+The vault is available as a Rust library (`starpod_vault::Vault`). System keys (API keys, bot tokens) are stored in the vault and managed via the Settings UI or `starpod init --env`. The agent accesses secrets via the `EnvGet` tool.
 
 ## Use Cases
 

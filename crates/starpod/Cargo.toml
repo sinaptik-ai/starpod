@@ -20,15 +20,13 @@ agent-sdk = { workspace = true }
 starpod-core = { workspace = true }
 starpod-agent = { workspace = true }
 starpod-gateway = { workspace = true }
-starpod-skills = { workspace = true }
 starpod-cron = { workspace = true }
-starpod-instances = { workspace = true }
 starpod-vault = { workspace = true }
-starpod-auth = { workspace = true }
-starpod-db = { workspace = true }
-futures = "0.3"
-chrono = "0.4"
+starpod-instances = { workspace = true }
 clap = { version = "4", features = ["derive"] }
+dialoguer = "0.11"
+flate2 = "1"
+tar = "0.4"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 tracing = "0.1"
@@ -40,7 +38,6 @@ colored = "3"
 anyhow = "1"
 uuid = { version = "1", features = ["v4"] }
 toml = "0.8"
-dialoguer = "0.12.0"
 dirs = "6"
 open = "5"
 tempfile = "3"

@@ -49,25 +49,6 @@ When reviewing code, always check for:
 
 ## Creating Skills
 
-### Via CLI
-
-`starpod skill new` generates a complete skill using AI — you provide the name, and optionally a description or extra context:
-
-```bash
-# Name only — AI generates everything
-starpod skill new code-review
-
-# With explicit description (overrides AI)
-starpod skill new code-review \
-  --description "Review code for bugs, security issues, and style."
-
-# With extra context for the AI
-starpod skill new code-review \
-  --prompt "Focus on OWASP top 10 and always check error handling"
-```
-
-The generated skill follows [AgentSkills best practices](https://agentskills.io/skill-creation/best-practices): clear trigger conditions, step-by-step procedures, gotchas sections, and validation loops.
-
 ### Via the Web UI
 
 In **Settings → Skills**, click **+ New Skill** to open the creation wizard:
@@ -104,11 +85,7 @@ EOF
 
 ## Managing Skills
 
-```bash
-starpod skill list              # List all skills with descriptions
-starpod skill show code-review  # View a skill's full content
-starpod skill delete code-review # Delete a skill
-```
+Skills are managed through the chat interface (ask the agent to list, create, or delete skills), the web UI Settings page, or by editing files directly in `.starpod/skills/`.
 
 ## Agent Tools
 

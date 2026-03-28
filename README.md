@@ -5,7 +5,7 @@
 <h1 align="center">Starpod</h1>
 
 <p align="center">
-  <strong>Kubernetes for AI agents. Minus the pain.</strong>
+  <strong>Personal AI agents. Built in Rust.</strong>
 </p>
 
 <p align="center">
@@ -15,34 +15,14 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-C0C0C0.svg?style=flat-square" alt="MIT License"></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-1.87+-C0C0C0.svg?style=flat-square&logo=rust&logoColor=white" alt="Rust 1.87+"></a>
-  <img src="https://img.shields.io/badge/tests-1316-C0C0C0.svg?style=flat-square" alt="1316 tests">
+  <img src="https://img.shields.io/badge/tests-1362-C0C0C0.svg?style=flat-square" alt="1362 tests">
   <img src="https://img.shields.io/badge/crates-16-C0C0C0.svg?style=flat-square" alt="16 crates">
   <a href="https://discord.com/invite/KYKj9F2FRH"><img src="https://img.shields.io/discord/1102146545580785686?label=Discord&logo=discord&logoColor=white&color=5865F2&style=flat-square" alt="Discord"></a>
 </p>
 
 ---
 
-Starpod is an open-source AI agent runtime built in Rust. Define an agent once — skills, config, tools — then deploy isolated instances for every user, team, or client. Each instance gets its own memory, vault, filesystem, and sessions. No cross-contamination. Scale from 1 to 10,000.
-
-```
-          Starpod UI · Telegram · Slack · Email · API
-                          │
-                          ▼
-               ┌─────────────────────┐
-               │       AGENT         │  Define once
-               │  skills · config    │
-               │  tools · personality│
-               └────────┬────────────┘
-                        │  starpod agent push + instance new
-          ┌─────────────┼─────────────┐
-          ▼             ▼             ▼
-    ┌───────────┐ ┌───────────┐ ┌───────────┐
-    │ Instance A│ │ Instance B│ │ Instance C│  Isolated per tenant
-    │ memory    │ │ memory    │ │ memory    │
-    │ vault     │ │ vault     │ │ vault     │
-    │ files     │ │ files     │ │ files     │
-    └───────────┘ └───────────┘ └───────────┘
-```
+Starpod is an open-source AI agent runtime built in Rust. Bootstrap an agent in any directory with `starpod init`, then run it locally or deploy to the cloud. Each agent gets its own memory, vault, filesystem, and sessions — all self-contained in a `.starpod/` directory.
 
 ## Install
 
@@ -61,47 +41,43 @@ cargo install --path crates/starpod --locked
 ## Quick start
 
 ```bash
-# Initialize a workspace
-starpod init
+# Initialize an agent
+starpod init --name "Jarvis" --model anthropic/claude-haiku-4-5
 
-# Create an agent
-starpod agent new my-agent
+# Seed your API key into the vault
+starpod init --env ANTHROPIC_API_KEY=sk-ant-...
 
-# Run locally
-starpod dev my-agent
+# Start the dev server (opens browser)
+starpod dev
 ```
 
 ```
-  Starpod is running
+  ╭──────────────────────────────────────────╮
+  │      Jarvis  ·  AI Assistant             │
+  ╰──────────────────────────────────────────╯
 
-  Frontend  http://127.0.0.1:3000
-  API       http://127.0.0.1:3000/api
-  WS        ws://127.0.0.1:3000/ws
-  Telegram  connected
-  Model     claude-haiku-4-5
+  Server 127.0.0.1:3000
+  API Key sp-abc123...
 ```
 
-Or deploy to [Starpod Console](https://console.starpod.sh):
+Or use the terminal:
 
 ```bash
-starpod auth login
-starpod agent push my-agent
-starpod instance new --agent my-agent
+starpod chat "What files are in this directory?"
+starpod repl
 ```
-
-Managed cloud or self-hosted (AWS, GCP, Azure). Real-time logs, secrets vault, usage analytics.
 
 ## Highlights
 
-- **One agent, infinite instances** — define skills and config once, deploy isolated instances per user, team, or client. Each gets its own memory, vault, and filesystem.
-- **Multi-channel** — Starpod UI, Telegram, Slack, Email, HTTP API, WebSocket streaming. Same agent, every surface.
+- **Simple setup** — `starpod init` bootstraps everything. No workspace files, no blueprints, no separate instance management.
+- **Multi-channel** — Web UI, Telegram, CLI, HTTP API, WebSocket streaming. Same agent, every surface.
 - **Persistent memory** — markdown files + SQLite FTS5. Per-user memory spaces. The agent remembers across sessions.
 - **Self-extending skills** — the agent creates, edits, and deletes its own skill files at runtime. `/skill` and it executes.
-- **Encrypted vault** — AES-256-GCM credential storage per instance. API keys never touch disk in plaintext.
+- **Encrypted vault** — AES-256-GCM credential storage. API keys never touch disk in plaintext. No `.env` files — vault only.
 - **Cron scheduling** — interval, cron expressions, one-shot. Runs through the full agent loop, records history.
 - **Channel-aware sessions** — explicit sessions for web/API, time-gap sessions for Telegram. Per-user scoping.
 - **Streaming** — real-time text deltas and tool-use events over WebSocket.
-- **Built in Rust** — 16 crates, 1,316 tests, zero warnings.
+- **Built in Rust** — 16 crates, 1,362 tests, zero warnings.
 
 ## Architecture
 
@@ -123,18 +99,20 @@ crates/
 └── starpod/              CLI binary
 ```
 
-## Instance layout
+## Agent layout
 
-Each instance gets its own isolated `.starpod/` directory:
+Each agent is self-contained in a `.starpod/` directory:
 
 ```
 .starpod/
-├── .env                    Secrets (never overwritten by deploy)
 ├── config/
 │   ├── agent.toml          Agent configuration
 │   ├── SOUL.md             Personality
-│   └── BOOT.md             Bootstrap prompt
-├── skills/                 Skill files (merged on build)
+│   ├── HEARTBEAT.md        Periodic self-reflection
+│   ├── BOOT.md             Boot instructions
+│   ├── BOOTSTRAP.md        First-run instructions
+│   └── frontend.toml       Web UI config
+├── skills/                 Skill files
 ├── db/
 │   ├── core.db             Sessions + cron + auth
 │   ├── memory.db           FTS5 + vectors
@@ -147,30 +125,19 @@ Each instance gets its own isolated `.starpod/` directory:
 
 ## Configuration
 
-**Workspace** (`starpod.toml`) — shared defaults for all agents:
+All configuration lives in a single `agent.toml`:
 
 ```toml
-provider = "anthropic"
-model = "claude-haiku-4-5"
+agent_name = "Nova"
+models = ["anthropic/claude-haiku-4-5"]
 max_turns = 30
-```
-
-**Agent** (`agents/<name>/agent.toml`) — per-agent overrides:
-
-```toml
-agent_name = "Aster"
-model = "claude-haiku-4-5"
+server_addr = "127.0.0.1:3000"
 
 [channels.telegram]
 allowed_users = [123456789]
 ```
 
-**Secrets** in `.env` — never in config:
-
-```
-ANTHROPIC_API_KEY=sk-ant-...
-TELEGRAM_BOT_TOKEN=123456789:ABC...
-```
+**Secrets** live in the vault (`vault.db`), seeded via `starpod init --env KEY=VAL` or the web UI Settings page. No `.env` files.
 
 **Personality** in `SOUL.md` — not in config.
 
@@ -212,47 +179,20 @@ WebSocket at `ws://localhost:3000/ws`. Auth via `X-API-Key` header or `?token=` 
 ## Telegram
 
 1. Create a bot with [@BotFather](https://t.me/BotFather)
-2. Add `TELEGRAM_BOT_TOKEN=...` to `.env`
+2. Store the token in the vault (via `starpod init --env TELEGRAM_BOT_TOKEN=...` or Settings UI)
 3. Add `allowed_users` to `agent.toml`
-4. `starpod dev <agent>` — look for `Telegram connected`
-
-The bot shares the same agent as web and API. Typing indicators, smart message splitting, HTML rendering with plain-text fallback.
+4. `starpod dev` — look for `Telegram connected`
 
 ## CLI
 
 ```
-starpod init                          Initialize workspace
-starpod agent new <name>              Create agent
-starpod agent list                    List agents
-starpod dev <agent>                   Dev server (blueprint + serve)
-starpod serve                         Production server
-starpod chat -a <agent> "..."         One-shot message
-starpod repl -a <agent>               Interactive REPL
-
-starpod memory search "..." [-l 5]    Search memory
-starpod memory reindex                Rebuild FTS5 index
-starpod sessions list [-l 10]         List sessions
-
-starpod skill list                    List skills
-starpod skill new <name> -d "..."     Create skill
-starpod skill delete <name>           Delete skill
-
-starpod cron list                     List cron jobs
-starpod cron remove <name>            Remove cron job
-starpod cron runs <name>              Show run history
-starpod cron run <name>               Trigger immediately
-
-starpod auth login                    Authenticate with platform
-starpod agent push <name>             Push blueprint to platform
-starpod agent pull <name>             Pull blueprint from platform
-starpod instance new -a <agent>       Create remote instance
-starpod instance list                 List remote instances
-starpod instance destroy <id>         Destroy instance
-starpod instance stop <id>            Stop instance
-starpod instance start <id>           Start instance
-starpod instance logs <id>            Stream logs
-starpod instance ssh <id>             SSH into instance
-starpod instance health <id>          Health metrics
+starpod init [--name N] [--model M] [--env K=V]   Initialize agent
+starpod dev [--port P]                             Dev server (opens browser)
+starpod serve                                      Production server
+starpod deploy                                     Deploy to remote (coming soon)
+starpod chat "message"                             One-shot message
+starpod repl                                       Interactive REPL
+starpod auth login|logout|status                   Platform authentication
 ```
 
 ## Development

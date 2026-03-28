@@ -151,19 +151,10 @@ Starpod has two mechanisms for background memory persistence:
 
 Both can be active simultaneously. The nudge catches information proactively; the flush is a safety net before context is lost.
 
-## CLI
-
-```bash
-# Search from the command line
-starpod memory search "database migrations" --limit 5
-
-# Rebuild FTS5 index after manual edits
-starpod memory reindex
-```
 
 ## Manual Editing
 
-You can edit any file in `.starpod/` with your text editor. Run `starpod memory reindex` afterward to update the search index.
+You can edit any file in `.starpod/` with your text editor. The search index is rebuilt automatically on the next server start, or you can trigger a reindex via the API (`POST /api/memory/reindex`).
 
 ::: tip
 Edit `SOUL.md` to change the agent's personality. Edit `USER.md` to update what the agent knows about you. Changes take effect on the next conversation.

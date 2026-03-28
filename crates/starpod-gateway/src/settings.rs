@@ -24,6 +24,7 @@
 //! `SKILL.md` files in `.starpod/skills/<name>/`. The store is instantiated
 //! per-request (cheap — just a `create_dir_all` + struct init).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::extract::{Path, Request, State};
@@ -113,6 +114,59 @@ struct GeneralSettings {
 #[derive(Debug, Serialize)]
 struct ModelsResponse {
     models: std::collections::HashMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+struct SetupStatus {
+    complete: bool,
+    steps: SetupSteps,
+    agent_name: String,
+    provider: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SetupSteps {
+    identity: bool,
+    model: bool,
+    personality: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeneratePersonalityRequest {
+    prompt: String,
+    agent_name: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct GeneratePersonalityResponse {
+    soul_md: String,
+    #[serde(default)]
+    heartbeat_md: String,
+    #[serde(default)]
+    skills: Vec<GeneratedPersonalitySkill>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GeneratedPersonalitySkill {
+    name: String,
+    description: String,
+    body: String,
+    #[serde(default)]
+    env: Option<GeneratedSkillEnv>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GeneratedSkillEnv {
+    #[serde(default)]
+    secrets: HashMap<String, GeneratedSecretDecl>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GeneratedSecretDecl {
+    #[serde(default)]
+    required: bool,
+    #[serde(default)]
+    description: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -225,6 +279,22 @@ struct CreateSkillRequest {
     name: String,
     description: String,
     body: String,
+    #[serde(default)]
+    env: Option<CreateSkillEnv>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateSkillEnv {
+    #[serde(default)]
+    secrets: HashMap<String, CreateSecretDecl>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateSecretDecl {
+    #[serde(default)]
+    required: bool,
+    #[serde(default)]
+    description: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -395,6 +465,12 @@ pub fn settings_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         )
         // Costs
         .route("/api/settings/costs", get(get_costs))
+        // Onboarding
+        .route("/api/settings/setup-status", get(get_setup_status))
+        .route(
+            "/api/settings/setup/generate-role",
+            axum::routing::post(generate_role),
+        )
         // Telegram linking per user
         .route(
             "/api/settings/auth/users/{id}/telegram",
@@ -1052,8 +1128,33 @@ async fn create_skill(
     Json(req): Json<CreateSkillRequest>,
 ) -> Result<(StatusCode, Json<SkillDetail>), (StatusCode, Json<ErrorResponse>)> {
     let store = skill_store(&state)?;
+    let skill_env = req.env.map(|e| {
+        use starpod_skills::{SecretDecl, SkillEnv};
+        SkillEnv {
+            secrets: e
+                .secrets
+                .into_iter()
+                .map(|(k, v)| {
+                    (
+                        k,
+                        SecretDecl {
+                            required: v.required,
+                            description: v.description,
+                        },
+                    )
+                })
+                .collect(),
+            variables: HashMap::new(),
+        }
+    });
     store
-        .create(&req.name, &req.description, None, None, &req.body)
+        .create(
+            &req.name,
+            &req.description,
+            None,
+            skill_env.as_ref(),
+            &req.body,
+        )
         .map_err(|e| bad_request(e.to_string()))?;
     let skill = store
         .get(&req.name)
@@ -1228,6 +1329,181 @@ async fn generate_skill(
         description: gen.description,
         body: gen.body,
     }))
+}
+
+// ── Onboarding / Setup ──────────────────────────────────────────────────
+
+async fn get_setup_status(State(state): State<Arc<AppState>>) -> ApiResult<SetupStatus> {
+    let cfg = state.config.read().unwrap();
+
+    // Identity: agent_name is set and non-default
+    let identity = !cfg.agent_name.is_empty();
+
+    // Model: at least one model configured AND the provider has an API key available
+    let model = if cfg.models.is_empty() {
+        false
+    } else {
+        // Check the primary model's provider
+        if let Some((provider, _)) = starpod_core::parse_model_spec(&cfg.models[0]) {
+            cfg.resolved_provider_api_key(provider).is_some()
+        } else {
+            false
+        }
+    };
+
+    // Personality: SOUL.md has substantial content (more than the default stub)
+    let soul_content = state
+        .agent
+        .memory()
+        .read_file("SOUL.md")
+        .unwrap_or_default();
+    let personality = soul_content.trim().len() > 50;
+
+    let provider = cfg
+        .models
+        .first()
+        .and_then(|m| starpod_core::parse_model_spec(m))
+        .map(|(p, _)| p.to_string())
+        .unwrap_or_default();
+
+    Ok(Json(SetupStatus {
+        complete: identity && model,
+        steps: SetupSteps {
+            identity,
+            model,
+            personality,
+        },
+        agent_name: cfg.agent_name.clone(),
+        provider,
+    }))
+}
+
+const ROLE_GEN_SYSTEM_PROMPT: &str = r#"You are an AI agent configurator for the Starpod platform. Given a description of what a user wants their AI agent to do, generate:
+
+1. **soul_md**: A markdown document that defines the agent's role, capabilities, voice, and behavior guidelines. Use a `# Soul` heading followed by the agent's name on the next line. Be specific and actionable — describe what the agent does, how it should communicate, what to prioritize, and any domain expertise. Keep it under 200 lines.
+
+2. **heartbeat_md**: A short markdown document (under 50 lines) with periodic check-in prompts the agent uses to stay aligned with its role. Use a `# Heartbeat` heading. Only include this if the role naturally calls for proactive behavior (monitoring, reminders, etc.). For purely reactive roles, return an empty string.
+
+3. **skills**: An array of 0-3 relevant skills that complement this role. Each skill has:
+   - `name`: short kebab-case identifier (e.g., "web-research", "code-review")
+   - `description`: 1-2 sentences explaining when to use the skill
+   - `body`: Markdown instructions (under 100 lines) the agent follows when the skill is activated. The body should reference any required env vars by name so the agent knows they are available.
+   - `env`: Environment requirements. **IMPORTANT**: You MUST include this field whenever a skill interacts with an external service, API, or platform. Structure:
+     ```json
+     { "secrets": { "GITHUB_TOKEN": { "required": true, "description": "GitHub personal access token for repository and PR access" } } }
+     ```
+     Common secrets to include when relevant:
+     - GitHub: `GITHUB_TOKEN` (PAT with repo scope)
+     - Slack: `SLACK_BOT_TOKEN` (Bot User OAuth Token)
+     - Notion: `NOTION_API_KEY` (Internal integration token)
+     - Jira: `JIRA_API_TOKEN` + `JIRA_EMAIL` + `JIRA_BASE_URL`
+     - Linear: `LINEAR_API_KEY`
+     - Brave Search: `BRAVE_API_KEY`
+     - Google: `GOOGLE_API_KEY` + `GOOGLE_CSE_ID`
+     - Telegram: `TELEGRAM_BOT_TOKEN`
+     - Any other service the skill needs to call — always include the credential as a secret.
+     If a skill only uses local tools (file I/O, shell commands, etc.) and no external APIs, omit `env`.
+
+Return a JSON object with exactly: `soul_md`, `heartbeat_md`, `skills`.
+If the user's description is vague, make reasonable creative choices that feel coherent. Always think about what API keys and credentials each skill would need to actually function.
+"#;
+
+async fn generate_role(
+    State(_state): State<Arc<AppState>>,
+    Json(req): Json<GeneratePersonalityRequest>,
+) -> ApiResult<GeneratePersonalityResponse> {
+    let agent_name = req.agent_name.unwrap_or_else(|| "Nova".to_string());
+    let user_prompt = format!(
+        "Configure an AI agent named \"{}\". \
+         The user describes what they want it to do:\n\n{}",
+        agent_name, req.prompt
+    );
+
+    let output_schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "soul_md": {
+                "type": "string",
+                "description": "Markdown document defining the agent's role, voice, and behavior with # Soul heading"
+            },
+            "heartbeat_md": {
+                "type": "string",
+                "description": "Markdown heartbeat/self-reflection document with # Heartbeat heading"
+            },
+            "skills": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "description": { "type": "string" },
+                        "body": { "type": "string" },
+                        "env": {
+                            "type": "object",
+                            "properties": {
+                                "secrets": {
+                                    "type": "object",
+                                    "additionalProperties": {
+                                        "type": "object",
+                                        "properties": {
+                                            "required": { "type": "boolean" },
+                                            "description": { "type": "string" }
+                                        },
+                                        "required": ["required", "description"],
+                                        "additionalProperties": false
+                                    }
+                                }
+                            },
+                            "required": ["secrets"],
+                            "additionalProperties": false
+                        }
+                    },
+                    "required": ["name", "description", "body"],
+                    "additionalProperties": false
+                },
+                "description": "0-3 complementary skills"
+            }
+        },
+        "required": ["soul_md", "heartbeat_md", "skills"],
+        "additionalProperties": false
+    });
+
+    let options = agent_sdk::Options::builder()
+        .system_prompt(agent_sdk::options::SystemPrompt::Custom(
+            ROLE_GEN_SYSTEM_PROMPT.to_string(),
+        ))
+        .output_format(output_schema)
+        .max_turns(1)
+        .persist_session(false)
+        .permission_mode(agent_sdk::PermissionMode::Plan)
+        .build();
+
+    let mut stream = agent_sdk::query(&user_prompt, options);
+
+    use futures::StreamExt;
+    let mut result_msg = None;
+    while let Some(msg_result) = stream.next().await {
+        let msg = msg_result.map_err(internal)?;
+        if let agent_sdk::Message::Result(result) = msg {
+            result_msg = Some(result);
+        }
+    }
+
+    let result = result_msg.ok_or_else(|| internal("No result from AI"))?;
+
+    if result.is_error {
+        return Err(internal(result.errors.join("; ")));
+    }
+
+    let result_text = result
+        .result
+        .ok_or_else(|| internal("No text returned from AI"))?;
+
+    let json_str = strip_json_fence(&result_text);
+    let gen: GeneratePersonalityResponse = serde_json::from_str(json_str)
+        .map_err(|e| internal(format!("Failed to parse AI response: {e}")))?;
+
+    Ok(Json(gen))
 }
 
 // ── Auth user management ─────────────────────────────────────────────────
@@ -2161,7 +2437,7 @@ mod tests {
             models: vec!["anthropic/claude-haiku-4-5".into()],
             max_turns: 30,
             max_tokens: 16384,
-            agent_name: "Aster".into(),
+            agent_name: "Nova".into(),
             timezone: Some("Europe/Rome".into()),
             reasoning_effort: Some(ReasoningEffort::High),
             compaction_model: None,
@@ -2713,8 +2989,8 @@ mod tests {
         let (_tmp, state) = test_app_state().await;
         let (status, json) = get_json(state, "/api/settings/files/SOUL.md").await;
         assert_eq!(status, StatusCode::OK);
-        // Default SOUL.md contains "Aster"
-        assert!(json["content"].as_str().unwrap().contains("Aster"));
+        // Default SOUL.md contains "Nova"
+        assert!(json["content"].as_str().unwrap().contains("Nova"));
     }
 
     #[tokio::test]

@@ -1,30 +1,23 @@
-//! Blueprint application and instance lifecycle.
+//! Agent instance lifecycle and ephemeral instances.
 //!
-//! An agent **blueprint** lives in `agents/<name>/` (git-tracked) and contains
-//! configuration, personality files, and template filesystem content.
-//!
-//! A runtime **instance** lives in `.instances/<name>/` (gitignored) and holds
-//! the actual agent state: databases, memory, user data, and any files the
-//! agent creates at runtime.
+//! An agent is bootstrapped with `starpod init` in any directory, creating a
+//! `.starpod/` directory with all configuration and runtime data.
 //!
 //! ## Functions
 //!
-//! - [`apply_blueprint`] — copies a blueprint into an instance, creating the
-//!   `.starpod/` directory structure. Idempotent: callers should check whether
-//!   the instance already exists before calling, and only re-apply when the
-//!   user explicitly requests a rebuild (e.g. `--build` flag).
-//! - [`build_standalone`] — creates a self-contained `.starpod/` for CI/CD
-//!   from explicit paths (no workspace required).
 //! - [`create_ephemeral_instance`] — creates a throwaway instance in a temp
-//!   directory for one-off commands like `starpod chat`. The returned
-//!   [`tempfile::TempDir`] guard auto-deletes on drop.
+//!   directory for one-off commands like `starpod chat` when no `.starpod/`
+//!   exists. The returned [`tempfile::TempDir`] guard auto-deletes on drop.
+//! - [`apply_blueprint`] — legacy: copies a blueprint into an instance directory.
+//! - [`build_standalone`] — legacy: creates a self-contained `.starpod/` from
+//!   explicit paths.
 //!
 //! ## Directory layout
 //!
-//! - `config/` — blueprint-managed files (overwritten on every build)
-//! - `skills/` — merged: blueprint skills overwrite by filename, user additions preserved
-//! - `db/`, `users/` — runtime data (never touched by build)
-//! - `.env` — environment secrets at starpod root (not in config/)
+//! - `config/` — agent configuration files (`agent.toml`, `SOUL.md`, etc.)
+//! - `skills/` — agent skills
+//! - `db/` — SQLite databases (core.db, memory.db, vault.db)
+//! - `users/` — per-user data
 
 use std::path::Path;
 

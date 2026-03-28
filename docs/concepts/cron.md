@@ -86,14 +86,9 @@ Both channels fire for every job — web push is always active when clients are 
 | `CronRun` | Immediately execute a job by name (manual trigger) |
 | `CronUpdate` | Update properties of an existing job (`name`, `prompt`, `enabled`, `max_retries`, `timeout_secs`, `session_mode`) |
 
-## CLI
+## Managing Jobs
 
-```bash
-starpod cron list                         # List all jobs
-starpod cron remove "morning-reminder"    # Remove a job
-starpod cron runs "morning-reminder" -l 10 # View run history
-starpod cron run "morning-reminder"        # Trigger immediately
-```
+Cron jobs are managed through the chat interface (ask the agent to create, list, or remove jobs) or via the web UI. The agent uses `CronAdd`, `CronList`, `CronRemove`, `CronRun`, and `CronUpdate` tools.
 
 ## Lifecycle Prompts
 

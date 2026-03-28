@@ -149,5 +149,5 @@ curl http://localhost:3000/api/instances/inst_abc123/health \
 | `error` | Encountered a failure |
 
 ::: info
-Log streaming (`GET /instances/:id/logs`) and SSH info (`GET /instances/:id/ssh`) are available via the CLI only. See the [CLI Reference](/cli-reference#instances).
+Log streaming and SSH access are available via the `starpod-instances` crate API. See the [Instances concept docs](/concepts/instances) for details.
 :::
