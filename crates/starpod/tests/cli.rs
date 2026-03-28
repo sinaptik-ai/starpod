@@ -26,12 +26,27 @@ fn init_creates_starpod_directory() {
 
     let sp = tmp.path().join(".starpod");
     let cfg = sp.join("config");
-    assert!(cfg.join("agent.toml").is_file(), ".starpod/config/agent.toml should exist");
-    assert!(cfg.join("SOUL.md").is_file(), ".starpod/config/SOUL.md should exist");
-    assert!(cfg.join("frontend.toml").is_file(), ".starpod/config/frontend.toml should exist");
-    assert!(cfg.join("HEARTBEAT.md").is_file(), "HEARTBEAT.md should exist");
+    assert!(
+        cfg.join("agent.toml").is_file(),
+        ".starpod/config/agent.toml should exist"
+    );
+    assert!(
+        cfg.join("SOUL.md").is_file(),
+        ".starpod/config/SOUL.md should exist"
+    );
+    assert!(
+        cfg.join("frontend.toml").is_file(),
+        ".starpod/config/frontend.toml should exist"
+    );
+    assert!(
+        cfg.join("HEARTBEAT.md").is_file(),
+        "HEARTBEAT.md should exist"
+    );
     assert!(cfg.join("BOOT.md").is_file(), "BOOT.md should exist");
-    assert!(cfg.join("BOOTSTRAP.md").is_file(), "BOOTSTRAP.md should exist");
+    assert!(
+        cfg.join("BOOTSTRAP.md").is_file(),
+        "BOOTSTRAP.md should exist"
+    );
     assert!(sp.join("db").is_dir(), ".starpod/db/ should exist");
     assert!(sp.join("skills").is_dir(), ".starpod/skills/ should exist");
     assert!(sp.join("users").is_dir(), ".starpod/users/ should exist");
@@ -48,17 +63,13 @@ fn init_with_name_flag() {
         .assert()
         .success();
 
-    let agent_toml = fs::read_to_string(
-        tmp.path().join(".starpod/config/agent.toml"),
-    ).unwrap();
+    let agent_toml = fs::read_to_string(tmp.path().join(".starpod/config/agent.toml")).unwrap();
     assert!(
         agent_toml.contains(r#"agent_name = "Jarvis""#),
         "agent_name should be Jarvis, got:\n{agent_toml}"
     );
 
-    let soul = fs::read_to_string(
-        tmp.path().join(".starpod/config/SOUL.md"),
-    ).unwrap();
+    let soul = fs::read_to_string(tmp.path().join(".starpod/config/SOUL.md")).unwrap();
     assert!(
         soul.contains("You are Jarvis"),
         "SOUL.md should reference Jarvis, got:\n{soul}"
@@ -75,9 +86,7 @@ fn init_with_model_flag() {
         .assert()
         .success();
 
-    let agent_toml = fs::read_to_string(
-        tmp.path().join(".starpod/config/agent.toml"),
-    ).unwrap();
+    let agent_toml = fs::read_to_string(tmp.path().join(".starpod/config/agent.toml")).unwrap();
     assert!(
         agent_toml.contains("openai/gpt-4o"),
         "model should be openai/gpt-4o, got:\n{agent_toml}"
@@ -94,9 +103,7 @@ fn init_default_values() {
         .assert()
         .success();
 
-    let agent_toml = fs::read_to_string(
-        tmp.path().join(".starpod/config/agent.toml"),
-    ).unwrap();
+    let agent_toml = fs::read_to_string(tmp.path().join(".starpod/config/agent.toml")).unwrap();
     assert!(
         agent_toml.contains(r#"agent_name = "Nova""#),
         "default agent_name should be Nova, got:\n{agent_toml}"
@@ -137,8 +144,14 @@ fn init_creates_gitignore() {
         .success();
 
     let gitignore = fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
-    assert!(gitignore.contains(".starpod/db/"), ".gitignore should contain .starpod/db/");
-    assert!(gitignore.contains("home/"), ".gitignore should contain home/");
+    assert!(
+        gitignore.contains(".starpod/db/"),
+        ".gitignore should contain .starpod/db/"
+    );
+    assert!(
+        gitignore.contains("home/"),
+        ".gitignore should contain home/"
+    );
 }
 
 #[test]
@@ -170,9 +183,7 @@ fn init_with_name_and_model() {
         .assert()
         .success();
 
-    let agent_toml = fs::read_to_string(
-        tmp.path().join(".starpod/config/agent.toml"),
-    ).unwrap();
+    let agent_toml = fs::read_to_string(tmp.path().join(".starpod/config/agent.toml")).unwrap();
     assert!(
         agent_toml.contains(r#"agent_name = "Ada""#),
         "agent_name should be Ada, got:\n{agent_toml}"
@@ -182,9 +193,7 @@ fn init_with_name_and_model() {
         "model should be openai/gpt-4o, got:\n{agent_toml}"
     );
 
-    let soul = fs::read_to_string(
-        tmp.path().join(".starpod/config/SOUL.md"),
-    ).unwrap();
+    let soul = fs::read_to_string(tmp.path().join(".starpod/config/SOUL.md")).unwrap();
     assert!(
         soul.contains("You are Ada"),
         "SOUL.md should reference Ada, got:\n{soul}"
@@ -197,11 +206,7 @@ fn init_with_multiple_env_flags() {
 
     starpod()
         .current_dir(tmp.path())
-        .args([
-            "init",
-            "--env", "KEY_A=val_a",
-            "--env", "KEY_B=val_b",
-        ])
+        .args(["init", "--env", "KEY_A=val_a", "--env", "KEY_B=val_b"])
         .assert()
         .success();
 
@@ -243,8 +248,14 @@ fn init_appends_to_existing_gitignore() {
         .success();
 
     let gitignore = fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
-    assert!(gitignore.contains("node_modules/"), "should preserve existing entries");
-    assert!(gitignore.contains(".starpod/db/"), "should add .starpod/db/");
+    assert!(
+        gitignore.contains("node_modules/"),
+        "should preserve existing entries"
+    );
+    assert!(
+        gitignore.contains(".starpod/db/"),
+        "should add .starpod/db/"
+    );
     assert!(gitignore.contains("home/"), "should add home/");
 }
 
@@ -258,9 +269,7 @@ fn init_frontend_toml_references_agent_name() {
         .assert()
         .success();
 
-    let frontend = fs::read_to_string(
-        tmp.path().join(".starpod/config/frontend.toml"),
-    ).unwrap();
+    let frontend = fs::read_to_string(tmp.path().join(".starpod/config/frontend.toml")).unwrap();
     assert!(
         frontend.contains("Jarvis"),
         "frontend.toml should reference the agent name, got:\n{frontend}"
@@ -280,7 +289,10 @@ fn init_lifecycle_files_are_empty() {
     let cfg = tmp.path().join(".starpod/config");
     for file in &["HEARTBEAT.md", "BOOT.md", "BOOTSTRAP.md"] {
         let content = fs::read_to_string(cfg.join(file)).unwrap();
-        assert!(content.is_empty(), "{file} should be empty, got: {content:?}");
+        assert!(
+            content.is_empty(),
+            "{file} should be empty, got: {content:?}"
+        );
     }
 }
 
@@ -288,26 +300,17 @@ fn init_lifecycle_files_are_empty() {
 
 #[test]
 fn deploy_requires_auth() {
-    let output = starpod()
-        .args(["deploy"])
-        .output()
-        .unwrap();
+    let output = starpod().args(["deploy"]).output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
     // Deploy should fail because we're not logged in
-    assert!(
-        !output.status.success(),
-        "deploy without auth should fail"
-    );
+    assert!(!output.status.success(), "deploy without auth should fail");
 }
 
 // ── subcommand help text ──────────────────────────────────────────────
 
 #[test]
 fn dev_help_shows_port_flag() {
-    let output = starpod()
-        .args(["dev", "--help"])
-        .output()
-        .unwrap();
+    let output = starpod().args(["dev", "--help"]).output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("--port"),
@@ -317,10 +320,7 @@ fn dev_help_shows_port_flag() {
 
 #[test]
 fn chat_help_shows_message_arg() {
-    let output = starpod()
-        .args(["chat", "--help"])
-        .output()
-        .unwrap();
+    let output = starpod().args(["chat", "--help"]).output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("message") || stdout.contains("MESSAGE"),
@@ -330,10 +330,7 @@ fn chat_help_shows_message_arg() {
 
 #[test]
 fn init_help_shows_all_flags() {
-    let output = starpod()
-        .args(["init", "--help"])
-        .output()
-        .unwrap();
+    let output = starpod().args(["init", "--help"]).output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     for flag in &["--name", "--model", "--env"] {
         assert!(
@@ -392,10 +389,7 @@ fn auth_login_email_flag_exists() {
 
 #[test]
 fn auth_status_produces_json() {
-    let output = starpod_json()
-        .args(["auth", "status"])
-        .output()
-        .unwrap();
+    let output = starpod_json().args(["auth", "status"]).output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap_or_else(|e| {
         panic!("auth status --format json should produce valid JSON, got: {stdout}\nerror: {e}");
@@ -411,10 +405,7 @@ fn auth_status_produces_json() {
 
 #[test]
 fn help_shows_all_commands() {
-    let output = starpod()
-        .args(["--help"])
-        .output()
-        .unwrap();
+    let output = starpod().args(["--help"]).output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     for cmd in &["init", "dev", "serve", "deploy", "repl", "chat", "auth"] {
@@ -428,11 +419,10 @@ fn help_shows_all_commands() {
 #[test]
 fn old_commands_removed() {
     // These commands should no longer exist
-    for cmd in &["agent", "instance", "secret", "build", "memory", "sessions", "skill", "cron"] {
-        let output = starpod()
-            .args([cmd, "--help"])
-            .output()
-            .unwrap();
+    for cmd in &[
+        "agent", "instance", "secret", "build", "memory", "sessions", "skill", "cron",
+    ] {
+        let output = starpod().args([cmd, "--help"]).output().unwrap();
         assert!(
             !output.status.success(),
             "'{cmd}' should no longer be a valid command"

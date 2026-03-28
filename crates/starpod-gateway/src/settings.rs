@@ -467,7 +467,10 @@ pub fn settings_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/api/settings/costs", get(get_costs))
         // Onboarding
         .route("/api/settings/setup-status", get(get_setup_status))
-        .route("/api/settings/setup/generate-role", axum::routing::post(generate_role))
+        .route(
+            "/api/settings/setup/generate-role",
+            axum::routing::post(generate_role),
+        )
         // Telegram linking per user
         .route(
             "/api/settings/auth/users/{id}/telegram",
@@ -1126,17 +1129,32 @@ async fn create_skill(
 ) -> Result<(StatusCode, Json<SkillDetail>), (StatusCode, Json<ErrorResponse>)> {
     let store = skill_store(&state)?;
     let skill_env = req.env.map(|e| {
-        use starpod_skills::{SkillEnv, SecretDecl};
+        use starpod_skills::{SecretDecl, SkillEnv};
         SkillEnv {
-            secrets: e.secrets.into_iter().map(|(k, v)| (k, SecretDecl {
-                required: v.required,
-                description: v.description,
-            })).collect(),
+            secrets: e
+                .secrets
+                .into_iter()
+                .map(|(k, v)| {
+                    (
+                        k,
+                        SecretDecl {
+                            required: v.required,
+                            description: v.description,
+                        },
+                    )
+                })
+                .collect(),
             variables: HashMap::new(),
         }
     });
     store
-        .create(&req.name, &req.description, None, skill_env.as_ref(), &req.body)
+        .create(
+            &req.name,
+            &req.description,
+            None,
+            skill_env.as_ref(),
+            &req.body,
+        )
         .map_err(|e| bad_request(e.to_string()))?;
     let skill = store
         .get(&req.name)
@@ -1315,9 +1333,7 @@ async fn generate_skill(
 
 // ── Onboarding / Setup ──────────────────────────────────────────────────
 
-async fn get_setup_status(
-    State(state): State<Arc<AppState>>,
-) -> ApiResult<SetupStatus> {
+async fn get_setup_status(State(state): State<Arc<AppState>>) -> ApiResult<SetupStatus> {
     let cfg = state.config.read().unwrap();
 
     // Identity: agent_name is set and non-default
@@ -1336,7 +1352,11 @@ async fn get_setup_status(
     };
 
     // Personality: SOUL.md has substantial content (more than the default stub)
-    let soul_content = state.agent.memory().read_file("SOUL.md").unwrap_or_default();
+    let soul_content = state
+        .agent
+        .memory()
+        .read_file("SOUL.md")
+        .unwrap_or_default();
     let personality = soul_content.trim().len() > 50;
 
     let provider = cfg
@@ -1469,16 +1489,15 @@ async fn generate_role(
         }
     }
 
-    let result = result_msg
-        .ok_or_else(|| internal("No result from AI"))?;
+    let result = result_msg.ok_or_else(|| internal("No result from AI"))?;
 
     if result.is_error {
         return Err(internal(result.errors.join("; ")));
     }
 
-    let result_text = result.result.ok_or_else(|| {
-        internal("No text returned from AI")
-    })?;
+    let result_text = result
+        .result
+        .ok_or_else(|| internal("No text returned from AI"))?;
 
     let json_str = strip_json_fence(&result_text);
     let gen: GeneratePersonalityResponse = serde_json::from_str(json_str)

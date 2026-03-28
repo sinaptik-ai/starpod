@@ -126,8 +126,8 @@ mod tests {
     #[test]
     fn agent_toml_is_valid_toml() {
         let config_str = generate_agent_toml("Nova", "anthropic", "claude-haiku-4-5");
-        let val: toml::Value = toml::from_str(&config_str)
-            .expect("Generated agent config must be valid TOML");
+        let val: toml::Value =
+            toml::from_str(&config_str).expect("Generated agent config must be valid TOML");
         let table = val.as_table().unwrap();
         let models = table["models"].as_array().unwrap();
         assert_eq!(models[0].as_str(), Some("anthropic/claude-haiku-4-5"));
@@ -147,8 +147,8 @@ mod tests {
     #[test]
     fn custom_agent_toml_is_valid_toml() {
         let config_str = generate_agent_toml("MyBot", "openai", "gpt-4o");
-        let val: toml::Value = toml::from_str(&config_str)
-            .expect("Generated agent config must be valid TOML");
+        let val: toml::Value =
+            toml::from_str(&config_str).expect("Generated agent config must be valid TOML");
         let table = val.as_table().unwrap();
         let models = table["models"].as_array().unwrap();
         assert_eq!(models[0].as_str(), Some("openai/gpt-4o"));
@@ -159,8 +159,10 @@ mod tests {
         for &provider in &providers() {
             let model = default_model(provider);
             let config_str = generate_agent_toml("Test", provider, model);
-            let config: starpod_core::AgentConfig = toml::from_str(&config_str)
-                .unwrap_or_else(|e| panic!("Config for provider '{}' failed to parse: {}", provider, e));
+            let config: starpod_core::AgentConfig =
+                toml::from_str(&config_str).unwrap_or_else(|e| {
+                    panic!("Config for provider '{}' failed to parse: {}", provider, e)
+                });
             assert_eq!(config.models, vec![format!("{provider}/{model}")]);
             assert_eq!(config.max_turns, 30);
             assert_eq!(config.server_addr, "127.0.0.1:3000");
@@ -216,8 +218,8 @@ mod tests {
     #[test]
     fn frontend_toml_is_valid_toml() {
         let content = generate_frontend_toml("Nova");
-        let val: toml::Value = toml::from_str(&content)
-            .expect("Generated frontend.toml must be valid TOML");
+        let val: toml::Value =
+            toml::from_str(&content).expect("Generated frontend.toml must be valid TOML");
         let table = val.as_table().unwrap();
         let prompts = table["prompts"].as_array().unwrap();
         assert_eq!(prompts.len(), 2);
@@ -226,7 +228,10 @@ mod tests {
     #[test]
     fn frontend_toml_references_agent_name() {
         let content = generate_frontend_toml("Luna");
-        assert!(content.contains("Luna"), "frontend.toml should reference agent name");
+        assert!(
+            content.contains("Luna"),
+            "frontend.toml should reference agent name"
+        );
     }
 
     #[test]
@@ -247,7 +252,14 @@ mod tests {
     #[test]
     fn agent_toml_has_all_commented_sections() {
         let content = generate_agent_toml("Test", "anthropic", "claude-haiku-4-5");
-        for section in &["[memory]", "[compaction]", "[cron]", "[attachments]", "[internet]", "[channels.telegram]"] {
+        for section in &[
+            "[memory]",
+            "[compaction]",
+            "[cron]",
+            "[attachments]",
+            "[internet]",
+            "[channels.telegram]",
+        ] {
             assert!(
                 content.contains(section),
                 "agent.toml should contain commented {section}"

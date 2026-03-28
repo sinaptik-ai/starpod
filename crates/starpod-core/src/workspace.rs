@@ -70,7 +70,10 @@ pub enum Mode {
     /// Legacy: dev workspace with `starpod.toml` (no longer detected).
     Workspace { root: PathBuf, agent_name: String },
     /// Legacy: instance inside `.instances/<name>/` (no longer detected).
-    Instance { instance_root: PathBuf, agent_name: String },
+    Instance {
+        instance_root: PathBuf,
+        agent_name: String,
+    },
 }
 
 /// Detect the operating mode from the current directory.
@@ -117,8 +120,7 @@ pub fn detect_mode_from(_agent_name: Option<&str>, start_dir: &Path) -> crate::R
     }
 
     Err(StarpodError::Config(
-        "No .starpod/ found. Run `starpod init` to set up an agent."
-            .to_string(),
+        "No .starpod/ found. Run `starpod init` to set up an agent.".to_string(),
     ))
 }
 

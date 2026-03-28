@@ -23,10 +23,7 @@ use tracing_subscriber::EnvFilter;
 
 use agent_sdk::{ContentBlock, Message};
 use starpod_agent::StarpodAgent;
-use starpod_core::{
-    ChatMessage, StarpodConfig, ResolvedPaths,
-    detect_mode, load_agent_config,
-};
+use starpod_core::{detect_mode, load_agent_config, ChatMessage, ResolvedPaths, StarpodConfig};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum OutputFormat {
@@ -41,7 +38,10 @@ impl std::str::FromStr for OutputFormat {
         match s.to_lowercase().as_str() {
             "text" => Ok(Self::Text),
             "json" => Ok(Self::Json),
-            other => Err(format!("unknown format '{}' (expected 'text' or 'json')", other)),
+            other => Err(format!(
+                "unknown format '{}' (expected 'text' or 'json')",
+                other
+            )),
         }
     }
 }
@@ -56,7 +56,11 @@ impl std::fmt::Display for OutputFormat {
 }
 
 #[derive(Parser)]
-#[command(name = "starpod", about = "Starpod — personal AI assistant platform", version)]
+#[command(
+    name = "starpod",
+    about = "Starpod — personal AI assistant platform",
+    version
+)]
 struct Cli {
     /// Output format: text (default) or json.
     #[arg(long, global = true, default_value = "text")]
@@ -320,9 +324,7 @@ async fn process_stream(
                         let result_str = content
                             .as_str()
                             .map(|s| s.to_string())
-                            .unwrap_or_else(|| {
-                                serde_json::to_string(content).unwrap_or_default()
-                            });
+                            .unwrap_or_else(|| serde_json::to_string(content).unwrap_or_default());
 
                         let lines: Vec<&str> = result_str.lines().collect();
                         let preview = if lines.len() > 3 {
@@ -434,20 +436,23 @@ async fn inject_vault_env(paths: &ResolvedPaths) -> anyhow::Result<()> {
 }
 
 /// Build the cron notification sender from config.
-fn build_cron_notifier(
-    config: &StarpodConfig,
-) -> Option<starpod_cron::NotificationSender> {
+fn build_cron_notifier(config: &StarpodConfig) -> Option<starpod_cron::NotificationSender> {
     let telegram_token = config.resolved_telegram_token();
 
     if let Some(ref token) = telegram_token {
         let token = token.clone();
-        Some(Arc::new(move |_job_name, _session_id, result_text, _success| {
-            let token = token.clone();
-            Box::pin(async move {
-                tracing::debug!("Cron notification: {}", &result_text[..result_text.len().min(100)]);
-                let _ = token;
-            })
-        }))
+        Some(Arc::new(
+            move |_job_name, _session_id, result_text, _success| {
+                let token = token.clone();
+                Box::pin(async move {
+                    tracing::debug!(
+                        "Cron notification: {}",
+                        &result_text[..result_text.len().min(100)]
+                    );
+                    let _ = token;
+                })
+            },
+        ))
     } else {
         None
     }
@@ -468,7 +473,11 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         // ── Init: bootstrap .starpod/ in CWD ─────────────────────────
-        Commands::Init { name, model, env_vars } => {
+        Commands::Init {
+            name,
+            model,
+            env_vars,
+        } => {
             let cwd = std::env::current_dir()?;
             let starpod_dir = cwd.join(".starpod");
 
@@ -499,15 +508,18 @@ async fn main() -> anyhow::Result<()> {
             tokio::fs::write(
                 config_dir.join("agent.toml"),
                 onboarding::generate_agent_toml(agent_name, provider, model_name),
-            ).await?;
+            )
+            .await?;
             tokio::fs::write(
                 config_dir.join("SOUL.md"),
                 onboarding::generate_soul(agent_name),
-            ).await?;
+            )
+            .await?;
             tokio::fs::write(
                 config_dir.join("frontend.toml"),
                 onboarding::generate_frontend_toml(agent_name),
-            ).await?;
+            )
+            .await?;
 
             // Empty lifecycle files
             for filename in &["HEARTBEAT.md", "BOOT.md", "BOOTSTRAP.md"] {
@@ -548,7 +560,8 @@ async fn main() -> anyhow::Result<()> {
                 let vault = starpod_vault::Vault::new(
                     &starpod_dir.join("db").join("vault.db"),
                     &master_key,
-                ).await?;
+                )
+                .await?;
                 for kv in &env_vars {
                     if let Some((key, val)) = kv.split_once('=') {
                         vault.set(key.trim(), val.trim(), None).await?;
@@ -609,7 +622,14 @@ async fn main() -> anyhow::Result<()> {
                 let _ = open::that(format!("http://{}", addr));
             }
 
-            starpod_gateway::serve_with_agent(agent, config, cron_notifier, paths, Some(auth_store)).await?;
+            starpod_gateway::serve_with_agent(
+                agent,
+                config,
+                cron_notifier,
+                paths,
+                Some(auth_store),
+            )
+            .await?;
         }
 
         // ── Serve: production mode ──────────────────────────────────
@@ -620,7 +640,10 @@ async fn main() -> anyhow::Result<()> {
             let addr = config.server_addr.clone();
             let display_name = config.agent_name.clone();
             let agent = Arc::new(agent);
-            let auth = starpod_gateway::create_auth_store(&paths).await.ok().map(|b| b.store);
+            let auth = starpod_gateway::create_auth_store(&paths)
+                .await
+                .ok()
+                .map(|b| b.store);
             let cron_notifier = build_cron_notifier(&config);
 
             println!();
@@ -630,16 +653,33 @@ async fn main() -> anyhow::Result<()> {
                 "is running".bright_white()
             );
             println!();
-            println!("  {} {}", "Frontend".dimmed(), format!("http://{}", addr).bright_white());
-            println!("  {} {}", "API     ".dimmed(), format!("http://{}/api", addr).bright_white());
-            println!("  {} {}", "WS      ".dimmed(), format!("ws://{}/ws", addr).bright_white());
+            println!(
+                "  {} {}",
+                "Frontend".dimmed(),
+                format!("http://{}", addr).bright_white()
+            );
+            println!(
+                "  {} {}",
+                "API     ".dimmed(),
+                format!("http://{}/api", addr).bright_white()
+            );
+            println!(
+                "  {} {}",
+                "WS      ".dimmed(),
+                format!("ws://{}/ws", addr).bright_white()
+            );
             println!();
 
             starpod_gateway::serve_with_agent(agent, config, cron_notifier, paths, auth).await?;
         }
 
         // ── Deploy ──────────────────────────────────────────────────
-        Commands::Deploy { name, zone, machine_type, yes } => {
+        Commands::Deploy {
+            name,
+            zone,
+            machine_type,
+            yes,
+        } => {
             deploy::run_deploy(name, zone, machine_type, yes).await?;
         }
 
@@ -683,7 +723,8 @@ async fn main() -> anyhow::Result<()> {
                 triggered_by: None,
                 model: None,
             };
-            let (mut stream, session_id, _followup_tx, _attachments) = agent.chat_stream(&chat_msg).await?;
+            let (mut stream, session_id, _followup_tx, _attachments) =
+                agent.chat_stream(&chat_msg).await?;
             let (result_text, result_msg) = process_stream(&mut stream, &start).await?;
 
             if let Some(ref result) = result_msg {
@@ -696,128 +737,131 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ── Auth ────────────────────────────────────────────────────
-        Commands::Auth { action } => {
-            match action {
-                AuthCommand::Login { url, api_key, email } => {
-                    let spawner_url = url
-                        .or_else(|| std::env::var(auth::SPAWNER_URL_ENV).ok())
-                        .unwrap_or_else(|| auth::DEFAULT_SPAWNER_URL.to_string());
+        Commands::Auth { action } => match action {
+            AuthCommand::Login {
+                url,
+                api_key,
+                email,
+            } => {
+                let spawner_url = url
+                    .or_else(|| std::env::var(auth::SPAWNER_URL_ENV).ok())
+                    .unwrap_or_else(|| auth::DEFAULT_SPAWNER_URL.to_string());
 
-                    if let Some(existing) = auth::load_credentials() {
-                        println!(
-                            "  {} Already logged in as {}",
-                            "ℹ".bright_cyan(),
-                            existing.email.bright_white()
-                        );
-                        println!(
-                            "  {} Run {} to log out first.",
-                            "→".dimmed(),
-                            "starpod auth logout".bright_white()
-                        );
-                        return Ok(());
-                    }
-
-                    if let Some(key) = api_key {
-                        let email = email.unwrap_or_else(|| "cli@starpod.local".to_string());
-                        let creds = auth::Credentials {
-                            backend_url: spawner_url.trim_end_matches('/').to_string(),
-                            api_key: key,
-                            email: email.clone(),
-                        };
-                        auth::save_credentials(&creds).map_err(|e| anyhow::anyhow!(e))?;
-                        println!(
-                            "  {} Authenticated as {} (API key)",
-                            "✓".green().bold(),
-                            email.bright_white()
-                        );
-                        println!(
-                            "  {} Credentials saved to {}",
-                            "→".dimmed(),
-                            "~/.starpod/credentials.toml".bright_white()
-                        );
-                    } else {
-                        match auth::browser_login(&spawner_url).await {
-                            Ok(creds) => {
-                                println!();
-                                println!(
-                                    "  {} Authenticated as {}",
-                                    "✓".green().bold(),
-                                    creds.email.bright_white()
-                                );
-                                println!(
-                                    "  {} Credentials saved to {}",
-                                    "→".dimmed(),
-                                    "~/.starpod/credentials.toml".bright_white()
-                                );
-                            }
-                            Err(e) => {
-                                eprintln!("  {} Login failed: {}", "✗".red().bold(), e);
-                                std::process::exit(1);
-                            }
-                        }
-                    }
+                if let Some(existing) = auth::load_credentials() {
+                    println!(
+                        "  {} Already logged in as {}",
+                        "ℹ".bright_cyan(),
+                        existing.email.bright_white()
+                    );
+                    println!(
+                        "  {} Run {} to log out first.",
+                        "→".dimmed(),
+                        "starpod auth logout".bright_white()
+                    );
+                    return Ok(());
                 }
 
-                AuthCommand::Logout => {
-                    match auth::delete_credentials() {
-                        Ok(()) => {
+                if let Some(key) = api_key {
+                    let email = email.unwrap_or_else(|| "cli@starpod.local".to_string());
+                    let creds = auth::Credentials {
+                        backend_url: spawner_url.trim_end_matches('/').to_string(),
+                        api_key: key,
+                        email: email.clone(),
+                    };
+                    auth::save_credentials(&creds).map_err(|e| anyhow::anyhow!(e))?;
+                    println!(
+                        "  {} Authenticated as {} (API key)",
+                        "✓".green().bold(),
+                        email.bright_white()
+                    );
+                    println!(
+                        "  {} Credentials saved to {}",
+                        "→".dimmed(),
+                        "~/.starpod/credentials.toml".bright_white()
+                    );
+                } else {
+                    match auth::browser_login(&spawner_url).await {
+                        Ok(creds) => {
+                            println!();
                             println!(
-                                "  {} Logged out. Credentials removed.",
-                                "✓".green().bold()
+                                "  {} Authenticated as {}",
+                                "✓".green().bold(),
+                                creds.email.bright_white()
+                            );
+                            println!(
+                                "  {} Credentials saved to {}",
+                                "→".dimmed(),
+                                "~/.starpod/credentials.toml".bright_white()
                             );
                         }
                         Err(e) => {
-                            eprintln!("  {} {}", "✗".red().bold(), e);
+                            eprintln!("  {} Login failed: {}", "✗".red().bold(), e);
                             std::process::exit(1);
                         }
                     }
                 }
+            }
 
-                AuthCommand::Status => {
-                    match auth::load_credentials() {
-                        Some(creds) => {
-                            if output_format == OutputFormat::Json {
-                                let preview = if creds.api_key.len() > 12 {
-                                    format!("{}...{}", &creds.api_key[..8], &creds.api_key[creds.api_key.len()-4..])
-                                } else {
-                                    "****".to_string()
-                                };
-                                let json = serde_json::json!({
-                                    "logged_in": true,
-                                    "email": creds.email,
-                                    "backend_url": creds.backend_url,
-                                    "api_key_preview": preview,
-                                });
-                                println!("{}", serde_json::to_string_pretty(&json).unwrap());
-                            } else {
-                                println!("  {} Logged in", "✓".green().bold());
-                                println!("  {} Email:   {}", "│".dimmed(), creds.email.bright_white());
-                                println!("  {} Backend: {}", "│".dimmed(), creds.backend_url);
-                                let preview = if creds.api_key.len() > 12 {
-                                    format!("{}...{}", &creds.api_key[..8], &creds.api_key[creds.api_key.len()-4..])
-                                } else {
-                                    "****".to_string()
-                                };
-                                println!("  {} API Key: {}", "│".dimmed(), preview);
-                            }
-                        }
-                        None => {
-                            if output_format == OutputFormat::Json {
-                                let json = serde_json::json!({"logged_in": false});
-                                println!("{}", serde_json::to_string_pretty(&json).unwrap());
-                            } else {
-                                println!("  {} Not logged in", "✗".yellow().bold());
-                                println!(
-                                    "  {} Run {} to authenticate.",
-                                    "→".dimmed(),
-                                    "starpod auth login".bright_white()
-                                );
-                            }
-                        }
+            AuthCommand::Logout => match auth::delete_credentials() {
+                Ok(()) => {
+                    println!("  {} Logged out. Credentials removed.", "✓".green().bold());
+                }
+                Err(e) => {
+                    eprintln!("  {} {}", "✗".red().bold(), e);
+                    std::process::exit(1);
+                }
+            },
+
+            AuthCommand::Status => match auth::load_credentials() {
+                Some(creds) => {
+                    if output_format == OutputFormat::Json {
+                        let preview = if creds.api_key.len() > 12 {
+                            format!(
+                                "{}...{}",
+                                &creds.api_key[..8],
+                                &creds.api_key[creds.api_key.len() - 4..]
+                            )
+                        } else {
+                            "****".to_string()
+                        };
+                        let json = serde_json::json!({
+                            "logged_in": true,
+                            "email": creds.email,
+                            "backend_url": creds.backend_url,
+                            "api_key_preview": preview,
+                        });
+                        println!("{}", serde_json::to_string_pretty(&json).unwrap());
+                    } else {
+                        println!("  {} Logged in", "✓".green().bold());
+                        println!("  {} Email:   {}", "│".dimmed(), creds.email.bright_white());
+                        println!("  {} Backend: {}", "│".dimmed(), creds.backend_url);
+                        let preview = if creds.api_key.len() > 12 {
+                            format!(
+                                "{}...{}",
+                                &creds.api_key[..8],
+                                &creds.api_key[creds.api_key.len() - 4..]
+                            )
+                        } else {
+                            "****".to_string()
+                        };
+                        println!("  {} API Key: {}", "│".dimmed(), preview);
                     }
                 }
-            }
-        }
+                None => {
+                    if output_format == OutputFormat::Json {
+                        let json = serde_json::json!({"logged_in": false});
+                        println!("{}", serde_json::to_string_pretty(&json).unwrap());
+                    } else {
+                        println!("  {} Not logged in", "✗".yellow().bold());
+                        println!(
+                            "  {} Run {} to authenticate.",
+                            "→".dimmed(),
+                            "starpod auth login".bright_white()
+                        );
+                    }
+                }
+            },
+        },
     }
 
     Ok(())
@@ -841,8 +885,7 @@ async fn run_repl(agent: StarpodAgent, name: &str) -> anyhow::Result<()> {
         let line = match rl.readline(&prompt) {
             Ok(line) => line,
             Err(
-                rustyline::error::ReadlineError::Interrupted
-                | rustyline::error::ReadlineError::Eof,
+                rustyline::error::ReadlineError::Interrupted | rustyline::error::ReadlineError::Eof,
             ) => {
                 println!("\n  {} {}", "●".bright_yellow(), "Goodbye!".dimmed());
                 break;
@@ -874,11 +917,14 @@ async fn run_repl(agent: StarpodAgent, name: &str) -> anyhow::Result<()> {
             triggered_by: None,
             model: None,
         };
-        let (mut stream, session_id, _followup_tx, _attachments) = agent.chat_stream(&chat_msg).await?;
+        let (mut stream, session_id, _followup_tx, _attachments) =
+            agent.chat_stream(&chat_msg).await?;
         let (result_text, result_msg) = process_stream(&mut stream, &start).await?;
 
         if let Some(ref result) = result_msg {
-            agent.finalize_chat(&session_id, line, &result_text, result, None).await;
+            agent
+                .finalize_chat(&session_id, line, &result_text, result, None)
+                .await;
             print_result(&result_text, result, &start);
         } else if !result_text.is_empty() {
             println!("\n  {}\n", result_text);

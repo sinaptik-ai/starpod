@@ -78,18 +78,10 @@ pub async fn run_deploy(
     };
 
     // 5. Build tarball
-    print!(
-        "  {} Packaging...",
-        "▸".bright_cyan().bold()
-    );
+    print!("  {} Packaging...", "▸".bright_cyan().bold());
     std::io::stdout().flush()?;
 
-    let tarball = build_tarball(
-        &paths,
-        include_secrets,
-        include_memory,
-        include_home,
-    )?;
+    let tarball = build_tarball(&paths, include_secrets, include_memory, include_home)?;
 
     println!(
         " {} ({:.1} KB)",
@@ -98,10 +90,7 @@ pub async fn run_deploy(
     );
 
     // 6. Upload
-    println!(
-        "  {} Uploading to platform...",
-        "▸".bright_cyan().bold()
-    );
+    println!("  {} Uploading to platform...", "▸".bright_cyan().bold());
 
     let client = DeployClient::new(&creds.backend_url, &creds.api_key)?;
     let deploy_resp = client
@@ -122,10 +111,7 @@ pub async fn run_deploy(
     );
 
     // 7. Poll until ready
-    println!(
-        "  {} Provisioning...",
-        "▸".bright_cyan().bold()
-    );
+    println!("  {} Provisioning...", "▸".bright_cyan().bold());
 
     let mut last_status = String::new();
     let result = client
@@ -153,28 +139,16 @@ pub async fn run_deploy(
                 "running".green().bold()
             );
             if let Some(url) = &inst.web_url {
-                println!(
-                    "  {} {}",
-                    "→".dimmed(),
-                    url.bright_white()
-                );
+                println!("  {} {}", "→".dimmed(), url.bright_white());
             }
             if let Some(url) = &inst.direct_url {
-                println!(
-                    "  {} {} (with auth)",
-                    "→".dimmed(),
-                    url.bright_white()
-                );
+                println!("  {} {} (with auth)", "→".dimmed(), url.bright_white());
             }
             println!();
         }
         Err(e) => {
             println!();
-            println!(
-                "  {} Deploy failed: {}",
-                "✗".red().bold(),
-                e
-            );
+            println!("  {} Deploy failed: {}", "✗".red().bold(), e);
             println!();
             return Err(e.into());
         }
@@ -184,7 +158,9 @@ pub async fn run_deploy(
 }
 
 /// Export all secrets from the local vault as a HashMap.
-async fn export_vault_secrets(paths: &ResolvedPaths) -> anyhow::Result<Option<HashMap<String, String>>> {
+async fn export_vault_secrets(
+    paths: &ResolvedPaths,
+) -> anyhow::Result<Option<HashMap<String, String>>> {
     let vault_path = paths.db_dir.join("vault.db");
     if !vault_path.exists() {
         return Ok(None);
@@ -227,54 +203,49 @@ fn build_tarball(
     let project_root = &paths.project_root;
 
     // Add .starpod/ contents
-    add_directory_to_tar(
-        &mut archive,
-        starpod_dir,
-        ".starpod",
-        &|rel_path: &str| {
-            // Always exclude core.db (instance creates its own)
-            if rel_path == ".starpod/db/core.db"
-                || rel_path == ".starpod/db/core.db-wal"
-                || rel_path == ".starpod/db/core.db-shm"
+    add_directory_to_tar(&mut archive, starpod_dir, ".starpod", &|rel_path: &str| {
+        // Always exclude core.db (instance creates its own)
+        if rel_path == ".starpod/db/core.db"
+            || rel_path == ".starpod/db/core.db-wal"
+            || rel_path == ".starpod/db/core.db-shm"
+        {
+            return false;
+        }
+
+        // Exclude secrets if not requested
+        if !include_secrets
+            && (rel_path == ".starpod/db/vault.db"
+                || rel_path == ".starpod/db/vault.db-wal"
+                || rel_path == ".starpod/db/vault.db-shm"
+                || rel_path == ".starpod/db/.vault_key")
+        {
+            return false;
+        }
+
+        // Exclude memory if not requested
+        if !include_memory {
+            if rel_path == ".starpod/db/memory.db"
+                || rel_path == ".starpod/db/memory.db-wal"
+                || rel_path == ".starpod/db/memory.db-shm"
             {
                 return false;
             }
-
-            // Exclude secrets if not requested
-            if !include_secrets
-                && (rel_path == ".starpod/db/vault.db"
-                    || rel_path == ".starpod/db/vault.db-wal"
-                    || rel_path == ".starpod/db/vault.db-shm"
-                    || rel_path == ".starpod/db/.vault_key")
-            {
-                return false;
-            }
-
-            // Exclude memory if not requested
-            if !include_memory {
-                if rel_path == ".starpod/db/memory.db"
-                    || rel_path == ".starpod/db/memory.db-wal"
-                    || rel_path == ".starpod/db/memory.db-shm"
-                {
-                    return false;
-                }
-                // users/*/MEMORY.md and users/*/memory/
-                if rel_path.starts_with(".starpod/users/") {
-                    let after_users = &rel_path[".starpod/users/".len()..];
-                    if let Some(after_id) = after_users.split('/').nth(1) {
-                        if after_id == "MEMORY.md"
-                            || after_id == "memory"
-                            || after_id.starts_with("memory/")
-                        {
-                            return false;
-                        }
+            // users/*/MEMORY.md and users/*/memory/
+            if rel_path.starts_with(".starpod/users/") {
+                let after_users = &rel_path[".starpod/users/".len()..];
+                if let Some(after_id) = after_users.split('/').nth(1) {
+                    if after_id == "MEMORY.md"
+                        || after_id == "memory"
+                        || after_id.starts_with("memory/")
+                    {
+                        return false;
                     }
                 }
             }
+        }
 
-            true
-        },
-    )?;
+        true
+    })?;
 
     // Add home/ contents if requested
     if include_home {
