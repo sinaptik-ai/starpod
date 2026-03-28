@@ -141,6 +141,21 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
         }
         break
       }
+      case 'attachment': {
+        // File attached by the agent — append to the last assistant message
+        setMessages(prev => {
+          if (prev.length === 0) return prev
+          const last = prev[prev.length - 1]
+          if (last.role !== 'assistant_stream') return prev
+          const attachments = [...(last.attachments || []), {
+            file_name: data.file_name,
+            mime_type: data.mime_type,
+            data: data.data,
+          }]
+          return [...prev.slice(0, -1), { ...last, attachments }]
+        })
+        break
+      }
       case 'error': {
         // Check if we're currently streaming
         setStreamingMessage(prev => {
@@ -402,7 +417,7 @@ function renderBubblesAndTools(bubbles, tools, streaming) {
 }
 
 function AssistantMessage({ msg }) {
-  const { bubbles, tools, stats, errors } = msg
+  const { bubbles, tools, stats, errors, attachments } = msg
   const elements = renderBubblesAndTools(bubbles, tools, false)
 
   if (errors && errors.length > 0) {
@@ -416,6 +431,37 @@ function AssistantMessage({ msg }) {
   return (
     <div className="max-w-full mt-2" style={{ animation: 'msg-in 0.25s cubic-bezier(0.16, 1, 0.3, 1)' }}>
       {elements}
+      {attachments && attachments.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          {attachments.map((att, i) => {
+            const href = `data:${att.mime_type};base64,${att.data}`
+            if (att.mime_type && att.mime_type.startsWith('image/')) {
+              return (
+                <a key={i} href={href} download={att.file_name} className="block">
+                  <img
+                    src={href}
+                    className="max-w-[280px] max-h-[200px] rounded-none object-cover border border-border-subtle"
+                    alt={att.file_name}
+                  />
+                </a>
+              )
+            }
+            return (
+              <a
+                key={i}
+                href={href}
+                download={att.file_name}
+                className="inline-flex items-center gap-1.5 bg-elevated px-2.5 py-1.5 rounded-none font-mono text-[11px] text-accent border border-border-subtle hover:bg-surface transition-colors duration-150"
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="shrink-0">
+                  <path d="M6 1v7.5M6 8.5L3.5 6M6 8.5L8.5 6M2 10.5h8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                {att.file_name}
+              </a>
+            )
+          })}
+        </div>
+      )}
       {stats && (
         <div className="font-mono text-xs text-dim mt-2 pt-2 border-t border-border-subtle flex gap-3 flex-wrap tabular-nums">
           <span>{stats.numTurns} turn{stats.numTurns > 1 ? 's' : ''}</span>

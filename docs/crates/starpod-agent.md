@@ -18,13 +18,16 @@ let response = agent.chat(ChatMessage {
 }).await?;
 
 // Streaming chat
-let (stream, session_id, followup_tx, si_tracker) = agent.chat_stream(&message).await?;
+let (stream, session_id, followup_tx, out_attachments) = agent.chat_stream(&message).await?;
 // stream is a Query (tokio Stream of Message)
 // followup_tx can inject messages into the running agent loop
-// si_tracker tracks skill activations/errors when self_improve is enabled
+// out_attachments: Arc<Mutex<Vec<Attachment>>> — files queued by the Attach tool
 
 // Finalize after streaming
-agent.finalize_chat(&session_id, &user_text, &result_text, &result, None, si_tracker.as_ref()).await;
+agent.finalize_chat(&session_id, &user_text, &result_text, &result, None).await;
+
+// Deliver accumulated attachments to the user's channel
+let attachments = out_attachments.lock().await.drain(..).collect::<Vec<_>>();
 ```
 
 ## Chat Pipeline
@@ -50,13 +53,13 @@ When a user sends a message while a stream is active, behavior depends on `follo
 
 Conversation compaction is enabled by default with a 160k token context budget. The compaction model is configurable via `compaction_model` in `agent.toml` (defaults to the primary model).
 
-## Custom Tools (20)
+## Custom Tools (21)
 
 | Category | Tools |
 |----------|-------|
 | Memory | `MemorySearch`, `MemoryWrite`, `MemoryAppendDaily` |
 | Environment | `EnvGet` |
-| Files | `FileRead`, `FileWrite`, `FileList`, `FileDelete` |
+| Files | `FileRead`, `FileWrite`, `FileList`, `FileDelete`, `Attach` |
 | Skills | `SkillActivate`, `SkillCreate`, `SkillUpdate`, `SkillDelete`, `SkillList` |
 | Cron | `CronAdd`, `CronList`, `CronRemove`, `CronRuns`, `CronRun`, `CronUpdate` |
 | Heartbeat | `HeartbeatWake` |
@@ -107,4 +110,4 @@ After the main agent loop, `run_self_improve_reflection()` checks these metrics 
 
 ## Tests
 
-15+ unit tests covering agent construction, custom tools, attachments, config reload, session export, and self-improve tracking.
+25+ unit tests covering agent construction, custom tools, attachments (inbound and outbound via `Attach`), config reload, session export, and self-improve tracking.

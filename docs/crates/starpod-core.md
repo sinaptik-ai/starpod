@@ -160,6 +160,9 @@ pub struct ChatResponse {
     pub text: String,
     pub session_id: String,
     pub usage: Option<ChatUsage>,
+    /// Files the agent attached for delivery to the user (via the `Attach` tool).
+    /// Empty when no files were attached.
+    pub attachments: Vec<Attachment>,
 }
 ```
 

@@ -1,6 +1,6 @@
 # Agent Tools
 
-The agent has access to **built-in tools** from the Claude Agent SDK plus **20 custom tools** provided by Starpod.
+The agent has access to **built-in tools** from the Claude Agent SDK plus **21 custom tools** provided by Starpod.
 
 ## Built-in Tools
 
@@ -45,6 +45,19 @@ Environment variables from the vault are injected into the process at serve time
 | `FileWrite` | `path`, `content` | Write a file to the agent's filesystem sandbox |
 | `FileList` | `path` (optional) | List files and directories in the sandbox |
 | `FileDelete` | `path` | Delete a file from the sandbox |
+| `Attach` | `path` | Attach a sandbox file for delivery to the user (see below) |
+
+### Attach
+
+The `Attach` tool sends a file to the user through their current channel. After the agent generates or locates a file in its sandbox, calling `Attach` queues it for delivery:
+
+- **Web UI** — delivered as a WebSocket `attachment` message; images render inline, other files show as download links.
+- **Telegram** — images sent via `send_photo`, everything else via `send_document`.
+- **CLI** — files remain in the sandbox (already accessible on disk).
+
+The tool validates sandbox paths the same way `FileRead` does (no `..` traversal, no absolute paths, no `.starpod/` access). Files must be under 20 MB. MIME type is inferred from the file extension.
+
+Multiple files can be attached in a single turn — they accumulate and are delivered after the agent finishes responding.
 
 ### Skills
 

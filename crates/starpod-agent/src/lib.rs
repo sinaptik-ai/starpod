@@ -38,6 +38,7 @@ const CUSTOM_TOOLS: &[&str] = &[
     "WebSearch", "WebFetch",
     "BrowserOpen", "BrowserClick", "BrowserType",
     "BrowserExtract", "BrowserEval", "BrowserWaitFor", "BrowserClose",
+    "Attach",
 ];
 
 /// The Starpod agent orchestrator.
@@ -844,7 +845,12 @@ impl StarpodAgent {
     }
 
     /// Build the external tool handler closure.
-    async fn build_tool_handler(&self, config: &StarpodConfig, user_id: Option<&str>) -> ExternalToolHandlerFn {
+    async fn build_tool_handler(
+        &self,
+        config: &StarpodConfig,
+        user_id: Option<&str>,
+        attachments: Arc<tokio::sync::Mutex<Vec<Attachment>>>,
+    ) -> ExternalToolHandlerFn {
         let user_view = match user_id {
             Some(uid) => {
                 let user_dir = self.paths.users_dir.join(uid);
@@ -879,6 +885,7 @@ impl StarpodAgent {
             vault: self.vault.clone(),
             user_md_limit: config.memory.user_md_limit,
             memory_md_limit: config.memory.memory_md_limit,
+            attachments,
         });
 
         Box::new(move |tool_name, input| {
@@ -963,6 +970,10 @@ impl StarpodAgent {
             .map_err(|e| StarpodError::Config(e))?;
         let provider = self.build_provider_for(&resolved_provider, &config).await?;
 
+        // Attachment accumulator — populated by the Attach tool during the agent loop
+        let out_attachments: Arc<tokio::sync::Mutex<Vec<Attachment>>> =
+            Arc::new(tokio::sync::Mutex::new(Vec::new()));
+
         let mut builder = Options::builder()
             .allowed_tools(Self::allowed_tools())
             .system_prompt(SystemPrompt::Custom(system_prompt))
@@ -976,7 +987,7 @@ impl StarpodAgent {
             .max_tool_result_bytes(config.compaction.max_tool_result_bytes)
             .prune_threshold_pct(config.compaction.prune_threshold_pct)
             .prune_tool_result_max_chars(config.compaction.prune_tool_result_max_chars)
-            .external_tool_handler(self.build_tool_handler(&config, message.user_id.as_deref()).await)
+            .external_tool_handler(self.build_tool_handler(&config, message.user_id.as_deref(), Arc::clone(&out_attachments)).await)
             .pre_compact_handler(self.build_pre_compact_handler(&config, message.user_id.as_deref()).await)
             .custom_tools(custom_tool_definitions())
             .attachments(query_atts)
@@ -1098,18 +1109,23 @@ impl StarpodAgent {
             let _ = self.append_daily_for_user(message.user_id.as_deref(), &entry).await;
         }
 
+        let attachments = out_attachments.lock().await.drain(..).collect();
+
         Ok(ChatResponse {
             text: result_text,
             session_id,
             usage: Some(usage),
+            attachments,
         })
     }
 
     /// Start a streaming chat that yields raw agent-sdk messages.
     ///
-    /// Returns (Query stream, session_id, followup_tx). The caller should consume
-    /// the stream for real-time display, then call `finalize_chat()` with the
-    /// collected results.
+    /// Returns (Query stream, session_id, followup_tx, out_attachments).
+    /// The caller should consume the stream for real-time display, then call
+    /// `finalize_chat()` with the collected results. After the stream ends,
+    /// drain `out_attachments` for any files the agent attached via the `Attach`
+    /// tool.
     ///
     /// The returned `followup_tx` can be used to inject followup messages into
     /// the running agent loop (when `followup_mode = "inject"`). Messages sent
@@ -1118,7 +1134,7 @@ impl StarpodAgent {
     pub async fn chat_stream(
         &self,
         message: &ChatMessage,
-    ) -> Result<(Query, String, mpsc::UnboundedSender<String>)> {
+    ) -> Result<(Query, String, mpsc::UnboundedSender<String>, Arc<tokio::sync::Mutex<Vec<Attachment>>>)> {
         let config = self.snapshot_config();
 
         let (channel, key) = resolve_channel(message);
@@ -1202,6 +1218,10 @@ impl StarpodAgent {
         // Create the followup channel — sender goes to caller, receiver to the agent loop
         let (followup_tx, followup_rx) = mpsc::unbounded_channel::<String>();
 
+        // Attachment accumulator — populated by the Attach tool, drained by the caller
+        let out_attachments: Arc<tokio::sync::Mutex<Vec<Attachment>>> =
+            Arc::new(tokio::sync::Mutex::new(Vec::new()));
+
         let mut builder = Options::builder()
             .allowed_tools(Self::allowed_tools())
             .system_prompt(SystemPrompt::Custom(system_prompt))
@@ -1215,7 +1235,7 @@ impl StarpodAgent {
             .max_tool_result_bytes(config.compaction.max_tool_result_bytes)
             .prune_threshold_pct(config.compaction.prune_threshold_pct)
             .prune_tool_result_max_chars(config.compaction.prune_tool_result_max_chars)
-            .external_tool_handler(self.build_tool_handler(&config, message.user_id.as_deref()).await)
+            .external_tool_handler(self.build_tool_handler(&config, message.user_id.as_deref(), Arc::clone(&out_attachments)).await)
             .pre_compact_handler(self.build_pre_compact_handler(&config, message.user_id.as_deref()).await)
             .custom_tools(custom_tool_definitions())
             .followup_rx(followup_rx)
@@ -1259,7 +1279,7 @@ impl StarpodAgent {
         let options = builder.build();
 
         let stream = agent_sdk::query(&prompt, options);
-        Ok((stream, session_id, followup_tx))
+        Ok((stream, session_id, followup_tx, out_attachments))
     }
 
     /// Get the configured followup mode.
@@ -1875,7 +1895,8 @@ mod tests {
         assert!(names.contains(&"BrowserClose"));
         assert!(names.contains(&"WebSearch"));
         assert!(names.contains(&"WebFetch"));
-        assert_eq!(defs.len(), 30);
+        assert!(names.contains(&"Attach"));
+        assert_eq!(defs.len(), 31);
     }
 
     #[tokio::test]
@@ -1902,6 +1923,7 @@ mod tests {
             vault: None,
             user_md_limit: 4_000,
             memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         };
 
         // Test MemorySearch

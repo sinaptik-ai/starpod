@@ -317,7 +317,7 @@ async fn handle_final_only(
 ) -> Result<(), teloxide::RequestError> {
     let uid = user_id_str.clone();
     let chat_msg = build_chat_msg(text, user_id_str, chat_id, attachments);
-    let (mut stream, session_id, _followup_tx) = match agent.chat_stream(&chat_msg).await {
+    let (mut stream, session_id, _followup_tx, out_attachments) = match agent.chat_stream(&chat_msg).await {
         Ok(s) => s,
         Err(e) => {
             error!(error = %e, "Failed to start stream");
@@ -369,6 +369,9 @@ async fn handle_final_only(
         send_response(bot, chat_id, &last_assistant_text).await;
     }
 
+    // Deliver any files the agent attached
+    send_attachments(bot, chat_id, &out_attachments).await;
+
     // Finalize (record usage, daily log)
     if let Some(ref result) = result_msg {
         agent.finalize_chat(&session_id, text, &all_text, result, uid.as_deref()).await;
@@ -389,7 +392,7 @@ async fn handle_all_messages(
 ) -> Result<(), teloxide::RequestError> {
     let uid = user_id_str.clone();
     let chat_msg = build_chat_msg(text, user_id_str, chat_id, attachments);
-    let (mut stream, session_id, _followup_tx) = match agent.chat_stream(&chat_msg).await {
+    let (mut stream, session_id, _followup_tx, out_attachments) = match agent.chat_stream(&chat_msg).await {
         Ok(s) => s,
         Err(e) => {
             error!(error = %e, "Failed to start stream");
@@ -438,6 +441,9 @@ async fn handle_all_messages(
         bot.send_message(chat_id, "(no response)").await.ok();
     }
 
+    // Deliver any files the agent attached
+    send_attachments(bot, chat_id, &out_attachments).await;
+
     // Finalize (record usage, daily log)
     if let Some(ref result) = result_msg {
         agent.finalize_chat(&session_id, text, &all_text, result, uid.as_deref()).await;
@@ -459,6 +465,38 @@ async fn send_response(bot: &Bot, chat_id: ChatId, text: &str) {
         if sent.is_err() {
             // Fallback: send as plain text
             bot.send_message(chat_id, chunk).await.ok();
+        }
+    }
+}
+
+/// Send accumulated attachments as Telegram documents (or photos for images).
+async fn send_attachments(
+    bot: &Bot,
+    chat_id: ChatId,
+    attachments: &std::sync::Arc<tokio::sync::Mutex<Vec<Attachment>>>,
+) {
+    use base64::Engine as _;
+    use teloxide::types::InputFile;
+
+    let items: Vec<Attachment> = attachments.lock().await.drain(..).collect();
+    for att in items {
+        let bytes = match base64::engine::general_purpose::STANDARD.decode(&att.data) {
+            Ok(b) => b,
+            Err(e) => {
+                warn!(file = %att.file_name, error = %e, "Failed to decode attachment");
+                continue;
+            }
+        };
+        let input = InputFile::memory(bytes).file_name(att.file_name.clone());
+
+        if att.mime_type.starts_with("image/") {
+            if let Err(e) = bot.send_photo(chat_id, input).await {
+                warn!(file = %att.file_name, error = %e, "Failed to send photo attachment");
+            }
+        } else {
+            if let Err(e) = bot.send_document(chat_id, input).await {
+                warn!(file = %att.file_name, error = %e, "Failed to send document attachment");
+            }
         }
     }
 }
