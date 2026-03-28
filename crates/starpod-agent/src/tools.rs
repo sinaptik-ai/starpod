@@ -6,6 +6,7 @@
 //! - **Memory** — search, read, write, and append to long-term memory
 //! - **Environment** — read environment variables (with sensitive-key blocking)
 //! - **File sandbox** — read/write/list/delete files within the instance home directory
+//! - **Attachment** — attach sandbox files for delivery to the user's channel
 //! - **Skills** — CRUD for self-extension skills
 //! - **Cron** — schedule and manage recurring/one-shot jobs
 //! - **Web** — search the internet via Brave Search and fetch web pages
@@ -24,6 +25,7 @@ use serde_json::json;
 use tracing::debug;
 
 use starpod_core::config::InternetConfig;
+use starpod_core::Attachment;
 use starpod_browser::BrowserSession;
 use starpod_cron::store::epoch_to_rfc3339;
 use starpod_cron::{CronStore, RunStatus};
@@ -63,6 +65,10 @@ pub struct ToolContext {
     pub user_md_limit: usize,
     /// Soft character limit for MEMORY.md (0 = no limit).
     pub memory_md_limit: usize,
+    /// Accumulator for files the agent attaches to send to the user.
+    /// Populated by the `Attach` tool; read by the channel layer after
+    /// the stream completes.
+    pub attachments: Arc<tokio::sync::Mutex<Vec<Attachment>>>,
 }
 
 /// Build the JSON schema definitions for all Starpod custom tools.
@@ -674,6 +680,21 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
             input_schema: json!({
                 "type": "object",
                 "properties": {}
+            }),
+        },
+        // --- Attachment tool ---
+        CustomToolDefinition {
+            name: "Attach".into(),
+            description: "Attach a file to send to the user. The file must exist in the agent's filesystem sandbox (relative path). Use this when the user asks for a file, or when you've generated a file (e.g. CSV, image, PDF) the user would want to download. The file is delivered through the user's current channel (web download, Telegram document, etc.).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative file path within the agent's filesystem (e.g. \"reports/output.csv\", \"chart.png\")"
+                    }
+                },
+                "required": ["path"]
             }),
         },
     ]
@@ -2137,6 +2158,79 @@ pub async fn handle_custom_tool(
             }
         }
 
+        "Attach" => {
+            let path = input.get("path")?.as_str()?;
+
+            debug!(path = %path, "Attach");
+
+            match validate_sandbox_path(path, &ctx.home_dir) {
+                Ok(resolved) => {
+                    if !resolved.is_file() {
+                        return Some(ToolResult {
+                            content: format!("File not found: {}", path),
+                            is_error: true,
+                            raw_content: None,
+                        });
+                    }
+                    match std::fs::read(&resolved) {
+                        Ok(bytes) => {
+                            use base64::Engine as _;
+                            let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                            let file_name = resolved
+                                .file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_else(|| path.to_string());
+                            let mime_type = mime_guess::from_path(&resolved)
+                                .first_or_octet_stream()
+                                .to_string();
+
+                            let size = bytes.len();
+                            if size > starpod_core::MAX_ATTACHMENT_SIZE {
+                                return Some(ToolResult {
+                                    content: format!(
+                                        "File too large ({:.1} MB). Maximum attachment size is {} MB.",
+                                        size as f64 / (1024.0 * 1024.0),
+                                        starpod_core::MAX_ATTACHMENT_SIZE / (1024 * 1024),
+                                    ),
+                                    is_error: true,
+                                    raw_content: None,
+                                });
+                            }
+
+                            let attachment = Attachment {
+                                file_name: file_name.clone(),
+                                mime_type: mime_type.clone(),
+                                data,
+                            };
+
+                            ctx.attachments.lock().await.push(attachment);
+
+                            Some(ToolResult {
+                                content: format!(
+                                    "Attached \"{}\" ({}, {:.1} KB) — will be delivered to the user.",
+                                    file_name,
+                                    mime_type,
+                                    size as f64 / 1024.0,
+                                ),
+                                is_error: false,
+                                raw_content: None,
+                            })
+                        }
+                        Err(e) => Some(ToolResult {
+                            content: format!("Failed to read file: {}", e),
+                            is_error: true,
+                            raw_content: None,
+                        }),
+                    }
+                }
+                Err(e) => Some(ToolResult {
+                    content: format!("Invalid path: {}", e),
+                    is_error: true,
+                    raw_content: None,
+                }),
+            }
+        }
+
         _ => None,
     }
 }
@@ -2531,6 +2625,7 @@ mod tests {
             vault: None,
             user_md_limit: 4_000,
             memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         };
 
         std::env::set_var("STARPOD_ENVGET_TEST_VAR", "test_value_42");
@@ -2572,6 +2667,7 @@ mod tests {
             vault: None,
             user_md_limit: 4_000,
             memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         };
 
         let result = handle_custom_tool(
@@ -2611,6 +2707,7 @@ mod tests {
             vault: None,
             user_md_limit: 4_000,
             memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         };
 
         // System keys should be blocked
@@ -2666,6 +2763,7 @@ mod tests {
             vault: Some(Arc::new(vault)),
             user_md_limit: 4_000,
             memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         };
 
         // Set an env var and read it via EnvGet — exercises the vault audit path
@@ -2709,6 +2807,7 @@ mod tests {
             vault: Some(Arc::new(vault)),
             user_md_limit: 4_000,
             memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         };
 
         // System key should be blocked before reaching the audit code
@@ -2752,6 +2851,7 @@ mod tests {
             vault: None,
             user_md_limit: 4_000,
             memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         };
 
         // Write a file
@@ -2802,6 +2902,7 @@ mod tests {
             vault: None,
             user_md_limit: 4_000,
             memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         };
 
         let result = handle_custom_tool(
@@ -2844,6 +2945,7 @@ mod tests {
             vault: None,
             user_md_limit: 4_000,
             memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         };
 
         let result = handle_custom_tool(
@@ -2886,6 +2988,7 @@ mod tests {
             vault: None,
             user_md_limit: 4_000,
             memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         };
 
         let result = handle_custom_tool(
@@ -2925,6 +3028,7 @@ mod tests {
             vault: None,
             user_md_limit: 4_000,
             memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         };
 
         let result = handle_custom_tool(
@@ -2978,6 +3082,7 @@ mod tests {
             vault: None,
             user_md_limit: 4_000,
             memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -3314,6 +3419,7 @@ mod tests {
             vault: None,
             user_md_limit: 4_000,
             memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -3467,6 +3573,7 @@ mod tests {
             vault: None,
             user_md_limit: 4_000,
             memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -3831,6 +3938,7 @@ mod tests {
             vault: None,
             user_md_limit: 4_000,
             memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -4001,6 +4109,7 @@ mod tests {
             vault: None,
             user_md_limit: 4_000,
             memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -4204,5 +4313,257 @@ mod tests {
         let result = handle_custom_tool(&ctx, "MemoryAppendDaily", &input).await.unwrap();
         assert!(result.is_error);
         assert!(result.content.contains("rejected"));
+    }
+
+    // ── Attach tool tests ────────────────────────────────────────────
+
+    /// Helper: build a ToolContext for Attach tests with an isolated home dir.
+    async fn ctx_for_attach(tmp: &TempDir) -> ToolContext {
+        let memory = Arc::new(
+            starpod_memory::MemoryStore::new(
+                &tmp.path().join("agent"),
+                &tmp.path().join("agent").join("config"),
+                &tmp.path().join("db"),
+            ).await.unwrap(),
+        );
+        let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let core_db = starpod_db::CoreDb::new(tmp.path()).await.unwrap();
+        let cron = Arc::new(starpod_cron::CronStore::from_pool(core_db.pool().clone()));
+
+        let home_dir = tmp.path().join("instance");
+        std::fs::create_dir_all(&home_dir).unwrap();
+
+        ToolContext {
+            memory,
+            user_view: None,
+            skills,
+            cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: true,
+            browser_cdp_url: None,
+            user_tz: None,
+            home_dir,
+            agent_home: tmp.path().join("instance").join(".starpod"),
+            user_id: Some("admin".into()),
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
+            vault: None,
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+        }
+    }
+
+    #[tokio::test]
+    async fn attach_success_text_file() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_for_attach(&tmp).await;
+
+        // Create a file in the sandbox
+        std::fs::write(ctx.home_dir.join("report.csv"), "a,b,c\n1,2,3").unwrap();
+
+        let result = handle_custom_tool(
+            &ctx,
+            "Attach",
+            &json!({"path": "report.csv"}),
+        ).await.unwrap();
+
+        assert!(!result.is_error, "Attach failed: {}", result.content);
+        assert!(result.content.contains("report.csv"));
+        assert!(result.content.contains("text/csv"));
+        assert!(result.content.contains("will be delivered"));
+
+        // Verify the attachment was accumulated
+        let attachments = ctx.attachments.lock().await;
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].file_name, "report.csv");
+        assert_eq!(attachments[0].mime_type, "text/csv");
+
+        // Verify base64 round-trip
+        use base64::Engine as _;
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&attachments[0].data)
+            .unwrap();
+        assert_eq!(decoded, b"a,b,c\n1,2,3");
+    }
+
+    #[tokio::test]
+    async fn attach_success_image_file() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_for_attach(&tmp).await;
+
+        // Write a fake PNG (just needs the right extension for MIME detection)
+        let png_bytes = b"\x89PNG\r\n\x1a\nfake";
+        std::fs::write(ctx.home_dir.join("chart.png"), png_bytes).unwrap();
+
+        let result = handle_custom_tool(
+            &ctx,
+            "Attach",
+            &json!({"path": "chart.png"}),
+        ).await.unwrap();
+
+        assert!(!result.is_error);
+        assert!(result.content.contains("image/png"));
+
+        let attachments = ctx.attachments.lock().await;
+        assert_eq!(attachments[0].mime_type, "image/png");
+        assert_eq!(attachments[0].file_name, "chart.png");
+    }
+
+    #[tokio::test]
+    async fn attach_nested_path() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_for_attach(&tmp).await;
+
+        std::fs::create_dir_all(ctx.home_dir.join("reports/q1")).unwrap();
+        std::fs::write(ctx.home_dir.join("reports/q1/summary.pdf"), b"fake-pdf").unwrap();
+
+        let result = handle_custom_tool(
+            &ctx,
+            "Attach",
+            &json!({"path": "reports/q1/summary.pdf"}),
+        ).await.unwrap();
+
+        assert!(!result.is_error);
+        assert!(result.content.contains("summary.pdf"));
+        assert!(result.content.contains("application/pdf"));
+    }
+
+    #[tokio::test]
+    async fn attach_missing_file() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_for_attach(&tmp).await;
+
+        let result = handle_custom_tool(
+            &ctx,
+            "Attach",
+            &json!({"path": "does_not_exist.txt"}),
+        ).await.unwrap();
+
+        assert!(result.is_error);
+        assert!(result.content.contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn attach_directory_is_rejected() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_for_attach(&tmp).await;
+
+        std::fs::create_dir_all(ctx.home_dir.join("subdir")).unwrap();
+
+        let result = handle_custom_tool(
+            &ctx,
+            "Attach",
+            &json!({"path": "subdir"}),
+        ).await.unwrap();
+
+        assert!(result.is_error);
+        assert!(result.content.contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn attach_rejects_absolute_path() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_for_attach(&tmp).await;
+
+        let result = handle_custom_tool(
+            &ctx,
+            "Attach",
+            &json!({"path": "/etc/passwd"}),
+        ).await.unwrap();
+
+        assert!(result.is_error);
+        assert!(result.content.to_lowercase().contains("absolute"));
+    }
+
+    #[tokio::test]
+    async fn attach_rejects_traversal() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_for_attach(&tmp).await;
+
+        let result = handle_custom_tool(
+            &ctx,
+            "Attach",
+            &json!({"path": "../../../etc/passwd"}),
+        ).await.unwrap();
+
+        assert!(result.is_error);
+        assert!(result.content.contains("traversal"));
+    }
+
+    #[tokio::test]
+    async fn attach_rejects_starpod_dir() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_for_attach(&tmp).await;
+
+        let starpod = ctx.home_dir.join(".starpod");
+        std::fs::create_dir_all(&starpod).unwrap();
+        std::fs::write(starpod.join("agent.toml"), "secret").unwrap();
+
+        let result = handle_custom_tool(
+            &ctx,
+            "Attach",
+            &json!({"path": ".starpod/agent.toml"}),
+        ).await.unwrap();
+
+        assert!(result.is_error);
+        assert!(result.content.contains(".starpod"));
+    }
+
+    #[tokio::test]
+    async fn attach_missing_path_returns_none() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_for_attach(&tmp).await;
+
+        // Missing required "path" field — handler returns None (converted to
+        // error by the CUSTOM_TOOLS guard in build_tool_handler)
+        let result = handle_custom_tool(
+            &ctx,
+            "Attach",
+            &json!({}),
+        ).await;
+
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn attach_multiple_files_accumulate() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_for_attach(&tmp).await;
+
+        std::fs::write(ctx.home_dir.join("a.txt"), "aaa").unwrap();
+        std::fs::write(ctx.home_dir.join("b.json"), r#"{"key": 1}"#).unwrap();
+
+        let r1 = handle_custom_tool(&ctx, "Attach", &json!({"path": "a.txt"})).await.unwrap();
+        assert!(!r1.is_error);
+
+        let r2 = handle_custom_tool(&ctx, "Attach", &json!({"path": "b.json"})).await.unwrap();
+        assert!(!r2.is_error);
+
+        let attachments = ctx.attachments.lock().await;
+        assert_eq!(attachments.len(), 2);
+        assert_eq!(attachments[0].file_name, "a.txt");
+        assert_eq!(attachments[1].file_name, "b.json");
+        assert_eq!(attachments[1].mime_type, "application/json");
+    }
+
+    #[tokio::test]
+    async fn attach_reports_size_in_kb() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_for_attach(&tmp).await;
+
+        // Write a 2 KB file
+        let data = vec![0u8; 2048];
+        std::fs::write(ctx.home_dir.join("data.bin"), &data).unwrap();
+
+        let result = handle_custom_tool(
+            &ctx,
+            "Attach",
+            &json!({"path": "data.bin"}),
+        ).await.unwrap();
+
+        assert!(!result.is_error);
+        assert!(result.content.contains("2.0 KB"), "Expected size in KB, got: {}", result.content);
     }
 }

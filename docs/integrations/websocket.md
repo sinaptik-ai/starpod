@@ -127,6 +127,27 @@ Emitted when the agent finishes:
 }
 ```
 
+#### `attachment`
+
+Emitted after `stream_end` when the agent attached files for the user (via the `Attach` tool). One message per file.
+
+```json
+{
+  "type": "attachment",
+  "file_name": "report.csv",
+  "mime_type": "text/csv",
+  "data": "<base64-encoded-file-content>"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `file_name` | string | Original filename |
+| `mime_type` | string | MIME type (inferred from extension) |
+| `data` | string | Base64-encoded file content (max 20 MB decoded) |
+
+The web UI renders images inline and shows other file types as download links. If you're building a custom client, decode the base64 data and present it appropriately for the file type.
+
 #### `error`
 
 Emitted on errors:
@@ -178,6 +199,20 @@ Server:  {"type": "text_delta", "text": "Here are the files:\n\n"}
 Server:  {"type": "text_delta", "text": "- Cargo.toml\n"}
 Server:  {"type": "text_delta", "text": "- README.md\n"}
 Server:  {"type": "stream_end", ...}
+```
+
+When the agent attaches files, they arrive after `stream_end`:
+
+```
+Client:  {"type": "message", "text": "Generate a CSV report"}
+Server:  {"type": "stream_start", ...}
+Server:  {"type": "tool_use", "name": "FileWrite", ...}
+Server:  {"type": "tool_result", ...}
+Server:  {"type": "tool_use", "name": "Attach", "input": {"path": "report.csv"}}
+Server:  {"type": "tool_result", ...}
+Server:  {"type": "text_delta", "text": "Here's your report."}
+Server:  {"type": "stream_end", ...}
+Server:  {"type": "attachment", "file_name": "report.csv", ...}
 ```
 
 ## Followup Messages

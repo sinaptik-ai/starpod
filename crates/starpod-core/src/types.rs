@@ -74,6 +74,10 @@ pub struct ChatResponse {
     /// Token usage for this turn.
     #[serde(default)]
     pub usage: Option<ChatUsage>,
+
+    /// Files the agent attached for delivery to the user (via the `Attach` tool).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<Attachment>,
 }
 
 /// Token usage summary.

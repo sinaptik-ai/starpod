@@ -1952,7 +1952,7 @@ async fn main() -> anyhow::Result<()> {
                 triggered_by: None,
                 model: None,
             };
-            let (mut stream, session_id, _followup_tx) = agent.chat_stream(&chat_msg).await?;
+            let (mut stream, session_id, _followup_tx, _out_attachments) = agent.chat_stream(&chat_msg).await?;
             let (result_text, result_msg) = process_stream(&mut stream, &start).await?;
 
             if let Some(ref result) = result_msg {
@@ -3661,7 +3661,7 @@ async fn run_repl(agent: StarpodAgent, name: &str) -> anyhow::Result<()> {
             triggered_by: None,
             model: None,
         };
-        let (mut stream, session_id, _followup_tx) = agent.chat_stream(&chat_msg).await?;
+        let (mut stream, session_id, _followup_tx, _out_attachments) = agent.chat_stream(&chat_msg).await?;
         let (result_text, result_msg) = process_stream(&mut stream, &start).await?;
 
         if let Some(ref result) = result_msg {

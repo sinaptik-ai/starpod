@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error};
 
 use agent_sdk::{ContentBlock, Message};
-use starpod_core::FollowupMode;
+use starpod_core::{Attachment, FollowupMode};
 
 use crate::AppState;
 
@@ -159,6 +159,16 @@ enum ServerMessage {
         errors: Vec<String>,
     },
 
+    /// A file the agent attached for the user (via the `Attach` tool).
+    /// Sent after `stream_end` so the client can offer a download.
+    #[serde(rename = "attachment")]
+    Attachment {
+        file_name: String,
+        mime_type: String,
+        /// Base64-encoded file content.
+        data: String,
+    },
+
     /// Error message.
     #[serde(rename = "error")]
     Error { message: String },
@@ -184,6 +194,21 @@ async fn send_msg(
 ) -> bool {
     let json = serde_json::to_string(msg).unwrap();
     sender.send(WsMessage::Text(json.into())).await.is_ok()
+}
+
+/// Drain the attachment accumulator and send each file over the WebSocket.
+async fn send_accumulated_attachments(
+    sender: &mut futures::stream::SplitSink<WebSocket, WsMessage>,
+    attachments: &Arc<tokio::sync::Mutex<Vec<Attachment>>>,
+) {
+    let items: Vec<Attachment> = attachments.lock().await.drain(..).collect();
+    for att in items {
+        let _ = send_msg(sender, &ServerMessage::Attachment {
+            file_name: att.file_name,
+            mime_type: att.mime_type,
+            data: att.data,
+        }).await;
+    }
 }
 
 /// Handle an individual WebSocket connection with streaming.
@@ -228,7 +253,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_user: Optio
                 model: first.model.clone(),
             };
 
-            let (mut stream, session_id, _followup_tx) = match state.agent.chat_stream(&chat_msg).await {
+            let (mut stream, session_id, _followup_tx, out_attachments) = match state.agent.chat_stream(&chat_msg).await {
                 Ok(s) => s,
                 Err(e) => {
                     let _ = send_msg(&mut sender, &ServerMessage::Error {
@@ -249,6 +274,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_user: Optio
             // Consume this queued batch stream (no followup injection needed here
             // since we're replaying buffered messages after the main stream finished).
             process_stream(&mut stream, &mut sender, &state, &session_id, &combined_text, chat_msg.user_id.as_deref()).await;
+
+            // Deliver any files the agent attached during this stream
+            send_accumulated_attachments(&mut sender, &out_attachments).await;
             continue;
         }
 
@@ -356,7 +384,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_user: Optio
                 }
 
                 // No active stream — start a new one
-                let (mut stream, session_id, followup_tx) =
+                let (mut stream, session_id, followup_tx, out_attachments) =
                     match state.agent.chat_stream(&chat_msg).await {
                         Ok(s) => s,
                         Err(e) => {
@@ -394,6 +422,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_user: Optio
                 ).await;
 
                 active_followup_tx = None;
+
+                // Deliver any files the agent attached during this stream
+                send_accumulated_attachments(&mut sender, &out_attachments).await;
 
                 if !stream_done {
                     // WS was closed during streaming

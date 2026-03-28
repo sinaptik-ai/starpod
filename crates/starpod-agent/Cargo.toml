@@ -28,6 +28,7 @@ tokio-stream = "0.1"
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
+mime_guess = "2"
 reqwest = { version = "0.12", features = ["json"] }
 htmd = "0.1"
 lol_html = "2"
