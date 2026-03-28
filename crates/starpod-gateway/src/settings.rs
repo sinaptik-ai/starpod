@@ -1483,7 +1483,7 @@ async fn generate_role(
     use futures::StreamExt;
     let mut result_msg = None;
     while let Some(msg_result) = stream.next().await {
-        let msg = msg_result.map_err(|e| internal(e))?;
+        let msg = msg_result.map_err(internal)?;
         if let agent_sdk::Message::Result(result) = msg {
             result_msg = Some(result);
         }

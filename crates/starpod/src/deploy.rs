@@ -231,8 +231,7 @@ fn build_tarball(
                 return false;
             }
             // users/*/MEMORY.md and users/*/memory/
-            if rel_path.starts_with(".starpod/users/") {
-                let after_users = &rel_path[".starpod/users/".len()..];
+            if let Some(after_users) = rel_path.strip_prefix(".starpod/users/") {
                 if let Some(after_id) = after_users.split('/').nth(1) {
                     if after_id == "MEMORY.md"
                         || after_id == "memory"
