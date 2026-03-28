@@ -327,8 +327,7 @@ impl SessionManager {
         .await
         .map_err(|e| StarpodError::Database(format!("Query failed: {}", e)))?;
 
-        let sessions: Vec<SessionMeta> =
-            rows.iter().map(session_meta_from_row).collect();
+        let sessions: Vec<SessionMeta> = rows.iter().map(session_meta_from_row).collect();
 
         Ok(sessions)
     }

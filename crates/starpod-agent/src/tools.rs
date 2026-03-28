@@ -2396,13 +2396,10 @@ fn strip_invisible_html(html: &str) -> String {
         RewriteStrSettings {
             element_content_handlers: vec![
                 // Remove entire elements for non-content tags.
-                element!(
-                    &REMOVE_TAGS.to_vec().join(","),
-                    |el| {
-                        el.remove();
-                        Ok(())
-                    }
-                ),
+                element!(&REMOVE_TAGS.to_vec().join(","), |el| {
+                    el.remove();
+                    Ok(())
+                }),
                 // Remove elements hidden via attributes or inline styles.
                 element!("*", |el| {
                     // hidden attribute

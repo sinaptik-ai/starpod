@@ -2001,11 +2001,7 @@ async fn main() -> anyhow::Result<()> {
             let (agent, config, paths) = resolve_agent(agent_name).await?;
             let addr = config.server_addr.clone();
             let display_name = config.agent_name.clone();
-            let telegram_enabled = config
-                .channels
-                .telegram
-                .as_ref()
-                .is_some_and(|t| t.enabled);
+            let telegram_enabled = config.channels.telegram.as_ref().is_some_and(|t| t.enabled);
             let telegram_active = telegram_enabled && config.resolved_telegram_token().is_some();
             let agent = Arc::new(agent);
             let auth = starpod_gateway::create_auth_store(&paths)

@@ -1337,8 +1337,14 @@ mod tests {
             half_life_days = 14.0
         "#;
         let config: StarpodConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.memory.nudge_interval, 10, "nudge_interval should default to 10");
-        assert!(config.memory.nudge_model.is_none(), "nudge_model should default to None");
+        assert_eq!(
+            config.memory.nudge_interval, 10,
+            "nudge_interval should default to 10"
+        );
+        assert!(
+            config.memory.nudge_model.is_none(),
+            "nudge_model should default to None"
+        );
     }
 
     #[test]
@@ -1349,7 +1355,10 @@ mod tests {
         "#;
         let config: StarpodConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.memory.nudge_interval, 5);
-        assert!(config.memory.nudge_model.is_none(), "nudge_model should be None when not in TOML");
+        assert!(
+            config.memory.nudge_model.is_none(),
+            "nudge_model should be None when not in TOML"
+        );
     }
 
     #[test]
@@ -1362,7 +1371,10 @@ mod tests {
         let serialized = toml::to_string(&cfg).unwrap();
         let deserialized: MemoryConfig = toml::from_str(&serialized).unwrap();
         assert_eq!(deserialized.nudge_interval, 20);
-        assert_eq!(deserialized.nudge_model.as_deref(), Some("anthropic/claude-haiku-4-5-20251001"));
+        assert_eq!(
+            deserialized.nudge_model.as_deref(),
+            Some("anthropic/claude-haiku-4-5-20251001")
+        );
     }
 
     // ── Channel gap_minutes tests ──────────────────────────────────────

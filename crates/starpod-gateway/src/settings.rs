@@ -1233,12 +1233,7 @@ async fn generate_skill(
 // ── Auth user management ─────────────────────────────────────────────────
 
 async fn list_auth_users(State(state): State<Arc<AppState>>) -> ApiResult<Vec<starpod_auth::User>> {
-    state
-        .auth
-        .list_users()
-        .await
-        .map(Json)
-        .map_err(internal)
+    state.auth.list_users().await.map(Json).map_err(internal)
 }
 
 async fn get_auth_user(
@@ -1314,11 +1309,7 @@ async fn deactivate_auth_user(
         }
     }
 
-    state
-        .auth
-        .deactivate_user(&id)
-        .await
-        .map_err(internal)?;
+    state.auth.deactivate_user(&id).await.map_err(internal)?;
 
     Ok(ok_json())
 }
@@ -1327,11 +1318,7 @@ async fn activate_auth_user(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> ApiResult<serde_json::Value> {
-    state
-        .auth
-        .activate_user(&id)
-        .await
-        .map_err(internal)?;
+    state.auth.activate_user(&id).await.map_err(internal)?;
 
     Ok(ok_json())
 }
@@ -1374,11 +1361,7 @@ async fn revoke_auth_api_key(
     State(state): State<Arc<AppState>>,
     Path(key_id): Path<String>,
 ) -> ApiResult<serde_json::Value> {
-    state
-        .auth
-        .revoke_api_key(&key_id)
-        .await
-        .map_err(internal)?;
+    state.auth.revoke_api_key(&key_id).await.map_err(internal)?;
 
     Ok(ok_json())
 }
@@ -2245,7 +2228,10 @@ mod tests {
         assert_eq!(back.half_life_days, 14.0);
         assert!(!back.vector_search);
         assert_eq!(back.nudge_interval, 5);
-        assert_eq!(back.nudge_model.as_deref(), Some("anthropic/claude-haiku-4-5-20251001"));
+        assert_eq!(
+            back.nudge_model.as_deref(),
+            Some("anthropic/claude-haiku-4-5-20251001")
+        );
     }
 
     #[test]
@@ -2484,7 +2470,10 @@ mod tests {
         assert_eq!(parsed["memory"]["half_life_days"].as_float(), Some(14.0));
         assert_eq!(parsed["memory"]["vector_search"].as_bool(), Some(false));
         assert_eq!(parsed["memory"]["nudge_interval"].as_integer(), Some(5));
-        assert_eq!(parsed["memory"]["nudge_model"].as_str(), Some("anthropic/claude-haiku-4-5-20251001"));
+        assert_eq!(
+            parsed["memory"]["nudge_model"].as_str(),
+            Some("anthropic/claude-haiku-4-5-20251001")
+        );
     }
 
     #[tokio::test]
@@ -2500,7 +2489,8 @@ mod tests {
                 "chunk_size": 1600, "chunk_overlap": 320, "export_sessions": true,
                 "nudge_interval": 10, "nudge_model": "anthropic/claude-haiku-4-5-20251001"
             }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
 
         // Verify it was written
@@ -2517,7 +2507,8 @@ mod tests {
                 "chunk_size": 1600, "chunk_overlap": 320, "export_sessions": true,
                 "nudge_interval": 10, "nudge_model": null
             }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
 
         // Verify nudge_model was removed from TOML
@@ -2545,7 +2536,8 @@ mod tests {
                 "chunk_size": 1600, "chunk_overlap": 320, "export_sessions": true,
                 "nudge_interval": 5, "nudge_model": "anthropic/claude-haiku-4-5-20251001"
             }),
-        ).await;
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
 
         // Reload config so GET reflects the new values

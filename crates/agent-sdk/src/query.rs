@@ -626,9 +626,7 @@ async fn run_agent_loop(
         total_cost += turn_cost;
 
         // Update model usage
-        let model_entry = model_usage
-            .entry(model.clone())
-            .or_default();
+        let model_entry = model_usage.entry(model.clone()).or_default();
         model_entry.input_tokens += response.usage.input_tokens;
         model_entry.output_tokens += response.usage.output_tokens;
         model_entry.cost_usd += turn_cost;

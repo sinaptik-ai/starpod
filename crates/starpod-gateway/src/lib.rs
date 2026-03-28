@@ -87,11 +87,7 @@ impl AppState {
         }
 
         let config = self.config.read().unwrap().clone();
-        let enabled = config
-            .channels
-            .telegram
-            .as_ref()
-            .is_some_and(|t| t.enabled);
+        let enabled = config.channels.telegram.as_ref().is_some_and(|t| t.enabled);
         let token = config.resolved_telegram_token();
 
         match (enabled, token) {

@@ -1226,7 +1226,8 @@ impl StarpodAgent {
         }
 
         // Step 7: Background memory nudge (every N user messages)
-        self.maybe_nudge_memory(&session_id, message.user_id.as_deref(), &config).await;
+        self.maybe_nudge_memory(&session_id, message.user_id.as_deref(), &config)
+            .await;
 
         let attachments = out_attachments.lock().await.drain(..).collect();
 
@@ -1523,7 +1524,10 @@ impl StarpodAgent {
         };
 
         // Resolve the model: nudge_model → flush_model → compaction_model → primary
-        let nudge_model = config.memory.nudge_model.clone()
+        let nudge_model = config
+            .memory
+            .nudge_model
+            .clone()
             .or_else(|| config.compaction.flush_model.clone())
             .or_else(|| config.compaction_model.clone())
             .unwrap_or_else(|| config.model().to_string());

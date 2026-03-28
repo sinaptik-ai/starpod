@@ -40,9 +40,7 @@ use std::sync::Arc;
 
 use tracing::{debug, warn};
 
-use agent_sdk::client::{
-    ApiContentBlock, ApiMessage, CreateMessageRequest, SystemBlock,
-};
+use agent_sdk::client::{ApiContentBlock, ApiMessage, CreateMessageRequest, SystemBlock};
 use agent_sdk::LlmProvider;
 use starpod_memory::MemoryStore;
 use starpod_memory::UserMemoryView;
@@ -211,10 +209,10 @@ mod tests {
 
     use std::pin::Pin;
 
-    use async_trait::async_trait;
     use agent_sdk::client::{ApiUsage, MessageResponse, StreamEvent};
     use agent_sdk::error::Result as SdkResult;
     use agent_sdk::provider::{CostRates, ProviderCapabilities};
+    use async_trait::async_trait;
     use futures::stream::Stream;
 
     /// Helper to build a SessionMessage with minimal boilerplate.
@@ -244,10 +242,7 @@ mod tests {
 
     #[test]
     fn transcript_separates_messages_with_double_newlines() {
-        let messages = vec![
-            msg(1, "user", "Hello"),
-            msg(2, "assistant", "Hi there"),
-        ];
+        let messages = vec![msg(1, "user", "Hello"), msg(2, "assistant", "Hi there")];
 
         let transcript = session_messages_to_transcript(&messages);
         assert!(transcript.contains("[user] Hello\n\n[assistant] Hi there"));
@@ -300,7 +295,7 @@ mod tests {
         // Should not panic and should end with "..."
         assert!(transcript.ends_with("..."));
         // Verify the truncated content is valid UTF-8 (implicitly true if we got here)
-        assert!(transcript.len() > 0);
+        assert!(!transcript.is_empty());
     }
 
     #[test]
@@ -438,13 +433,20 @@ mod tests {
         let provider = Arc::new(MockProvider::with_response(response));
         let messages = vec![
             msg(1, "user", "I always use dark mode in my editors"),
-            msg(2, "assistant", "Noted! I'll remember that you prefer dark mode."),
+            msg(
+                2,
+                "assistant",
+                "Noted! I'll remember that you prefer dark mode.",
+            ),
         ];
 
         run_memory_nudge(provider, "test-model", &messages, &store, None).await;
 
         let content = store.read_file("MEMORY.md").unwrap();
-        assert!(content.contains("dark mode"), "MemoryWrite should have persisted the preference");
+        assert!(
+            content.contains("dark mode"),
+            "MemoryWrite should have persisted the preference"
+        );
     }
 
     #[tokio::test]
@@ -463,7 +465,11 @@ mod tests {
         let provider = Arc::new(MockProvider::with_response(response));
         let messages = vec![
             msg(1, "user", "Let's use event sourcing for the new service"),
-            msg(2, "assistant", "Good choice — event sourcing fits well here."),
+            msg(
+                2,
+                "assistant",
+                "Good choice — event sourcing fits well here.",
+            ),
         ];
 
         run_memory_nudge(provider, "test-model", &messages, &store, None).await;
@@ -505,7 +511,10 @@ mod tests {
 
         let user = store.read_file("USER.md").unwrap();
         assert!(user.contains("Alice"), "USER.md should contain user's name");
-        assert!(user.contains("Backend engineer"), "USER.md should contain user's role");
+        assert!(
+            user.contains("Backend engineer"),
+            "USER.md should contain user's role"
+        );
 
         let results = store.search("backend engineer", 5).await.unwrap();
         assert!(!results.is_empty(), "Daily log should be searchable");
@@ -523,10 +532,7 @@ mod tests {
         }]);
 
         let provider = Arc::new(MockProvider::with_response(response));
-        let messages = vec![
-            msg(1, "user", "Hi"),
-            msg(2, "assistant", "Hello!"),
-        ];
+        let messages = vec![msg(1, "user", "Hi"), msg(2, "assistant", "Hello!")];
 
         // Should not panic or write anything
         run_memory_nudge(provider, "test-model", &messages, &store, None).await;
@@ -605,7 +611,7 @@ mod tests {
         let mut triggers = Vec::new();
         for msg_num in 1..=num_messages {
             counter += 1;
-            if interval > 0 && counter % interval == 0 {
+            if interval > 0 && counter.is_multiple_of(interval) {
                 triggers.push(msg_num);
             }
         }
@@ -639,13 +645,20 @@ mod tests {
     #[test]
     fn counter_does_not_fire_before_interval() {
         let triggers = simulate_nudge_triggers(10, 9);
-        assert!(triggers.is_empty(), "Should not fire before reaching interval");
+        assert!(
+            triggers.is_empty(),
+            "Should not fire before reaching interval"
+        );
     }
 
     #[test]
     fn counter_fires_exactly_at_boundary() {
         let triggers = simulate_nudge_triggers(10, 10);
-        assert_eq!(triggers, vec![10], "Should fire exactly at interval boundary");
+        assert_eq!(
+            triggers,
+            vec![10],
+            "Should fire exactly at interval boundary"
+        );
     }
 
     // ── nudge request construction ──────────────────────────────────
@@ -661,25 +674,47 @@ mod tests {
 
         #[async_trait]
         impl LlmProvider for InspectingProvider {
-            fn name(&self) -> &str { "inspect" }
+            fn name(&self) -> &str {
+                "inspect"
+            }
             fn capabilities(&self) -> ProviderCapabilities {
-                ProviderCapabilities { streaming: false, tool_use: true, thinking: false, prompt_caching: false }
+                ProviderCapabilities {
+                    streaming: false,
+                    tool_use: true,
+                    thinking: false,
+                    prompt_caching: false,
+                }
             }
             fn cost_rates(&self, _model: &str) -> CostRates {
-                CostRates { input_per_million: 0.0, output_per_million: 0.0, cache_read_multiplier: None, cache_creation_multiplier: None }
+                CostRates {
+                    input_per_million: 0.0,
+                    output_per_million: 0.0,
+                    cache_read_multiplier: None,
+                    cache_creation_multiplier: None,
+                }
             }
-            async fn create_message(&self, request: &CreateMessageRequest) -> SdkResult<MessageResponse> {
+            async fn create_message(
+                &self,
+                request: &CreateMessageRequest,
+            ) -> SdkResult<MessageResponse> {
                 self.called.store(true, Ordering::SeqCst);
 
                 // Verify system prompt is present
                 assert!(request.system.is_some(), "System prompt should be present");
                 let sys = &request.system.as_ref().unwrap()[0].text;
-                assert!(sys.contains("memory management agent"), "System prompt should identify as memory agent");
+                assert!(
+                    sys.contains("memory management agent"),
+                    "System prompt should identify as memory agent"
+                );
 
                 // Verify tools are present
                 assert!(request.tools.is_some(), "Tools should be present");
                 let tools = request.tools.as_ref().unwrap();
-                assert_eq!(tools.len(), 2, "Should have MemoryWrite and MemoryAppendDaily");
+                assert_eq!(
+                    tools.len(),
+                    2,
+                    "Should have MemoryWrite and MemoryAppendDaily"
+                );
                 assert_eq!(tools[0].name, "MemoryWrite");
                 assert_eq!(tools[1].name, "MemoryAppendDaily");
 
@@ -687,7 +722,10 @@ mod tests {
                 let user_msg = &request.messages[0];
                 assert_eq!(user_msg.role, "user");
                 if let ApiContentBlock::Text { text, .. } = &user_msg.content[0] {
-                    assert!(text.contains("dark mode"), "Transcript should contain message content");
+                    assert!(
+                        text.contains("dark mode"),
+                        "Transcript should contain message content"
+                    );
                 } else {
                     panic!("Expected text content block");
                 }
@@ -696,22 +734,33 @@ mod tests {
                 Ok(MessageResponse {
                     id: "msg_test".into(),
                     role: "assistant".into(),
-                    content: vec![ApiContentBlock::Text { text: "Nothing to save".into(), cache_control: None }],
+                    content: vec![ApiContentBlock::Text {
+                        text: "Nothing to save".into(),
+                        cache_control: None,
+                    }],
                     model: "test".into(),
                     stop_reason: Some("end_turn".into()),
-                    usage: ApiUsage { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: None, cache_read_input_tokens: None },
+                    usage: ApiUsage {
+                        input_tokens: 0,
+                        output_tokens: 0,
+                        cache_creation_input_tokens: None,
+                        cache_read_input_tokens: None,
+                    },
                 })
             }
-            async fn create_message_stream(&self, _request: &CreateMessageRequest)
-                -> SdkResult<Pin<Box<dyn Stream<Item = SdkResult<StreamEvent>> + Send>>>
-            {
+            async fn create_message_stream(
+                &self,
+                _request: &CreateMessageRequest,
+            ) -> SdkResult<Pin<Box<dyn Stream<Item = SdkResult<StreamEvent>> + Send>>> {
                 Err(agent_sdk::AgentError::Api("Not implemented".into()))
             }
         }
 
         let tmp = tempfile::TempDir::new().unwrap();
         let store = MemoryStore::new_user(tmp.path()).await.unwrap();
-        let provider = Arc::new(InspectingProvider { called: AtomicBool::new(false) });
+        let provider = Arc::new(InspectingProvider {
+            called: AtomicBool::new(false),
+        });
         let provider_dyn: Arc<dyn LlmProvider> = Arc::clone(&provider) as Arc<dyn LlmProvider>;
 
         let messages = vec![
@@ -720,7 +769,10 @@ mod tests {
         ];
 
         run_memory_nudge(provider_dyn, "test-model", &messages, &store, None).await;
-        assert!(provider.called.load(Ordering::SeqCst), "Provider should have been called");
+        assert!(
+            provider.called.load(Ordering::SeqCst),
+            "Provider should have been called"
+        );
     }
 
     // ── config defaults and parsing ─────────────────────────────────
