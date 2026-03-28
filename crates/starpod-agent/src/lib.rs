@@ -877,6 +877,8 @@ impl StarpodAgent {
             internet: config.internet.clone(),
             brave_api_key,
             vault: self.vault.clone(),
+            user_md_limit: config.memory.user_md_limit,
+            memory_md_limit: config.memory.memory_md_limit,
         });
 
         Box::new(move |tool_name, input| {
@@ -1898,6 +1900,8 @@ mod tests {
             internet: starpod_core::InternetConfig::default(),
             brave_api_key: None,
             vault: None,
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
         };
 
         // Test MemorySearch

@@ -280,11 +280,20 @@ pub struct MemoryConfig {
     /// With memory flush enabled, this is redundant and off by default.
     #[serde(default)]
     pub auto_log: bool,
+    /// Soft character limit for USER.md (default: 4000). Writes that would exceed
+    /// this return a warning asking the agent to consolidate before retrying.
+    #[serde(default = "default_user_md_limit")]
+    pub user_md_limit: usize,
+    /// Soft character limit for MEMORY.md (default: 8000).
+    #[serde(default = "default_memory_md_limit")]
+    pub memory_md_limit: usize,
 }
 
 fn default_chunk_size() -> usize { 1600 }
 fn default_chunk_overlap() -> usize { 320 }
 fn default_bootstrap_file_cap() -> usize { 20_000 }
+fn default_user_md_limit() -> usize { 4_000 }
+fn default_memory_md_limit() -> usize { 8_000 }
 
 impl Default for MemoryConfig {
     fn default() -> Self {
@@ -297,6 +306,8 @@ impl Default for MemoryConfig {
             bootstrap_file_cap: default_bootstrap_file_cap(),
             export_sessions: true,
             auto_log: false,
+            user_md_limit: default_user_md_limit(),
+            memory_md_limit: default_memory_md_limit(),
         }
     }
 }

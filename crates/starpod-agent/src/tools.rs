@@ -59,6 +59,10 @@ pub struct ToolContext {
     pub brave_api_key: Option<String>,
     /// Vault for auditing env var access. When `Some`, EnvGet logs reads.
     pub vault: Option<Arc<starpod_vault::Vault>>,
+    /// Soft character limit for USER.md (0 = no limit).
+    pub user_md_limit: usize,
+    /// Soft character limit for MEMORY.md (0 = no limit).
+    pub memory_md_limit: usize,
 }
 
 /// Build the JSON schema definitions for all Starpod custom tools.
@@ -941,6 +945,28 @@ pub async fn handle_custom_tool(
             } else {
                 content.to_string()
             };
+
+            // Soft character limit for USER.md and MEMORY.md
+            let limit = match file {
+                "USER.md" if ctx.user_md_limit > 0 => Some(("USER.md", ctx.user_md_limit)),
+                "MEMORY.md" if ctx.memory_md_limit > 0 => Some(("MEMORY.md", ctx.memory_md_limit)),
+                _ => None,
+            };
+            if let Some((name, max_chars)) = limit {
+                if final_content.len() > max_chars {
+                    return Some(ToolResult {
+                        content: format!(
+                            "{name} would be {} chars (limit: {max_chars}). \
+                             Consolidate or trim the content before retrying — \
+                             remove redundant entries and keep only what reduces \
+                             future user effort.",
+                            final_content.len(),
+                        ),
+                        is_error: true,
+                        raw_content: None,
+                    });
+                }
+            }
 
             let write_result = if let Some(ref uv) = ctx.user_view {
                 uv.write_file(file, &final_content).await
@@ -2503,6 +2529,8 @@ mod tests {
             internet: InternetConfig::default(),
             brave_api_key: None,
             vault: None,
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
         };
 
         std::env::set_var("STARPOD_ENVGET_TEST_VAR", "test_value_42");
@@ -2542,6 +2570,8 @@ mod tests {
             internet: InternetConfig::default(),
             brave_api_key: None,
             vault: None,
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
         };
 
         let result = handle_custom_tool(
@@ -2579,6 +2609,8 @@ mod tests {
             internet: InternetConfig::default(),
             brave_api_key: None,
             vault: None,
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
         };
 
         // System keys should be blocked
@@ -2632,6 +2664,8 @@ mod tests {
             internet: InternetConfig::default(),
             brave_api_key: None,
             vault: Some(Arc::new(vault)),
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
         };
 
         // Set an env var and read it via EnvGet — exercises the vault audit path
@@ -2673,6 +2707,8 @@ mod tests {
             internet: InternetConfig::default(),
             brave_api_key: None,
             vault: Some(Arc::new(vault)),
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
         };
 
         // System key should be blocked before reaching the audit code
@@ -2714,6 +2750,8 @@ mod tests {
             internet: InternetConfig::default(),
             brave_api_key: None,
             vault: None,
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
         };
 
         // Write a file
@@ -2762,6 +2800,8 @@ mod tests {
             internet: InternetConfig::default(),
             brave_api_key: None,
             vault: None,
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
         };
 
         let result = handle_custom_tool(
@@ -2802,6 +2842,8 @@ mod tests {
             internet: InternetConfig::default(),
             brave_api_key: None,
             vault: None,
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
         };
 
         let result = handle_custom_tool(
@@ -2842,6 +2884,8 @@ mod tests {
             internet: InternetConfig::default(),
             brave_api_key: None,
             vault: None,
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
         };
 
         let result = handle_custom_tool(
@@ -2879,6 +2923,8 @@ mod tests {
             internet: InternetConfig::default(),
             brave_api_key: None,
             vault: None,
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
         };
 
         let result = handle_custom_tool(
@@ -2930,6 +2976,8 @@ mod tests {
             internet: InternetConfig::default(),
             brave_api_key: None,
             vault: None,
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
         }
     }
 
@@ -3264,6 +3312,8 @@ mod tests {
             internet: InternetConfig::default(),
             brave_api_key: None,
             vault: None,
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
         }
     }
 
@@ -3415,6 +3465,8 @@ mod tests {
             internet: InternetConfig::default(),
             brave_api_key: None,
             vault: None,
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
         }
     }
 
@@ -3777,6 +3829,8 @@ mod tests {
             internet: InternetConfig::default(),
             brave_api_key: None,
             vault: None,
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
         }
     }
 
@@ -3945,6 +3999,8 @@ mod tests {
             internet: InternetConfig::default(),
             brave_api_key: None,
             vault: None,
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
         }
     }
 
@@ -4096,6 +4152,46 @@ mod tests {
         let result = handle_custom_tool(&ctx, "MemoryWrite", &input).await.unwrap();
         assert!(result.is_error);
         assert!(result.content.contains("rejected"));
+    }
+
+    #[tokio::test]
+    async fn memory_write_enforces_user_md_soft_limit() {
+        let tmp = TempDir::new().unwrap();
+        let mut ctx = ctx_with_user_view(&tmp).await;
+        ctx.user_md_limit = 50; // very small for testing
+
+        // Write within limit — should succeed
+        let result = handle_custom_tool(
+            &ctx, "MemoryWrite",
+            &serde_json::json!({"file": "USER.md", "content": "short"}),
+        ).await.unwrap();
+        assert!(!result.is_error);
+
+        // Write exceeding limit — should be rejected
+        let long = "x".repeat(100);
+        let result = handle_custom_tool(
+            &ctx, "MemoryWrite",
+            &serde_json::json!({"file": "USER.md", "content": long}),
+        ).await.unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("limit: 50"));
+        assert!(result.content.contains("Consolidate"));
+    }
+
+    #[tokio::test]
+    async fn memory_write_limit_does_not_affect_other_files() {
+        let tmp = TempDir::new().unwrap();
+        let mut ctx = ctx_with_user_view(&tmp).await;
+        ctx.user_md_limit = 10;
+        ctx.memory_md_limit = 10;
+
+        // Daily logs should not be limited
+        let long = "x".repeat(100);
+        let result = handle_custom_tool(
+            &ctx, "MemoryWrite",
+            &serde_json::json!({"file": "memory/notes.md", "content": long}),
+        ).await.unwrap();
+        assert!(!result.is_error);
     }
 
     #[tokio::test]
