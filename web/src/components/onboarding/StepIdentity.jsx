@@ -26,6 +26,7 @@ export default function StepIdentity({ data, updateData, onNext }) {
         body: JSON.stringify(config),
       })
       if (!saveResp.ok) throw new Error('Failed to save')
+      window.__STARPOD__ = { ...window.__STARPOD__, agent_name: data.agentName.trim() }
       onNext()
     } catch (e) {
       setError(e.message)
