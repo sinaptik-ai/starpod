@@ -84,7 +84,7 @@ resolve_version() {
         return
     fi
 
-    info "Fetching latest version..."
+    info "Fetching latest version..." >&2
     LATEST=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
         | grep '"tag_name"' \
         | sed 's/.*"tag_name": *"//;s/".*//')
