@@ -117,7 +117,7 @@ fi
 # Build target triple
 case "$OS" in
     darwin) TARGET="${ARCH}-apple-darwin" ;;
-    linux)  TARGET="${ARCH}-unknown-linux-gnu" ;;
+    linux)  TARGET="${ARCH}-unknown-linux-musl" ;;
 esac
 
 TARBALL="starpod-${VERSION}-${TARGET}.tar.gz"
