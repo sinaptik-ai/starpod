@@ -1578,6 +1578,79 @@ impl StarpodAgent {
         });
     }
 
+    /// Run a final background nudge for a closing session.
+    ///
+    /// Called by [`export_session_to_memory`] when a session ends with
+    /// un-nudged messages (e.g., a 3-message chat that never hit the nudge
+    /// interval). Uses the session's user_id from metadata for per-user
+    /// memory routing.
+    async fn run_final_nudge(&self, session_id: &str, config: &StarpodConfig) {
+        let messages = match self.session_mgr.get_messages(session_id).await {
+            Ok(msgs) if !msgs.is_empty() => msgs,
+            _ => return,
+        };
+
+        let nudge_model = config
+            .memory
+            .nudge_model
+            .clone()
+            .or_else(|| config.compaction.flush_model.clone())
+            .or_else(|| config.compaction_model.clone())
+            .unwrap_or_else(|| config.model().to_string());
+
+        let provider: Arc<dyn agent_sdk::LlmProvider> = match self.build_provider(config).await {
+            Ok(p) => Arc::from(p),
+            Err(e) => {
+                warn!(error = %e, "Failed to build provider for final nudge");
+                return;
+            }
+        };
+
+        // Resolve user_id from session metadata for per-user memory routing
+        let user_id = match self.session_mgr.get_session(session_id).await {
+            Ok(Some(meta))
+                if !meta.user_id.is_empty()
+                    && meta.user_id != "heartbeat"
+                    && meta.user_id != "cron" =>
+            {
+                Some(meta.user_id)
+            }
+            _ => None,
+        };
+
+        let memory = Arc::clone(&self.memory);
+        let user_view: Option<Arc<UserMemoryView>> = match user_id.as_deref() {
+            Some(uid) => {
+                let user_dir = self.paths.users_dir.join(uid);
+                match UserMemoryView::new(Arc::clone(&memory), user_dir).await {
+                    Ok(uv) => Some(Arc::new(uv)),
+                    Err(_) => None,
+                }
+            }
+            None => None,
+        };
+
+        let skills = if config.self_improve {
+            Some(Arc::clone(&self.skills))
+        } else {
+            None
+        };
+
+        info!(session_id, "Spawning final nudge for closing session");
+
+        tokio::spawn(async move {
+            nudge::run_nudge(
+                provider,
+                &nudge_model,
+                &messages,
+                &memory,
+                user_view.as_deref(),
+                skills.as_deref(),
+            )
+            .await;
+        });
+    }
+
     /// Append to daily log via user view when a user_id is present, falling back to agent-level store.
     async fn append_daily_for_user(
         &self,
@@ -1595,15 +1668,33 @@ impl StarpodAgent {
 
     /// Export a closed session's transcript to `knowledge/sessions/` for long-term recall.
     ///
+    /// Also runs a final background nudge if the session had messages that
+    /// never reached the nudge interval (e.g., a 3-message chat with
+    /// `nudge_interval = 10`), so short conversations aren't lost.
+    ///
     /// Formats all messages as markdown and writes to the memory store so they
     /// become searchable. Runs in the background to avoid blocking the chat flow.
     async fn export_session_to_memory(&self, session_id: &str) {
         // Always evict the frozen bootstrap snapshot when a session closes,
         // regardless of whether the transcript export is enabled.
         self.bootstrap_cache.write().await.remove(session_id);
-        self.nudge_counters.write().await.remove(session_id);
 
+        // Grab and evict the nudge counter — if it has un-nudged messages,
+        // we'll run a final nudge below.
+        let pending_count = self
+            .nudge_counters
+            .write()
+            .await
+            .remove(session_id)
+            .unwrap_or(0);
+
+        // Run a final nudge for sessions that ended before reaching the interval
         let config = self.snapshot_config();
+        let interval = config.memory.nudge_interval;
+        if interval > 0 && pending_count > 0 && pending_count % interval != 0 {
+            self.run_final_nudge(session_id, &config).await;
+        }
+
         if !config.memory.export_sessions {
             return;
         }

@@ -22,7 +22,10 @@
 //!    (`nudge_counters`). After each user message, the counter increments.
 //! 2. When `count % nudge_interval == 0`, [`StarpodAgent::maybe_nudge_memory`]
 //!    loads the full session transcript from the database.
-//! 3. A background `tokio::spawn` task calls [`run_nudge`] which:
+//! 3. When a session closes with un-nudged messages (counter > 0 but hasn't
+//!    hit the interval), a **final nudge** runs so short conversations are
+//!    never lost.
+//! 4. A background `tokio::spawn` task calls [`run_nudge`] which:
 //!    - Converts `SessionMessage` records into a human-readable transcript
 //!    - Makes a single non-streaming LLM call with memory tools (and skill
 //!      tools when self-improve is on)
