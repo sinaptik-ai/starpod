@@ -41,6 +41,19 @@ export function invalidateSkillsCache() {
   skillsFetchedAt = 0
 }
 
+let cachedVersion = null
+export async function fetchVersion() {
+  if (cachedVersion) return cachedVersion
+  try {
+    const resp = await fetch('/api/health')
+    if (resp.ok) {
+      const data = await resp.json()
+      cachedVersion = data.version
+    }
+  } catch {}
+  return cachedVersion || null
+}
+
 let cachedModels = null
 export async function fetchModels() {
   if (cachedModels) return cachedModels

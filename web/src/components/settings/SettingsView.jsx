@@ -1,7 +1,9 @@
+import { useState, useEffect } from 'react'
 import { useApp } from '../../contexts/AppContext'
 import IconButton from '../ui/IconButton'
 import ViewHeader from '../ui/ViewHeader'
 import { BackIcon } from '../ui/Icons'
+import { fetchVersion } from '../../lib/api'
 import GeneralTab from './GeneralTab'
 import FileTab from './FileTab'
 import HeartbeatTab from './HeartbeatTab'
@@ -102,6 +104,9 @@ export default function SettingsView() {
   const { settingsActiveTab } = state
   const activeLabel = allTabs.find(t => t.id === settingsActiveTab)?.label || 'General'
   const activeGroup = tabGroups.find(g => g.tabs.some(t => t.id === settingsActiveTab))?.label
+  const [version, setVersion] = useState(null)
+
+  useEffect(() => { fetchVersion().then(v => setVersion(v)) }, [])
 
   return (
     <div className="flex flex-1 min-h-0">
@@ -135,6 +140,12 @@ export default function SettingsView() {
             </div>
           ))}
         </nav>
+
+        {version && (
+          <div className="shrink-0 px-4 py-3 border-t border-border-subtle">
+            <span className="text-[11px] text-dim font-mono">starpod v{version}</span>
+          </div>
+        )}
       </div>
 
       {/* Main content area */}
