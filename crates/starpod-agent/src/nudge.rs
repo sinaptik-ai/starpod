@@ -25,6 +25,10 @@
 //! 3. When a session closes with un-nudged messages (counter > 0 but hasn't
 //!    hit the interval), a **final nudge** runs so short conversations are
 //!    never lost.
+//! 3b. When a user sends a message to any session,
+//!    [`StarpodAgent::flush_stale_sessions`] checks for other sessions
+//!    belonging to the same user with un-nudged messages and flushes them.
+//!    This catches the web UI pattern where sessions are never closed.
 //! 4. A background `tokio::spawn` task calls [`run_nudge`] which:
 //!    - Converts `SessionMessage` records into a human-readable transcript
 //!    - Makes a single non-streaming LLM call with memory tools (and skill

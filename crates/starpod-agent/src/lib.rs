@@ -98,10 +98,15 @@ pub struct StarpodAgent {
     bootstrap_cache: tokio::sync::RwLock<HashMap<String, String>>,
     /// Per-session user message counter for memory nudge scheduling.
     ///
-    /// Tracks how many user messages have been processed in each session.
-    /// When the count reaches `config.memory.nudge_interval`, a background
-    /// LLM call reviews the conversation and persists important information.
-    nudge_counters: tokio::sync::RwLock<HashMap<String, u32>>,
+    /// Maps `session_id → (user_id, message_count)`. Tracks how many user
+    /// messages have been processed in each session. When the count reaches
+    /// `config.memory.nudge_interval`, a background LLM call reviews the
+    /// conversation and persists important information.
+    ///
+    /// The `user_id` is stored alongside the count so that
+    /// [`flush_stale_sessions`] can find all sessions belonging to a user
+    /// without querying the database.
+    nudge_counters: tokio::sync::RwLock<HashMap<String, (String, u32)>>,
 }
 
 impl StarpodAgent {
@@ -1020,6 +1025,10 @@ impl StarpodAgent {
             .set_title_if_empty(&session_id, &message.text)
             .await;
 
+        // Flush un-nudged messages from other sessions this user left behind
+        self.flush_stale_sessions(&session_id, user_id, &config)
+            .await;
+
         // Step 2: Save attachments to downloads/ and build query attachments
         let saved_paths = self.save_attachments(&message.attachments).await;
         let (query_atts, mut extra_text) =
@@ -1297,6 +1306,10 @@ impl StarpodAgent {
             .set_title_if_empty(&session_id, &message.text)
             .await;
 
+        // Flush un-nudged messages from other sessions this user left behind
+        self.flush_stale_sessions(&session_id, user_id, &config)
+            .await;
+
         // Save attachments and build query attachments
         let saved_paths = self.save_attachments(&message.attachments).await;
         let (query_atts, mut extra_text) =
@@ -1511,9 +1524,11 @@ impl StarpodAgent {
 
         let count = {
             let mut counters = self.nudge_counters.write().await;
-            let count = counters.entry(session_id.to_string()).or_insert(0);
-            *count += 1;
-            *count
+            let entry = counters
+                .entry(session_id.to_string())
+                .or_insert_with(|| (user_id.unwrap_or("admin").to_string(), 0));
+            entry.1 += 1;
+            entry.1
         };
 
         if count % interval != 0 {
@@ -1651,6 +1666,61 @@ impl StarpodAgent {
         });
     }
 
+    /// Flush un-nudged sessions belonging to a user when they switch context.
+    ///
+    /// Scans `nudge_counters` for sessions owned by `user_id` that are NOT
+    /// `current_session_id` and have un-nudged messages (count > 0, not at an
+    /// interval boundary). For each, spawns a final nudge and resets the
+    /// counter so it won't be nudged again.
+    ///
+    /// This catches short conversations that never reached the nudge interval
+    /// (e.g., 3 messages in a web UI chat before starting a new one).
+    async fn flush_stale_sessions(
+        &self,
+        current_session_id: &str,
+        user_id: &str,
+        config: &StarpodConfig,
+    ) {
+        let interval = config.memory.nudge_interval;
+        if interval == 0 {
+            return;
+        }
+
+        // Collect stale session IDs under a read lock
+        let stale: Vec<String> = {
+            let counters = self.nudge_counters.read().await;
+            counters
+                .iter()
+                .filter(|(sid, (uid, count))| {
+                    sid.as_str() != current_session_id
+                        && uid == user_id
+                        && *count > 0
+                        && *count % interval != 0
+                })
+                .map(|(sid, _)| sid.clone())
+                .collect()
+        };
+
+        if stale.is_empty() {
+            return;
+        }
+
+        // Reset counters so these sessions won't be flushed again
+        {
+            let mut counters = self.nudge_counters.write().await;
+            for sid in &stale {
+                if let Some(entry) = counters.get_mut(sid) {
+                    entry.1 = 0;
+                }
+            }
+        }
+
+        for sid in stale {
+            debug!(session_id = %sid, user_id, "Flushing stale session for user");
+            self.run_final_nudge(&sid, config).await;
+        }
+    }
+
     /// Append to daily log via user view when a user_id is present, falling back to agent-level store.
     async fn append_daily_for_user(
         &self,
@@ -1686,6 +1756,7 @@ impl StarpodAgent {
             .write()
             .await
             .remove(session_id)
+            .map(|(_, count)| count)
             .unwrap_or(0);
 
         // Run a final nudge for sessions that ended before reaching the interval

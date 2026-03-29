@@ -43,7 +43,7 @@ let attachments = out_attachments.lock().await.drain(..).collect::<Vec<_>>();
 8. **Self-improve reflection** — if `self_improve` is enabled and conditions are met (skill failure or 5+ tool calls), run a follow-up query to create/update skills
 9. **Record usage** — tokens and cost to session database
 10. **Append daily log** — conversation summary
-11. **Background nudge** — if message count hits the nudge interval, spawn a background review (memory + skills when self-improve is on). A final nudge also runs when a session closes with un-nudged messages, so short conversations are never lost
+11. **Background nudge** — if message count hits the nudge interval, spawn a background review (memory + skills when self-improve is on). Un-nudged sessions are also flushed when the user switches to a different session or when a session closes, so short conversations are never lost
 
 ## Followup Message Handling
 
