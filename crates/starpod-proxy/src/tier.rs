@@ -16,6 +16,27 @@ pub enum IsolationTier {
     NetNamespace,
 }
 
+/// Check if the current process has CAP_NET_ADMIN.
+///
+/// Reads `/proc/self/status` and checks the effective capabilities bitmask.
+/// CAP_NET_ADMIN is bit 12 (value 0x1000).
+#[cfg(all(target_os = "linux", feature = "netns"))]
+fn has_cap_net_admin() -> bool {
+    let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
+        return false;
+    };
+    for line in status.lines() {
+        if let Some(hex) = line.strip_prefix("CapEff:\t") {
+            let Ok(caps) = u64::from_str_radix(hex.trim(), 16) else {
+                return false;
+            };
+            // CAP_NET_ADMIN = bit 12
+            return caps & (1 << 12) != 0;
+        }
+    }
+    false
+}
+
 /// Detect and log the best available isolation tier.
 pub fn detect_and_log() -> IsolationTier {
     #[cfg(all(target_os = "linux", feature = "netns"))]
@@ -45,36 +66,8 @@ mod tests {
     #[test]
     fn detect_returns_valid_tier() {
         let tier = detect_and_log();
-        // On macOS or Linux without CAP_NET_ADMIN, should be EnvProxy
         #[cfg(not(all(target_os = "linux", feature = "netns")))]
         assert_eq!(tier, IsolationTier::EnvProxy);
+        let _ = tier; // suppress unused on netns-enabled Linux
     }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn has_cap_net_admin_does_not_panic() {
-        // Just verify it doesn't panic — actual capability depends on environment
-        let _ = has_cap_net_admin();
-    }
-}
-
-/// Check if the current process has CAP_NET_ADMIN.
-///
-/// Reads `/proc/self/status` and checks the effective capabilities bitmask.
-/// CAP_NET_ADMIN is bit 12 (value 0x1000).
-#[cfg(target_os = "linux")]
-fn has_cap_net_admin() -> bool {
-    let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
-        return false;
-    };
-    for line in status.lines() {
-        if let Some(hex) = line.strip_prefix("CapEff:\t") {
-            let Ok(caps) = u64::from_str_radix(hex.trim(), 16) else {
-                return false;
-            };
-            // CAP_NET_ADMIN = bit 12
-            return caps & (1 << 12) != 0;
-        }
-    }
-    false
 }
