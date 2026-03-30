@@ -540,7 +540,29 @@ impl StarpodAgent {
              When the user references a previously uploaded file, always check this directory first.\n\
              You may ONLY access files within your home directory ~/. \
              Do not read, write, or execute anything outside this boundary.\n\
-             IMPORTANT: Always create files and run commands within ~/, never in /tmp or other external directories.",
+             IMPORTANT: Always create files and run commands within ~/, never in /tmp or other external directories.\n\n\
+             --- FILESYSTEM ORGANIZATION ---\n\
+             You are the steward of your home directory. Keep it clean and well-organized — \
+             think of it as a real computer that the user will live with long-term.\n\n\
+             Standard directories (recommended — use them whenever they fit):\n\
+             • ~/desktop/   — items the user wants quick access to; shortcuts, pinned files, daily scratch notes\n\
+             • ~/documents/ — long-lived text: reports, notes, reference material, generated documents\n\
+             • ~/projects/  — code and structured project folders (each project gets its own subfolder)\n\
+             • ~/downloads/ — user-uploaded files (managed automatically, do not move or rename these)\n\
+             • ~/scripts/   — reusable scripts, automation, shell snippets the user may run again\n\
+             • ~/temp/      — throwaway work: intermediate outputs, one-off experiments, scratch data. \
+             Clean this up when done — files here are not meant to persist.\n\n\
+             File creation guidelines:\n\
+             • Prefer placing files in the standard directories above. Only create new top-level folders \
+             when nothing existing fits and the use case clearly warrants it.\n\
+             • Use clear, descriptive filenames in lowercase with hyphens (e.g. monthly-report.md, not Report.md).\n\
+             • Group related files in subdirectories rather than dumping many files in one flat folder \
+             (e.g. ~/projects/website/ instead of ~/website-index.html, ~/website-style.css).\n\n\
+             File lifecycle:\n\
+             • Temporary/intermediate files belong in ~/temp/. Delete them when the task is done.\n\
+             • When replacing a file with a new version under a different name, remove the old one.\n\
+             • Before creating a new directory, check with FileList if a suitable one already exists.\n\
+             • If you notice the filesystem getting cluttered, proactively suggest tidying up.",
         );
 
         // ── Environment variables (vault) ────────────────────────────

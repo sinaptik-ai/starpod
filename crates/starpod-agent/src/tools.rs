@@ -185,13 +185,13 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
         },
         CustomToolDefinition {
             name: "FileWrite".into(),
-            description: "Write a file to the agent's filesystem sandbox. Path must be relative to the home directory (e.g. \"notes.txt\", \"reports/weekly.md\"). No \"..\" traversal or absolute paths. Creates parent directories as needed. The .starpod/ directory is internal and cannot be accessed — use MemoryWrite for USER.md, MEMORY.md, and memory files instead.".into(),
+            description: "Write a file to the agent's filesystem sandbox. Path must be relative to the home directory (e.g. \"documents/report.md\", \"projects/app/main.py\", \"scripts/backup.sh\"). Prefer standard directories: documents/ for text, projects/ for code, scripts/ for reusable scripts, temp/ for throwaway work, desktop/ for quick-access items. No \"..\" traversal or absolute paths. Creates parent directories as needed. The .starpod/ directory is internal and cannot be accessed — use MemoryWrite for USER.md, MEMORY.md, and memory files instead.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Relative file path within the agent's filesystem"
+                        "description": "Relative file path starting with a standard folder: documents/, projects/, scripts/, temp/, desktop/, or downloads/. Avoid placing files directly in ~/ root."
                     },
                     "content": {
                         "type": "string",
@@ -1404,11 +1404,34 @@ pub async fn handle_custom_tool(
                         }
                     }
                     match std::fs::write(&resolved, content) {
-                        Ok(()) => Some(ToolResult {
-                            content: format!("Successfully wrote {}", path),
-                            is_error: false,
-                            raw_content: None,
-                        }),
+                        Ok(()) => {
+                            let is_in_standard_folder = path.starts_with("documents/")
+                                || path.starts_with("projects/")
+                                || path.starts_with("scripts/")
+                                || path.starts_with("temp/")
+                                || path.starts_with("desktop/")
+                                || path.starts_with("downloads/");
+
+                            let msg = if is_in_standard_folder {
+                                format!("Successfully wrote {}", path)
+                            } else {
+                                format!(
+                                    "Successfully wrote {}\n\n\
+                                     [Warning: this file is outside the standard directories. \
+                                     Consider using: documents/ for text/notes, projects/ for code, \
+                                     scripts/ for reusable scripts, temp/ for throwaway work, \
+                                     desktop/ for quick-access items. \
+                                     Move it with FileWrite + FileDelete if appropriate.]",
+                                    path
+                                )
+                            };
+
+                            Some(ToolResult {
+                                content: msg,
+                                is_error: false,
+                                raw_content: None,
+                            })
+                        }
                         Err(e) => Some(ToolResult {
                             content: format!("Failed to write file: {}", e),
                             is_error: true,
@@ -1475,8 +1498,41 @@ pub async fn handle_custom_tool(
                             .and_then(|v| v.as_str())
                             .cmp(&b.get("name").and_then(|v| v.as_str()))
                     });
+                    let listing = serde_json::to_string_pretty(&items).unwrap_or_default();
+
+                    // If listing root and there are loose files, nudge
+                    let is_root = resolved == ctx.home_dir;
+                    let loose_files: Vec<&str> = if is_root {
+                        items
+                            .iter()
+                            .filter_map(|item| {
+                                let t = item.get("type")?.as_str()?;
+                                if t == "file" {
+                                    item.get("name")?.as_str()
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+
+                    let content = if loose_files.is_empty() {
+                        listing
+                    } else {
+                        format!(
+                            "{}\n\n[Note: found {} loose file(s) in ~/: {}. \
+                             Consider moving them to the appropriate standard folder \
+                             (documents/, projects/, scripts/, temp/, desktop/).]",
+                            listing,
+                            loose_files.len(),
+                            loose_files.join(", ")
+                        )
+                    };
+
                     Some(ToolResult {
-                        content: serde_json::to_string_pretty(&items).unwrap_or_default(),
+                        content,
                         is_error: false,
                         raw_content: None,
                     })
@@ -3463,6 +3519,461 @@ mod tests {
         .await
         .unwrap();
         assert!(result.is_error, "FileWrite should reject .. traversal");
+    }
+
+    // ── FileWrite nudge & filesystem hygiene ──────────────────────
+
+    #[tokio::test]
+    async fn file_write_response_contains_nudge() {
+        let tmp = TempDir::new().unwrap();
+        let memory = Arc::new(
+            starpod_memory::MemoryStore::new(
+                &tmp.path().join("agent"),
+                &tmp.path().join("agent").join("config"),
+                &tmp.path().join("db"),
+            )
+            .await
+            .unwrap(),
+        );
+        let skills =
+            Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let core_db = starpod_db::CoreDb::new(tmp.path()).await.unwrap();
+        let cron = Arc::new(starpod_cron::CronStore::from_pool(core_db.pool().clone()));
+
+        let home_dir = tmp.path().join("instance");
+        std::fs::create_dir_all(&home_dir).unwrap();
+
+        let ctx = ToolContext {
+            memory,
+            user_view: None,
+            skills,
+            cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: true,
+            browser_cdp_url: None,
+            user_tz: None,
+            home_dir: home_dir.clone(),
+            agent_home: home_dir.join(".starpod"),
+            user_id: Some("admin".into()),
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
+            vault: None,
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            proxy_enabled: false,
+        };
+
+        // Write to standard folder — no warning
+        let result = handle_custom_tool(
+            &ctx,
+            "FileWrite",
+            &serde_json::json!({"path": "documents/test.md", "content": "hello"}),
+        )
+        .await
+        .unwrap();
+        assert!(!result.is_error);
+        assert!(
+            !result.content.contains("[Warning:"),
+            "Standard folder write should NOT trigger warning, got: {}",
+            result.content
+        );
+
+        // Write to root — should get warning
+        let result = handle_custom_tool(
+            &ctx,
+            "FileWrite",
+            &serde_json::json!({"path": "random.txt", "content": "hello"}),
+        )
+        .await
+        .unwrap();
+        assert!(!result.is_error);
+        assert!(
+            result.content.contains("[Warning:"),
+            "Root write should trigger warning, got: {}",
+            result.content
+        );
+        assert!(result.content.contains("outside the standard directories"));
+    }
+
+    #[tokio::test]
+    async fn file_write_nudge_present_on_nested_paths() {
+        let tmp = TempDir::new().unwrap();
+        let memory = Arc::new(
+            starpod_memory::MemoryStore::new(
+                &tmp.path().join("agent"),
+                &tmp.path().join("agent").join("config"),
+                &tmp.path().join("db"),
+            )
+            .await
+            .unwrap(),
+        );
+        let skills =
+            Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let core_db = starpod_db::CoreDb::new(tmp.path()).await.unwrap();
+        let cron = Arc::new(starpod_cron::CronStore::from_pool(core_db.pool().clone()));
+
+        let home_dir = tmp.path().join("instance");
+        std::fs::create_dir_all(&home_dir).unwrap();
+
+        let ctx = ToolContext {
+            memory,
+            user_view: None,
+            skills,
+            cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: true,
+            browser_cdp_url: None,
+            user_tz: None,
+            home_dir: home_dir.clone(),
+            agent_home: home_dir.join(".starpod"),
+            user_id: Some("admin".into()),
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
+            vault: None,
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            proxy_enabled: false,
+        };
+
+        // Deep nested path in standard folder — no warning
+        let result = handle_custom_tool(
+            &ctx,
+            "FileWrite",
+            &serde_json::json!({
+                "path": "projects/my-app/src/lib/utils/helpers.py",
+                "content": "# helper functions"
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(!result.is_error);
+        assert!(
+            !result.content.contains("[Warning:"),
+            "Standard folder deep write should not warn"
+        );
+
+        // Deep nested path in custom folder — should warn
+        let result = handle_custom_tool(
+            &ctx,
+            "FileWrite",
+            &serde_json::json!({
+                "path": "custom/deep/nested/file.txt",
+                "content": "# test"
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(!result.is_error);
+        assert!(
+            result.content.contains("[Warning:"),
+            "Non-standard folder should warn"
+        );
+        // Verify the file was actually created
+        assert!(home_dir
+            .join("projects/my-app/src/lib/utils/helpers.py")
+            .exists());
+    }
+
+    #[tokio::test]
+    async fn file_write_creates_many_files_all_nudged() {
+        let tmp = TempDir::new().unwrap();
+        let memory = Arc::new(
+            starpod_memory::MemoryStore::new(
+                &tmp.path().join("agent"),
+                &tmp.path().join("agent").join("config"),
+                &tmp.path().join("db"),
+            )
+            .await
+            .unwrap(),
+        );
+        let skills =
+            Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let core_db = starpod_db::CoreDb::new(tmp.path()).await.unwrap();
+        let cron = Arc::new(starpod_cron::CronStore::from_pool(core_db.pool().clone()));
+
+        let home_dir = tmp.path().join("instance");
+        std::fs::create_dir_all(&home_dir).unwrap();
+
+        let ctx = ToolContext {
+            memory,
+            user_view: None,
+            skills,
+            cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: true,
+            browser_cdp_url: None,
+            user_tz: None,
+            home_dir: home_dir.clone(),
+            agent_home: home_dir.join(".starpod"),
+            user_id: Some("admin".into()),
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
+            vault: None,
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            proxy_enabled: false,
+        };
+
+        // Standard folder writes — no warning
+        let standard_paths = vec![
+            ("documents/report.md", "correct placement"),
+            ("temp/scratch.txt", "temp file"),
+            ("scripts/backup.sh", "script"),
+            ("projects/app/main.rs", "code"),
+            ("desktop/note.txt", "quick note"),
+        ];
+
+        for (path, content) in &standard_paths {
+            let result = handle_custom_tool(
+                &ctx,
+                "FileWrite",
+                &serde_json::json!({"path": path, "content": content}),
+            )
+            .await
+            .unwrap();
+            assert!(!result.is_error, "FileWrite failed for {}", path);
+            assert!(
+                !result.content.contains("[Warning:"),
+                "Standard path {} should not warn",
+                path
+            );
+        }
+
+        // Non-standard writes — should warn
+        let nonstandard_paths = vec![
+            ("random.txt", "root file"),
+            ("foo/bar/baz.txt", "deep arbitrary path"),
+            ("my-stuff/notes.txt", "custom folder"),
+        ];
+
+        for (path, content) in &nonstandard_paths {
+            let result = handle_custom_tool(
+                &ctx,
+                "FileWrite",
+                &serde_json::json!({"path": path, "content": content}),
+            )
+            .await
+            .unwrap();
+            assert!(!result.is_error, "FileWrite failed for {}", path);
+            assert!(
+                result.content.contains("[Warning:"),
+                "Non-standard path {} should warn",
+                path
+            );
+        }
+
+        // All files should exist
+        for (path, _) in standard_paths.iter().chain(nonstandard_paths.iter()) {
+            assert!(
+                home_dir.join(path).exists(),
+                "File should exist: {}",
+                path
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn file_list_root_nudges_about_loose_files() {
+        let tmp = TempDir::new().unwrap();
+        let memory = Arc::new(
+            starpod_memory::MemoryStore::new(
+                &tmp.path().join("agent"),
+                &tmp.path().join("agent").join("config"),
+                &tmp.path().join("db"),
+            )
+            .await
+            .unwrap(),
+        );
+        let skills =
+            Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let core_db = starpod_db::CoreDb::new(tmp.path()).await.unwrap();
+        let cron = Arc::new(starpod_cron::CronStore::from_pool(core_db.pool().clone()));
+
+        let home_dir = tmp.path().join("instance");
+        std::fs::create_dir_all(home_dir.join("documents")).unwrap();
+        // Create a loose file in root
+        std::fs::write(home_dir.join("stray.txt"), "oops").unwrap();
+
+        let ctx = ToolContext {
+            memory,
+            user_view: None,
+            skills,
+            cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: true,
+            browser_cdp_url: None,
+            user_tz: None,
+            home_dir: home_dir.clone(),
+            agent_home: home_dir.join(".starpod"),
+            user_id: Some("admin".into()),
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
+            vault: None,
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            proxy_enabled: false,
+        };
+
+        // List root — should nudge about the loose file
+        let result = handle_custom_tool(&ctx, "FileList", &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert!(
+            result.content.contains("[Note: found 1 loose file(s)"),
+            "FileList root should nudge about loose files, got: {}",
+            result.content
+        );
+        assert!(result.content.contains("stray.txt"));
+
+        // List a subdirectory — should NOT nudge
+        let result = handle_custom_tool(
+            &ctx,
+            "FileList",
+            &serde_json::json!({"path": "documents"}),
+        )
+        .await
+        .unwrap();
+        assert!(!result.is_error);
+        assert!(
+            !result.content.contains("[Note:"),
+            "FileList on subdirectory should not nudge"
+        );
+    }
+
+    #[tokio::test]
+    async fn file_list_root_clean_no_nudge() {
+        let tmp = TempDir::new().unwrap();
+        let memory = Arc::new(
+            starpod_memory::MemoryStore::new(
+                &tmp.path().join("agent"),
+                &tmp.path().join("agent").join("config"),
+                &tmp.path().join("db"),
+            )
+            .await
+            .unwrap(),
+        );
+        let skills =
+            Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let core_db = starpod_db::CoreDb::new(tmp.path()).await.unwrap();
+        let cron = Arc::new(starpod_cron::CronStore::from_pool(core_db.pool().clone()));
+
+        let home_dir = tmp.path().join("instance");
+        std::fs::create_dir_all(home_dir.join("documents")).unwrap();
+        std::fs::create_dir_all(home_dir.join("projects")).unwrap();
+        // Only directories, no loose files
+
+        let ctx = ToolContext {
+            memory,
+            user_view: None,
+            skills,
+            cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: true,
+            browser_cdp_url: None,
+            user_tz: None,
+            home_dir: home_dir.clone(),
+            agent_home: home_dir.join(".starpod"),
+            user_id: Some("admin".into()),
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
+            vault: None,
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            proxy_enabled: false,
+        };
+
+        // List root — clean, no nudge
+        let result = handle_custom_tool(&ctx, "FileList", &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert!(
+            !result.content.contains("[Note:"),
+            "Clean root should not nudge, got: {}",
+            result.content
+        );
+    }
+
+    #[tokio::test]
+    async fn file_write_error_has_no_warning() {
+        let tmp = TempDir::new().unwrap();
+        let memory = Arc::new(
+            starpod_memory::MemoryStore::new(
+                &tmp.path().join("agent"),
+                &tmp.path().join("agent").join("config"),
+                &tmp.path().join("db"),
+            )
+            .await
+            .unwrap(),
+        );
+        let skills =
+            Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let core_db = starpod_db::CoreDb::new(tmp.path()).await.unwrap();
+        let cron = Arc::new(starpod_cron::CronStore::from_pool(core_db.pool().clone()));
+
+        let home_dir = tmp.path().join("instance");
+        std::fs::create_dir_all(&home_dir).unwrap();
+
+        let ctx = ToolContext {
+            memory,
+            user_view: None,
+            skills,
+            cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: true,
+            browser_cdp_url: None,
+            user_tz: None,
+            home_dir: home_dir.clone(),
+            agent_home: home_dir.join(".starpod"),
+            user_id: Some("admin".into()),
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
+            vault: None,
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            proxy_enabled: false,
+        };
+
+        // Traversal error — should NOT contain a warning
+        let result = handle_custom_tool(
+            &ctx,
+            "FileWrite",
+            &serde_json::json!({"path": "../escape.txt", "content": "bad"}),
+        )
+        .await
+        .unwrap();
+        assert!(result.is_error);
+        assert!(
+            !result.content.contains("[Warning:"),
+            "Warning should not appear on error responses"
+        );
+
+        // .starpod access — should NOT contain a warning
+        let result = handle_custom_tool(
+            &ctx,
+            "FileWrite",
+            &serde_json::json!({"path": ".starpod/config.toml", "content": "bad"}),
+        )
+        .await
+        .unwrap();
+        assert!(result.is_error);
+        assert!(
+            !result.content.contains("[Warning:"),
+            "Warning should not appear on error responses"
+        );
     }
 
     // ── Per-user memory routing via UserMemoryView ─────────────────
