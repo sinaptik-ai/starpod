@@ -96,9 +96,7 @@ impl ProxyHandle {
     /// should be passed to `ToolExecutor::with_pre_exec()` so that all tool
     /// subprocesses enter the isolated namespace.
     #[cfg(feature = "netns")]
-    pub fn pre_exec_hook(
-        &self,
-    ) -> Option<Box<dyn Fn() -> std::io::Result<()> + Send + Sync>> {
+    pub fn pre_exec_hook(&self) -> Option<Box<dyn Fn() -> std::io::Result<()> + Send + Sync>> {
         self.ns_handle.as_ref().map(|ns| ns.pre_exec_fn())
     }
 }
@@ -131,7 +129,9 @@ pub async fn start_proxy(config: ProxyConfig) -> Result<ProxyHandle> {
             match netns::create_namespace(addr.port()) {
                 Ok(handle) => Some(handle),
                 Err(e) => {
-                    tracing::warn!("Failed to create network namespace: {e} — falling back to env var proxy");
+                    tracing::warn!(
+                        "Failed to create network namespace: {e} — falling back to env var proxy"
+                    );
                     None
                 }
             }
@@ -277,10 +277,7 @@ mod tests {
             .unwrap();
 
         // Use http (not https) so no MITM needed
-        let resp = client
-            .get("http://httpbin.org/status/200")
-            .send()
-            .await;
+        let resp = client.get("http://httpbin.org/status/200").send().await;
 
         // The request should either succeed or fail with a network error
         // (httpbin might be unreachable in CI) — but the proxy itself should not crash
@@ -366,13 +363,19 @@ mod tests {
         // CA cert should exist
         assert!(handle.ca_cert_path.is_some());
         let ca_path = handle.ca_cert_path.as_ref().unwrap();
-        assert!(ca_path.exists(), "CA bundle should exist at {}", ca_path.display());
+        assert!(
+            ca_path.exists(),
+            "CA bundle should exist at {}",
+            ca_path.display()
+        );
 
         // CA bundle should contain PEM data
         let bundle = std::fs::read_to_string(ca_path).unwrap();
-        assert!(bundle.contains("BEGIN CERTIFICATE"), "Bundle should contain PEM certs");
+        assert!(
+            bundle.contains("BEGIN CERTIFICATE"),
+            "Bundle should contain PEM certs"
+        );
 
         handle.shutdown().await;
     }
 }
-

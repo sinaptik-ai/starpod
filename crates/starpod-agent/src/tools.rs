@@ -1184,8 +1184,7 @@ pub async fn handle_custom_tool(
                     {
                         if ctx.proxy_enabled {
                             let entry = vault.get_entry(key).await.ok().flatten();
-                            let is_secret =
-                                entry.as_ref().map(|e| e.is_secret).unwrap_or(true);
+                            let is_secret = entry.as_ref().map(|e| e.is_secret).unwrap_or(true);
 
                             if is_secret {
                                 let hosts = entry
@@ -1206,9 +1205,7 @@ pub async fn handle_custom_tool(
                                     }
                                     Err(e) => {
                                         return Some(ToolResult {
-                                            content: format!(
-                                                "Failed to create opaque token: {e}"
-                                            ),
+                                            content: format!("Failed to create opaque token: {e}"),
                                             is_error: true,
                                             raw_content: None,
                                         })
@@ -5183,8 +5180,7 @@ mod tests {
             .await
             .unwrap(),
         );
-        let skills =
-            Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
         let core_db = starpod_db::CoreDb::new(tmp.path()).await.unwrap();
         let cron = Arc::new(starpod_cron::CronStore::from_pool(core_db.pool().clone()));
 
@@ -5226,10 +5222,9 @@ mod tests {
         let (ctx, vault) = vault_ctx(&tmp).await;
         vault.set("MY_KEY", "my-secret", None).await.unwrap();
 
-        let result =
-            handle_custom_tool(&ctx, "VaultGet", &serde_json::json!({"key": "MY_KEY"}))
-                .await
-                .unwrap();
+        let result = handle_custom_tool(&ctx, "VaultGet", &serde_json::json!({"key": "MY_KEY"}))
+            .await
+            .unwrap();
         assert!(!result.is_error);
         assert_eq!(result.content, "my-secret");
     }
@@ -5259,10 +5254,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let (ctx, _) = vault_ctx(&tmp).await;
 
-        let result =
-            handle_custom_tool(&ctx, "VaultGet", &serde_json::json!({"key": "NOPE"}))
-                .await
-                .unwrap();
+        let result = handle_custom_tool(&ctx, "VaultGet", &serde_json::json!({"key": "NOPE"}))
+            .await
+            .unwrap();
         assert!(!result.is_error);
         assert!(result.content.contains("not found"));
     }
@@ -5369,13 +5363,9 @@ mod tests {
         let (ctx, vault) = vault_ctx(&tmp).await;
         vault.set("MY_KEY", "val", None).await.unwrap();
 
-        let result = handle_custom_tool(
-            &ctx,
-            "VaultDelete",
-            &serde_json::json!({"key": "MY_KEY"}),
-        )
-        .await
-        .unwrap();
+        let result = handle_custom_tool(&ctx, "VaultDelete", &serde_json::json!({"key": "MY_KEY"}))
+            .await
+            .unwrap();
         assert!(!result.is_error);
         assert!(result.content.contains("deleted"));
 
@@ -5389,8 +5379,7 @@ mod tests {
         ctx.vault = None;
 
         // Without a vault, VaultGet should return None (fall through)
-        let result =
-            handle_custom_tool(&ctx, "VaultGet", &serde_json::json!({"key": "X"})).await;
+        let result = handle_custom_tool(&ctx, "VaultGet", &serde_json::json!({"key": "X"})).await;
         assert!(result.is_none());
     }
 
@@ -5412,10 +5401,9 @@ mod tests {
             .await
             .unwrap();
 
-        let result =
-            handle_custom_tool(&ctx, "VaultGet", &serde_json::json!({"key": "TOKEN"}))
-                .await
-                .unwrap();
+        let result = handle_custom_tool(&ctx, "VaultGet", &serde_json::json!({"key": "TOKEN"}))
+            .await
+            .unwrap();
         assert!(!result.is_error);
         assert!(
             result.content.starts_with("starpod:v1:"),
@@ -5425,8 +5413,7 @@ mod tests {
 
         // Decode it to verify contents
         let (val, hosts) =
-            starpod_vault::opaque::decode_opaque_token(vault.cipher(), &result.content)
-                .unwrap();
+            starpod_vault::opaque::decode_opaque_token(vault.cipher(), &result.content).unwrap();
         assert_eq!(val, "real-secret");
         assert_eq!(hosts, vec!["api.x.com"]);
     }
@@ -5443,13 +5430,10 @@ mod tests {
             .await
             .unwrap();
 
-        let result = handle_custom_tool(
-            &ctx,
-            "VaultGet",
-            &serde_json::json!({"key": "CONFIG_VAR"}),
-        )
-        .await
-        .unwrap();
+        let result =
+            handle_custom_tool(&ctx, "VaultGet", &serde_json::json!({"key": "CONFIG_VAR"}))
+                .await
+                .unwrap();
         assert!(!result.is_error);
         // Non-secret should be plaintext even with proxy on
         assert_eq!(result.content, "plain-value");
@@ -5469,8 +5453,7 @@ mod tests {
             .unwrap();
         assert!(!result.is_error);
 
-        let parsed: Vec<serde_json::Value> =
-            serde_json::from_str(&result.content).unwrap();
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(&result.content).unwrap();
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0]["key"], "KEY");
         assert_eq!(parsed[0]["is_secret"], false);

@@ -4575,7 +4575,10 @@ mod tests {
         let entry = vault.get_entry("TOKEN").await.unwrap().unwrap();
         assert!(entry.is_secret);
         assert_eq!(entry.allowed_hosts, Some(vec!["api.x.com".to_string()]));
-        assert_eq!(vault.get("TOKEN", None).await.unwrap().as_deref(), Some("v2"));
+        assert_eq!(
+            vault.get("TOKEN", None).await.unwrap().as_deref(),
+            Some("v2")
+        );
     }
 
     #[tokio::test]

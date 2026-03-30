@@ -652,11 +652,11 @@ mod tests {
 
         let entry = vault.get_entry("KEY").await.unwrap().unwrap();
         assert!(!entry.is_secret);
+        assert_eq!(entry.allowed_hosts, Some(vec!["example.com".to_string()]));
         assert_eq!(
-            entry.allowed_hosts,
-            Some(vec!["example.com".to_string()])
+            vault.get("KEY", None).await.unwrap().as_deref(),
+            Some("new")
         );
-        assert_eq!(vault.get("KEY", None).await.unwrap().as_deref(), Some("new"));
     }
 
     #[tokio::test]
@@ -720,7 +720,10 @@ mod tests {
         assert!(!entry.is_secret);
 
         // Value should be unchanged
-        assert_eq!(vault.get("TOKEN", None).await.unwrap().as_deref(), Some("val"));
+        assert_eq!(
+            vault.get("TOKEN", None).await.unwrap().as_deref(),
+            Some("val")
+        );
     }
 
     #[tokio::test]
@@ -737,7 +740,10 @@ mod tests {
         assert!(vault.update_meta("KEY", true, Some(&hosts)).await.unwrap());
 
         let entry = vault.get_entry("KEY").await.unwrap().unwrap();
-        assert_eq!(entry.allowed_hosts, Some(vec!["api.example.com".to_string()]));
+        assert_eq!(
+            entry.allowed_hosts,
+            Some(vec!["api.example.com".to_string()])
+        );
     }
 
     #[tokio::test]
@@ -768,12 +774,10 @@ mod tests {
         vault.set("KEY", "v", None).await.unwrap();
         vault.update_meta("KEY", false, None).await.unwrap();
 
-        let rows = sqlx::query_as::<_, (String,)>(
-            "SELECT action FROM vault_audit ORDER BY id",
-        )
-        .fetch_all(&vault.pool)
-        .await
-        .unwrap();
+        let rows = sqlx::query_as::<_, (String,)>("SELECT action FROM vault_audit ORDER BY id")
+            .fetch_all(&vault.pool)
+            .await
+            .unwrap();
 
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].0, "set");
@@ -845,13 +849,7 @@ mod tests {
         let vault = setup().await;
         // Set with metadata
         vault
-            .set_with_meta(
-                "KEY",
-                "v1",
-                false,
-                Some(&["host.com".to_string()]),
-                None,
-            )
+            .set_with_meta("KEY", "v1", false, Some(&["host.com".to_string()]), None)
             .await
             .unwrap();
 
@@ -861,15 +859,9 @@ mod tests {
         let entry = vault.get_entry("KEY").await.unwrap().unwrap();
         // is_secret and allowed_hosts should be unchanged from the set_with_meta call
         assert!(!entry.is_secret);
-        assert_eq!(
-            entry.allowed_hosts,
-            Some(vec!["host.com".to_string()])
-        );
+        assert_eq!(entry.allowed_hosts, Some(vec!["host.com".to_string()]));
         // Value should be updated
-        assert_eq!(
-            vault.get("KEY", None).await.unwrap().as_deref(),
-            Some("v2")
-        );
+        assert_eq!(vault.get("KEY", None).await.unwrap().as_deref(), Some("v2"));
     }
 
     #[tokio::test]

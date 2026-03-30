@@ -6,7 +6,9 @@
 
 use std::path::{Path, PathBuf};
 
-use rcgen::{BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, Issuer, KeyPair};
+use rcgen::{
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, Issuer, KeyPair,
+};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use tracing::{debug, info};
 
@@ -130,8 +132,8 @@ fn build_ca_params() -> CertificateParams {
 fn generate_ca() -> Result<(CertificateDer<'static>, KeyPair, CertificateParams)> {
     let params = build_ca_params();
 
-    let key = KeyPair::generate()
-        .map_err(|e| StarpodError::Proxy(format!("Generate CA key: {e}")))?;
+    let key =
+        KeyPair::generate().map_err(|e| StarpodError::Proxy(format!("Generate CA key: {e}")))?;
 
     let cert = params
         .self_signed(&key)
@@ -153,7 +155,7 @@ fn build_ca_bundle(ca_cert_path: &Path, bundle_path: &Path) -> Result<()> {
     for sys_path in &[
         "/etc/ssl/certs/ca-certificates.crt", // Debian/Ubuntu
         "/etc/pki/tls/certs/ca-bundle.crt",   // RHEL/Fedora
-        "/etc/ssl/cert.pem",                   // macOS
+        "/etc/ssl/cert.pem",                  // macOS
     ] {
         if let Ok(system_certs) = std::fs::read_to_string(sys_path) {
             bundle.push_str(&system_certs);

@@ -470,10 +470,7 @@ impl OptionsBuilder {
     /// Set a pre-exec hook for subprocesses (Unix only).
     /// Called in the child after fork, before exec. Used for netns isolation.
     #[cfg(unix)]
-    pub fn pre_exec_fn(
-        mut self,
-        f: Box<dyn Fn() -> std::io::Result<()> + Send + Sync>,
-    ) -> Self {
+    pub fn pre_exec_fn(mut self, f: Box<dyn Fn() -> std::io::Result<()> + Send + Sync>) -> Self {
         self.options.pre_exec_fn = Some(f);
         self
     }

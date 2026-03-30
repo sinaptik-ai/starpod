@@ -244,10 +244,7 @@ impl ToolExecutor {
     /// Set a pre-exec hook for child processes (Unix only).
     /// Runs after fork, before exec — used for network namespace isolation.
     #[cfg(unix)]
-    pub fn with_pre_exec(
-        mut self,
-        f: Box<dyn Fn() -> std::io::Result<()> + Send + Sync>,
-    ) -> Self {
+    pub fn with_pre_exec(mut self, f: Box<dyn Fn() -> std::io::Result<()> + Send + Sync>) -> Self {
         self.pre_exec = Some(Arc::from(f));
         self
     }

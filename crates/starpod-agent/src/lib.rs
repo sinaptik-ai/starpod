@@ -241,7 +241,9 @@ impl StarpodAgent {
                             Some(handle)
                         }
                         Err(e) => {
-                            tracing::warn!("Failed to start secret proxy: {e} — falling back to no proxy");
+                            tracing::warn!(
+                                "Failed to start secret proxy: {e} — falling back to no proxy"
+                            );
                             None
                         }
                     }

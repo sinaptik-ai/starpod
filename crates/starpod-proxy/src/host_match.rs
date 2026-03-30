@@ -56,14 +56,8 @@ mod tests {
 
     #[test]
     fn glob_match() {
-        assert!(host_matches(
-            "api.github.com",
-            &["*.github.com".into()]
-        ));
-        assert!(host_matches(
-            "raw.github.com",
-            &["*.github.com".into()]
-        ));
+        assert!(host_matches("api.github.com", &["*.github.com".into()]));
+        assert!(host_matches("raw.github.com", &["*.github.com".into()]));
     }
 
     #[test]
@@ -101,9 +95,6 @@ mod tests {
 
     #[test]
     fn deeply_nested_subdomain_matches_glob() {
-        assert!(host_matches(
-            "a.b.c.github.com",
-            &["*.github.com".into()]
-        ));
+        assert!(host_matches("a.b.c.github.com", &["*.github.com".into()]));
     }
 }

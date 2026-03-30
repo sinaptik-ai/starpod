@@ -204,10 +204,7 @@ mod tests {
 
         let result = scan_and_replace_str(&cipher, &data, "host.com");
         assert_eq!(result.replaced, 2);
-        assert_eq!(
-            String::from_utf8(result.data).unwrap(),
-            "a=val1&b=val2"
-        );
+        assert_eq!(String::from_utf8(result.data).unwrap(), "a=val1&b=val2");
     }
 
     #[test]
@@ -282,9 +279,6 @@ mod tests {
         let result = scan_and_replace_str(&cipher, &data, "ok.com");
         assert_eq!(result.replaced, 1);
         assert_eq!(result.stripped, 1);
-        assert_eq!(
-            String::from_utf8(result.data).unwrap(),
-            "a=good&b="
-        );
+        assert_eq!(String::from_utf8(result.data).unwrap(), "a=good&b=");
     }
 }

@@ -273,8 +273,7 @@ mod tests {
                 let value = format!("secret-{i}");
                 let hosts = vec![format!("host-{i}.com")];
                 let token = encode_opaque_token(&cipher, &value, &hosts).unwrap();
-                let (decoded_value, decoded_hosts) =
-                    decode_opaque_token(&cipher, &token).unwrap();
+                let (decoded_value, decoded_hosts) = decode_opaque_token(&cipher, &token).unwrap();
                 assert_eq!(decoded_value, value);
                 assert_eq!(decoded_hosts, hosts);
             }));

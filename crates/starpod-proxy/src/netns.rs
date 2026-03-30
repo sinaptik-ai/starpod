@@ -62,13 +62,9 @@ impl NamespaceHandle {
                     format!("Failed to open netns {ns_path}: {e}"),
                 )
             })?;
-            nix::sched::setns(file.as_raw_fd(), nix::sched::CloneFlags::CLONE_NEWNET)
-                .map_err(|e| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("setns failed: {e}"),
-                    )
-                })?;
+            nix::sched::setns(file.as_raw_fd(), nix::sched::CloneFlags::CLONE_NEWNET).map_err(
+                |e| std::io::Error::new(std::io::ErrorKind::Other, format!("setns failed: {e}")),
+            )?;
             Ok(())
         })
     }
@@ -121,7 +117,9 @@ pub fn create_namespace(proxy_port: u16) -> Result<NamespaceHandle> {
         .map_err(|e| StarpodError::Proxy(format!("Failed to configure child veth: {e}")))?;
     run_cmd(
         "ip",
-        &["netns", "exec", NS_NAME, "ip", "link", "set", VETH_CHILD, "up"],
+        &[
+            "netns", "exec", NS_NAME, "ip", "link", "set", VETH_CHILD, "up",
+        ],
     )
     .map_err(|e| StarpodError::Proxy(format!("Failed to bring up child veth: {e}")))?;
     run_cmd(
@@ -146,7 +144,14 @@ pub fn create_namespace(proxy_port: u16) -> Result<NamespaceHandle> {
     run_cmd(
         "iptables",
         &[
-            "-t", "nat", "-A", "POSTROUTING", "-s", SUBNET, "-j", "MASQUERADE",
+            "-t",
+            "nat",
+            "-A",
+            "POSTROUTING",
+            "-s",
+            SUBNET,
+            "-j",
+            "MASQUERADE",
         ],
     )
     .map_err(|e| StarpodError::Proxy(format!("Failed to set up NAT: {e}")))?;
@@ -158,15 +163,23 @@ pub fn create_namespace(proxy_port: u16) -> Result<NamespaceHandle> {
         run_cmd(
             "iptables",
             &[
-                "-t", "nat", "-A", "PREROUTING",
-                "-s", SUBNET,
-                "-p", "tcp", "--dport", port,
-                "-j", "DNAT", "--to-destination", &proxy_dest,
+                "-t",
+                "nat",
+                "-A",
+                "PREROUTING",
+                "-s",
+                SUBNET,
+                "-p",
+                "tcp",
+                "--dport",
+                port,
+                "-j",
+                "DNAT",
+                "--to-destination",
+                &proxy_dest,
             ],
         )
-        .map_err(|e| {
-            StarpodError::Proxy(format!("Failed to set up DNAT for port {port}: {e}"))
-        })?;
+        .map_err(|e| StarpodError::Proxy(format!("Failed to set up DNAT for port {port}: {e}")))?;
     }
 
     let ns_path = format!("/var/run/netns/{NS_NAME}");
