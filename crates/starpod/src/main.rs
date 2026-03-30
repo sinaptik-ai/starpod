@@ -431,24 +431,29 @@ async fn inject_vault_env(paths: &ResolvedPaths, proxy_enabled: bool) -> anyhow:
         if let Some(val) = vault.get(&key, None).await? {
             #[cfg(feature = "secret-proxy")]
             if proxy_enabled {
-                let entry = vault.get_entry(&key).await?.unwrap_or_else(|| {
-                    starpod_vault::VaultEntry {
-                        key: key.clone(),
-                        is_secret: true,
-                        allowed_hosts: None,
-                        created_at: String::new(),
-                        updated_at: String::new(),
+                // System keys (ANTHROPIC_API_KEY, etc.) are consumed by the
+                // Starpod process itself to call LLM APIs. They must never
+                // be opaque-ified — only user-facing secrets get tokens.
+                if !starpod_vault::is_system_key(&key) {
+                    let entry = vault.get_entry(&key).await?.unwrap_or_else(|| {
+                        starpod_vault::VaultEntry {
+                            key: key.clone(),
+                            is_secret: true,
+                            allowed_hosts: None,
+                            created_at: String::new(),
+                            updated_at: String::new(),
+                        }
+                    });
+                    if entry.is_secret {
+                        let hosts = entry.allowed_hosts.unwrap_or_default();
+                        let token = starpod_vault::opaque::encode_opaque_token(
+                            vault.cipher(),
+                            &val,
+                            &hosts,
+                        )?;
+                        std::env::set_var(&key, &token);
+                        continue;
                     }
-                });
-                if entry.is_secret {
-                    let hosts = entry.allowed_hosts.unwrap_or_default();
-                    let token = starpod_vault::opaque::encode_opaque_token(
-                        vault.cipher(),
-                        &val,
-                        &hosts,
-                    )?;
-                    std::env::set_var(&key, &token);
-                    continue;
                 }
             }
             let _ = proxy_enabled; // suppress unused warning when feature disabled
