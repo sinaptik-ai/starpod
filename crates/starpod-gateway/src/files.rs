@@ -486,6 +486,8 @@ mod tests {
             events_tx,
             vault: None,
             telegram_handle: tokio::sync::Mutex::new(None),
+            update_cache: crate::system::new_update_cache(),
+            shutdown_tx: tokio::sync::watch::channel(false).0,
         });
 
         (tmp, state)

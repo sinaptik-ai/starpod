@@ -34,6 +34,8 @@ let router = starpod_gateway::build_router(state);
 | `POST` | `/api/instances/:id/restart` | Restart an instance |
 | `GET` | `/api/instances/:id/health` | Instance health info |
 | `GET` | `/api/health` | Health check |
+| `GET` | `/api/system/version` | Version check (current vs latest release) |
+| `POST` | `/api/system/update` | Trigger self-update + restart |
 | `GET/PUT` | `/api/settings/general` | General config (model, provider, etc.) |
 | `GET` | `/api/settings/models` | Well-known models per provider |
 | `GET/PUT` | `/api/settings/memory` | Memory settings |
@@ -71,6 +73,8 @@ pub struct AppState {
     pub config: RwLock<StarpodConfig>,
     pub paths: ResolvedPaths,
     pub events_tx: tokio::sync::broadcast::Sender<GatewayEvent>,
+    pub update_cache: system::UpdateCache,   // cached latest-release info
+    pub shutdown_tx: watch::Sender<bool>,    // graceful shutdown (self-update)
 }
 ```
 
@@ -96,6 +100,15 @@ The gateway composes the cron `NotificationSender` to both:
 2. Forward to the original Telegram notifier (if configured)
 
 This composition happens transparently in `serve_with_agent` — callers pass their Telegram notifier and the gateway wraps it.
+
+## Self-Update
+
+The `system` module (`src/system.rs`) provides version checking and self-update:
+
+- **Version check** (`GET /api/system/version`) — queries GitHub Releases API, caches for 1 hour, compares via semver.
+- **Self-update** (`POST /api/system/update`) — downloads the platform tarball, verifies SHA-256, backs up binary + DBs + config to `.starpod/backups/`, replaces the binary, spawns the new process, and gracefully shuts down via `shutdown_tx`.
+
+The old process monitors the new binary for 30 seconds. If it crashes (non-zero exit), the old binary restores itself from the `.bak` file.
 
 ## Config Hot Reload
 

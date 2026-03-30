@@ -37,6 +37,10 @@ toml = "0.8"
 chrono = "0.4"
 notify = "7"
 notify-debouncer-mini = "0.5"
+semver = "1"
+sha2 = "0.10"
+flate2 = "1"
+tar = "0.4"
 
 [dev-dependencies]
 http-body-util = "0.1"
