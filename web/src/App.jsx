@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useCallback } from 'react'
+import React, { useRef, useEffect, useCallback, useMemo } from 'react'
 import './style.css'
 import { AppProvider, useApp, isMobile } from './contexts/AppContext'
 import { generateUUID } from './lib/utils'
@@ -18,11 +18,25 @@ import FilesView from './components/FilesView'
 function AppInner() {
   const { state, dispatch } = useApp()
   const { isAdmin } = useUser()
-  const { wsStatus, settingsVisible, cronVisible, filesVisible, currentSessionId, currentSessionKey, previewUrl } = state
+  const { wsStatus, settingsVisible, cronVisible, filesVisible, currentSessionId, currentSessionKey, previewUrl, chatTitle, settingsActiveTab } = state
   const wsRef = useRef(null)
   const chatRef = useRef(null)
   const toastsRef = useRef(null)
   const reconnectAttemptRef = useRef(0)
+
+  // ── Dynamic page title ──
+  const agentName = (window.__STARPOD__?.agent_name) || 'Starpod'
+  const pageLabel = useMemo(() => {
+    if (settingsVisible) return `Settings · ${(settingsActiveTab || 'general').replace(/^./, c => c.toUpperCase())}`
+    if (cronVisible) return 'Schedules'
+    if (filesVisible) return 'Files'
+    if (chatTitle) return chatTitle
+    return null
+  }, [settingsVisible, settingsActiveTab, cronVisible, filesVisible, chatTitle])
+
+  useEffect(() => {
+    document.title = pageLabel ? `${pageLabel} — ${agentName}` : agentName
+  }, [pageLabel, agentName])
 
   // ── WebSocket ──
   const connect = useCallback(() => {
