@@ -54,7 +54,7 @@ When `proxy.enabled = true` in `agent.toml`, the vault changes how secrets are s
 - The `VaultGet` tool returns opaque tokens when the proxy is active, plaintext otherwise.
 - `inject_vault_env()` at startup produces opaque tokens for secret entries.
 
-The proxy crate (Phase 2+) intercepts outbound HTTP traffic, finds `starpod:v1:` tokens, decrypts them, verifies the target host matches `allowed_hosts`, and replaces the token with the real value. This prevents API keys from leaking into the LLM context window.
+The `starpod-proxy` crate runs as a local HTTP/HTTPS proxy that intercepts outbound traffic from tool subprocesses. For HTTP, it scans headers and bodies for tokens. For HTTPS, it uses MITM with ephemeral per-host certificates (signed by a local CA) to decrypt, scan, and re-encrypt traffic. See the [starpod-proxy crate docs](/crates/starpod-proxy) for details.
 
 ### Tiered Isolation
 

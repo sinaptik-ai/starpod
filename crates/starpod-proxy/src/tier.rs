@@ -38,6 +38,26 @@ pub fn detect_and_log() -> IsolationTier {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_returns_valid_tier() {
+        let tier = detect_and_log();
+        // On macOS or Linux without CAP_NET_ADMIN, should be EnvProxy
+        #[cfg(not(all(target_os = "linux", feature = "netns")))]
+        assert_eq!(tier, IsolationTier::EnvProxy);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn has_cap_net_admin_does_not_panic() {
+        // Just verify it doesn't panic — actual capability depends on environment
+        let _ = has_cap_net_admin();
+    }
+}
+
 /// Check if the current process has CAP_NET_ADMIN.
 ///
 /// Reads `/proc/self/status` and checks the effective capabilities bitmask.

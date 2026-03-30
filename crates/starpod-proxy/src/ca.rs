@@ -240,4 +240,68 @@ mod tests {
         assert_ne!(chain1[0].as_ref(), chain2[0].as_ref());
         assert_eq!(chain1[1].as_ref(), chain2[1].as_ref());
     }
+
+    #[test]
+    fn ca_bundle_contains_local_cert() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ca = CertAuthority::load_or_generate(tmp.path()).unwrap();
+
+        let bundle = std::fs::read_to_string(&ca.ca_bundle_path).unwrap();
+        let ca_pem = std::fs::read_to_string(&ca.ca_cert_path).unwrap();
+
+        // Bundle should contain our CA cert
+        assert!(
+            bundle.contains(&ca_pem.trim()),
+            "Bundle should contain the local CA cert"
+        );
+    }
+
+    #[test]
+    fn ca_key_file_permissions() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let _ca = CertAuthority::load_or_generate(tmp.path()).unwrap();
+
+        let key_path = tmp.path().join("proxy-ca-key.pem");
+        assert!(key_path.exists());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::metadata(&key_path).unwrap().permissions();
+            assert_eq!(
+                perms.mode() & 0o777,
+                0o600,
+                "CA key should have 0600 permissions"
+            );
+        }
+    }
+
+    #[test]
+    fn concurrent_cert_issuance() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ca = CertAuthority::load_or_generate(tmp.path()).unwrap();
+        let ca = std::sync::Arc::new(ca);
+
+        let mut handles = vec![];
+        for i in 0..20 {
+            let ca = std::sync::Arc::clone(&ca);
+            handles.push(std::thread::spawn(move || {
+                let hostname = format!("host-{i}.example.com");
+                let (chain, _key) = ca.issue_cert(&hostname).unwrap();
+                assert_eq!(chain.len(), 2);
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn pem_encode_roundtrip() {
+        let data = b"test certificate data";
+        let pem = pem_encode("CERTIFICATE", data);
+        assert!(pem.starts_with("-----BEGIN CERTIFICATE-----"));
+        assert!(pem.contains("-----END CERTIFICATE-----"));
+    }
 }

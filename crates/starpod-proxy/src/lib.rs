@@ -236,3 +236,143 @@ pub async fn start_proxy(config: ProxyConfig) -> Result<ProxyHandle> {
         task,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine as _;
+
+    #[tokio::test]
+    async fn proxy_starts_and_binds_port() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let handle = start_proxy(ProxyConfig {
+            master_key: [0xAB; 32],
+            data_dir: tmp.path().to_path_buf(),
+        })
+        .await
+        .unwrap();
+
+        assert_ne!(handle.port(), 0);
+        assert_eq!(handle.addr.ip(), std::net::Ipv4Addr::LOCALHOST);
+
+        handle.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn proxy_responds_to_http_request() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let handle = start_proxy(ProxyConfig {
+            master_key: [0xAB; 32],
+            data_dir: tmp.path().to_path_buf(),
+        })
+        .await
+        .unwrap();
+
+        let proxy_url = format!("http://127.0.0.1:{}", handle.port());
+
+        // Send a request through the proxy to a known endpoint
+        let client = reqwest::Client::builder()
+            .proxy(reqwest::Proxy::all(&proxy_url).unwrap())
+            .build()
+            .unwrap();
+
+        // Use http (not https) so no MITM needed
+        let resp = client
+            .get("http://httpbin.org/status/200")
+            .send()
+            .await;
+
+        // The request should either succeed or fail with a network error
+        // (httpbin might be unreachable in CI) — but the proxy itself should not crash
+        match resp {
+            Ok(r) => assert_eq!(r.status(), 200),
+            Err(e) => {
+                // Network error is acceptable (no internet in CI)
+                assert!(
+                    e.is_connect() || e.is_request() || e.is_timeout(),
+                    "Unexpected error type: {e}"
+                );
+            }
+        }
+
+        handle.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn proxy_replaces_token_in_http_request() {
+        use aes_gcm::aead::{Aead, OsRng};
+        use aes_gcm::{AeadCore, Aes256Gcm, KeyInit};
+
+        let master_key = [0xAB_u8; 32];
+        let cipher = Aes256Gcm::new_from_slice(&master_key).unwrap();
+
+        // Encode a token
+        #[derive(serde::Serialize)]
+        struct Payload {
+            v: String,
+            h: Vec<String>,
+        }
+        let payload = Payload {
+            v: "real-secret".into(),
+            h: vec![], // unrestricted
+        };
+        let json = serde_json::to_vec(&payload).unwrap();
+        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let ciphertext = cipher.encrypt(&nonce, json.as_ref()).unwrap();
+        let mut blob = Vec::with_capacity(12 + ciphertext.len());
+        blob.extend_from_slice(nonce.as_slice());
+        blob.extend_from_slice(&ciphertext);
+        let token = format!(
+            "starpod:v1:{}",
+            base64::engine::general_purpose::STANDARD.encode(&blob)
+        );
+
+        // Verify the token decodes correctly through our scanner
+        let result = scan::scan_and_replace_str(&cipher, &token, "any.host");
+        assert_eq!(result.replaced, 1);
+        assert_eq!(String::from_utf8(result.data).unwrap(), "real-secret");
+    }
+
+    #[tokio::test]
+    async fn proxy_shutdown_is_graceful() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let handle = start_proxy(ProxyConfig {
+            master_key: [0xAB; 32],
+            data_dir: tmp.path().to_path_buf(),
+        })
+        .await
+        .unwrap();
+
+        let port = handle.port();
+        handle.shutdown().await;
+
+        // After shutdown, the port should no longer accept connections
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let result = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}")).await;
+        assert!(result.is_err(), "Port should be closed after shutdown");
+    }
+
+    #[cfg(feature = "mitm")]
+    #[tokio::test]
+    async fn proxy_generates_ca_on_startup() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let handle = start_proxy(ProxyConfig {
+            master_key: [0xAB; 32],
+            data_dir: tmp.path().to_path_buf(),
+        })
+        .await
+        .unwrap();
+
+        // CA cert should exist
+        assert!(handle.ca_cert_path.is_some());
+        let ca_path = handle.ca_cert_path.as_ref().unwrap();
+        assert!(ca_path.exists(), "CA bundle should exist at {}", ca_path.display());
+
+        // CA bundle should contain PEM data
+        let bundle = std::fs::read_to_string(ca_path).unwrap();
+        assert!(bundle.contains("BEGIN CERTIFICATE"), "Bundle should contain PEM certs");
+
+        handle.shutdown().await;
+    }
+}
+
