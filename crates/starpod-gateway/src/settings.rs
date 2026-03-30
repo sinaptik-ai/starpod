@@ -50,7 +50,7 @@ use crate::AppState;
 /// - If the user is authenticated and has `Role::Admin`, the `starpod_auth::User`
 ///   is inserted into request extensions for handlers that need it.
 /// - Otherwise returns 401 (unauthenticated) or 403 (non-admin).
-async fn require_admin_middleware(
+pub(crate) async fn require_admin_middleware(
     State(state): State<Arc<AppState>>,
     mut req: Request,
     next: Next,
@@ -2243,6 +2243,8 @@ mod tests {
             events_tx,
             vault: None,
             telegram_handle: tokio::sync::Mutex::new(None),
+            update_cache: crate::system::new_update_cache(),
+            shutdown_tx: tokio::sync::watch::channel(false).0,
         });
 
         (tmp, state)
@@ -3981,6 +3983,8 @@ mod tests {
             events_tx: state.events_tx.clone(),
             vault: Some(Arc::new(vault)),
             telegram_handle: tokio::sync::Mutex::new(None),
+            update_cache: crate::system::new_update_cache(),
+            shutdown_tx: tokio::sync::watch::channel(false).0,
         });
         (tmp, state)
     }

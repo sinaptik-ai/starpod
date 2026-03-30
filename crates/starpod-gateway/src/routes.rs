@@ -71,7 +71,8 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/cron/jobs/{id}",
             axum::routing::put(update_cron_job_handler).delete(delete_cron_job_handler),
         )
-        .merge(crate::settings::settings_routes(state))
+        .merge(crate::settings::settings_routes(state.clone()))
+        .merge(crate::system::system_routes(state))
         .merge(crate::files::files_routes())
 }
 
@@ -792,6 +793,8 @@ mod tests {
             events_tx,
             vault: None,
             telegram_handle: tokio::sync::Mutex::new(None),
+            update_cache: crate::system::new_update_cache(),
+            shutdown_tx: tokio::sync::watch::channel(false).0,
         });
 
         (tmp, state)
@@ -906,6 +909,8 @@ mod tests {
             events_tx: state.events_tx.clone(),
             vault: None,
             telegram_handle: tokio::sync::Mutex::new(None),
+            update_cache: crate::system::new_update_cache(),
+            shutdown_tx: tokio::sync::watch::channel(false).0,
         });
 
         // First request should succeed (use /api/sessions which requires auth)

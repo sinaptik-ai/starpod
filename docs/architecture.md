@@ -35,6 +35,7 @@ my-agent/                           # project root
 │   │   ├── BOOTSTRAP.md           # first-run instructions
 │   │   └── frontend.toml          # web UI config
 │   ├── skills/                     # agent skills
+│   ├── backups/                    # pre-update backups (binary, DBs, config)
 │   ├── db/                         # SQLite databases (runtime)
 │   │   ├── core.db                # sessions, cron, auth
 │   │   ├── memory.db              # FTS5 + vector memory

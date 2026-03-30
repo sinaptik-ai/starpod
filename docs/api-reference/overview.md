@@ -52,6 +52,8 @@ When no users exist yet (fresh install), all endpoints are accessible without a 
 | `POST` | [`/api/instances/:id/restart`](/api-reference/instances#restart-instance) | Restart an instance |
 | `GET` | [`/api/instances/:id/health`](/api-reference/instances#instance-health) | Instance health info |
 | `GET` | [`/api/health`](/api-reference/health) | Health check |
+| `GET` | [`/api/system/version`](/api-reference/system#get-apisystemversion) | Version check (current vs latest) |
+| `POST` | [`/api/system/update`](/api-reference/system#post-apisystemupdate) | Trigger self-update |
 | `GET/PUT` | `/api/settings/general` | General config (model, provider, limits) |
 | `GET` | `/api/settings/models` | Well-known models per provider |
 | `GET/PUT` | `/api/settings/memory` | Memory settings |

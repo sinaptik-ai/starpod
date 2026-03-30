@@ -1,4 +1,5 @@
 pub mod config;
+pub mod config_migrate;
 pub mod deploy_manifest;
 pub mod error;
 pub mod instance;

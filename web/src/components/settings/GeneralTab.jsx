@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { apiHeaders, fetchModels } from '../../lib/api'
+import { apiHeaders, fetchModels, fetchSystemVersion, triggerUpdate, pollHealthForVersion } from '../../lib/api'
 import { Card, Row, Field, Input, Select, ModelSelect, Toggle, SaveBar } from './fields'
 import { Loading } from '../ui/EmptyState'
 
@@ -12,6 +12,115 @@ function parseSpec(spec) {
 /** Build "provider/model" from parts */
 function buildSpec(provider, model) {
   return `${provider}/${model}`
+}
+
+function VersionCard() {
+  const [info, setInfo] = useState(null)
+  const [updating, setUpdating] = useState(false)
+  const [updatePhase, setUpdatePhase] = useState(null) // 'downloading' | 'restarting' | 'done' | 'error'
+  const [errorMsg, setErrorMsg] = useState(null)
+
+  useEffect(() => {
+    fetchSystemVersion().then(v => setInfo(v))
+  }, [])
+
+  const handleUpdate = async () => {
+    if (!info?.latest) return
+    setUpdating(true)
+    setUpdatePhase('downloading')
+    setErrorMsg(null)
+    try {
+      const result = await triggerUpdate()
+      setUpdatePhase('restarting')
+      const ok = await pollHealthForVersion(info.latest)
+      if (ok) {
+        setUpdatePhase('done')
+        setTimeout(() => window.location.reload(), 1500)
+      } else {
+        setUpdatePhase('error')
+        setErrorMsg('Restart timed out. Check server logs or restore from .starpod/backups/')
+      }
+    } catch (e) {
+      setUpdatePhase('error')
+      setErrorMsg(e.message)
+      setUpdating(false)
+    }
+  }
+
+  if (!info) {
+    return (
+      <Card title="Version">
+        <Row label="Current version">
+          <span className="text-secondary font-mono text-xs">loading...</span>
+        </Row>
+      </Card>
+    )
+  }
+
+  return (
+    <Card title="Version">
+      <Row label="Current version">
+        <span className="text-primary font-mono text-xs">v{info.current}</span>
+      </Row>
+
+      {info.update_available ? (
+        <>
+          <Row label="Latest version">
+            <span className="text-primary font-mono text-xs">
+              v{info.latest}
+              {info.release_notes_url && (
+                <>
+                  {' '}&middot;{' '}
+                  <a
+                    href={info.release_notes_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-accent hover:underline"
+                  >
+                    What&apos;s new &#8599;
+                  </a>
+                </>
+              )}
+            </span>
+          </Row>
+
+          {!updating ? (
+            <div className="px-4 pb-3 pt-1">
+              <button
+                onClick={handleUpdate}
+                className="text-xs px-3 py-1.5 border border-accent text-accent hover:bg-accent hover:text-bg transition-colors cursor-pointer"
+              >
+                Update to v{info.latest}
+              </button>
+            </div>
+          ) : (
+            <div className="px-4 pb-3 pt-1">
+              {updatePhase === 'downloading' && (
+                <div className="text-xs text-secondary">Downloading v{info.latest}...</div>
+              )}
+              {updatePhase === 'restarting' && (
+                <div className="text-xs text-secondary">Restarting... Starpod will reload automatically.</div>
+              )}
+              {updatePhase === 'done' && (
+                <div className="text-xs text-ok">Updated successfully. Reloading...</div>
+              )}
+              {updatePhase === 'error' && (
+                <div className="text-xs text-err">{errorMsg}</div>
+              )}
+            </div>
+          )}
+        </>
+      ) : info.latest ? (
+        <Row label="">
+          <span className="text-dim text-xs">You&apos;re on the latest version</span>
+        </Row>
+      ) : (
+        <Row label="">
+          <span className="text-dim text-xs">Could not check for updates</span>
+        </Row>
+      )}
+    </Card>
+  )
 }
 
 export default function GeneralTab() {
@@ -66,6 +175,8 @@ export default function GeneralTab() {
 
   return (
     <>
+      <VersionCard />
+
       <Card title="Models" desc="first model is the default">
         <div className="s-model-list">
           {configModels.map((spec, idx) => {

@@ -413,6 +413,12 @@ fn print_result(result_text: &str, result_msg: &agent_sdk::ResultMessage, start:
 async fn resolve_agent() -> anyhow::Result<(StarpodAgent, StarpodConfig, ResolvedPaths)> {
     let mode = detect_mode(None)?;
     let paths = ResolvedPaths::resolve(&mode)?;
+
+    // Run config migrations before loading config
+    if starpod_core::config_migrate::migrate_config(&paths.agent_toml)? {
+        tracing::info!("agent.toml config migrations applied");
+    }
+
     let agent_config = load_agent_config(&paths)?;
     let starpod_config = agent_config.clone().into_starpod_config(&paths);
     let agent = StarpodAgent::with_paths(agent_config, paths.clone()).await?;

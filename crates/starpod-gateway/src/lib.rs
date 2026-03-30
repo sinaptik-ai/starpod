@@ -1,6 +1,7 @@
 mod files;
 mod routes;
 mod settings;
+mod system;
 mod ws;
 
 use std::path::PathBuf;
@@ -67,6 +68,13 @@ pub struct AppState {
     pub vault: Option<Arc<starpod_vault::Vault>>,
     /// Handle to the running Telegram bot task (if any).
     pub telegram_handle: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Cached latest-release info for version checks (`GET /api/system/version`).
+    /// Populated on first request and refreshed after 1 hour.
+    pub update_cache: system::UpdateCache,
+    /// Sender to signal graceful shutdown. The self-update handler sends `true`
+    /// after spawning the new binary, causing `axum::serve` to drain connections
+    /// and exit cleanly.
+    pub shutdown_tx: tokio::sync::watch::Sender<bool>,
 }
 
 impl AppState {
@@ -416,6 +424,7 @@ pub async fn serve_with_agent(
             }
         },
     };
+    let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
     let state = Arc::new(AppState {
         agent,
         auth,
@@ -426,6 +435,8 @@ pub async fn serve_with_agent(
         events_tx,
         vault,
         telegram_handle: tokio::sync::Mutex::new(None),
+        update_cache: system::new_update_cache(),
+        shutdown_tx,
     });
 
     // Start Telegram bot if configured
@@ -433,6 +444,9 @@ pub async fn serve_with_agent(
 
     // Start config file watcher in background
     let _watcher_handle = start_config_watcher(Arc::clone(&state), &config, &state.paths);
+
+    // Subscribe to shutdown signal for graceful shutdown (used by self-update)
+    let mut shutdown_rx = state.shutdown_tx.subscribe();
 
     let app = build_router(state);
 
@@ -442,8 +456,11 @@ pub async fn serve_with_agent(
     })?;
 
     info!(addr = %addr, "Starpod gateway listening");
-
     axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            let _ = shutdown_rx.wait_for(|&v| v).await;
+            info!("graceful shutdown signal received");
+        })
         .await
         .map_err(|e| starpod_core::StarpodError::Config(format!("Server error: {}", e)))?;
 

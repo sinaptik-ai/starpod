@@ -148,6 +148,19 @@ pub struct ChatUsage {
 }
 ```
 
+## Config Migrations
+
+The `config_migrate` module handles schema evolution of `agent.toml` across versions. A `config_version` integer field tracks which migrations have been applied. On startup (before `load_agent_config`), pending migrations run in order:
+
+```rust
+use starpod_core::config_migrate;
+
+// Returns Ok(true) if migrations were applied, Ok(false) if already current
+config_migrate::migrate_config(&paths.agent_toml)?;
+```
+
+New migrations are added to the registry in `src/config_migrate.rs`. Each migration receives the raw `toml::Value` and transforms it in-place (add/remove/rename fields). Migrations are numbered sequentially starting at 1.
+
 ## StarpodError
 
 Unified error type for the workspace:
