@@ -30,7 +30,7 @@
 
 use std::process::Command;
 
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use starpod_core::{Result, StarpodError};
 
@@ -55,16 +55,15 @@ impl NamespaceHandle {
     pub fn pre_exec_fn(&self) -> Box<dyn Fn() -> std::io::Result<()> + Send + Sync> {
         let ns_path = self.ns_path.clone();
         Box::new(move || {
-            use std::os::unix::io::AsRawFd;
             let file = std::fs::File::open(&ns_path).map_err(|e| {
                 std::io::Error::new(
                     std::io::ErrorKind::Other,
                     format!("Failed to open netns {ns_path}: {e}"),
                 )
             })?;
-            nix::sched::setns(file.as_raw_fd(), nix::sched::CloneFlags::CLONE_NEWNET).map_err(
-                |e| std::io::Error::new(std::io::ErrorKind::Other, format!("setns failed: {e}")),
-            )?;
+            nix::sched::setns(file, nix::sched::CloneFlags::CLONE_NEWNET).map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::Other, format!("setns failed: {e}"))
+            })?;
             Ok(())
         })
     }
