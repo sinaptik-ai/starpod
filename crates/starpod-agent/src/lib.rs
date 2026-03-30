@@ -652,6 +652,24 @@ fn append_execution_context(prompt: &mut String, channel_id: Option<&str>, user_
     }
 }
 
+/// Resolve a model spec (which may be in `"provider/model"` format) into
+/// separate `(provider, model)` strings.  Falls back to the config's default
+/// provider/model when `spec` is `None` or lacks a provider prefix.
+///
+/// This is used by background tasks (nudge, flush) that accept an optional
+/// model override from config.  The override may contain a provider prefix
+/// (e.g. `"anthropic/claude-haiku-4-5-20251001"`) that must be stripped
+/// before sending the model name to the API.
+fn resolve_background_model(spec: Option<&str>, config: &StarpodConfig) -> (String, String) {
+    match spec {
+        Some(s) => match starpod_core::parse_model_spec(s) {
+            Some((p, m)) => (p.to_string(), m.to_string()),
+            None => (config.provider().to_string(), s.to_string()),
+        },
+        None => (config.provider().to_string(), config.model().to_string()),
+    }
+}
+
 impl StarpodAgent {
     /// Map reasoning effort config to ThinkingConfig.
     fn thinking_config(config: &StarpodConfig) -> Option<ThinkingConfig> {
@@ -674,11 +692,6 @@ impl StarpodAgent {
             vec!["Read".into(), "Bash".into(), "Glob".into(), "Grep".into()];
         tools.extend(CUSTOM_TOOLS.iter().map(|s| s.to_string()));
         tools
-    }
-
-    /// Build the LLM provider for the default (or given) provider.
-    async fn build_provider(&self, config: &StarpodConfig) -> Result<Box<dyn LlmProvider>> {
-        self.build_provider_for(config.provider(), config).await
     }
 
     /// Build an LLM provider for the given provider name using config for API key / base URL.
@@ -897,15 +910,16 @@ impl StarpodAgent {
             });
         }
 
-        // Agentic flush: build provider and user view for the closure
-        let flush_model = config
+        // Agentic flush: resolve model spec and build the correct provider.
+        let flush_spec = config
             .compaction
             .flush_model
             .clone()
-            .or_else(|| config.compaction_model.clone())
-            .unwrap_or_else(|| config.model().to_string());
+            .or_else(|| config.compaction_model.clone());
+        let (flush_provider_name, flush_model) =
+            resolve_background_model(flush_spec.as_deref(), config);
 
-        let provider: Arc<dyn LlmProvider> = match self.build_provider(config).await {
+        let provider: Arc<dyn LlmProvider> = match self.build_provider_for(&flush_provider_name, config).await {
             Ok(p) => Arc::from(p),
             Err(e) => {
                 warn!(error = %e, "Failed to build provider for memory flush, falling back to dumb dump");
@@ -1619,6 +1633,11 @@ impl StarpodAgent {
     /// Increment the nudge counter for a session and spawn a background
     /// review if the interval has been reached.
     ///
+    /// The model is resolved via [`resolve_background_model`] from
+    /// `nudge_model` → `flush_model` → `compaction_model` → primary.
+    /// Model specs in `"provider/model"` format are split so only the
+    /// model name reaches the API and the correct provider is used.
+    ///
     /// When `self_improve` is enabled, the nudge also includes skill tools
     /// so the background LLM can create or update skills from the conversation.
     ///
@@ -1653,22 +1672,24 @@ impl StarpodAgent {
             _ => return,
         };
 
-        // Resolve the model: nudge_model → flush_model → compaction_model → primary
-        let nudge_model = config
+        // Resolve the model: nudge_model → flush_model → compaction_model → primary.
+        let nudge_spec = config
             .memory
             .nudge_model
             .clone()
             .or_else(|| config.compaction.flush_model.clone())
-            .or_else(|| config.compaction_model.clone())
-            .unwrap_or_else(|| config.model().to_string());
+            .or_else(|| config.compaction_model.clone());
+        let (nudge_provider, nudge_model) =
+            resolve_background_model(nudge_spec.as_deref(), config);
 
-        let provider: Arc<dyn agent_sdk::LlmProvider> = match self.build_provider(config).await {
-            Ok(p) => Arc::from(p),
-            Err(e) => {
-                warn!(error = %e, "Failed to build provider for background nudge");
-                return;
-            }
-        };
+        let provider: Arc<dyn agent_sdk::LlmProvider> =
+            match self.build_provider_for(&nudge_provider, config).await {
+                Ok(p) => Arc::from(p),
+                Err(e) => {
+                    warn!(error = %e, "Failed to build provider for background nudge");
+                    return;
+                }
+            };
 
         let memory = Arc::clone(&self.memory);
         let user_view: Option<Arc<UserMemoryView>> = match user_id {
@@ -1711,27 +1732,33 @@ impl StarpodAgent {
     /// un-nudged messages (e.g., a 3-message chat that never hit the nudge
     /// interval). Uses the session's user_id from metadata for per-user
     /// memory routing.
+    ///
+    /// Model resolution follows the same chain as [`maybe_nudge_memory`]
+    /// via [`resolve_background_model`].
     async fn run_final_nudge(&self, session_id: &str, config: &StarpodConfig) {
         let messages = match self.session_mgr.get_messages(session_id).await {
             Ok(msgs) if !msgs.is_empty() => msgs,
             _ => return,
         };
 
-        let nudge_model = config
+        // Resolve the model: nudge_model → flush_model → compaction_model → primary.
+        let nudge_spec = config
             .memory
             .nudge_model
             .clone()
             .or_else(|| config.compaction.flush_model.clone())
-            .or_else(|| config.compaction_model.clone())
-            .unwrap_or_else(|| config.model().to_string());
+            .or_else(|| config.compaction_model.clone());
+        let (nudge_provider, nudge_model) =
+            resolve_background_model(nudge_spec.as_deref(), config);
 
-        let provider: Arc<dyn agent_sdk::LlmProvider> = match self.build_provider(config).await {
-            Ok(p) => Arc::from(p),
-            Err(e) => {
-                warn!(error = %e, "Failed to build provider for final nudge");
-                return;
-            }
-        };
+        let provider: Arc<dyn agent_sdk::LlmProvider> =
+            match self.build_provider_for(&nudge_provider, config).await {
+                Ok(p) => Arc::from(p),
+                Err(e) => {
+                    warn!(error = %e, "Failed to build provider for final nudge");
+                    return;
+                }
+            };
 
         // Resolve user_id from session metadata for per-user memory routing
         let user_id = match self.session_mgr.get_session(session_id).await {
@@ -3061,6 +3088,69 @@ mod tests {
 
         // Cache entry should be gone
         assert!(!agent.bootstrap_cache.read().await.contains_key(session_id));
+    }
+
+    // ── resolve_background_model tests ──────────────────────────────
+
+    #[test]
+    fn resolve_background_model_strips_provider_prefix() {
+        let cfg = StarpodConfig::default();
+        let (provider, model) =
+            resolve_background_model(Some("anthropic/claude-haiku-4-5-20251001"), &cfg);
+        assert_eq!(provider, "anthropic");
+        assert_eq!(model, "claude-haiku-4-5-20251001");
+    }
+
+    #[test]
+    fn resolve_background_model_handles_different_provider() {
+        let cfg = StarpodConfig::default(); // default provider is "anthropic"
+        let (provider, model) = resolve_background_model(Some("openai/gpt-4o"), &cfg);
+        assert_eq!(provider, "openai");
+        assert_eq!(model, "gpt-4o");
+    }
+
+    #[test]
+    fn resolve_background_model_bare_model_uses_default_provider() {
+        let cfg = StarpodConfig::default();
+        let (provider, model) =
+            resolve_background_model(Some("claude-haiku-4-5-20251001"), &cfg);
+        assert_eq!(
+            provider,
+            cfg.provider(),
+            "bare model name should use default provider"
+        );
+        assert_eq!(model, "claude-haiku-4-5-20251001");
+    }
+
+    #[test]
+    fn resolve_background_model_none_falls_back_to_default() {
+        let mut cfg = StarpodConfig::default();
+        cfg.models = vec!["anthropic/claude-sonnet-4-6".to_string()];
+        let (provider, model) = resolve_background_model(None, &cfg);
+        assert_eq!(provider, "anthropic");
+        assert_eq!(model, "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn resolve_background_model_vertex_provider() {
+        let cfg = StarpodConfig::default();
+        let (provider, model) = resolve_background_model(
+            Some("vertex/claude-haiku-4-5-20251001"),
+            &cfg,
+        );
+        assert_eq!(provider, "vertex");
+        assert_eq!(model, "claude-haiku-4-5-20251001");
+    }
+
+    #[test]
+    fn resolve_background_model_bedrock_provider() {
+        let cfg = StarpodConfig::default();
+        let (provider, model) = resolve_background_model(
+            Some("bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0"),
+            &cfg,
+        );
+        assert_eq!(provider, "bedrock");
+        assert_eq!(model, "us.anthropic.claude-haiku-4-5-20251001-v1:0");
     }
 
     // ── nudge counter and flush_stale_sessions tests ────────────────

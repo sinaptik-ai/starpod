@@ -44,7 +44,10 @@
 //! - `memory.nudge_interval` (default `10`) — user messages between nudges;
 //!   set to `0` to disable
 //! - `memory.nudge_model` — model override; falls back to
-//!   `compaction.flush_model` → `compaction_model` → primary model
+//!   `compaction.flush_model` → `compaction_model` → primary model.
+//!   Accepts `"provider/model"` format (e.g. `"anthropic/claude-haiku-4-5-20251001"`);
+//!   the provider prefix is stripped via [`resolve_background_model`](crate::resolve_background_model)
+//!   before the model name is sent to the API
 //! - `self_improve` (top-level) — when `true`, skill tools are included in the
 //!   nudge call
 //!
