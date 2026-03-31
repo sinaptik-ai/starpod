@@ -18,6 +18,7 @@ import BrowserTab from './BrowserTab'
 import CompactionTab from './CompactionTab'
 import CostsTab from './CostsTab'
 import VaultTab from './VaultTab'
+import AttachmentsTab from './AttachmentsTab'
 
 // 14px stroke-based icons for the sidebar
 const ico = (d) => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">{d}</svg>
@@ -39,6 +40,7 @@ const icons = {
   costs:     ico(<><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></>),
   users:     ico(<><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>),
   vault:     ico(<><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></>),
+  attachments: ico(<><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></>),
 }
 
 const tabGroups = [
@@ -56,6 +58,7 @@ const tabGroups = [
     label: 'Interface',
     tabs: [
       { id: 'frontend', label: 'Frontend' },
+      { id: 'attachments', label: 'Attachments' },
     ],
   },
   {
@@ -85,6 +88,7 @@ function TabContent({ tab }) {
     case 'boot': return <FileTab fileName="BOOT.md" description="Instructions executed once on agent startup." rows={20} />
     case 'bootstrap': return <FileTab fileName="BOOTSTRAP.md" description="Instructions for initial instance setup." rows={20} />
     case 'frontend': return <FrontendTab />
+    case 'attachments': return <AttachmentsTab />
     case 'memory': return <MemoryTab />
     case 'compaction': return <CompactionTab />
     case 'internet': return <InternetTab />

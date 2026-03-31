@@ -919,7 +919,10 @@ impl StarpodAgent {
         let (flush_provider_name, flush_model) =
             resolve_background_model(flush_spec.as_deref(), config);
 
-        let provider: Arc<dyn LlmProvider> = match self.build_provider_for(&flush_provider_name, config).await {
+        let provider: Arc<dyn LlmProvider> = match self
+            .build_provider_for(&flush_provider_name, config)
+            .await
+        {
             Ok(p) => Arc::from(p),
             Err(e) => {
                 warn!(error = %e, "Failed to build provider for memory flush, falling back to dumb dump");
@@ -1679,8 +1682,7 @@ impl StarpodAgent {
             .clone()
             .or_else(|| config.compaction.flush_model.clone())
             .or_else(|| config.compaction_model.clone());
-        let (nudge_provider, nudge_model) =
-            resolve_background_model(nudge_spec.as_deref(), config);
+        let (nudge_provider, nudge_model) = resolve_background_model(nudge_spec.as_deref(), config);
 
         let provider: Arc<dyn agent_sdk::LlmProvider> =
             match self.build_provider_for(&nudge_provider, config).await {
@@ -1748,8 +1750,7 @@ impl StarpodAgent {
             .clone()
             .or_else(|| config.compaction.flush_model.clone())
             .or_else(|| config.compaction_model.clone());
-        let (nudge_provider, nudge_model) =
-            resolve_background_model(nudge_spec.as_deref(), config);
+        let (nudge_provider, nudge_model) = resolve_background_model(nudge_spec.as_deref(), config);
 
         let provider: Arc<dyn agent_sdk::LlmProvider> =
             match self.build_provider_for(&nudge_provider, config).await {
@@ -3112,8 +3113,7 @@ mod tests {
     #[test]
     fn resolve_background_model_bare_model_uses_default_provider() {
         let cfg = StarpodConfig::default();
-        let (provider, model) =
-            resolve_background_model(Some("claude-haiku-4-5-20251001"), &cfg);
+        let (provider, model) = resolve_background_model(Some("claude-haiku-4-5-20251001"), &cfg);
         assert_eq!(
             provider,
             cfg.provider(),
@@ -3134,10 +3134,8 @@ mod tests {
     #[test]
     fn resolve_background_model_vertex_provider() {
         let cfg = StarpodConfig::default();
-        let (provider, model) = resolve_background_model(
-            Some("vertex/claude-haiku-4-5-20251001"),
-            &cfg,
-        );
+        let (provider, model) =
+            resolve_background_model(Some("vertex/claude-haiku-4-5-20251001"), &cfg);
         assert_eq!(provider, "vertex");
         assert_eq!(model, "claude-haiku-4-5-20251001");
     }

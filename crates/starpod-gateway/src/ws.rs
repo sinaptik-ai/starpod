@@ -33,6 +33,11 @@ async fn ws_handler(
     State(state): State<Arc<AppState>>,
     Query(params): Query<WsQuery>,
 ) -> impl IntoResponse {
+    // Derive WS frame limit from configured max file size (+ base64 overhead + JSON envelope).
+    // Minimum 32 MB to handle reasonable payloads even with small file size configs.
+    let max_file_size = state.config.read().unwrap().attachments.max_file_size;
+    let ws_limit = (max_file_size * 2).max(32 * 1024 * 1024);
+
     // Authenticate via token query param
     let has_users = state.auth.has_users().await.unwrap_or(false);
     if has_users {
@@ -50,8 +55,8 @@ async fn ws_handler(
             Ok(Some(user)) => {
                 let user = Some(user);
                 return ws
-                    .max_frame_size(1024 * 1024)
-                    .max_message_size(1024 * 1024)
+                    .max_frame_size(ws_limit)
+                    .max_message_size(ws_limit)
                     .on_upgrade(move |socket| handle_socket(socket, state, user))
                     .into_response();
             }
@@ -72,8 +77,8 @@ async fn ws_handler(
         }
     }
 
-    ws.max_frame_size(1024 * 1024) // 1 MB
-        .max_message_size(1024 * 1024) // 1 MB
+    ws.max_frame_size(ws_limit)
+        .max_message_size(ws_limit)
         .on_upgrade(move |socket| handle_socket(socket, state, None))
         .into_response()
 }
@@ -326,6 +331,18 @@ async fn handle_socket(
                     }
                     Some(Ok(_)) => continue,
                     Some(Err(e)) => {
+                        let msg = e.to_string();
+                        // Size-limit errors are recoverable — tell the client
+                        // instead of killing the connection.
+                        if msg.contains("payload too large") || msg.contains("Message too big") || msg.contains("message size") {
+                            let _ = send_msg(
+                                &mut sender,
+                                &ServerMessage::Error {
+                                    message: "The message was too large to process. Try removing some attachments or uploading smaller files.".into(),
+                                },
+                            ).await;
+                            continue;
+                        }
                         error!(error = %e, "WebSocket receive error");
                         break;
                     }
@@ -1152,5 +1169,17 @@ mod tests {
                 assert!(model.is_none());
             }
         }
+    }
+
+    #[test]
+    fn error_message_serializes_for_client() {
+        let msg = ServerMessage::Error {
+            message: "The message was too large to process. Try removing some attachments or uploading smaller files.".into(),
+        };
+        let json: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&msg).unwrap()).unwrap();
+
+        assert_eq!(json["type"], "error");
+        assert!(json["message"].as_str().unwrap().contains("too large"));
     }
 }

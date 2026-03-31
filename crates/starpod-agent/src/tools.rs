@@ -3535,8 +3535,7 @@ mod tests {
             .await
             .unwrap(),
         );
-        let skills =
-            Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
         let core_db = starpod_db::CoreDb::new(tmp.path()).await.unwrap();
         let cron = Arc::new(starpod_cron::CronStore::from_pool(core_db.pool().clone()));
 
@@ -3609,8 +3608,7 @@ mod tests {
             .await
             .unwrap(),
         );
-        let skills =
-            Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
         let core_db = starpod_db::CoreDb::new(tmp.path()).await.unwrap();
         let cron = Arc::new(starpod_cron::CronStore::from_pool(core_db.pool().clone()));
 
@@ -3690,8 +3688,7 @@ mod tests {
             .await
             .unwrap(),
         );
-        let skills =
-            Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
         let core_db = starpod_db::CoreDb::new(tmp.path()).await.unwrap();
         let cron = Arc::new(starpod_cron::CronStore::from_pool(core_db.pool().clone()));
 
@@ -3770,11 +3767,7 @@ mod tests {
 
         // All files should exist
         for (path, _) in standard_paths.iter().chain(nonstandard_paths.iter()) {
-            assert!(
-                home_dir.join(path).exists(),
-                "File should exist: {}",
-                path
-            );
+            assert!(home_dir.join(path).exists(), "File should exist: {}", path);
         }
     }
 
@@ -3790,8 +3783,7 @@ mod tests {
             .await
             .unwrap(),
         );
-        let skills =
-            Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
         let core_db = starpod_db::CoreDb::new(tmp.path()).await.unwrap();
         let cron = Arc::new(starpod_cron::CronStore::from_pool(core_db.pool().clone()));
 
@@ -3835,13 +3827,10 @@ mod tests {
         assert!(result.content.contains("stray.txt"));
 
         // List a subdirectory — should NOT nudge
-        let result = handle_custom_tool(
-            &ctx,
-            "FileList",
-            &serde_json::json!({"path": "documents"}),
-        )
-        .await
-        .unwrap();
+        let result =
+            handle_custom_tool(&ctx, "FileList", &serde_json::json!({"path": "documents"}))
+                .await
+                .unwrap();
         assert!(!result.is_error);
         assert!(
             !result.content.contains("[Note:"),
@@ -3861,8 +3850,7 @@ mod tests {
             .await
             .unwrap(),
         );
-        let skills =
-            Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
         let core_db = starpod_db::CoreDb::new(tmp.path()).await.unwrap();
         let cron = Arc::new(starpod_cron::CronStore::from_pool(core_db.pool().clone()));
 
@@ -3917,8 +3905,7 @@ mod tests {
             .await
             .unwrap(),
         );
-        let skills =
-            Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let skills = Arc::new(starpod_skills::SkillStore::new(&tmp.path().join("skills")).unwrap());
         let core_db = starpod_db::CoreDb::new(tmp.path()).await.unwrap();
         let cron = Arc::new(starpod_cron::CronStore::from_pool(core_db.pool().clone()));
 

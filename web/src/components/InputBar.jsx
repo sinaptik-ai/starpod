@@ -4,7 +4,7 @@ import { PaperclipIcon } from './ui/Icons'
 import SlashMenu, { filterSkills } from './SlashMenu'
 import { fetchSkills } from '../lib/api'
 
-const MAX_FILE_SIZE = 20 * 1024 * 1024
+const DEFAULT_MAX_FILE_SIZE = 20 * 1024 * 1024
 
 function readFileAsBase64(file) {
   return new Promise((resolve, reject) => {
@@ -25,6 +25,11 @@ function InputBar({ onSend, disabled }) {
   const textareaRef = useRef(null)
   const fileInputRef = useRef(null)
   const dragCounterRef = useRef(0)
+
+  const attConfig = state.config?.attachments || {}
+  const attachmentsEnabled = attConfig.enabled !== false
+  const maxFileSize = attConfig.max_file_size || DEFAULT_MAX_FILE_SIZE
+  const allowedExtensions = attConfig.allowed_extensions || []
 
   useEffect(() => {
     if (!disabled && textareaRef.current) textareaRef.current.focus()
@@ -63,11 +68,23 @@ function InputBar({ onSend, disabled }) {
   }
 
   const addFiles = useCallback(async (files) => {
+    if (!attachmentsEnabled) {
+      alert('File attachments are disabled.')
+      return
+    }
+    const maxMB = (maxFileSize / 1048576).toFixed(0)
     const newAttachments = []
     for (const file of files) {
-      if (file.size > MAX_FILE_SIZE) {
-        alert(`"${file.name}" is too large (${(file.size / 1048576).toFixed(1)} MB). Maximum file size is 20 MB.`)
+      if (file.size > maxFileSize) {
+        alert(`"${file.name}" is too large (${(file.size / 1048576).toFixed(1)} MB). Maximum file size is ${maxMB} MB.`)
         continue
+      }
+      if (allowedExtensions.length > 0) {
+        const ext = file.name.split('.').pop()?.toLowerCase() || ''
+        if (!allowedExtensions.some(e => e.toLowerCase() === ext)) {
+          alert(`"${file.name}" — file type ".${ext}" is not allowed. Allowed: ${allowedExtensions.join(', ')}`)
+          continue
+        }
       }
       const base64 = await readFileAsBase64(file)
       newAttachments.push({
@@ -79,7 +96,7 @@ function InputBar({ onSend, disabled }) {
     if (newAttachments.length > 0) {
       setPendingAttachments(prev => [...prev, ...newAttachments])
     }
-  }, [])
+  }, [attachmentsEnabled, maxFileSize, allowedExtensions])
 
   function removeAttachment(index) {
     setPendingAttachments(prev => prev.filter((_, i) => i !== index))

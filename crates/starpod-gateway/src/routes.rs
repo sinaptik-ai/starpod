@@ -47,10 +47,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             get(get_session_messages_handler),
         )
         .route("/api/sessions/{id}/read", post(mark_session_read_handler))
-        .route(
-            "/api/sessions/{id}/archive",
-            post(archive_session_handler),
-        )
+        .route("/api/sessions/{id}/archive", post(archive_session_handler))
         .route("/api/memory/search", get(memory_search_handler))
         .route("/api/memory/reindex", post(reindex_handler))
         .route("/api/instances", get(list_instances_handler))
@@ -580,6 +577,11 @@ async fn frontend_config_handler(State(state): State<Arc<AppState>>) -> Json<ser
         "prompts": frontend.prompts,
         "models": cfg.models,
         "agent_name": cfg.agent_name,
+        "attachments": {
+            "enabled": cfg.attachments.enabled,
+            "max_file_size": cfg.attachments.max_file_size,
+            "allowed_extensions": cfg.attachments.allowed_extensions,
+        },
     }))
 }
 

@@ -563,7 +563,14 @@ async fn main() -> anyhow::Result<()> {
             }
 
             // Agent home directory (filesystem sandbox)
-            for dir in &["desktop", "documents", "projects", "downloads", "scripts", "temp"] {
+            for dir in &[
+                "desktop",
+                "documents",
+                "projects",
+                "downloads",
+                "scripts",
+                "temp",
+            ] {
                 tokio::fs::create_dir_all(cwd.join("home").join(dir)).await?;
             }
 

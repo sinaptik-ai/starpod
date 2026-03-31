@@ -1828,7 +1828,10 @@ mod tests {
         let sessions = mgr.list_sessions(10).await.unwrap();
         assert_eq!(sessions.len(), 2);
         assert!(sessions.iter().any(|s| s.id == id1));
-        assert!(!sessions.iter().any(|s| s.id == id2), "Archived session should not appear");
+        assert!(
+            !sessions.iter().any(|s| s.id == id2),
+            "Archived session should not appear"
+        );
         assert!(sessions.iter().any(|s| s.id == id3));
     }
 

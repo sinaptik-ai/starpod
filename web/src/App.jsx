@@ -123,7 +123,23 @@ function AppInner() {
     const payload = { type: 'message', text, channel_id: 'web', channel_session_key: currentSessionKey }
     if (attachments && attachments.length > 0) payload.attachments = attachments
     if (selectedModel) payload.model = selectedModel
-    wsRef.current.send(JSON.stringify(payload))
+    const json = JSON.stringify(payload)
+    // Guard against payloads that exceed the WebSocket server limit
+    // The WS limit is the configured max file size + overhead for base64 + JSON envelope
+    const maxFileSize = state.config?.attachments?.max_file_size || (20 * 1024 * 1024)
+    const MAX_WS_PAYLOAD = Math.max(maxFileSize * 2, 32 * 1024 * 1024)
+    if (json.length > MAX_WS_PAYLOAD) {
+      const sizeMB = (json.length / (1024 * 1024)).toFixed(1)
+      if (chatRef.current) {
+        chatRef.current.addUserMessage(text, attachments)
+        chatRef.current.handleStreamEvent({
+          type: 'error',
+          message: `Message too large to send (${sizeMB} MB). Try removing some attachments or uploading smaller files.`,
+        })
+      }
+      return
+    }
+    wsRef.current.send(json)
     if (chatRef.current) chatRef.current.addUserMessage(text, attachments)
   }, [currentSessionKey, selectedModel])
 

@@ -228,6 +228,14 @@ struct CompactionSettings {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct AttachmentsSettings {
+    enabled: bool,
+    max_file_size: usize,
+    #[serde(default)]
+    allowed_extensions: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct InternetSettings {
     enabled: bool,
     timeout_secs: u64,
@@ -463,6 +471,11 @@ pub fn settings_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/api/settings/vault/{key}/meta",
             axum::routing::put(put_vault_meta),
+        )
+        // Attachments
+        .route(
+            "/api/settings/attachments",
+            get(get_attachments).put(put_attachments),
         )
         // Internet
         .route(
@@ -1729,6 +1742,53 @@ async fn put_compaction(
     compaction.insert(
         "memory_flush".into(),
         toml::Value::Boolean(settings.memory_flush),
+    );
+
+    write_agent_toml(&state, &doc)?;
+
+    Ok(ok_json())
+}
+
+// ── Attachments ────────────────────────────────────────────────────────
+
+async fn get_attachments(State(state): State<Arc<AppState>>) -> ApiResult<AttachmentsSettings> {
+    let cfg = state.config.read().unwrap();
+    Ok(Json(AttachmentsSettings {
+        enabled: cfg.attachments.enabled,
+        max_file_size: cfg.attachments.max_file_size,
+        allowed_extensions: cfg.attachments.allowed_extensions.clone(),
+    }))
+}
+
+async fn put_attachments(
+    State(state): State<Arc<AppState>>,
+    Json(settings): Json<AttachmentsSettings>,
+) -> ApiResult<serde_json::Value> {
+    let mut doc = read_agent_toml(&state)?;
+    let table = doc
+        .as_table_mut()
+        .ok_or_else(|| internal("agent.toml is not a table"))?;
+
+    let attachments = table
+        .entry("attachments")
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| internal("[attachments] is not a table"))?;
+
+    attachments.insert("enabled".into(), toml::Value::Boolean(settings.enabled));
+    attachments.insert(
+        "max_file_size".into(),
+        toml::Value::Integer(settings.max_file_size as i64),
+    );
+    attachments.insert(
+        "allowed_extensions".into(),
+        toml::Value::Array(
+            settings
+                .allowed_extensions
+                .into_iter()
+                .map(toml::Value::String)
+                .collect(),
+        ),
     );
 
     write_agent_toml(&state, &doc)?;
@@ -4754,5 +4814,76 @@ mod tests {
         let entry = vault.get_entry("KEY").await.unwrap().unwrap();
         assert!(!entry.is_secret);
         assert!(entry.allowed_hosts.is_none());
+    }
+
+    // ── Attachments settings ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn get_attachments_returns_defaults() {
+        let (_tmp, state) = test_app_state().await;
+        let (status, json) = get_json(state, "/api/settings/attachments").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["enabled"], true);
+        assert_eq!(json["max_file_size"], 20 * 1024 * 1024);
+        assert!(json["allowed_extensions"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn put_attachments_updates_agent_toml() {
+        let (_tmp, state) = test_app_state().await;
+        let (status, json) = put_json(
+            Arc::clone(&state),
+            "/api/settings/attachments",
+            serde_json::json!({
+                "enabled": false,
+                "max_file_size": 5242880,
+                "allowed_extensions": ["pdf", "png", "jpg"]
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["status"], "ok");
+
+        // Verify the file was written
+        let content = std::fs::read_to_string(&state.paths.agent_toml).unwrap();
+        let parsed: toml::Value = toml::from_str(&content).unwrap();
+        assert_eq!(parsed["attachments"]["enabled"].as_bool(), Some(false));
+        assert_eq!(
+            parsed["attachments"]["max_file_size"].as_integer(),
+            Some(5242880)
+        );
+        let exts: Vec<&str> = parsed["attachments"]["allowed_extensions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(exts, vec!["pdf", "png", "jpg"]);
+    }
+
+    #[tokio::test]
+    async fn put_attachments_roundtrips_via_get() {
+        let (_tmp, state) = test_app_state().await;
+        let (status, _) = put_json(
+            Arc::clone(&state),
+            "/api/settings/attachments",
+            serde_json::json!({
+                "enabled": true,
+                "max_file_size": 10485760,
+                "allowed_extensions": ["docx"]
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Reload config from disk so GET picks up changes
+        let agent_cfg = starpod_core::reload_agent_config(&state.paths).unwrap();
+        *state.config.write().unwrap() = agent_cfg.into_starpod_config(&state.paths);
+
+        let (status, json) = get_json(state, "/api/settings/attachments").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["enabled"], true);
+        assert_eq!(json["max_file_size"], 10485760);
+        assert_eq!(json["allowed_extensions"][0], "docx");
     }
 }
