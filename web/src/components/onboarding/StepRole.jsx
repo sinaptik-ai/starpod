@@ -61,7 +61,7 @@ export default function StepRole({ data, updateData, onNext, onBack }) {
   if (mode === null) {
     return (
       <div>
-        <h2 className="ob-heading">Define a role</h2>
+        <h2 className="ob-heading">Describe your agent</h2>
         <p className="ob-desc">
           What should {data.agentName} do? Describe a role and we'll generate its
           configuration, skills, and API integrations.
