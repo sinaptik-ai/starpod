@@ -1,0 +1,7 @@
+name = "aws"
+display_name = "AWS"
+description = "Amazon Web Services including S3, Lambda, Bedrock, and more"
+secrets = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]
+
+[config]
+AWS_REGION = "us-east-1"

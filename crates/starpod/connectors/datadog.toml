@@ -1,0 +1,8 @@
+name = "datadog"
+display_name = "Datadog"
+description = "Datadog monitoring, APM, and log management"
+secrets = ["DD_API_KEY"]
+optional_secrets = ["DD_APP_KEY"]
+
+[config]
+DD_SITE = "datadoghq.com"

@@ -23,6 +23,7 @@ starpod-core = { workspace = true }
 starpod-agent = { workspace = true }
 starpod-gateway = { workspace = true }
 starpod-cron = { workspace = true }
+starpod-db = { workspace = true }
 starpod-vault = { workspace = true }
 starpod-instances = { workspace = true }
 clap = { version = "4", features = ["derive"] }

@@ -1,0 +1,5 @@
+name = "mysql"
+display_name = "MySQL"
+description = "MySQL database connection"
+multi_instance = true
+secrets = ["DATABASE_URL"]

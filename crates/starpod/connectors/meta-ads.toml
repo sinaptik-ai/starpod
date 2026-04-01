@@ -1,0 +1,7 @@
+name = "meta-ads"
+display_name = "Meta Ads"
+description = "Meta (Facebook/Instagram) Ads API for campaign management and reporting"
+secrets = ["META_ADS_ACCESS_TOKEN"]
+
+[config]
+api_version = "v21.0"

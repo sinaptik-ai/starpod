@@ -25,10 +25,6 @@ use starpod_core::{Result, StarpodError};
 #[derive(Debug, Clone)]
 pub struct VaultEntry {
     pub key: String,
-    /// Whether this entry holds a secret that should be opaque-ified when the
-    /// proxy is enabled. `true` (default) for API keys/tokens, `false` for
-    /// non-sensitive config like `SENTRY_DSN`.
-    pub is_secret: bool,
     /// Hostnames where this secret may be sent (e.g. `["api.openai.com"]`).
     /// `None` means unrestricted.
     pub allowed_hosts: Option<Vec<String>>,
@@ -242,15 +238,14 @@ impl Vault {
 
     // ── Metadata-aware API (Phase 1: secret proxy) ──────────────────
 
-    /// Store a value with secret classification and allowed-host metadata.
+    /// Store a value with allowed-host metadata.
     ///
-    /// Like [`set`](Self::set) but also persists `is_secret` and
-    /// `allowed_hosts` for the proxy to enforce host binding.
-    pub async fn set_with_meta(
+    /// Like [`set`](Self::set) but also persists `allowed_hosts` for the
+    /// proxy to enforce host binding.
+    pub async fn set_with_hosts(
         &self,
         key: &str,
         value: &str,
-        is_secret: bool,
         allowed_hosts: Option<&[String]>,
         user_id: Option<&str>,
     ) -> Result<()> {
@@ -265,19 +260,17 @@ impl Vault {
             allowed_hosts.map(|h| serde_json::to_string(h).unwrap_or_default());
 
         sqlx::query(
-            "INSERT INTO vault_entries (key, encrypted_value, nonce, is_secret, allowed_hosts, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+            "INSERT INTO vault_entries (key, encrypted_value, nonce, allowed_hosts, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?5)
              ON CONFLICT(key) DO UPDATE SET
                  encrypted_value = excluded.encrypted_value,
                  nonce = excluded.nonce,
-                 is_secret = excluded.is_secret,
                  allowed_hosts = excluded.allowed_hosts,
                  updated_at = excluded.updated_at",
         )
         .bind(key)
         .bind(&ciphertext)
         .bind(nonce.as_slice())
-        .bind(is_secret as i32)
         .bind(&hosts_json)
         .bind(&now)
         .execute(&self.pool)
@@ -285,19 +278,18 @@ impl Vault {
         .map_err(|e| StarpodError::Database(format!("Insert failed: {}", e)))?;
 
         self.audit(key, "set", user_id).await?;
-        debug!(key = %key, is_secret = %is_secret, "Vault set_with_meta");
+        debug!(key = %key, "Vault set_with_hosts");
 
         Ok(())
     }
 
-    /// Update only the metadata (`is_secret`, `allowed_hosts`) for an existing entry.
+    /// Update only the `allowed_hosts` metadata for an existing entry.
     ///
     /// Does **not** touch the encrypted value or nonce. Returns `Ok(false)` if the
     /// key does not exist.
-    pub async fn update_meta(
+    pub async fn update_hosts(
         &self,
         key: &str,
-        is_secret: bool,
         allowed_hosts: Option<&[String]>,
     ) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
@@ -305,10 +297,9 @@ impl Vault {
             allowed_hosts.map(|h| serde_json::to_string(h).unwrap_or_default());
 
         let result = sqlx::query(
-            "UPDATE vault_entries SET is_secret = ?1, allowed_hosts = ?2, updated_at = ?3
-             WHERE key = ?4",
+            "UPDATE vault_entries SET allowed_hosts = ?1, updated_at = ?2
+             WHERE key = ?3",
         )
-        .bind(is_secret as i32)
         .bind(&hosts_json)
         .bind(&now)
         .bind(key)
@@ -317,8 +308,8 @@ impl Vault {
         .map_err(|e| StarpodError::Database(format!("Update failed: {}", e)))?;
 
         if result.rows_affected() > 0 {
-            self.audit(key, "update_meta", None).await?;
-            debug!(key = %key, is_secret = %is_secret, "Vault update_meta");
+            self.audit(key, "update_hosts", None).await?;
+            debug!(key = %key, "Vault update_hosts");
             Ok(true)
         } else {
             Ok(false)
@@ -328,7 +319,7 @@ impl Vault {
     /// Retrieve metadata for a single vault entry (without decrypting the value).
     pub async fn get_entry(&self, key: &str) -> Result<Option<VaultEntry>> {
         let row = sqlx::query(
-            "SELECT key, is_secret, allowed_hosts, created_at, updated_at
+            "SELECT key, allowed_hosts, created_at, updated_at
              FROM vault_entries WHERE key = ?1",
         )
         .bind(key)
@@ -338,7 +329,6 @@ impl Vault {
 
         Ok(row.map(|r| VaultEntry {
             key: r.get("key"),
-            is_secret: r.get::<i32, _>("is_secret") != 0,
             allowed_hosts: r
                 .get::<Option<String>, _>("allowed_hosts")
                 .and_then(|s| serde_json::from_str(&s).ok()),
@@ -350,7 +340,7 @@ impl Vault {
     /// List all vault entries with metadata (no decrypted values).
     pub async fn list_entries(&self) -> Result<Vec<VaultEntry>> {
         let rows = sqlx::query(
-            "SELECT key, is_secret, allowed_hosts, created_at, updated_at
+            "SELECT key, allowed_hosts, created_at, updated_at
              FROM vault_entries ORDER BY key",
         )
         .fetch_all(&self.pool)
@@ -361,7 +351,6 @@ impl Vault {
             .iter()
             .map(|r| VaultEntry {
                 key: r.get("key"),
-                is_secret: r.get::<i32, _>("is_secret") != 0,
                 allowed_hosts: r
                     .get::<Option<String>, _>("allowed_hosts")
                     .and_then(|s| serde_json::from_str(&s).ok()),
@@ -595,20 +584,19 @@ mod tests {
         assert!(!super::is_system_key("CUSTOM_TOKEN"));
     }
 
-    // ── set_with_meta / get_entry / list_entries tests ───────────
+    // ── set_with_hosts / get_entry / list_entries tests ───────────
 
     #[tokio::test]
-    async fn test_set_with_meta_and_get_entry() {
+    async fn test_set_with_hosts_and_get_entry() {
         let vault = setup().await;
         let hosts = vec!["api.github.com".to_string()];
         vault
-            .set_with_meta("GH_TOKEN", "ghp_abc", true, Some(&hosts), None)
+            .set_with_hosts("GH_TOKEN", "ghp_abc", Some(&hosts), None)
             .await
             .unwrap();
 
         let entry = vault.get_entry("GH_TOKEN").await.unwrap().unwrap();
         assert_eq!(entry.key, "GH_TOKEN");
-        assert!(entry.is_secret);
         assert_eq!(
             entry.allowed_hosts,
             Some(vec!["api.github.com".to_string()])
@@ -620,30 +608,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_set_with_meta_non_secret() {
+    async fn test_set_with_hosts_no_hosts() {
         let vault = setup().await;
         vault
-            .set_with_meta("SENTRY_DSN", "https://sentry.io/123", false, None, None)
+            .set_with_hosts("SENTRY_DSN", "https://sentry.io/123", None, None)
             .await
             .unwrap();
 
         let entry = vault.get_entry("SENTRY_DSN").await.unwrap().unwrap();
-        assert!(!entry.is_secret);
         assert!(entry.allowed_hosts.is_none());
     }
 
     #[tokio::test]
-    async fn test_set_with_meta_overwrites() {
+    async fn test_set_with_hosts_overwrites() {
         let vault = setup().await;
         vault
-            .set_with_meta("KEY", "old", true, None, None)
+            .set_with_hosts("KEY", "old", None, None)
             .await
             .unwrap();
         vault
-            .set_with_meta(
+            .set_with_hosts(
                 "KEY",
                 "new",
-                false,
                 Some(&["example.com".to_string()]),
                 None,
             )
@@ -651,7 +637,6 @@ mod tests {
             .unwrap();
 
         let entry = vault.get_entry("KEY").await.unwrap().unwrap();
-        assert!(!entry.is_secret);
         assert_eq!(entry.allowed_hosts, Some(vec!["example.com".to_string()]));
         assert_eq!(
             vault.get("KEY", None).await.unwrap().as_deref(),
@@ -662,11 +647,10 @@ mod tests {
     #[tokio::test]
     async fn test_plain_set_preserves_defaults() {
         let vault = setup().await;
-        // Plain set() should get is_secret=1, allowed_hosts=NULL
+        // Plain set() should get allowed_hosts=NULL
         vault.set("TOKEN", "val", None).await.unwrap();
 
         let entry = vault.get_entry("TOKEN").await.unwrap().unwrap();
-        assert!(entry.is_secret); // default 1
         assert!(entry.allowed_hosts.is_none()); // default NULL
     }
 
@@ -674,14 +658,13 @@ mod tests {
     async fn test_list_entries() {
         let vault = setup().await;
         vault
-            .set_with_meta("B_KEY", "v", true, None, None)
+            .set_with_hosts("B_KEY", "v", None, None)
             .await
             .unwrap();
         vault
-            .set_with_meta(
+            .set_with_hosts(
                 "A_KEY",
                 "v",
-                false,
                 Some(&["api.example.com".to_string()]),
                 None,
             )
@@ -691,9 +674,12 @@ mod tests {
         let entries = vault.list_entries().await.unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].key, "A_KEY");
-        assert!(!entries[0].is_secret);
+        assert_eq!(
+            entries[0].allowed_hosts,
+            Some(vec!["api.example.com".to_string()])
+        );
         assert_eq!(entries[1].key, "B_KEY");
-        assert!(entries[1].is_secret);
+        assert!(entries[1].allowed_hosts.is_none());
     }
 
     #[tokio::test]
@@ -702,32 +688,10 @@ mod tests {
         assert!(vault.get_entry("NOPE").await.unwrap().is_none());
     }
 
-    // ── update_meta tests ────────────────────────────────────────
+    // ── update_hosts tests ────────────────────────────────────────
 
     #[tokio::test]
-    async fn test_update_meta_changes_is_secret() {
-        let vault = setup().await;
-        vault.set("TOKEN", "val", None).await.unwrap();
-
-        // Default is_secret = true
-        let entry = vault.get_entry("TOKEN").await.unwrap().unwrap();
-        assert!(entry.is_secret);
-
-        // Flip to non-secret
-        assert!(vault.update_meta("TOKEN", false, None).await.unwrap());
-
-        let entry = vault.get_entry("TOKEN").await.unwrap().unwrap();
-        assert!(!entry.is_secret);
-
-        // Value should be unchanged
-        assert_eq!(
-            vault.get("TOKEN", None).await.unwrap().as_deref(),
-            Some("val")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_update_meta_changes_hosts() {
+    async fn test_update_hosts_changes_hosts() {
         let vault = setup().await;
         vault.set("KEY", "v", None).await.unwrap();
 
@@ -737,42 +701,48 @@ mod tests {
 
         // Set hosts
         let hosts = vec!["api.example.com".to_string()];
-        assert!(vault.update_meta("KEY", true, Some(&hosts)).await.unwrap());
+        assert!(vault.update_hosts("KEY", Some(&hosts)).await.unwrap());
 
         let entry = vault.get_entry("KEY").await.unwrap().unwrap();
         assert_eq!(
             entry.allowed_hosts,
             Some(vec!["api.example.com".to_string()])
         );
+
+        // Value should be unchanged
+        assert_eq!(
+            vault.get("KEY", None).await.unwrap().as_deref(),
+            Some("v")
+        );
     }
 
     #[tokio::test]
-    async fn test_update_meta_clears_hosts() {
+    async fn test_update_hosts_clears_hosts() {
         let vault = setup().await;
         vault
-            .set_with_meta("KEY", "v", true, Some(&["host.com".to_string()]), None)
+            .set_with_hosts("KEY", "v", Some(&["host.com".to_string()]), None)
             .await
             .unwrap();
 
         // Clear hosts by passing None
-        assert!(vault.update_meta("KEY", true, None).await.unwrap());
+        assert!(vault.update_hosts("KEY", None).await.unwrap());
 
         let entry = vault.get_entry("KEY").await.unwrap().unwrap();
         assert!(entry.allowed_hosts.is_none());
     }
 
     #[tokio::test]
-    async fn test_update_meta_nonexistent_key() {
+    async fn test_update_hosts_nonexistent_key() {
         let vault = setup().await;
         // Returns false for missing key
-        assert!(!vault.update_meta("NOPE", true, None).await.unwrap());
+        assert!(!vault.update_hosts("NOPE", None).await.unwrap());
     }
 
     #[tokio::test]
-    async fn test_update_meta_audit_logged() {
+    async fn test_update_hosts_audit_logged() {
         let vault = setup().await;
         vault.set("KEY", "v", None).await.unwrap();
-        vault.update_meta("KEY", false, None).await.unwrap();
+        vault.update_hosts("KEY", None).await.unwrap();
 
         let rows = sqlx::query_as::<_, (String,)>("SELECT action FROM vault_audit ORDER BY id")
             .fetch_all(&vault.pool)
@@ -781,17 +751,17 @@ mod tests {
 
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].0, "set");
-        assert_eq!(rows[1].0, "update_meta");
+        assert_eq!(rows[1].0, "update_hosts");
     }
 
     // ── Metadata stress tests ────────────────────────────────────
 
     #[tokio::test]
-    async fn test_set_with_meta_many_hosts() {
+    async fn test_set_with_hosts_many_hosts() {
         let vault = setup().await;
         let hosts: Vec<String> = (0..200).map(|i| format!("host-{i}.example.com")).collect();
         vault
-            .set_with_meta("KEY", "v", true, Some(&hosts), None)
+            .set_with_hosts("KEY", "v", Some(&hosts), None)
             .await
             .unwrap();
 
@@ -800,11 +770,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_set_with_meta_unicode_hosts() {
+    async fn test_set_with_hosts_unicode_hosts() {
         let vault = setup().await;
         let hosts = vec!["api.例え.jp".to_string(), "api.مثال.com".to_string()];
         vault
-            .set_with_meta("KEY", "v", true, Some(&hosts), None)
+            .set_with_hosts("KEY", "v", Some(&hosts), None)
             .await
             .unwrap();
 
@@ -813,11 +783,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_set_with_meta_empty_hosts_vec() {
+    async fn test_set_with_hosts_empty_hosts_vec() {
         let vault = setup().await;
         // Empty vec (not None) — should store as "[]"
         vault
-            .set_with_meta("KEY", "v", true, Some(&[]), None)
+            .set_with_hosts("KEY", "v", Some(&[]), None)
             .await
             .unwrap();
 
@@ -826,21 +796,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_rapid_meta_updates() {
+    async fn test_rapid_hosts_updates() {
         let vault = setup().await;
         vault.set("KEY", "v", None).await.unwrap();
 
-        // Rapidly toggle is_secret
+        // Rapidly toggle hosts
         for i in 0..50 {
-            let is_secret = i % 2 == 0;
-            vault.update_meta("KEY", is_secret, None).await.unwrap();
+            let hosts = if i % 2 == 0 {
+                Some(vec!["a.com".to_string()])
+            } else {
+                None
+            };
+            vault.update_hosts("KEY", hosts.as_deref()).await.unwrap();
         }
 
-        // Final state should be is_secret = false (49 is odd, 49%2=1, so false)
+        // Final state: i=49 is odd → None
         let entry = vault.get_entry("KEY").await.unwrap().unwrap();
-        assert!(!entry.is_secret);
+        assert!(entry.allowed_hosts.is_none());
 
-        // Value should be untouched through all meta updates
+        // Value should be untouched through all host updates
         assert_eq!(vault.get("KEY", None).await.unwrap().as_deref(), Some("v"));
     }
 
@@ -849,16 +823,15 @@ mod tests {
         let vault = setup().await;
         // Set with metadata
         vault
-            .set_with_meta("KEY", "v1", false, Some(&["host.com".to_string()]), None)
+            .set_with_hosts("KEY", "v1", Some(&["host.com".to_string()]), None)
             .await
             .unwrap();
 
-        // Plain set() overwrites value but should NOT touch is_secret/allowed_hosts
+        // Plain set() overwrites value but should NOT touch allowed_hosts
         vault.set("KEY", "v2", None).await.unwrap();
 
         let entry = vault.get_entry("KEY").await.unwrap().unwrap();
-        // is_secret and allowed_hosts should be unchanged from the set_with_meta call
-        assert!(!entry.is_secret);
+        // allowed_hosts should be unchanged from the set_with_hosts call
         assert_eq!(entry.allowed_hosts, Some(vec!["host.com".to_string()]));
         // Value should be updated
         assert_eq!(vault.get("KEY", None).await.unwrap().as_deref(), Some("v2"));
@@ -870,7 +843,7 @@ mod tests {
         // Keys with unusual but valid characters
         for key in &["MY_KEY_123", "a", "A_B_C_D_E_F"] {
             vault
-                .set_with_meta(key, "val", true, None, None)
+                .set_with_hosts(key, "val", None, None)
                 .await
                 .unwrap();
             let entry = vault.get_entry(key).await.unwrap().unwrap();
@@ -889,7 +862,7 @@ mod tests {
     async fn test_delete_cleans_up_metadata() {
         let vault = setup().await;
         vault
-            .set_with_meta("KEY", "v", true, Some(&["h.com".to_string()]), None)
+            .set_with_hosts("KEY", "v", Some(&["h.com".to_string()]), None)
             .await
             .unwrap();
         vault.delete("KEY", None).await.unwrap();
@@ -901,7 +874,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_concurrent_set_with_meta() {
+    async fn test_concurrent_set_with_hosts() {
         // SQLite WAL mode should handle concurrent writes
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         let vault = Vault::from_pool(pool, &test_key()).await.unwrap();
@@ -916,7 +889,7 @@ mod tests {
                     cipher,
                 };
                 let key = format!("KEY_{i}");
-                v.set_with_meta(&key, &format!("val_{i}"), true, None, None)
+                v.set_with_hosts(&key, &format!("val_{i}"), None, None)
                     .await
                     .unwrap();
             }));

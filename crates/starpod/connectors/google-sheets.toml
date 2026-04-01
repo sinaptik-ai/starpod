@@ -1,0 +1,11 @@
+name = "google-sheets"
+display_name = "Google Sheets"
+description = "Google Sheets spreadsheet access and manipulation"
+secrets = ["GOOGLE_SHEETS_CREDENTIALS_JSON"]
+
+[oauth]
+authorize_url = "https://accounts.google.com/o/oauth2/v2/auth"
+token_url = "https://oauth2.googleapis.com/token"
+scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+token_key = "GOOGLE_SHEETS_TOKEN"
+refresh_key = "GOOGLE_SHEETS_REFRESH_TOKEN"

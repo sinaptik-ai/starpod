@@ -69,6 +69,9 @@ const CUSTOM_TOOLS: &[&str] = &[
     "VaultList",
     "VaultSet",
     "VaultDelete",
+    "ConnectorList",
+    "ConnectorAdd",
+    "ConnectorRemove",
 ];
 
 /// The Starpod agent orchestrator.
@@ -164,6 +167,7 @@ impl StarpodAgent {
             config_dir: starpod_dir.join("config"),
             db_dir: config.db_dir.clone(),
             skills_dir: starpod_dir.join("skills"),
+            connectors_dir: starpod_dir.join("connectors"),
             project_root: home_dir.clone(),
             instance_root,
             home_dir,
@@ -471,17 +475,66 @@ impl StarpodAgent {
             .resolved_timezone()
             .unwrap_or_else(|| "UTC".to_string());
 
-        // ── Enumerate available (non-system) env vars from the vault ────
-        // Only list keys that are actually in the process environment (injected
-        // from deploy.toml at serve time). Vault-only keys that weren't declared
-        // in deploy.toml are excluded to avoid advertising unreachable vars.
+        // ── Build connectors section ────────────────────────────────────
+        // Query the connectors table and format as `<connectors>` XML for
+        // the system prompt. Each connector includes its name, type, status,
+        // description, config key-value pairs, and resolved vault key names.
+        // This gives the LLM full visibility into available service connections.
+        //
+        // Remaining vault keys that are NOT owned by any connector are still
+        // listed in a separate "ENVIRONMENT VARIABLES" section below.
+        let connector_store = starpod_db::connectors::ConnectorStore::from_pool(
+            self.core_db.pool().clone(),
+        );
+        let connectors_section = match connector_store.list().await {
+            Ok(rows) if !rows.is_empty() => {
+                let mut xml = String::from("\n\n--- CONNECTORS ---\n<connectors>\n");
+                for r in &rows {
+                    xml.push_str(&format!(
+                        "  <connector name=\"{}\" type=\"{}\" status=\"{}\" description=\"{}\">\n",
+                        r.name, r.connector_type, r.status, r.description,
+                    ));
+                    if !r.config.is_empty() {
+                        let attrs: Vec<String> = r.config.iter().map(|(k, v)| format!("{k}=\"{v}\"")).collect();
+                        xml.push_str(&format!("    <config {} />\n", attrs.join(" ")));
+                    } else {
+                        xml.push_str("    <config />\n");
+                    }
+                    if !r.secrets.is_empty() {
+                        xml.push_str(&format!("    <env>{}</env>\n", r.secrets.join(", ")));
+                    }
+                    xml.push_str("  </connector>\n");
+                }
+                xml.push_str("</connectors>\n\
+                              Connectors represent configured service connections. Their secrets are \
+                              available as environment variables — use them in Bash commands or read \
+                              with EnvGet. Manage connectors with ConnectorList, ConnectorAdd, \
+                              ConnectorRemove.");
+                xml
+            }
+            _ => String::new(),
+        };
+
+        // Collect vault keys that are NOT owned by any connector (standalone secrets)
+        let mut connector_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+        if let Ok(rows) = connector_store.list().await {
+            for r in &rows {
+                for s in &r.secrets {
+                    connector_keys.insert(s.clone());
+                }
+            }
+        }
         let env_vars_section = if let Some(ref vault) = self.vault {
             match vault.list_keys().await {
                 Ok(keys) => {
                     let user_keys: Vec<&str> = keys
                         .iter()
                         .map(|k| k.as_str())
-                        .filter(|k| !starpod_vault::is_system_key(k) && std::env::var(k).is_ok())
+                        .filter(|k| {
+                            !starpod_vault::is_system_key(k)
+                                && std::env::var(k).is_ok()
+                                && !connector_keys.contains(*k)
+                        })
                         .collect();
                     if user_keys.is_empty() {
                         String::new()
@@ -522,7 +575,8 @@ impl StarpodAgent {
              environment tools (EnvGet), file tools (FileRead, FileWrite, FileList, FileDelete), \
              skill tools (SkillActivate, SkillCreate, SkillUpdate, SkillDelete, SkillList), \
              scheduling tools (CronAdd, CronList, CronRemove, CronRuns, CronRun, CronUpdate, HeartbeatWake), \
-             and browser tools (BrowserOpen, BrowserClick, BrowserType, BrowserExtract, BrowserEval, BrowserWaitFor, BrowserClose).\n\
+             browser tools (BrowserOpen, BrowserClick, BrowserType, BrowserExtract, BrowserEval, BrowserWaitFor, BrowserClose), \
+             and connector tools (ConnectorList, ConnectorAdd, ConnectorRemove).\n\
              Browser tools let you automate web tasks: BrowserOpen navigates to a URL (auto-launches a browser process), \
              BrowserExtract gets text content, BrowserClick/BrowserType interact with elements by CSS selector, \
              BrowserEval runs JavaScript, BrowserWaitFor waits for a condition (URL change, element, or JS expression), \
@@ -565,7 +619,12 @@ impl StarpodAgent {
              • If you notice the filesystem getting cluttered, proactively suggest tidying up.",
         );
 
-        // ── Environment variables (vault) ────────────────────────────
+        // ── Connectors ────────────────────────────────────────────────
+        if !connectors_section.is_empty() {
+            prompt.push_str(&connectors_section);
+        }
+
+        // ── Environment variables (vault, excluding connector-owned keys) ──
         if !env_vars_section.is_empty() {
             prompt.push_str(&env_vars_section);
         }
@@ -602,13 +661,11 @@ impl StarpodAgent {
                  immediately with SkillUpdate — don't wait to be asked. Skills that aren't \
                  maintained become liabilities. If a skill's instructions led you astray, \
                  fix them so the next invocation succeeds.\n\n\
-                 SKILL ENVIRONMENT DECLARATIONS:\n\
-                 When creating or updating skills that interact with external APIs, declare their \
-                 environment requirements using the `env` parameter — `secrets` for API keys/tokens \
-                 (e.g. GITHUB_TOKEN, WEATHER_API_KEY), `variables` for configurable settings with \
-                 defaults (e.g. DEFAULT_ORG, MAX_RESULTS). Use UPPER_SNAKE_CASE for key names. \
-                 Only declare env when the skill genuinely needs external access — do not add env \
-                 to skills that only use built-in tools.",
+                 SKILL CONNECTOR DECLARATIONS:\n\
+                 When creating or updating skills that interact with external services, declare their \
+                 connector requirements using the `connectors` parameter — a list of connector names \
+                 (e.g. [\"github\", \"postgres\"]). Only declare connectors when the skill genuinely \
+                 needs external access — do not add connectors to skills that only use built-in tools.",
             );
         }
 
@@ -1023,6 +1080,10 @@ impl StarpodAgent {
 
         let brave_api_key = std::env::var("BRAVE_API_KEY").ok();
 
+        let connector_store = starpod_db::connectors::ConnectorStore::from_pool(
+            self.core_db.pool().clone(),
+        );
+
         let ctx = Arc::new(ToolContext {
             memory: Arc::clone(&self.memory),
             user_view,
@@ -1043,6 +1104,8 @@ impl StarpodAgent {
             memory_md_limit: config.memory.memory_md_limit,
             attachments,
             proxy_enabled: config.proxy.enabled,
+            connector_store: Some(connector_store),
+            connectors_dir: self.paths.connectors_dir.clone(),
         });
 
         Box::new(move |tool_name, input| {
@@ -2341,6 +2404,7 @@ mod tests {
             config_dir: agent_home.clone(),
             db_dir: db_dir.clone(),
             skills_dir: skills_dir.clone(),
+            connectors_dir: agent_home.join("connectors"),
             project_root: tmp.path().join("home"),
             instance_root: tmp.path().to_path_buf(),
             home_dir: tmp.path().join("home"),
@@ -2400,6 +2464,7 @@ mod tests {
             config_dir: agent_home.clone(),
             db_dir: agent_home.join("db"),
             skills_dir: skills_dir.clone(),
+            connectors_dir: agent_home.join("connectors"),
             project_root: tmp.path().join("home"),
             instance_root: tmp.path().to_path_buf(),
             home_dir: tmp.path().join("home"),
@@ -2483,7 +2548,11 @@ mod tests {
         assert!(names.contains(&"VaultList"));
         assert!(names.contains(&"VaultSet"));
         assert!(names.contains(&"VaultDelete"));
-        assert_eq!(defs.len(), 35);
+        // Connector tools
+        assert!(names.contains(&"ConnectorList"));
+        assert!(names.contains(&"ConnectorAdd"));
+        assert!(names.contains(&"ConnectorRemove"));
+        assert_eq!(defs.len(), 38);
     }
 
     #[tokio::test]
@@ -2512,6 +2581,8 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: std::path::PathBuf::new(),
         };
 
         // Test MemorySearch

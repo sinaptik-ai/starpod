@@ -826,6 +826,7 @@ mod tests {
             config_dir,
             db_dir: db_dir.clone(),
             skills_dir,
+            connectors_dir: starpod_dir.join("connectors"),
             project_root: tmp.path().join("home"),
             instance_root: tmp.path().to_path_buf(),
             home_dir: tmp.path().join("home"),

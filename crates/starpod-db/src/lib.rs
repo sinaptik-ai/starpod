@@ -33,6 +33,8 @@
 //! # }
 //! ```
 
+pub mod connectors;
+
 use std::path::Path;
 use std::str::FromStr;
 

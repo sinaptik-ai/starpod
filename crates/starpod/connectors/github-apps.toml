@@ -1,0 +1,13 @@
+name = "github-apps"
+display_name = "GitHub App"
+description = "GitHub App with fine-grained permissions and installation tokens"
+secrets = ["GITHUB_APP_PRIVATE_KEY"]
+
+[config]
+GITHUB_APP_ID = ""
+
+[oauth]
+authorize_url = "https://github.com/login/oauth/authorize"
+token_url = "https://github.com/login/oauth/access_token"
+scopes = ["repo", "read:org"]
+token_key = "GITHUB_TOKEN"

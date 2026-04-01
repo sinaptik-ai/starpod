@@ -1,0 +1,8 @@
+name = "jira"
+display_name = "Jira"
+description = "Atlassian Jira project tracking and issue management"
+secrets = ["JIRA_API_TOKEN"]
+
+[config]
+JIRA_BASE_URL = ""
+JIRA_EMAIL = ""

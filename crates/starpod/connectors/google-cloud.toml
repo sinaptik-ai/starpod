@@ -1,0 +1,8 @@
+name = "google-cloud"
+display_name = "Google Cloud"
+description = "Google Cloud Platform services including GCS, BigQuery, Cloud Run, and more"
+secrets = ["GOOGLE_APPLICATION_CREDENTIALS_JSON"]
+optional_secrets = ["GOOGLE_CLOUD_PROJECT"]
+
+[config]
+GOOGLE_CLOUD_REGION = "us-central1"

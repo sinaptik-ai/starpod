@@ -1,0 +1,7 @@
+name = "sendgrid"
+display_name = "SendGrid"
+description = "SendGrid email delivery and marketing campaigns"
+secrets = ["SENDGRID_API_KEY"]
+
+[config]
+base_url = "https://api.sendgrid.com/v3"

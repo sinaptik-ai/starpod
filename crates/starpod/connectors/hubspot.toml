@@ -1,0 +1,14 @@
+name = "hubspot"
+display_name = "HubSpot"
+description = "HubSpot CRM, marketing, and sales automation"
+secrets = ["HUBSPOT_ACCESS_TOKEN"]
+
+[config]
+base_url = "https://api.hubapi.com"
+
+[oauth]
+authorize_url = "https://app.hubspot.com/oauth/authorize"
+token_url = "https://api.hubapi.com/oauth/v1/token"
+scopes = ["crm.objects.contacts.read", "crm.objects.contacts.write"]
+token_key = "HUBSPOT_ACCESS_TOKEN"
+refresh_key = "HUBSPOT_REFRESH_TOKEN"

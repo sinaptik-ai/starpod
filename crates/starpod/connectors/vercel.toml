@@ -1,0 +1,7 @@
+name = "vercel"
+display_name = "Vercel"
+description = "Vercel deployments, domains, and serverless functions"
+secrets = ["VERCEL_TOKEN"]
+
+[config]
+base_url = "https://api.vercel.com"

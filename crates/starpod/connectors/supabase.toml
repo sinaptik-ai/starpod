@@ -1,0 +1,7 @@
+name = "supabase"
+display_name = "Supabase"
+description = "Supabase database, auth, storage, and edge functions"
+secrets = ["SUPABASE_SERVICE_ROLE_KEY"]
+
+[config]
+SUPABASE_URL = ""

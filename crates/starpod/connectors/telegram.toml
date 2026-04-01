@@ -1,0 +1,4 @@
+name = "telegram"
+display_name = "Telegram"
+description = "Telegram Bot API for sending and receiving messages"
+secrets = ["TELEGRAM_BOT_TOKEN"]

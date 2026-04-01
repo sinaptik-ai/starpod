@@ -1,0 +1,7 @@
+name = "mongodb"
+display_name = "MongoDB"
+description = "MongoDB database access and management"
+multi_instance = true
+secrets = ["MONGODB_URI"]
+
+[config]

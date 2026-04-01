@@ -1,0 +1,8 @@
+name = "twilio"
+display_name = "Twilio"
+description = "Twilio SMS, voice, and communication APIs"
+secrets = ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"]
+optional_secrets = ["TWILIO_PHONE_NUMBER"]
+
+[config]
+base_url = "https://api.twilio.com/2010-04-01"

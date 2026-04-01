@@ -1,0 +1,7 @@
+name = "digitalocean"
+display_name = "DigitalOcean"
+description = "DigitalOcean droplets, databases, and app platform"
+secrets = ["DIGITALOCEAN_TOKEN"]
+
+[config]
+base_url = "https://api.digitalocean.com/v2"

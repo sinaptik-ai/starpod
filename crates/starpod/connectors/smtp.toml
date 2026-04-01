@@ -1,0 +1,10 @@
+name = "smtp"
+display_name = "SMTP"
+description = "Send emails via SMTP"
+secrets = ["SMTP_PASSWORD"]
+
+[config]
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = "587"
+SMTP_FROM = ""
+SMTP_USERNAME = ""

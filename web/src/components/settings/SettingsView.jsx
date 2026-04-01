@@ -19,6 +19,7 @@ import CompactionTab from './CompactionTab'
 import CostsTab from './CostsTab'
 import VaultTab from './VaultTab'
 import AttachmentsTab from './AttachmentsTab'
+import ConnectorsTab from './ConnectorsTab'
 
 // 14px stroke-based icons for the sidebar
 const ico = (d) => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">{d}</svg>
@@ -41,6 +42,7 @@ const icons = {
   users:     ico(<><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>),
   vault:     ico(<><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></>),
   attachments: ico(<><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></>),
+  connectors: ico(<><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M6 8H5a4 4 0 0 0 0 8h1"/><line x1="8" y1="12" x2="16" y2="12"/></>),
 }
 
 const tabGroups = [
@@ -71,6 +73,7 @@ const tabGroups = [
       { id: 'browser', label: 'Browser (beta)' },
       { id: 'channels', label: 'Channels' },
       { id: 'skills', label: 'Skills' },
+      { id: 'connectors', label: 'Connectors' },
       { id: 'vault', label: 'Vault' },
       { id: 'costs', label: 'Costs' },
       { id: 'users', label: 'Users' },
@@ -96,6 +99,7 @@ function TabContent({ tab }) {
     case 'browser': return <BrowserTab />
     case 'channels': return <ChannelsTab />
     case 'skills': return <SkillsTab />
+    case 'connectors': return <ConnectorsTab />
     case 'vault': return <VaultTab />
     case 'costs': return <CostsTab />
     case 'users': return <UsersTab />

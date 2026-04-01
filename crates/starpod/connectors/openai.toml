@@ -1,0 +1,8 @@
+name = "openai"
+display_name = "OpenAI"
+description = "OpenAI API for GPT, DALL-E, Whisper, and embeddings"
+secrets = ["OPENAI_API_KEY"]
+optional_secrets = ["OPENAI_ORG_ID"]
+
+[config]
+base_url = "https://api.openai.com/v1"

@@ -10,6 +10,8 @@
 //! - **Skills** — CRUD for self-extension skills
 //! - **Cron** — schedule and manage recurring/one-shot jobs
 //! - **Web** — search the internet via Brave Search and fetch web pages
+//! - **Connectors** — manage service-level authentication connectors (list, add, remove)
+//! - **Vault** — read, write, list, and delete encrypted credentials
 //!
 //! Each tool is defined as a [`CustomToolDefinition`] (JSON schema sent to Claude)
 //! and handled by [`handle_custom_tool`], which dispatches on tool name.
@@ -29,8 +31,9 @@ use starpod_core::config::InternetConfig;
 use starpod_core::Attachment;
 use starpod_cron::store::epoch_to_rfc3339;
 use starpod_cron::{CronStore, RunStatus};
+use starpod_db::connectors::{ConnectorRow, ConnectorStore};
 use starpod_memory::{MemoryStore, UserMemoryView};
-use starpod_skills::{SkillEnv, SkillStore};
+use starpod_skills::SkillStore;
 
 /// Shared context for custom tool handlers.
 ///
@@ -71,6 +74,18 @@ pub struct ToolContext {
     pub attachments: Arc<tokio::sync::Mutex<Vec<Attachment>>>,
     /// Whether the secret proxy is enabled (controls opaque token generation).
     pub proxy_enabled: bool,
+    /// Connector store for CRUD operations on service-level connectors.
+    ///
+    /// `None` in tests or when the core database is unavailable. When `None`,
+    /// all connector tools (ConnectorList, ConnectorAdd, ConnectorRemove)
+    /// return `None` (falling through to the "missing parameters" error path).
+    pub connector_store: Option<ConnectorStore>,
+    /// Path to `.starpod/connectors/` directory containing `.toml` templates.
+    ///
+    /// Used by `ConnectorAdd` to resolve template definitions when creating
+    /// new connectors. Templates are consumed once at setup time — connectors
+    /// reference vault keys directly at runtime.
+    pub connectors_dir: PathBuf,
 }
 
 /// Build the JSON schema definitions for all Starpod custom tools.
@@ -245,7 +260,7 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
         },
         CustomToolDefinition {
             name: "SkillCreate".into(),
-            description: "Create a new AgentSkills-compatible skill. Skills are SKILL.md files with YAML frontmatter (name, description, env) and a markdown body containing instructions.".into(),
+            description: "Create a new AgentSkills-compatible skill. Skills are SKILL.md files with YAML frontmatter (name, description, connectors) and a markdown body containing instructions.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -261,33 +276,10 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
                         "type": "string",
                         "description": "Markdown instructions for the skill (the body after frontmatter)"
                     },
-                    "env": {
-                        "type": "object",
-                        "description": "Environment requirements. Declare secrets (API keys/tokens) and variables (configurable settings with defaults) the skill needs. Only include when the skill needs external API access or user-configurable settings.",
-                        "properties": {
-                            "secrets": {
-                                "type": "object",
-                                "description": "Secret keys the skill needs (e.g. API tokens). Keys are env var names, values are {required: bool, description: string}.",
-                                "additionalProperties": {
-                                    "type": "object",
-                                    "properties": {
-                                        "required": { "type": "boolean", "default": true },
-                                        "description": { "type": "string" }
-                                    }
-                                }
-                            },
-                            "variables": {
-                                "type": "object",
-                                "description": "Configurable variables with optional defaults. Keys are env var names, values are {default: string, description: string}.",
-                                "additionalProperties": {
-                                    "type": "object",
-                                    "properties": {
-                                        "default": { "type": "string" },
-                                        "description": { "type": "string" }
-                                    }
-                                }
-                            }
-                        }
+                    "connectors": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Connector names this skill requires (e.g. [\"github\", \"postgres\"])"
                     }
                 },
                 "required": ["name", "description", "body"]
@@ -295,7 +287,7 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
         },
         CustomToolDefinition {
             name: "SkillUpdate".into(),
-            description: "Update an existing skill's description, instructions, and/or env requirements.".into(),
+            description: "Update an existing skill's description, instructions, and/or connector requirements.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -311,31 +303,10 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
                         "type": "string",
                         "description": "New markdown instructions for the skill"
                     },
-                    "env": {
-                        "type": "object",
-                        "description": "Updated environment requirements. Declare secrets and variables the skill needs.",
-                        "properties": {
-                            "secrets": {
-                                "type": "object",
-                                "additionalProperties": {
-                                    "type": "object",
-                                    "properties": {
-                                        "required": { "type": "boolean", "default": true },
-                                        "description": { "type": "string" }
-                                    }
-                                }
-                            },
-                            "variables": {
-                                "type": "object",
-                                "additionalProperties": {
-                                    "type": "object",
-                                    "properties": {
-                                        "default": { "type": "string" },
-                                        "description": { "type": "string" }
-                                    }
-                                }
-                            }
-                        }
+                    "connectors": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Connector names this skill requires (e.g. [\"github\", \"postgres\"])"
                     }
                 },
                 "required": ["name", "description", "body"]
@@ -716,7 +687,7 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
         },
         CustomToolDefinition {
             name: "VaultList".into(),
-            description: "List all keys in the vault with metadata (is_secret, allowed_hosts). Does not return decrypted values.".into(),
+            description: "List all keys in the vault with metadata (allowed_hosts). Does not return decrypted values.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {}
@@ -735,10 +706,6 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
                     "value": {
                         "type": "string",
                         "description": "The secret value to store"
-                    },
-                    "is_secret": {
-                        "type": "boolean",
-                        "description": "Whether this value should be opaque-ified when proxy is enabled (default: true)"
                     },
                     "allowed_hosts": {
                         "type": "array",
@@ -763,6 +730,56 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
                 "required": ["key"]
             }),
         },
+        // ── Connector tools ─────────────────────────────────────────
+        CustomToolDefinition {
+            name: "ConnectorList".into(),
+            description: "List all configured connectors with their status, secrets, and config.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        CustomToolDefinition {
+            name: "ConnectorAdd".into(),
+            description: "Create a connector from a template. For multi-instance templates (e.g. postgres), provide a unique instance name. Secrets must already be stored in the vault.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "description": "Template type (e.g. 'github', 'postgres', 'stripe')"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Instance name. Required for multi-instance types (e.g. 'analytics-db'). For single-instance types, defaults to the type name."
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "What this connector is for (e.g. 'Production analytics warehouse')"
+                    },
+                    "config": {
+                        "type": "object",
+                        "additionalProperties": { "type": "string" },
+                        "description": "Config overrides (e.g. {\"base_url\": \"https://api.github.com\"})"
+                    }
+                },
+                "required": ["type"]
+            }),
+        },
+        CustomToolDefinition {
+            name: "ConnectorRemove".into(),
+            description: "Delete a connector by name. Does not remove its vault secrets.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The connector name to remove"
+                    }
+                },
+                "required": ["name"]
+            }),
+        },
     ]
 }
 
@@ -775,13 +792,6 @@ pub fn custom_tool_definitions() -> Vec<CustomToolDefinition> {
 /// - Contain `..` traversal
 /// - Are absolute paths
 ///
-/// Parse an optional `env` JSON value from a tool input into a `SkillEnv`.
-fn parse_env_from_tool_input(value: Option<&serde_json::Value>) -> Option<SkillEnv> {
-    value
-        .and_then(|v| serde_json::from_value::<SkillEnv>(v.clone()).ok())
-        .filter(|env| !env.is_empty())
-}
-
 fn validate_sandbox_path(relative: &str, home_dir: &Path) -> std::result::Result<PathBuf, String> {
     // Reject absolute paths
     if relative.starts_with('/') || relative.starts_with('\\') {
@@ -909,6 +919,7 @@ pub async fn handle_custom_tool(
                                   • Files: FileRead, FileWrite, FileList, FileDelete\n\
                                   • Skills: SkillCreate, SkillUpdate, SkillDelete, SkillList\n\
                                   • Cron: CronAdd, CronList, CronRemove, CronUpdate\n\
+                                  • Connectors: ConnectorList, ConnectorAdd, ConnectorRemove\n\
                                   • Environment: EnvGet".to_string(),
                         is_error: true,
                         raw_content: None,
@@ -1183,33 +1194,31 @@ pub async fn handle_custom_tool(
                     #[cfg(feature = "secret-proxy")]
                     {
                         if ctx.proxy_enabled {
-                            let entry = vault.get_entry(key).await.ok().flatten();
-                            let is_secret = entry.as_ref().map(|e| e.is_secret).unwrap_or(true);
-
-                            if is_secret {
-                                let hosts = entry
-                                    .as_ref()
-                                    .and_then(|e| e.allowed_hosts.clone())
-                                    .unwrap_or_default();
-                                match starpod_vault::opaque::encode_opaque_token(
-                                    vault.cipher(),
-                                    &value,
-                                    &hosts,
-                                ) {
-                                    Ok(token) => {
-                                        return Some(ToolResult {
-                                            content: token,
-                                            is_error: false,
-                                            raw_content: None,
-                                        })
-                                    }
-                                    Err(e) => {
-                                        return Some(ToolResult {
-                                            content: format!("Failed to create opaque token: {e}"),
-                                            is_error: true,
-                                            raw_content: None,
-                                        })
-                                    }
+                            let hosts = vault
+                                .get_entry(key)
+                                .await
+                                .ok()
+                                .flatten()
+                                .and_then(|e| e.allowed_hosts)
+                                .unwrap_or_default();
+                            match starpod_vault::opaque::encode_opaque_token(
+                                vault.cipher(),
+                                &value,
+                                &hosts,
+                            ) {
+                                Ok(token) => {
+                                    return Some(ToolResult {
+                                        content: token,
+                                        is_error: false,
+                                        raw_content: None,
+                                    })
+                                }
+                                Err(e) => {
+                                    return Some(ToolResult {
+                                        content: format!("Failed to create opaque token: {e}"),
+                                        is_error: true,
+                                        raw_content: None,
+                                    })
                                 }
                             }
                         }
@@ -1246,7 +1255,6 @@ pub async fn handle_custom_tool(
                         .map(|e| {
                             serde_json::json!({
                                 "key": e.key,
-                                "is_secret": e.is_secret,
                                 "allowed_hosts": e.allowed_hosts,
                                 "updated_at": e.updated_at,
                             })
@@ -1269,16 +1277,12 @@ pub async fn handle_custom_tool(
         "VaultSet" => {
             let key = input.get("key")?.as_str()?;
             let value = input.get("value")?.as_str()?;
-            let is_secret = input
-                .get("is_secret")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
             let allowed_hosts: Option<Vec<String>> = input
                 .get("allowed_hosts")
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
             let vault = ctx.vault.as_ref()?;
 
-            debug!(key = %key, is_secret = %is_secret, "VaultSet");
+            debug!(key = %key, "VaultSet");
 
             if starpod_vault::is_system_key(key) {
                 return Some(ToolResult {
@@ -1293,10 +1297,9 @@ pub async fn handle_custom_tool(
                 allowed_hosts.or_else(|| starpod_vault::known_hosts::default_hosts_for_key(key));
 
             match vault
-                .set_with_meta(
+                .set_with_hosts(
                     key,
                     value,
-                    is_secret,
                     hosts.as_deref(),
                     ctx.user_id.as_deref(),
                 )
@@ -1609,13 +1612,15 @@ pub async fn handle_custom_tool(
             let name = input.get("name")?.as_str()?;
             let description = input.get("description")?.as_str()?;
             let body = input.get("body")?.as_str()?;
-            let env = parse_env_from_tool_input(input.get("env"));
+            let connectors: Option<Vec<String>> = input
+                .get("connectors")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
 
             debug!(skill = %name, "SkillCreate");
 
             match ctx
                 .skills
-                .create(name, description, None, env.as_ref(), body)
+                .create(name, description, None, connectors.as_deref(), body)
             {
                 Ok(()) => Some(ToolResult {
                     content: format!("Created skill '{}'.", name),
@@ -1634,13 +1639,15 @@ pub async fn handle_custom_tool(
             let name = input.get("name")?.as_str()?;
             let description = input.get("description")?.as_str()?;
             let body = input.get("body")?.as_str()?;
-            let env = parse_env_from_tool_input(input.get("env"));
+            let connectors: Option<Vec<String>> = input
+                .get("connectors")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
 
             debug!(skill = %name, "SkillUpdate");
 
             match ctx
                 .skills
-                .update(name, description, None, env.as_ref(), body)
+                .update(name, description, None, connectors.as_deref(), body)
             {
                 Ok(()) => Some(ToolResult {
                     content: format!("Updated skill '{}'.", name),
@@ -2597,6 +2604,217 @@ pub async fn handle_custom_tool(
             }
         }
 
+        // ── Connector tools ──────────────────────────────────────────────
+        "ConnectorList" => {
+            let store = ctx.connector_store.as_ref()?;
+
+            debug!("ConnectorList");
+
+            match store.list().await {
+                Ok(rows) => {
+                    let list: Vec<serde_json::Value> = rows
+                        .iter()
+                        .map(|r| {
+                            json!({
+                                "name": r.name,
+                                "type": r.connector_type,
+                                "display_name": r.display_name,
+                                "description": r.description,
+                                "auth_method": r.auth_method,
+                                "secrets": r.secrets,
+                                "config": r.config,
+                                "status": r.status,
+                            })
+                        })
+                        .collect();
+                    Some(ToolResult {
+                        content: serde_json::to_string_pretty(&list).unwrap_or_default(),
+                        is_error: false,
+                        raw_content: None,
+                    })
+                }
+                Err(e) => Some(ToolResult {
+                    content: format!("Connector error: {e}"),
+                    is_error: true,
+                    raw_content: None,
+                }),
+            }
+        }
+
+        "ConnectorAdd" => {
+            let store = ctx.connector_store.as_ref()?;
+            let connector_type = input.get("type")?.as_str()?;
+
+            debug!(connector_type = %connector_type, "ConnectorAdd");
+
+            // Load the template to validate the type and get defaults
+            let template_path = ctx.connectors_dir.join(format!("{connector_type}.toml"));
+            let template = match starpod_core::connector_template::load_template(&template_path) {
+                Ok(t) => t,
+                Err(_) => {
+                    // Try loading all templates to suggest available ones
+                    let available = starpod_core::connector_template::load_all_templates(&ctx.connectors_dir)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|t| t.name)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return Some(ToolResult {
+                        content: format!(
+                            "Unknown connector type '{connector_type}'. Available templates: {available}"
+                        ),
+                        is_error: true,
+                        raw_content: None,
+                    });
+                }
+            };
+
+            // Determine the instance name
+            let instance_name = if template.multi_instance {
+                match input.get("name").and_then(|v| v.as_str()) {
+                    Some(n) => n.to_string(),
+                    None => {
+                        return Some(ToolResult {
+                            content: format!(
+                                "Connector type '{}' supports multiple instances — you must provide a 'name' \
+                                 (e.g. 'analytics-db', 'prod-redis').",
+                                connector_type
+                            ),
+                            is_error: true,
+                            raw_content: None,
+                        });
+                    }
+                }
+            } else {
+                input
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(connector_type)
+                    .to_string()
+            };
+
+            // Check if connector already exists
+            match store.get(&instance_name).await {
+                Ok(Some(_)) => {
+                    return Some(ToolResult {
+                        content: format!("Connector '{}' already exists.", instance_name),
+                        is_error: true,
+                        raw_content: None,
+                    });
+                }
+                Err(e) => {
+                    return Some(ToolResult {
+                        content: format!("Connector error: {e}"),
+                        is_error: true,
+                        raw_content: None,
+                    });
+                }
+                Ok(None) => {}
+            }
+
+            // Resolve vault key names: for multi-instance, namespace as INSTANCE_KEY
+            let resolve_key = |logical: &str| -> String {
+                if template.multi_instance {
+                    let prefix = instance_name.to_uppercase().replace('-', "_");
+                    format!("{prefix}_{logical}")
+                } else {
+                    logical.to_string()
+                }
+            };
+
+            let resolved_secrets: Vec<String> = template.secrets.iter().map(|s| resolve_key(s)).collect();
+
+            // Merge config: template defaults + user overrides
+            let mut merged_config = template.config.clone();
+            if let Some(overrides) = input.get("config").and_then(|v| v.as_object()) {
+                for (k, v) in overrides {
+                    if let Some(val) = v.as_str() {
+                        merged_config.insert(k.clone(), val.to_string());
+                    }
+                }
+            }
+
+            let description = input
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&template.description);
+
+            // Determine auth method from template
+            let auth_method = if template.oauth.is_some() && template.secrets.is_empty() {
+                "oauth"
+            } else {
+                "token"
+            };
+
+            let row = ConnectorRow {
+                name: instance_name.clone(),
+                connector_type: connector_type.to_string(),
+                display_name: template.display_name.clone(),
+                description: description.to_string(),
+                auth_method: auth_method.to_string(),
+                secrets: resolved_secrets.clone(),
+                config: merged_config,
+                oauth_token_url: template.oauth.as_ref().map(|o| o.token_url.clone()),
+                oauth_token_key: template.oauth.as_ref().map(|o| resolve_key(&o.token_key)),
+                oauth_refresh_key: template
+                    .oauth
+                    .as_ref()
+                    .and_then(|o| o.refresh_key.as_ref().map(|k| resolve_key(k))),
+                oauth_expires_at: None,
+                status: "pending".to_string(),
+                created_at: String::new(),
+                updated_at: String::new(),
+            };
+
+            match store.insert(&row).await {
+                Ok(()) => {
+                    let mut msg = format!("Connector '{}' created (type: {}).", instance_name, connector_type);
+                    if !resolved_secrets.is_empty() {
+                        msg.push_str(&format!(
+                            "\nRequired vault keys: {}",
+                            resolved_secrets.join(", ")
+                        ));
+                        msg.push_str("\nStore these secrets with VaultSet to activate the connector.");
+                    }
+                    Some(ToolResult {
+                        content: msg,
+                        is_error: false,
+                        raw_content: None,
+                    })
+                }
+                Err(e) => Some(ToolResult {
+                    content: format!("Connector error: {e}"),
+                    is_error: true,
+                    raw_content: None,
+                }),
+            }
+        }
+
+        "ConnectorRemove" => {
+            let store = ctx.connector_store.as_ref()?;
+            let name = input.get("name")?.as_str()?;
+
+            debug!(connector = %name, "ConnectorRemove");
+
+            match store.delete(name).await {
+                Ok(true) => Some(ToolResult {
+                    content: format!("Connector '{}' removed. Vault secrets were not deleted — remove them manually with VaultDelete if needed.", name),
+                    is_error: false,
+                    raw_content: None,
+                }),
+                Ok(false) => Some(ToolResult {
+                    content: format!("Connector '{}' not found.", name),
+                    is_error: true,
+                    raw_content: None,
+                }),
+                Err(e) => Some(ToolResult {
+                    content: format!("Connector error: {e}"),
+                    is_error: true,
+                    raw_content: None,
+                }),
+            }
+        }
+
         _ => None,
     }
 }
@@ -2999,6 +3217,8 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: PathBuf::new(),
         };
 
         std::env::set_var("STARPOD_ENVGET_TEST_VAR", "test_value_42");
@@ -3051,6 +3271,8 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: PathBuf::new(),
         };
 
         let result = handle_custom_tool(
@@ -3101,6 +3323,8 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: PathBuf::new(),
         };
 
         // System keys should be blocked
@@ -3173,6 +3397,8 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: PathBuf::new(),
         };
 
         // Set an env var and read it via EnvGet — exercises the vault audit path
@@ -3232,6 +3458,8 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: PathBuf::new(),
         };
 
         // System key should be blocked before reaching the audit code
@@ -3287,6 +3515,8 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: PathBuf::new(),
         };
 
         // Write a file
@@ -3351,6 +3581,8 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: PathBuf::new(),
         };
 
         let result = handle_custom_tool(&ctx, "FileList", &serde_json::json!({}))
@@ -3404,6 +3636,8 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: PathBuf::new(),
         };
 
         let result = handle_custom_tool(
@@ -3458,6 +3692,8 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: PathBuf::new(),
         };
 
         let result = handle_custom_tool(
@@ -3509,6 +3745,8 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: PathBuf::new(),
         };
 
         let result = handle_custom_tool(
@@ -3562,6 +3800,8 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: PathBuf::new(),
         };
 
         // Write to standard folder — no warning
@@ -3635,6 +3875,8 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: PathBuf::new(),
         };
 
         // Deep nested path in standard folder — no warning
@@ -3715,6 +3957,8 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: PathBuf::new(),
         };
 
         // Standard folder writes — no warning
@@ -3812,6 +4056,8 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: PathBuf::new(),
         };
 
         // List root — should nudge about the loose file
@@ -3879,6 +4125,8 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: PathBuf::new(),
         };
 
         // List root — clean, no nudge
@@ -3932,6 +4180,8 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: PathBuf::new(),
         };
 
         // Traversal error — should NOT contain a warning
@@ -4004,6 +4254,8 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: PathBuf::new(),
         }
     }
 
@@ -4431,6 +4683,8 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: PathBuf::new(),
         }
     }
 
@@ -4610,6 +4864,8 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: PathBuf::new(),
         }
     }
 
@@ -5004,6 +5260,8 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: PathBuf::new(),
         }
     }
 
@@ -5079,85 +5337,7 @@ mod tests {
         assert!(result.is_none());
     }
 
-    // ── parse_env_from_tool_input ──────────────────────────────────
-
-    #[test]
-    fn parse_env_none_when_absent() {
-        assert!(parse_env_from_tool_input(None).is_none());
-    }
-
-    #[test]
-    fn parse_env_none_when_null() {
-        let v = json!(null);
-        assert!(parse_env_from_tool_input(Some(&v)).is_none());
-    }
-
-    #[test]
-    fn parse_env_none_when_empty_object() {
-        let v = json!({});
-        assert!(parse_env_from_tool_input(Some(&v)).is_none());
-    }
-
-    #[test]
-    fn parse_env_none_when_empty_secrets_and_variables() {
-        let v = json!({"secrets": {}, "variables": {}});
-        assert!(parse_env_from_tool_input(Some(&v)).is_none());
-    }
-
-    #[test]
-    fn parse_env_valid_secrets_only() {
-        let v = json!({
-            "secrets": {
-                "GITHUB_TOKEN": {"required": true, "description": "PAT"}
-            }
-        });
-        let env = parse_env_from_tool_input(Some(&v)).unwrap();
-        assert_eq!(env.secrets.len(), 1);
-        assert!(env.secrets["GITHUB_TOKEN"].required);
-        assert_eq!(env.secrets["GITHUB_TOKEN"].description, "PAT");
-        assert!(env.variables.is_empty());
-    }
-
-    #[test]
-    fn parse_env_valid_variables_only() {
-        let v = json!({
-            "variables": {
-                "DEFAULT_ORG": {"default": "acme", "description": "Default org"}
-            }
-        });
-        let env = parse_env_from_tool_input(Some(&v)).unwrap();
-        assert!(env.secrets.is_empty());
-        assert_eq!(env.variables.len(), 1);
-        assert_eq!(
-            env.variables["DEFAULT_ORG"].default.as_deref(),
-            Some("acme")
-        );
-    }
-
-    #[test]
-    fn parse_env_mixed_secrets_and_variables() {
-        let v = json!({
-            "secrets": {
-                "API_KEY": {"required": true, "description": "key"},
-                "OPTIONAL_KEY": {"required": false, "description": "optional"}
-            },
-            "variables": {
-                "TIMEOUT": {"default": "30", "description": "timeout secs"}
-            }
-        });
-        let env = parse_env_from_tool_input(Some(&v)).unwrap();
-        assert_eq!(env.secrets.len(), 2);
-        assert_eq!(env.variables.len(), 1);
-        assert!(!env.secrets["OPTIONAL_KEY"].required);
-    }
-
-    #[test]
-    fn parse_env_ignores_invalid_json_structure() {
-        let v = json!("not an object");
-        assert!(parse_env_from_tool_input(Some(&v)).is_none());
-    }
-
-    // ── SkillCreate/SkillUpdate with env ──────────────────────────
+    // ── SkillCreate/SkillUpdate with connectors ─────────────────────
 
     async fn skill_tool_context(tmp: &TempDir) -> ToolContext {
         let memory = Arc::new(
@@ -5193,11 +5373,13 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: PathBuf::new(),
         }
     }
 
     #[tokio::test]
-    async fn skill_create_with_env() {
+    async fn skill_create_with_connectors() {
         let tmp = TempDir::new().unwrap();
         let ctx = skill_tool_context(&tmp).await;
 
@@ -5205,14 +5387,7 @@ mod tests {
             "name": "test-skill",
             "description": "A test skill",
             "body": "Do the thing.",
-            "env": {
-                "secrets": {
-                    "MY_TOKEN": {"required": true, "description": "Auth token"}
-                },
-                "variables": {
-                    "MAX_ITEMS": {"default": "10", "description": "Max items to process"}
-                }
-            }
+            "connectors": ["github", "postgres"]
         });
 
         let result = handle_custom_tool(&ctx, "SkillCreate", &input)
@@ -5221,23 +5396,21 @@ mod tests {
         assert!(!result.is_error);
         assert!(result.content.contains("Created"));
 
-        // Verify env persisted
+        // Verify connectors persisted
         let skill = ctx.skills.get("test-skill").unwrap().unwrap();
-        let env = skill.env.unwrap();
-        assert!(env.secrets.contains_key("MY_TOKEN"));
-        assert!(env.secrets["MY_TOKEN"].required);
-        assert!(env.variables.contains_key("MAX_ITEMS"));
-        assert_eq!(env.variables["MAX_ITEMS"].default.as_deref(), Some("10"));
+        let conns = skill.connectors.unwrap();
+        assert!(conns.contains(&"github".to_string()));
+        assert!(conns.contains(&"postgres".to_string()));
     }
 
     #[tokio::test]
-    async fn skill_create_without_env() {
+    async fn skill_create_without_connectors() {
         let tmp = TempDir::new().unwrap();
         let ctx = skill_tool_context(&tmp).await;
 
         let input = json!({
             "name": "plain-skill",
-            "description": "No env needed",
+            "description": "No connectors needed",
             "body": "Just do it."
         });
 
@@ -5247,18 +5420,18 @@ mod tests {
         assert!(!result.is_error);
 
         let skill = ctx.skills.get("plain-skill").unwrap().unwrap();
-        assert!(skill.env.is_none());
+        assert!(skill.connectors.is_none());
     }
 
     #[tokio::test]
-    async fn skill_update_adds_env() {
+    async fn skill_update_adds_connectors() {
         let tmp = TempDir::new().unwrap();
         let ctx = skill_tool_context(&tmp).await;
 
-        // Create without env
+        // Create without connectors
         let create_input = json!({
             "name": "evolving-skill",
-            "description": "Will get env later",
+            "description": "Will get connectors later",
             "body": "v1"
         });
         handle_custom_tool(&ctx, "SkillCreate", &create_input)
@@ -5269,19 +5442,15 @@ mod tests {
             .get("evolving-skill")
             .unwrap()
             .unwrap()
-            .env
+            .connectors
             .is_none());
 
-        // Update to add env
+        // Update to add connectors
         let update_input = json!({
             "name": "evolving-skill",
-            "description": "Now has env",
+            "description": "Now has connectors",
             "body": "v2",
-            "env": {
-                "secrets": {
-                    "NEW_KEY": {"required": true, "description": "Added later"}
-                }
-            }
+            "connectors": ["slack"]
         });
         let result = handle_custom_tool(&ctx, "SkillUpdate", &update_input)
             .await
@@ -5289,8 +5458,8 @@ mod tests {
         assert!(!result.is_error);
 
         let skill = ctx.skills.get("evolving-skill").unwrap().unwrap();
-        assert!(skill.env.is_some());
-        assert!(skill.env.unwrap().secrets.contains_key("NEW_KEY"));
+        assert!(skill.connectors.is_some());
+        assert!(skill.connectors.unwrap().contains(&"slack".to_string()));
     }
 
     // ── scan_memory_content tests ─────────────────────────────────
@@ -5465,6 +5634,8 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: PathBuf::new(),
         }
     }
 
@@ -5709,6 +5880,8 @@ mod tests {
             memory_md_limit: 8_000,
             attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             proxy_enabled: false,
+            connector_store: None,
+            connectors_dir: PathBuf::new(),
         };
 
         (ctx, vault)
@@ -5794,33 +5967,10 @@ mod tests {
         assert!(result.content.contains("api.github.com"));
 
         let entry = vault.get_entry("GITHUB_TOKEN").await.unwrap().unwrap();
-        assert!(entry.is_secret);
         assert_eq!(
             entry.allowed_hosts,
             Some(vec!["api.github.com".to_string()])
         );
-    }
-
-    #[tokio::test]
-    async fn vault_set_respects_is_secret_false() {
-        let tmp = TempDir::new().unwrap();
-        let (ctx, vault) = vault_ctx(&tmp).await;
-
-        let result = handle_custom_tool(
-            &ctx,
-            "VaultSet",
-            &serde_json::json!({
-                "key": "SENTRY_DSN",
-                "value": "https://sentry.io/123",
-                "is_secret": false
-            }),
-        )
-        .await
-        .unwrap();
-        assert!(!result.is_error);
-
-        let entry = vault.get_entry("SENTRY_DSN").await.unwrap().unwrap();
-        assert!(!entry.is_secret);
     }
 
     #[tokio::test]
@@ -5889,10 +6039,9 @@ mod tests {
         ctx.proxy_enabled = true;
 
         vault
-            .set_with_meta(
+            .set_with_hosts(
                 "TOKEN",
                 "real-secret",
-                true,
                 Some(&["api.x.com".into()]),
                 None,
             )
@@ -5918,13 +6067,13 @@ mod tests {
 
     #[cfg(feature = "secret-proxy")]
     #[tokio::test]
-    async fn vault_get_returns_plaintext_for_non_secret_when_proxy_enabled() {
+    async fn vault_get_returns_opaque_for_all_keys_when_proxy_enabled() {
         let tmp = TempDir::new().unwrap();
         let (mut ctx, vault) = vault_ctx(&tmp).await;
         ctx.proxy_enabled = true;
 
         vault
-            .set_with_meta("CONFIG_VAR", "plain-value", false, None, None)
+            .set("CONFIG_VAR", "plain-value", None)
             .await
             .unwrap();
 
@@ -5933,8 +6082,12 @@ mod tests {
                 .await
                 .unwrap();
         assert!(!result.is_error);
-        // Non-secret should be plaintext even with proxy on
-        assert_eq!(result.content, "plain-value");
+        // Everything in vault is secret — should be opaque when proxy on
+        assert!(
+            result.content.starts_with("starpod:v1:"),
+            "Expected opaque token, got: {}",
+            result.content
+        );
     }
 
     #[tokio::test]
@@ -5942,7 +6095,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let (ctx, vault) = vault_ctx(&tmp).await;
         vault
-            .set_with_meta("KEY", "v", false, Some(&["h.com".into()]), None)
+            .set_with_hosts("KEY", "v", Some(&["h.com".into()]), None)
             .await
             .unwrap();
 
@@ -5954,7 +6107,6 @@ mod tests {
         let parsed: Vec<serde_json::Value> = serde_json::from_str(&result.content).unwrap();
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0]["key"], "KEY");
-        assert_eq!(parsed[0]["is_secret"], false);
         assert_eq!(parsed[0]["allowed_hosts"][0], "h.com");
     }
 
@@ -5983,6 +6135,353 @@ mod tests {
                 "custom.api.com".to_string(),
                 "backup.api.com".to_string()
             ])
+        );
+    }
+
+    // ── Connector tool tests ────────────────────────────────────────────
+
+    /// Helper that builds a `ToolContext` with a real `ConnectorStore` and a
+    /// temp directory for connector template `.toml` files.
+    async fn connector_tool_context(tmp: &TempDir) -> (ToolContext, ConnectorStore) {
+        let memory = Arc::new(
+            starpod_memory::MemoryStore::new(
+                &tmp.path().join("agent"),
+                &tmp.path().join("agent").join("config"),
+                &tmp.path().join("db"),
+            )
+            .await
+            .unwrap(),
+        );
+        let skills = Arc::new(SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let core_db = starpod_db::CoreDb::in_memory().await.unwrap();
+        let cron = Arc::new(starpod_cron::CronStore::from_pool(core_db.pool().clone()));
+        let connector_store = ConnectorStore::from_pool(core_db.pool().clone());
+
+        let connectors_dir = tmp.path().join("connectors");
+        std::fs::create_dir_all(&connectors_dir).unwrap();
+
+        // Write a simple connector template
+        std::fs::write(
+            connectors_dir.join("github.toml"),
+            r#"name = "github"
+display_name = "GitHub"
+description = "GitHub access"
+secrets = ["GITHUB_TOKEN"]
+"#,
+        )
+        .unwrap();
+
+        // Write a multi-instance connector template
+        std::fs::write(
+            connectors_dir.join("postgres.toml"),
+            r#"name = "postgres"
+display_name = "PostgreSQL"
+description = "PostgreSQL database"
+multi_instance = true
+secrets = ["DATABASE_URL"]
+"#,
+        )
+        .unwrap();
+
+        let ctx = ToolContext {
+            memory,
+            user_view: None,
+            skills,
+            cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: false,
+            browser_cdp_url: None,
+            user_tz: None,
+            home_dir: tmp.path().to_path_buf(),
+            agent_home: tmp.path().join(".starpod"),
+            user_id: None,
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
+            vault: None,
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            proxy_enabled: false,
+            connector_store: Some(connector_store.clone()),
+            connectors_dir,
+        };
+        (ctx, connector_store)
+    }
+
+    #[tokio::test]
+    async fn connector_list_empty() {
+        let tmp = TempDir::new().unwrap();
+        let (ctx, _store) = connector_tool_context(&tmp).await;
+
+        let result = handle_custom_tool(&ctx, "ConnectorList", &json!({}))
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(&result.content).unwrap();
+        assert!(parsed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn connector_list_returns_connectors() {
+        let tmp = TempDir::new().unwrap();
+        let (ctx, store) = connector_tool_context(&tmp).await;
+
+        // Insert a connector directly via the store
+        store
+            .insert(&ConnectorRow {
+                name: "github".into(),
+                connector_type: "github".into(),
+                display_name: "GitHub".into(),
+                description: "GitHub access".into(),
+                auth_method: "token".into(),
+                secrets: vec!["GITHUB_TOKEN".into()],
+                config: std::collections::HashMap::new(),
+                oauth_token_url: None,
+                oauth_token_key: None,
+                oauth_refresh_key: None,
+                oauth_expires_at: None,
+                status: "pending".into(),
+                created_at: String::new(),
+                updated_at: String::new(),
+            })
+            .await
+            .unwrap();
+
+        let result = handle_custom_tool(&ctx, "ConnectorList", &json!({}))
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(&result.content).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0]["name"], "github");
+        assert_eq!(parsed[0]["type"], "github");
+        assert_eq!(parsed[0]["display_name"], "GitHub");
+    }
+
+    #[tokio::test]
+    async fn connector_add_simple() {
+        let tmp = TempDir::new().unwrap();
+        let (ctx, store) = connector_tool_context(&tmp).await;
+
+        let result = handle_custom_tool(
+            &ctx,
+            "ConnectorAdd",
+            &json!({"type": "github"}),
+        )
+        .await
+        .unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains("github"));
+        assert!(result.content.contains("Created") || result.content.contains("created"));
+
+        // Verify it was persisted
+        let row = store.get("github").await.unwrap().unwrap();
+        assert_eq!(row.connector_type, "github");
+        assert_eq!(row.display_name, "GitHub");
+        assert_eq!(row.secrets, vec!["GITHUB_TOKEN".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn connector_add_multi_instance_requires_name() {
+        let tmp = TempDir::new().unwrap();
+        let (ctx, _store) = connector_tool_context(&tmp).await;
+
+        let result = handle_custom_tool(
+            &ctx,
+            "ConnectorAdd",
+            &json!({"type": "postgres"}),
+        )
+        .await
+        .unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("name"));
+    }
+
+    #[tokio::test]
+    async fn connector_add_multi_instance_with_name() {
+        let tmp = TempDir::new().unwrap();
+        let (ctx, store) = connector_tool_context(&tmp).await;
+
+        let result = handle_custom_tool(
+            &ctx,
+            "ConnectorAdd",
+            &json!({"type": "postgres", "name": "analytics-db"}),
+        )
+        .await
+        .unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains("analytics-db"));
+
+        // Verify namespaced vault keys
+        let row = store.get("analytics-db").await.unwrap().unwrap();
+        assert_eq!(row.connector_type, "postgres");
+        assert_eq!(row.secrets, vec!["ANALYTICS_DB_DATABASE_URL".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn connector_add_unknown_type() {
+        let tmp = TempDir::new().unwrap();
+        let (ctx, _store) = connector_tool_context(&tmp).await;
+
+        let result = handle_custom_tool(
+            &ctx,
+            "ConnectorAdd",
+            &json!({"type": "nonexistent"}),
+        )
+        .await
+        .unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("Unknown connector type"));
+        // Should list available templates
+        assert!(result.content.contains("github"));
+    }
+
+    #[tokio::test]
+    async fn connector_add_duplicate() {
+        let tmp = TempDir::new().unwrap();
+        let (ctx, _store) = connector_tool_context(&tmp).await;
+
+        // First add succeeds
+        let result = handle_custom_tool(
+            &ctx,
+            "ConnectorAdd",
+            &json!({"type": "github"}),
+        )
+        .await
+        .unwrap();
+        assert!(!result.is_error);
+
+        // Second add with same name fails
+        let result = handle_custom_tool(
+            &ctx,
+            "ConnectorAdd",
+            &json!({"type": "github"}),
+        )
+        .await
+        .unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("already exists"));
+    }
+
+    #[tokio::test]
+    async fn connector_add_with_config_override() {
+        let tmp = TempDir::new().unwrap();
+        let (ctx, store) = connector_tool_context(&tmp).await;
+
+        // Write a template with default config
+        std::fs::write(
+            ctx.connectors_dir.join("slack.toml"),
+            r#"name = "slack"
+display_name = "Slack"
+description = "Slack workspace"
+secrets = ["SLACK_TOKEN"]
+
+[config]
+base_url = "https://slack.com/api"
+"#,
+        )
+        .unwrap();
+
+        let result = handle_custom_tool(
+            &ctx,
+            "ConnectorAdd",
+            &json!({
+                "type": "slack",
+                "config": {"base_url": "https://custom.slack.com/api", "extra": "val"}
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(!result.is_error);
+
+        let row = store.get("slack").await.unwrap().unwrap();
+        assert_eq!(row.config.get("base_url").unwrap(), "https://custom.slack.com/api");
+        assert_eq!(row.config.get("extra").unwrap(), "val");
+    }
+
+    #[tokio::test]
+    async fn connector_add_with_description() {
+        let tmp = TempDir::new().unwrap();
+        let (ctx, store) = connector_tool_context(&tmp).await;
+
+        let result = handle_custom_tool(
+            &ctx,
+            "ConnectorAdd",
+            &json!({
+                "type": "github",
+                "description": "Company GitHub org"
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(!result.is_error);
+
+        let row = store.get("github").await.unwrap().unwrap();
+        assert_eq!(row.description, "Company GitHub org");
+    }
+
+    #[tokio::test]
+    async fn connector_remove_existing() {
+        let tmp = TempDir::new().unwrap();
+        let (ctx, store) = connector_tool_context(&tmp).await;
+
+        // Add one first
+        handle_custom_tool(&ctx, "ConnectorAdd", &json!({"type": "github"}))
+            .await
+            .unwrap();
+        assert!(store.get("github").await.unwrap().is_some());
+
+        // Remove it
+        let result = handle_custom_tool(
+            &ctx,
+            "ConnectorRemove",
+            &json!({"name": "github"}),
+        )
+        .await
+        .unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains("removed"));
+
+        // Verify it's gone
+        assert!(store.get("github").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn connector_remove_nonexistent() {
+        let tmp = TempDir::new().unwrap();
+        let (ctx, _store) = connector_tool_context(&tmp).await;
+
+        let result = handle_custom_tool(
+            &ctx,
+            "ConnectorRemove",
+            &json!({"name": "doesnotexist"}),
+        )
+        .await
+        .unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn connector_returns_none_without_store() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = skill_tool_context(&tmp).await;
+        // skill_tool_context sets connector_store: None
+
+        // All three connector tools should return None (pass-through)
+        assert!(handle_custom_tool(&ctx, "ConnectorList", &json!({})).await.is_none());
+        assert!(
+            handle_custom_tool(&ctx, "ConnectorAdd", &json!({"type": "github"}))
+                .await
+                .is_none()
+        );
+        assert!(
+            handle_custom_tool(&ctx, "ConnectorRemove", &json!({"name": "github"}))
+                .await
+                .is_none()
         );
     }
 }

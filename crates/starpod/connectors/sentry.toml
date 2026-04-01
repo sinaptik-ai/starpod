@@ -1,0 +1,8 @@
+name = "sentry"
+display_name = "Sentry"
+description = "Sentry error tracking and performance monitoring"
+secrets = ["SENTRY_AUTH_TOKEN"]
+optional_secrets = ["SENTRY_DSN"]
+
+[config]
+SENTRY_ORG = ""

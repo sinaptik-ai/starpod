@@ -1,0 +1,11 @@
+name = "slack"
+display_name = "Slack"
+description = "Slack workspace messaging and notifications"
+secrets = ["SLACK_BOT_TOKEN"]
+optional_secrets = ["SLACK_WEBHOOK_URL"]
+
+[oauth]
+authorize_url = "https://slack.com/oauth/v2/authorize"
+token_url = "https://slack.com/api/oauth.v2.access"
+scopes = ["chat:write", "channels:read"]
+token_key = "SLACK_BOT_TOKEN"

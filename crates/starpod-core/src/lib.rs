@@ -1,5 +1,6 @@
 pub mod config;
 pub mod config_migrate;
+pub mod connector_template;
 pub mod deploy_manifest;
 pub mod error;
 pub mod instance;

@@ -1,0 +1,5 @@
+name = "redis"
+display_name = "Redis"
+description = "Redis key-value store connection"
+multi_instance = true
+secrets = ["REDIS_URL"]

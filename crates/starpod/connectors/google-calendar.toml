@@ -1,0 +1,10 @@
+name = "google-calendar"
+display_name = "Google Calendar"
+description = "Google Calendar access for reading and managing events"
+
+[oauth]
+authorize_url = "https://accounts.google.com/o/oauth2/v2/auth"
+token_url = "https://oauth2.googleapis.com/token"
+scopes = ["https://www.googleapis.com/auth/calendar"]
+token_key = "GOOGLE_CALENDAR_TOKEN"
+refresh_key = "GOOGLE_CALENDAR_REFRESH_TOKEN"

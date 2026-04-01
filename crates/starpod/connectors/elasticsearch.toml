@@ -1,0 +1,8 @@
+name = "elasticsearch"
+display_name = "Elasticsearch"
+description = "Elasticsearch search and analytics engine"
+multi_instance = true
+secrets = ["ELASTICSEARCH_URL"]
+optional_secrets = ["ELASTICSEARCH_API_KEY"]
+
+[config]

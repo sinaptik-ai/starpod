@@ -194,6 +194,8 @@ pub struct ResolvedPaths {
     pub db_dir: PathBuf,
     /// Skills directory (.starpod/skills/).
     pub skills_dir: PathBuf,
+    /// Connector templates directory (.starpod/connectors/).
+    pub connectors_dir: PathBuf,
     /// Project root (parent of .starpod/).
     pub project_root: PathBuf,
     /// Agent's filesystem sandbox root (parent of .starpod/ and home/).
@@ -216,6 +218,7 @@ impl ResolvedPaths {
                 let agent_home = starpod_dir.clone();
                 let db_dir = starpod_dir.join("db");
                 let skills_dir = starpod_dir.join("skills");
+                let connectors_dir = starpod_dir.join("connectors");
                 let users_dir = starpod_dir.join("users");
                 let instance_root = starpod_dir
                     .parent()
@@ -232,6 +235,7 @@ impl ResolvedPaths {
                     config_dir,
                     db_dir,
                     skills_dir,
+                    connectors_dir,
                     project_root,
                     instance_root,
                     home_dir,
@@ -256,6 +260,7 @@ impl ResolvedPaths {
                 // Skills always live at instance level (.starpod/skills/).
                 // Workspace skills are copied into the instance during blueprint application.
                 let skills_dir = agent_home.join("skills");
+                let connectors_dir = agent_home.join("connectors");
                 // The agent's visible sandbox is home/ inside the instance
                 // directory.  project_root controls cwd, system-prompt paths,
                 // and file-tool boundaries.
@@ -269,6 +274,7 @@ impl ResolvedPaths {
                     config_dir,
                     db_dir,
                     skills_dir,
+                    connectors_dir,
                     project_root,
                     instance_root: instance_root.clone(),
                     home_dir,
@@ -990,6 +996,7 @@ max_turns = 30
             config_dir: PathBuf::from("/app/.starpod/config"),
             db_dir: PathBuf::from("/app/.starpod/db"),
             skills_dir: PathBuf::from("/app/.starpod/skills"),
+            connectors_dir: PathBuf::from("/app/.starpod/connectors"),
             project_root: PathBuf::from("/app/home"),
             instance_root: PathBuf::from("/app"),
             home_dir: PathBuf::from("/app/home"),

@@ -1,0 +1,7 @@
+name = "shopify"
+display_name = "Shopify"
+description = "Shopify store, products, orders, and admin API"
+secrets = ["SHOPIFY_ACCESS_TOKEN"]
+
+[config]
+SHOPIFY_STORE_DOMAIN = ""

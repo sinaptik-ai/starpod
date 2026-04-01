@@ -23,11 +23,21 @@
 //! Skills are managed via [`starpod_skills::SkillStore`], which reads/writes
 //! `SKILL.md` files in `.starpod/skills/<name>/`. The store is instantiated
 //! per-request (cheap — just a `create_dir_all` + struct init).
+//!
+//! ## Connector CRUD
+//!
+//! Connectors are service-level authentication abstractions stored in `core.db`.
+//! Templates (`.toml` files in `.starpod/connectors/`) define what a service
+//! needs; connectors (DB rows) are the runtime source of truth. Creating a
+//! connector reads a template, resolves vault key names (namespaced for
+//! multi-instance types), and inserts a row. The vault stores the actual secrets.
+//!
+//! Routes: `GET/POST /connectors`, `GET/PUT/DELETE /connectors/:name`,
+//! `GET /connector-templates`.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use axum::extract::{Path, Request, State};
+use axum::extract::{Path, Query, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::IntoResponse;
@@ -154,21 +164,7 @@ struct GeneratedPersonalitySkill {
     description: String,
     body: String,
     #[serde(default)]
-    env: Option<GeneratedSkillEnv>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct GeneratedSkillEnv {
-    #[serde(default)]
-    secrets: HashMap<String, GeneratedSecretDecl>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct GeneratedSecretDecl {
-    #[serde(default)]
-    required: bool,
-    #[serde(default)]
-    description: String,
+    connectors: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -295,21 +291,7 @@ struct CreateSkillRequest {
     description: String,
     body: String,
     #[serde(default)]
-    env: Option<CreateSkillEnv>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CreateSkillEnv {
-    #[serde(default)]
-    secrets: HashMap<String, CreateSecretDecl>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CreateSecretDecl {
-    #[serde(default)]
-    required: bool,
-    #[serde(default)]
-    description: String,
+    connectors: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -471,6 +453,29 @@ pub fn settings_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/api/settings/vault/{key}/meta",
             axum::routing::put(put_vault_meta),
+        )
+        // Connectors
+        .route(
+            "/api/settings/connectors",
+            get(list_connectors).post(create_connector),
+        )
+        .route(
+            "/api/settings/connectors/{name}",
+            get(get_connector)
+                .put(update_connector)
+                .delete(delete_connector),
+        )
+        .route(
+            "/api/settings/connector-templates",
+            get(list_connector_templates),
+        )
+        .route(
+            "/api/settings/connectors/{name}/oauth/start",
+            get(oauth_start),
+        )
+        .route(
+            "/api/settings/connectors/{name}/oauth/callback",
+            get(oauth_callback),
         )
         // Attachments
         .route(
@@ -1171,31 +1176,12 @@ async fn create_skill(
     Json(req): Json<CreateSkillRequest>,
 ) -> Result<(StatusCode, Json<SkillDetail>), (StatusCode, Json<ErrorResponse>)> {
     let store = skill_store(&state)?;
-    let skill_env = req.env.map(|e| {
-        use starpod_skills::{SecretDecl, SkillEnv};
-        SkillEnv {
-            secrets: e
-                .secrets
-                .into_iter()
-                .map(|(k, v)| {
-                    (
-                        k,
-                        SecretDecl {
-                            required: v.required,
-                            description: v.description,
-                        },
-                    )
-                })
-                .collect(),
-            variables: HashMap::new(),
-        }
-    });
     store
         .create(
             &req.name,
             &req.description,
             None,
-            skill_env.as_ref(),
+            req.connectors.as_deref(),
             &req.body,
         )
         .map_err(|e| bad_request(e.to_string()))?;
@@ -1430,22 +1416,10 @@ const ROLE_GEN_SYSTEM_PROMPT: &str = r#"You are an AI agent configurator for the
 3. **skills**: An array of 0-3 relevant skills that complement this role. Each skill has:
    - `name`: short kebab-case identifier (e.g., "web-research", "code-review")
    - `description`: 1-2 sentences explaining when to use the skill
-   - `body`: Markdown instructions (under 100 lines) the agent follows when the skill is activated. The body should reference any required env vars by name so the agent knows they are available.
-   - `env`: Environment requirements. **IMPORTANT**: You MUST include this field whenever a skill interacts with an external service, API, or platform. Structure:
-     ```json
-     { "secrets": { "GITHUB_TOKEN": { "required": true, "description": "GitHub personal access token for repository and PR access" } } }
-     ```
-     Common secrets to include when relevant:
-     - GitHub: `GITHUB_TOKEN` (PAT with repo scope)
-     - Slack: `SLACK_BOT_TOKEN` (Bot User OAuth Token)
-     - Notion: `NOTION_API_KEY` (Internal integration token)
-     - Jira: `JIRA_API_TOKEN` + `JIRA_EMAIL` + `JIRA_BASE_URL`
-     - Linear: `LINEAR_API_KEY`
-     - Brave Search: `BRAVE_API_KEY`
-     - Google: `GOOGLE_API_KEY` + `GOOGLE_CSE_ID`
-     - Telegram: `TELEGRAM_BOT_TOKEN`
-     - Any other service the skill needs to call — always include the credential as a secret.
-     If a skill only uses local tools (file I/O, shell commands, etc.) and no external APIs, omit `env`.
+   - `body`: Markdown instructions (under 100 lines) the agent follows when the skill is activated.
+   - `connectors`: An array of connector names the skill requires (e.g. ["github", "slack"]). Include this when a skill interacts with an external service, API, or platform.
+     Common connectors: "github", "slack", "notion", "jira", "linear", "google", "telegram", "postgres", "openweather".
+     If a skill only uses local tools (file I/O, shell commands, etc.) and no external services, omit `connectors`.
 
 Return a JSON object with exactly: `soul_md`, `heartbeat_md`, `skills`.
 If the user's description is vague, make reasonable creative choices that feel coherent. Always think about what API keys and credentials each skill would need to actually function.
@@ -1481,24 +1455,10 @@ async fn generate_role(
                         "name": { "type": "string" },
                         "description": { "type": "string" },
                         "body": { "type": "string" },
-                        "env": {
-                            "type": "object",
-                            "properties": {
-                                "secrets": {
-                                    "type": "object",
-                                    "additionalProperties": {
-                                        "type": "object",
-                                        "properties": {
-                                            "required": { "type": "boolean" },
-                                            "description": { "type": "string" }
-                                        },
-                                        "required": ["required", "description"],
-                                        "additionalProperties": false
-                                    }
-                                }
-                            },
-                            "required": ["secrets"],
-                            "additionalProperties": false
+                        "connectors": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Connector names this skill requires (e.g. [\"github\", \"slack\"])"
                         }
                     },
                     "required": ["name", "description", "body"],
@@ -2117,7 +2077,6 @@ struct VaultEntry {
     key: String,
     has_value: bool,
     is_system: bool,
-    is_secret: bool,
     allowed_hosts: Option<Vec<String>>,
 }
 
@@ -2130,14 +2089,8 @@ struct VaultListResponse {
 #[derive(Deserialize)]
 struct VaultPutBody {
     value: String,
-    #[serde(default = "default_true")]
-    is_secret: bool,
     #[serde(default)]
     allowed_hosts: Option<Vec<String>>,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 async fn get_vault(State(state): State<Arc<AppState>>) -> ApiResult<VaultListResponse> {
@@ -2157,7 +2110,6 @@ async fn get_vault(State(state): State<Arc<AppState>>) -> ApiResult<VaultListRes
                 key: e.key,
                 has_value: true,
                 is_system,
-                is_secret: e.is_secret,
                 allowed_hosts: e.allowed_hosts,
             }
         })
@@ -2191,7 +2143,7 @@ async fn put_vault(
         .or_else(|| starpod_vault::known_hosts::default_hosts_for_key(&key));
 
     vault
-        .set_with_meta(&key, &body.value, body.is_secret, hosts.as_deref(), None)
+        .set_with_hosts(&key, &body.value, hosts.as_deref(), None)
         .await
         .map_err(|e| internal(format!("vault set {key}: {e}")))?;
     // Keep process env in sync for system keys
@@ -2220,12 +2172,10 @@ async fn delete_vault(
     Ok(StatusCode::OK)
 }
 
-// Metadata-only update (is_secret + allowed_hosts) without re-entering the value.
+// Metadata-only update (allowed_hosts) without re-entering the value.
 
 #[derive(Deserialize)]
 struct VaultMetaBody {
-    #[serde(default = "default_true")]
-    is_secret: bool,
     #[serde(default)]
     allowed_hosts: Option<Vec<String>>,
 }
@@ -2240,13 +2190,578 @@ async fn put_vault_meta(
         .as_ref()
         .ok_or_else(|| internal("vault not available"))?;
     let updated = vault
-        .update_meta(&key, body.is_secret, body.allowed_hosts.as_deref())
+        .update_hosts(&key, body.allowed_hosts.as_deref())
         .await
-        .map_err(|e| internal(format!("vault update_meta {key}: {e}")))?;
+        .map_err(|e| internal(format!("vault update_hosts {key}: {e}")))?;
     if !updated {
         return Err(bad_request(format!("vault key '{}' not found", key)));
     }
     Ok(StatusCode::OK)
+}
+
+// ── Connectors ────────────────────────────────────────────────────────
+
+/// Response payload for a single connector.
+#[derive(Serialize)]
+struct ConnectorInfo {
+    name: String,
+    #[serde(rename = "type")]
+    connector_type: String,
+    display_name: String,
+    description: String,
+    auth_method: String,
+    secrets: Vec<String>,
+    config: std::collections::HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    oauth_token_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    oauth_token_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    oauth_refresh_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    oauth_expires_at: Option<String>,
+    status: String,
+    created_at: String,
+    updated_at: String,
+}
+
+/// Request body for `POST /api/settings/connectors`.
+///
+/// The `type` field selects a template from `.starpod/connectors/<type>.toml`.
+/// For multi-instance templates, `name` is required (e.g. "analytics-db").
+/// For single-instance templates, `name` defaults to the type name.
+#[derive(Deserialize)]
+struct CreateConnectorRequest {
+    #[serde(rename = "type")]
+    connector_type: String,
+    name: Option<String>,
+    description: Option<String>,
+    #[serde(default)]
+    config: std::collections::HashMap<String, String>,
+}
+
+/// Request body for `PUT /api/settings/connectors/:name`.
+///
+/// Both fields are optional — only provided fields are updated.
+#[derive(Deserialize)]
+struct UpdateConnectorRequest {
+    #[serde(default)]
+    config: Option<std::collections::HashMap<String, String>>,
+    #[serde(default)]
+    status: Option<String>,
+}
+
+/// Response payload for a connector template (read from `.toml` files).
+#[derive(Serialize)]
+struct ConnectorTemplateInfo {
+    name: String,
+    display_name: String,
+    description: String,
+    multi_instance: bool,
+    secrets: Vec<String>,
+    optional_secrets: Vec<String>,
+    config: std::collections::HashMap<String, String>,
+    has_oauth: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    oauth_authorize_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    oauth_scopes: Option<Vec<String>>,
+}
+
+/// Create a [`ConnectorStore`] from the shared core database pool.
+fn connector_store(state: &AppState) -> starpod_db::connectors::ConnectorStore {
+    starpod_db::connectors::ConnectorStore::from_pool(state.agent.core_db().pool().clone())
+}
+
+/// `GET /api/settings/connectors` — list all configured connectors.
+async fn list_connectors(
+    State(state): State<Arc<AppState>>,
+) -> ApiResult<Vec<ConnectorInfo>> {
+    let store = connector_store(&state);
+    let rows = store
+        .list()
+        .await
+        .map_err(|e| internal(format!("connector list: {e}")))?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|r| ConnectorInfo {
+                name: r.name,
+                connector_type: r.connector_type,
+                display_name: r.display_name,
+                description: r.description,
+                auth_method: r.auth_method,
+                secrets: r.secrets,
+                config: r.config,
+                oauth_token_url: r.oauth_token_url,
+                oauth_token_key: r.oauth_token_key,
+                oauth_refresh_key: r.oauth_refresh_key,
+                oauth_expires_at: r.oauth_expires_at,
+                status: r.status,
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+            })
+            .collect(),
+    ))
+}
+
+/// `GET /api/settings/connectors/:name` — get a single connector by name.
+async fn get_connector(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> ApiResult<ConnectorInfo> {
+    let store = connector_store(&state);
+    let row = store
+        .get(&name)
+        .await
+        .map_err(|e| internal(format!("connector get: {e}")))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, format!("Connector '{}' not found", name)))?;
+    Ok(Json(ConnectorInfo {
+        name: row.name,
+        connector_type: row.connector_type,
+        display_name: row.display_name,
+        description: row.description,
+        auth_method: row.auth_method,
+        secrets: row.secrets,
+        config: row.config,
+        oauth_token_url: row.oauth_token_url,
+        oauth_token_key: row.oauth_token_key,
+        oauth_refresh_key: row.oauth_refresh_key,
+        oauth_expires_at: row.oauth_expires_at,
+        status: row.status,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    }))
+}
+
+/// `POST /api/settings/connectors` — create a connector from a template.
+///
+/// Loads the template from `.starpod/connectors/<type>.toml`, resolves vault
+/// key names (namespaced for multi-instance types), merges config overrides,
+/// and inserts a row into the connectors table with status "pending".
+async fn create_connector(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CreateConnectorRequest>,
+) -> Result<(StatusCode, Json<ConnectorInfo>), (StatusCode, Json<ErrorResponse>)> {
+    // Load template
+    let template_path = state
+        .paths
+        .connectors_dir
+        .join(format!("{}.toml", req.connector_type));
+    let template = starpod_core::connector_template::load_template(&template_path)
+        .map_err(|_| {
+            let available = starpod_core::connector_template::load_all_templates(
+                &state.paths.connectors_dir,
+            )
+            .unwrap_or_default()
+            .into_iter()
+            .map(|t| t.name)
+            .collect::<Vec<_>>()
+            .join(", ");
+            bad_request(format!(
+                "Unknown connector type '{}'. Available: {}",
+                req.connector_type, available
+            ))
+        })?;
+
+    let instance_name = if template.multi_instance {
+        req.name.as_deref().ok_or_else(|| {
+            bad_request(format!(
+                "Connector type '{}' supports multiple instances — 'name' is required",
+                req.connector_type
+            ))
+        })?
+        .to_string()
+    } else {
+        req.name
+            .as_deref()
+            .unwrap_or(&req.connector_type)
+            .to_string()
+    };
+
+    let resolve_key = |logical: &str| -> String {
+        if template.multi_instance {
+            let prefix = instance_name.to_uppercase().replace('-', "_");
+            format!("{prefix}_{logical}")
+        } else {
+            logical.to_string()
+        }
+    };
+
+    let resolved_secrets: Vec<String> = template.secrets.iter().map(|s| resolve_key(s)).collect();
+    let initial_status = if resolved_secrets.is_empty() { "connected" } else { "not_connected" };
+
+    let mut merged_config = template.config.clone();
+    for (k, v) in &req.config {
+        merged_config.insert(k.clone(), v.clone());
+    }
+
+    let description = req
+        .description
+        .as_deref()
+        .unwrap_or(&template.description);
+
+    let auth_method = if template.oauth.is_some() && template.secrets.is_empty() {
+        "oauth"
+    } else {
+        "token"
+    };
+
+    let row = starpod_db::connectors::ConnectorRow {
+        name: instance_name.clone(),
+        connector_type: req.connector_type.clone(),
+        display_name: template.display_name.clone(),
+        description: description.to_string(),
+        auth_method: auth_method.to_string(),
+        secrets: resolved_secrets,
+        config: merged_config,
+        oauth_token_url: template.oauth.as_ref().map(|o| o.token_url.clone()),
+        oauth_token_key: template.oauth.as_ref().map(|o| resolve_key(&o.token_key)),
+        oauth_refresh_key: template
+            .oauth
+            .as_ref()
+            .and_then(|o| o.refresh_key.as_ref().map(|k| resolve_key(k))),
+        oauth_expires_at: None,
+        status: initial_status.to_string(),
+        created_at: String::new(),
+        updated_at: String::new(),
+    };
+
+    let store = connector_store(&state);
+    store
+        .insert(&row)
+        .await
+        .map_err(|e| bad_request(format!("connector create: {e}")))?;
+
+    // Re-fetch to get the server-assigned timestamps
+    let created = store
+        .get(&instance_name)
+        .await
+        .map_err(|e| internal(format!("connector get: {e}")))?
+        .ok_or_else(|| internal("Connector created but not found"))?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(ConnectorInfo {
+            name: created.name,
+            connector_type: created.connector_type,
+            display_name: created.display_name,
+            description: created.description,
+            auth_method: created.auth_method,
+            secrets: created.secrets,
+            config: created.config,
+            oauth_token_url: created.oauth_token_url,
+            oauth_token_key: created.oauth_token_key,
+            oauth_refresh_key: created.oauth_refresh_key,
+            oauth_expires_at: created.oauth_expires_at,
+            status: created.status,
+            created_at: created.created_at,
+            updated_at: created.updated_at,
+        }),
+    ))
+}
+
+/// `PUT /api/settings/connectors/:name` — update a connector's config or status.
+async fn update_connector(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    Json(req): Json<UpdateConnectorRequest>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    let store = connector_store(&state);
+
+    // Verify connector exists
+    store
+        .get(&name)
+        .await
+        .map_err(|e| internal(format!("connector get: {e}")))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, format!("Connector '{}' not found", name)))?;
+
+    if let Some(ref status) = req.status {
+        store
+            .update_status(&name, status)
+            .await
+            .map_err(|e| internal(format!("connector update_status: {e}")))?;
+    }
+    if let Some(ref config) = req.config {
+        store
+            .update_config(&name, config)
+            .await
+            .map_err(|e| internal(format!("connector update_config: {e}")))?;
+    }
+
+    Ok(StatusCode::OK)
+}
+
+/// `DELETE /api/settings/connectors/:name` — remove a connector.
+///
+/// Does not delete the connector's vault secrets — those must be removed
+/// separately via the vault API.
+async fn delete_connector(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    let store = connector_store(&state);
+    let deleted = store
+        .delete(&name)
+        .await
+        .map_err(|e| internal(format!("connector delete: {e}")))?;
+    if !deleted {
+        return Err(err(
+            StatusCode::NOT_FOUND,
+            format!("Connector '{}' not found", name),
+        ));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `GET /api/settings/connector-templates` — list available templates.
+///
+/// Reads all `.toml` files from `.starpod/connectors/` and returns their
+/// metadata. Templates are consumed once during connector setup.
+async fn list_connector_templates(
+    State(state): State<Arc<AppState>>,
+) -> ApiResult<Vec<ConnectorTemplateInfo>> {
+    let templates =
+        starpod_core::connector_template::load_all_templates(&state.paths.connectors_dir)
+            .unwrap_or_default();
+    Ok(Json(
+        templates
+            .into_iter()
+            .map(|t| {
+                let oauth_authorize_url = t.oauth.as_ref().map(|o| o.authorize_url.clone());
+                let oauth_scopes = t.oauth.as_ref().map(|o| o.scopes.clone());
+                ConnectorTemplateInfo {
+                    name: t.name,
+                    display_name: t.display_name,
+                    description: t.description,
+                    multi_instance: t.multi_instance,
+                    secrets: t.secrets,
+                    optional_secrets: t.optional_secrets,
+                    config: t.config,
+                    has_oauth: t.oauth.is_some(),
+                    oauth_authorize_url,
+                    oauth_scopes,
+                }
+            })
+            .collect(),
+    ))
+}
+
+/// `GET /api/settings/connectors/:name/oauth/start` — initiate OAuth flow.
+///
+/// Returns a JSON `{ url }` that the frontend should open in a popup/new tab.
+/// The URL redirects the user to the provider's authorize page, which will
+/// callback to `/api/settings/connectors/:name/oauth/callback`.
+async fn oauth_start(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let store = connector_store(&state);
+    let conn = store
+        .get(&name)
+        .await
+        .map_err(|e| internal(format!("connector get: {e}")))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, format!("Connector '{}' not found", name)))?;
+
+    let template_path = state
+        .paths
+        .connectors_dir
+        .join(format!("{}.toml", conn.connector_type));
+    let template = starpod_core::connector_template::load_template(&template_path)
+        .map_err(|_| internal("Failed to load connector template"))?;
+
+    let oauth = template
+        .oauth
+        .ok_or_else(|| bad_request("This connector does not support OAuth"))?;
+
+    // Read client ID from vault (key convention: <CONNECTOR_NAME>_CLIENT_ID)
+    let prefix = name.to_uppercase().replace('-', "_");
+    let client_id_key = oauth
+        .client_id_key
+        .unwrap_or_else(|| format!("{prefix}_CLIENT_ID"));
+    let client_id = read_vault_key(&state, &client_id_key)
+        .await
+        .ok_or_else(|| {
+            bad_request(format!(
+                "OAuth client ID not configured. Set '{}' in the vault first.",
+                client_id_key
+            ))
+        })?;
+
+    let server_addr = state.config.read().unwrap().server_addr.clone();
+    let redirect_uri = params.get("redirect_uri").cloned().unwrap_or_else(|| {
+        format!(
+            "http://{}/api/settings/connectors/{}/oauth/callback",
+            server_addr,
+            urlencoding::encode(&name)
+        )
+    });
+
+    let scopes = oauth.scopes.join(" ");
+    let state_token = uuid::Uuid::new_v4().to_string();
+
+    // Build authorize URL
+    let url = format!(
+        "{}?client_id={}&redirect_uri={}&scope={}&state={}&response_type=code",
+        oauth.authorize_url,
+        urlencoding::encode(&client_id),
+        urlencoding::encode(&redirect_uri),
+        urlencoding::encode(&scopes),
+        urlencoding::encode(&state_token),
+    );
+
+    Ok(Json(serde_json::json!({
+        "url": url,
+        "state": state_token,
+    })))
+}
+
+/// `GET /api/settings/connectors/:name/oauth/callback` — handle OAuth callback.
+///
+/// The provider redirects here with `?code=...&state=...`. This endpoint
+/// exchanges the code for tokens, stores them in the vault, and renders a
+/// small HTML page that closes the popup.
+async fn oauth_callback(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<axum::response::Html<String>, (StatusCode, Json<ErrorResponse>)> {
+    let code = params
+        .get("code")
+        .ok_or_else(|| bad_request("Missing 'code' parameter"))?;
+
+    let store = connector_store(&state);
+    let conn = store
+        .get(&name)
+        .await
+        .map_err(|e| internal(format!("connector get: {e}")))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, format!("Connector '{}' not found", name)))?;
+
+    let template_path = state
+        .paths
+        .connectors_dir
+        .join(format!("{}.toml", conn.connector_type));
+    let template = starpod_core::connector_template::load_template(&template_path)
+        .map_err(|_| internal("Failed to load connector template"))?;
+
+    let oauth = template
+        .oauth
+        .ok_or_else(|| bad_request("This connector does not support OAuth"))?;
+
+    let prefix = name.to_uppercase().replace('-', "_");
+    let client_id_key = oauth
+        .client_id_key
+        .unwrap_or_else(|| format!("{prefix}_CLIENT_ID"));
+    let client_secret_key = oauth
+        .client_secret_key
+        .unwrap_or_else(|| format!("{prefix}_CLIENT_SECRET"));
+
+    let client_id = read_vault_key(&state, &client_id_key)
+        .await
+        .ok_or_else(|| internal("OAuth client ID not found in vault"))?;
+    let client_secret = read_vault_key(&state, &client_secret_key)
+        .await
+        .ok_or_else(|| internal("OAuth client secret not found in vault"))?;
+
+    let server_addr = state.config.read().unwrap().server_addr.clone();
+    let redirect_uri = format!(
+        "http://{}/api/settings/connectors/{}/oauth/callback",
+        server_addr,
+        urlencoding::encode(&name)
+    );
+
+    // Exchange code for tokens
+    let client = reqwest::Client::new();
+    let token_resp = client
+        .post(&oauth.token_url)
+        .header("Accept", "application/json")
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("redirect_uri", &redirect_uri),
+            ("client_id", &client_id),
+            ("client_secret", &client_secret),
+        ])
+        .send()
+        .await
+        .map_err(|e| internal(format!("Token exchange failed: {e}")))?;
+
+    let token_json: serde_json::Value = token_resp
+        .json()
+        .await
+        .map_err(|e| internal(format!("Failed to parse token response: {e}")))?;
+
+    let access_token = token_json
+        .get("access_token")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            let error_desc = token_json
+                .get("error_description")
+                .or_else(|| token_json.get("error"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("No access_token in response");
+            internal(format!("OAuth error: {error_desc}"))
+        })?;
+
+    // Store access token in vault
+    let token_vault_key = conn
+        .oauth_token_key
+        .as_deref()
+        .unwrap_or(&oauth.token_key);
+    if let Some(ref vault) = state.vault {
+        vault
+            .set(token_vault_key, access_token, None)
+            .await
+            .map_err(|e| internal(format!("Failed to store access token: {e}")))?;
+        // Also set it as env var for immediate use
+        std::env::set_var(token_vault_key, access_token);
+    }
+
+    // Store refresh token if present
+    if let Some(refresh_token) = token_json.get("refresh_token").and_then(|v| v.as_str()) {
+        if let Some(ref refresh_key) = conn.oauth_refresh_key {
+            if let Some(ref vault) = state.vault {
+                vault
+                    .set(refresh_key, refresh_token, None)
+                    .await
+                    .map_err(|e| internal(format!("Failed to store refresh token: {e}")))?;
+                std::env::set_var(refresh_key, refresh_token);
+            }
+        }
+    }
+
+    // Update connector status
+    let _ = store.update_status(&name, "connected").await;
+
+    // Update expiry if present
+    if let Some(expires_in) = token_json.get("expires_in").and_then(|v| v.as_i64()) {
+        let expires_at = chrono::Utc::now() + chrono::Duration::seconds(expires_in);
+        let _ = store
+            .update_oauth_expiry(&name, &expires_at.to_rfc3339())
+            .await;
+    }
+
+    // Return HTML that notifies the opener and closes
+    Ok(axum::response::Html(format!(
+        r#"<!DOCTYPE html>
+<html><head><title>OAuth Complete</title></head>
+<body style="background:#0A0A0A;color:#E8E8E8;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+<div style="text-align:center">
+<p style="font-size:18px">Connected to {display_name}</p>
+<p style="color:#22c55e;font-size:14px">You can close this window.</p>
+</div>
+<script>
+if (window.opener) {{
+  window.opener.postMessage({{ type: 'oauth-complete', connector: '{name}' }}, '*');
+  setTimeout(() => window.close(), 1500);
+}} else {{
+  setTimeout(() => window.close(), 3000);
+}}
+</script>
+</body></html>"#,
+        display_name = conn.display_name,
+        name = name,
+    )))
 }
 
 /// Read a system key from the vault, falling back to the process environment.
@@ -2352,6 +2867,7 @@ mod tests {
             config_dir,
             db_dir,
             skills_dir,
+            connectors_dir: starpod_dir.join("connectors"),
             project_root: tmp.path().join("home"),
             instance_root: tmp.path().to_path_buf(),
             home_dir: tmp.path().join("home"),
@@ -4355,10 +4871,9 @@ mod tests {
         let (_tmp, state) = test_app_state_with_vault().await;
         let vault = state.vault.as_ref().unwrap();
         vault
-            .set_with_meta(
+            .set_with_hosts(
                 "MY_KEY",
                 "secret",
-                true,
                 Some(&["api.example.com".into()]),
                 None,
             )
@@ -4370,7 +4885,6 @@ mod tests {
 
         let entry = &json["entries"][0];
         assert_eq!(entry["key"], "MY_KEY");
-        assert_eq!(entry["is_secret"], true);
         assert_eq!(entry["allowed_hosts"][0], "api.example.com");
         assert!(json.get("proxy_enabled").is_some());
     }
@@ -4384,7 +4898,6 @@ mod tests {
             "/api/settings/vault/MY_TOKEN",
             serde_json::json!({
                 "value": "tok_abc",
-                "is_secret": true,
                 "allowed_hosts": ["api.stripe.com"]
             }),
         )
@@ -4393,7 +4906,6 @@ mod tests {
 
         let vault = state.vault.as_ref().unwrap();
         let entry = vault.get_entry("MY_TOKEN").await.unwrap().unwrap();
-        assert!(entry.is_secret);
         assert_eq!(
             entry.allowed_hosts,
             Some(vec!["api.stripe.com".to_string()])
@@ -4401,15 +4913,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn vault_put_non_secret() {
+    async fn vault_put_no_hosts() {
         let (_tmp, state) = test_app_state_with_vault().await;
 
         let (status, _) = put_json(
             Arc::clone(&state),
             "/api/settings/vault/SENTRY_DSN",
             serde_json::json!({
-                "value": "https://sentry.io/123",
-                "is_secret": false
+                "value": "https://sentry.io/123"
             }),
         )
         .await;
@@ -4417,7 +4928,6 @@ mod tests {
 
         let vault = state.vault.as_ref().unwrap();
         let entry = vault.get_entry("SENTRY_DSN").await.unwrap().unwrap();
-        assert!(!entry.is_secret);
         assert!(entry.allowed_hosts.is_none());
     }
 
@@ -4478,7 +4988,6 @@ mod tests {
             Arc::clone(&state),
             "/api/settings/vault/MY_KEY/meta",
             serde_json::json!({
-                "is_secret": false,
                 "allowed_hosts": null
             }),
         )
@@ -4486,7 +4995,6 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
 
         let entry = vault.get_entry("MY_KEY").await.unwrap().unwrap();
-        assert!(!entry.is_secret);
         assert!(entry.allowed_hosts.is_none());
     }
 
@@ -4500,7 +5008,6 @@ mod tests {
             Arc::clone(&state),
             "/api/settings/vault/MY_KEY/meta",
             serde_json::json!({
-                "is_secret": true,
                 "allowed_hosts": ["api.github.com", "*.github.com"]
             }),
         )
@@ -4508,7 +5015,6 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
 
         let entry = vault.get_entry("MY_KEY").await.unwrap().unwrap();
-        assert!(entry.is_secret);
         assert_eq!(
             entry.allowed_hosts,
             Some(vec![
@@ -4525,7 +5031,7 @@ mod tests {
         let (status, _) = put_json(
             state,
             "/api/settings/vault/NOPE/meta",
-            serde_json::json!({ "is_secret": false }),
+            serde_json::json!({ "allowed_hosts": null }),
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -4611,7 +5117,6 @@ mod tests {
             "/api/settings/vault/TOKEN",
             serde_json::json!({
                 "value": "v1",
-                "is_secret": true,
                 "allowed_hosts": ["api.x.com"]
             }),
         )
@@ -4624,7 +5129,6 @@ mod tests {
             "/api/settings/vault/TOKEN",
             serde_json::json!({
                 "value": "v2",
-                "is_secret": true,
                 "allowed_hosts": ["api.x.com"]
             }),
         )
@@ -4633,7 +5137,6 @@ mod tests {
 
         let vault = state.vault.as_ref().unwrap();
         let entry = vault.get_entry("TOKEN").await.unwrap().unwrap();
-        assert!(entry.is_secret);
         assert_eq!(entry.allowed_hosts, Some(vec!["api.x.com".to_string()]));
         assert_eq!(
             vault.get("TOKEN", None).await.unwrap().as_deref(),
@@ -4642,21 +5145,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn vault_put_default_is_secret_true_when_omitted() {
+    async fn vault_put_defaults_no_hosts_when_omitted() {
         let (_tmp, state) = test_app_state_with_vault().await;
 
-        // Omit is_secret — should default to true
+        // Omit allowed_hosts — should default to None (unless key is well-known)
         let (status, _) = put_json(
             Arc::clone(&state),
-            "/api/settings/vault/KEY",
+            "/api/settings/vault/MY_CUSTOM_KEY",
             serde_json::json!({ "value": "val" }),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
 
         let vault = state.vault.as_ref().unwrap();
-        let entry = vault.get_entry("KEY").await.unwrap().unwrap();
-        assert!(entry.is_secret);
+        let entry = vault.get_entry("MY_CUSTOM_KEY").await.unwrap().unwrap();
+        assert!(entry.allowed_hosts.is_none());
     }
 
     #[tokio::test]
@@ -4692,7 +5195,6 @@ mod tests {
                 Arc::clone(&state),
                 "/api/settings/vault/KEY/meta",
                 serde_json::json!({
-                    "is_secret": false,
                     "allowed_hosts": ["h.com"]
                 }),
             )
@@ -4701,7 +5203,6 @@ mod tests {
         }
 
         let entry = vault.get_entry("KEY").await.unwrap().unwrap();
-        assert!(!entry.is_secret);
         assert_eq!(entry.allowed_hosts, Some(vec!["h.com".to_string()]));
     }
 
@@ -4715,7 +5216,7 @@ mod tests {
         let (status, _) = put_json(
             Arc::clone(&state),
             "/api/settings/vault/KEY/meta",
-            serde_json::json!({ "is_secret": false }),
+            serde_json::json!({ "allowed_hosts": ["h.com"] }),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
@@ -4757,16 +5258,16 @@ mod tests {
         let (_tmp, state) = test_app_state_with_vault().await;
         let vault = state.vault.as_ref().unwrap();
 
-        // Mix of secrets and non-secrets
+        // Mix of entries with and without hosts
         vault
-            .set_with_meta("SECRET_A", "v", true, Some(&["a.com".into()]), None)
+            .set_with_hosts("SECRET_A", "v", Some(&["a.com".into()]), None)
             .await
             .unwrap();
         vault
-            .set_with_meta("CONFIG_B", "v", false, None, None)
+            .set_with_hosts("CONFIG_B", "v", None, None)
             .await
             .unwrap();
-        vault.set("PLAIN_C", "v", None).await.unwrap(); // default is_secret=true
+        vault.set("PLAIN_C", "v", None).await.unwrap();
 
         let (status, json) = get_json(Arc::clone(&state), "/api/settings/vault").await;
         assert_eq!(status, StatusCode::OK);
@@ -4776,14 +5277,11 @@ mod tests {
 
         // Sorted alphabetically
         assert_eq!(entries[0]["key"], "CONFIG_B");
-        assert_eq!(entries[0]["is_secret"], false);
         assert!(entries[0]["allowed_hosts"].is_null());
 
         assert_eq!(entries[1]["key"], "PLAIN_C");
-        assert_eq!(entries[1]["is_secret"], true);
 
         assert_eq!(entries[2]["key"], "SECRET_A");
-        assert_eq!(entries[2]["is_secret"], true);
         assert_eq!(entries[2]["allowed_hosts"][0], "a.com");
     }
 
@@ -4792,9 +5290,9 @@ mod tests {
         let (_tmp, state) = test_app_state_with_vault().await;
         let vault = state.vault.as_ref().unwrap();
 
-        // Create as secret
+        // Create with hosts
         vault
-            .set_with_meta("KEY", "v1", true, Some(&["h.com".into()]), None)
+            .set_with_hosts("KEY", "v1", Some(&["h.com".into()]), None)
             .await
             .unwrap();
 
@@ -4802,17 +5300,16 @@ mod tests {
         let status = delete_json(Arc::clone(&state), "/api/settings/vault/KEY").await;
         assert_eq!(status, StatusCode::OK);
 
-        // Recreate as non-secret
+        // Recreate without hosts
         let (status, _) = put_json(
             Arc::clone(&state),
             "/api/settings/vault/KEY",
-            serde_json::json!({ "value": "v2", "is_secret": false }),
+            serde_json::json!({ "value": "v2" }),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
 
         let entry = vault.get_entry("KEY").await.unwrap().unwrap();
-        assert!(!entry.is_secret);
         assert!(entry.allowed_hosts.is_none());
     }
 
@@ -4885,5 +5382,210 @@ mod tests {
         assert_eq!(json["enabled"], true);
         assert_eq!(json["max_file_size"], 10485760);
         assert_eq!(json["allowed_extensions"][0], "docx");
+    }
+
+    // ── Connector endpoints ────────────────────────────────────────────
+
+    /// Helper: write connector template files into the test state's connectors_dir.
+    fn write_connector_templates(state: &AppState) {
+        let dir = &state.paths.connectors_dir;
+        std::fs::create_dir_all(dir).unwrap();
+
+        std::fs::write(
+            dir.join("github.toml"),
+            r#"name = "github"
+display_name = "GitHub"
+description = "GitHub access"
+secrets = ["GITHUB_TOKEN"]
+
+[config]
+base_url = "https://api.github.com"
+"#,
+        )
+        .unwrap();
+
+        std::fs::write(
+            dir.join("postgres.toml"),
+            r#"name = "postgres"
+display_name = "PostgreSQL"
+description = "PostgreSQL database"
+multi_instance = true
+secrets = ["DATABASE_URL"]
+"#,
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_connector_list_empty() {
+        let (_tmp, state) = test_app_state().await;
+        let (status, json) = get_json(state, "/api/settings/connectors").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json.as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_connector_crud() {
+        let (_tmp, state) = test_app_state().await;
+        write_connector_templates(&state);
+
+        // CREATE
+        let (status, json) = post_json(
+            Arc::clone(&state),
+            "/api/settings/connectors",
+            serde_json::json!({ "type": "github" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(json["name"], "github");
+        assert_eq!(json["type"], "github");
+        assert_eq!(json["display_name"], "GitHub");
+        assert_eq!(json["status"], "pending");
+        assert_eq!(json["secrets"][0], "GITHUB_TOKEN");
+
+        // GET single
+        let (status, json) = get_json(
+            Arc::clone(&state),
+            "/api/settings/connectors/github",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["name"], "github");
+        assert_eq!(json["type"], "github");
+
+        // GET list
+        let (status, json) = get_json(
+            Arc::clone(&state),
+            "/api/settings/connectors",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json.as_array().unwrap().len(), 1);
+
+        // UPDATE
+        let (status, _) = put_json(
+            Arc::clone(&state),
+            "/api/settings/connectors/github",
+            serde_json::json!({ "status": "active" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Verify update took effect
+        let (status, json) = get_json(
+            Arc::clone(&state),
+            "/api/settings/connectors/github",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["status"], "active");
+
+        // DELETE
+        let status = delete_req(
+            Arc::clone(&state),
+            "/api/settings/connectors/github",
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        // Verify deletion
+        let (status, json) = get_json(state, "/api/settings/connectors").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json.as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_connector_create_unknown_type() {
+        let (_tmp, state) = test_app_state().await;
+        write_connector_templates(&state);
+
+        let (status, json) = post_json(
+            state,
+            "/api/settings/connectors",
+            serde_json::json!({ "type": "nonexistent" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(json["error"]
+            .as_str()
+            .unwrap()
+            .contains("Unknown connector type"));
+    }
+
+    #[tokio::test]
+    async fn test_connector_create_multi_instance_requires_name() {
+        let (_tmp, state) = test_app_state().await;
+        write_connector_templates(&state);
+
+        let (status, json) = post_json(
+            state,
+            "/api/settings/connectors",
+            serde_json::json!({ "type": "postgres" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(json["error"]
+            .as_str()
+            .unwrap()
+            .contains("'name' is required"));
+    }
+
+    #[tokio::test]
+    async fn test_connector_create_multi_instance() {
+        let (_tmp, state) = test_app_state().await;
+        write_connector_templates(&state);
+
+        let (status, json) = post_json(
+            Arc::clone(&state),
+            "/api/settings/connectors",
+            serde_json::json!({ "type": "postgres", "name": "my-db" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(json["name"], "my-db");
+        assert_eq!(json["type"], "postgres");
+        // Vault key should be namespaced: MY_DB_DATABASE_URL
+        assert_eq!(json["secrets"][0], "MY_DB_DATABASE_URL");
+    }
+
+    #[tokio::test]
+    async fn test_connector_templates_list() {
+        let (_tmp, state) = test_app_state().await;
+        write_connector_templates(&state);
+
+        let (status, json) = get_json(state, "/api/settings/connector-templates").await;
+        assert_eq!(status, StatusCode::OK);
+        let arr = json.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+
+        let names: Vec<&str> = arr.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert!(names.contains(&"github"));
+        assert!(names.contains(&"postgres"));
+
+        // Check that postgres is marked as multi_instance
+        let pg = arr.iter().find(|t| t["name"] == "postgres").unwrap();
+        assert_eq!(pg["multi_instance"], true);
+
+        let gh = arr.iter().find(|t| t["name"] == "github").unwrap();
+        assert_eq!(gh["multi_instance"], false);
+    }
+
+    #[tokio::test]
+    async fn test_connector_delete_nonexistent() {
+        let (_tmp, state) = test_app_state().await;
+        let status = delete_req(state, "/api/settings/connectors/ghost").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_connector_update_nonexistent() {
+        let (_tmp, state) = test_app_state().await;
+        let (status, _) = put_json(
+            state,
+            "/api/settings/connectors/ghost",
+            serde_json::json!({ "status": "active" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 }

@@ -10,16 +10,14 @@ export default function VaultTab() {
   const [adding, setAdding] = useState(false)
   const [newKey, setNewKey] = useState('')
   const [newValue, setNewValue] = useState('')
-  const [newIsSecret, setNewIsSecret] = useState(true)
   const [newHosts, setNewHosts] = useState([])
   const [newHostInput, setNewHostInput] = useState('')
   const [editingKey, setEditingKey] = useState(null)
   const [editValue, setEditValue] = useState('')
   const [saving, setSaving] = useState(null)
   const [confirmDelete, setConfirmDelete] = useState(null)
-  // Metadata editing (is_secret + allowed_hosts)
+  // Metadata editing (allowed_hosts)
   const [editingMeta, setEditingMeta] = useState(null)
-  const [metaIsSecret, setMetaIsSecret] = useState(true)
   const [metaHosts, setMetaHosts] = useState([])
   const [metaHostInput, setMetaHostInput] = useState('')
 
@@ -47,14 +45,12 @@ export default function VaultTab() {
         headers: apiHeaders(),
         body: JSON.stringify({
           value: newValue,
-          is_secret: newIsSecret,
           allowed_hosts: newHosts.length > 0 ? newHosts : null,
         }),
       })
       if (resp.ok) {
         setNewKey('')
         setNewValue('')
-        setNewIsSecret(true)
         setNewHosts([])
         setNewHostInput('')
         setAdding(false)
@@ -82,7 +78,6 @@ export default function VaultTab() {
         headers: apiHeaders(),
         body: JSON.stringify({
           value: editValue,
-          is_secret: entry?.is_secret ?? true,
           allowed_hosts: entry?.allowed_hosts || null,
         }),
       })
@@ -104,25 +99,10 @@ export default function VaultTab() {
     setSaving(key)
     setStatus(null)
     try {
-      // Re-read from vault: we need the current value but we don't have it.
-      // The PUT endpoint requires a value, so we pass a sentinel that the
-      // backend handles — actually, let's send a PATCH-style request by
-      // reading the entry's existing value from vault and re-setting it.
-      // Since we can't read the value from the browser (security), we use
-      // the existing PUT but must provide a value. We'll need a dedicated
-      // endpoint for metadata-only updates, or we keep the current value.
-      //
-      // For now: use a new PATCH endpoint on the backend, or we accept that
-      // metadata changes require re-entering the value.
-      //
-      // Simplest approach: add a PATCH route. But to avoid backend changes,
-      // we'll use a metadata-only PUT with a special body shape.
-      // Actually, let's just add a PATCH route to the gateway.
       const resp = await fetch(`/api/settings/vault/${encodeURIComponent(key)}/meta`, {
         method: 'PUT',
         headers: apiHeaders(),
         body: JSON.stringify({
-          is_secret: metaIsSecret,
           allowed_hosts: metaHosts.length > 0 ? metaHosts : null,
         }),
       })
@@ -228,26 +208,8 @@ export default function VaultTab() {
                 onChange={e => setNewValue(e.target.value)}
               />
 
-              {/* Sensitive toggle */}
-              {proxyEnabled && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: 'var(--color-secondary)' }}>
-                    <input
-                      type="checkbox"
-                      checked={newIsSecret}
-                      onChange={e => setNewIsSecret(e.target.checked)}
-                      style={{ accentColor: 'var(--color-accent)' }}
-                    />
-                    Sensitive
-                  </label>
-                  <span style={{ fontSize: '11px', color: 'var(--color-dim)' }}>
-                    {newIsSecret ? 'Opaque token when proxy active' : 'Plaintext in env'}
-                  </span>
-                </div>
-              )}
-
               {/* Allowed hosts */}
-              {proxyEnabled && newIsSecret && (
+              {proxyEnabled && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                   <span style={{ fontSize: '11px', color: 'var(--color-dim)' }}>
                     Allowed hosts {newHosts.length === 0 && '(unrestricted)'}
@@ -269,7 +231,7 @@ export default function VaultTab() {
                 <button
                   className="s-save-btn"
                   style={{ background: 'transparent', color: 'var(--color-muted)', border: '1px solid var(--color-border-main)' }}
-                  onClick={() => { setAdding(false); setNewKey(''); setNewValue(''); setNewHosts([]); setNewHostInput(''); setNewIsSecret(true) }}
+                  onClick={() => { setAdding(false); setNewKey(''); setNewValue(''); setNewHosts([]); setNewHostInput('') }}
                 >
                   Cancel
                 </button>
@@ -315,24 +277,6 @@ export default function VaultTab() {
                       system
                     </span>
                   )}
-                  {proxyEnabled && entry.is_secret && (
-                    <span style={{
-                      fontSize: '10px', padding: '1px 6px',
-                      border: '1px solid var(--color-border-main)',
-                      color: 'var(--color-accent)', textTransform: 'uppercase', letterSpacing: '0.05em',
-                    }}>
-                      sensitive
-                    </span>
-                  )}
-                  {proxyEnabled && !entry.is_secret && (
-                    <span style={{
-                      fontSize: '10px', padding: '1px 6px',
-                      border: '1px solid var(--color-border-main)',
-                      color: 'var(--color-dim)', textTransform: 'uppercase', letterSpacing: '0.05em',
-                    }}>
-                      config
-                    </span>
-                  )}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                   {editingKey !== entry.key && editingMeta !== entry.key && (
@@ -349,7 +293,6 @@ export default function VaultTab() {
                           style={{ background: 'none', border: 'none', color: 'var(--color-muted)', cursor: 'pointer', padding: '4px', fontSize: '12px' }}
                           onClick={() => {
                             setEditingMeta(entry.key)
-                            setMetaIsSecret(entry.is_secret)
                             setMetaHosts(entry.allowed_hosts || [])
                             setMetaHostInput('')
                           }}
@@ -390,7 +333,7 @@ export default function VaultTab() {
               </div>
 
               {/* Allowed hosts display (when not editing) */}
-              {proxyEnabled && entry.is_secret && entry.allowed_hosts && entry.allowed_hosts.length > 0 && editingMeta !== entry.key && (
+              {proxyEnabled && entry.allowed_hosts && entry.allowed_hosts.length > 0 && editingMeta !== entry.key && (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '2px' }}>
                   {entry.allowed_hosts.map(h => (
                     <span key={h} style={{
@@ -402,7 +345,7 @@ export default function VaultTab() {
                   ))}
                 </div>
               )}
-              {proxyEnabled && entry.is_secret && (!entry.allowed_hosts || entry.allowed_hosts.length === 0) && editingMeta !== entry.key && (
+              {proxyEnabled && (!entry.allowed_hosts || entry.allowed_hosts.length === 0) && editingMeta !== entry.key && (
                 <span style={{ fontSize: '10px', color: 'var(--color-dim)', marginTop: '2px' }}>
                   unrestricted
                 </span>
@@ -438,40 +381,25 @@ export default function VaultTab() {
                 </div>
               )}
 
-              {/* Metadata edit form (is_secret + allowed_hosts) */}
+              {/* Metadata edit form (allowed_hosts) */}
               {editingMeta === entry.key && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px', padding: '8px', border: '1px solid var(--color-border-subtle)' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', color: 'var(--color-secondary)' }}>
-                    <input
-                      type="checkbox"
-                      checked={metaIsSecret}
-                      onChange={e => setMetaIsSecret(e.target.checked)}
-                      style={{ accentColor: 'var(--color-accent)' }}
-                    />
-                    Sensitive
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                     <span style={{ fontSize: '11px', color: 'var(--color-dim)' }}>
-                      {metaIsSecret ? '(opaque token)' : '(plaintext in env)'}
+                      Allowed hosts {metaHosts.length === 0 && '(unrestricted)'}
                     </span>
-                  </label>
-
-                  {metaIsSecret && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <span style={{ fontSize: '11px', color: 'var(--color-dim)' }}>
-                        Allowed hosts {metaHosts.length === 0 && '(unrestricted)'}
-                      </span>
-                      <HostTags hosts={metaHosts} onRemove={h => removeHost(h, setMetaHosts)} />
-                      <input
-                        className="s-input"
-                        placeholder="api.example.com (Enter to add)"
-                        value={metaHostInput}
-                        onChange={e => setMetaHostInput(e.target.value)}
-                        onKeyDown={e => handleHostKeyDown(e, metaHosts, setMetaHosts, setMetaHostInput)}
-                        onBlur={() => addHost(metaHostInput, setMetaHosts, setMetaHostInput)}
-                        style={{ fontFamily: 'var(--font-mono)', fontSize: '12px' }}
-                        autoFocus
-                      />
-                    </div>
-                  )}
+                    <HostTags hosts={metaHosts} onRemove={h => removeHost(h, setMetaHosts)} />
+                    <input
+                      className="s-input"
+                      placeholder="api.example.com (Enter to add)"
+                      value={metaHostInput}
+                      onChange={e => setMetaHostInput(e.target.value)}
+                      onKeyDown={e => handleHostKeyDown(e, metaHosts, setMetaHosts, setMetaHostInput)}
+                      onBlur={() => addHost(metaHostInput, setMetaHosts, setMetaHostInput)}
+                      style={{ fontFamily: 'var(--font-mono)', fontSize: '12px' }}
+                      autoFocus
+                    />
+                  </div>
 
                   <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                     <button

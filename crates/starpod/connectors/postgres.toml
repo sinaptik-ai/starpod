@@ -1,0 +1,5 @@
+name = "postgres"
+display_name = "PostgreSQL"
+description = "PostgreSQL database connection"
+multi_instance = true
+secrets = ["DATABASE_URL"]

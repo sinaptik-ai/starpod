@@ -1,0 +1,8 @@
+name = "cloudflare"
+display_name = "Cloudflare"
+description = "Cloudflare DNS, Workers, R2, and CDN management"
+secrets = ["CLOUDFLARE_API_TOKEN"]
+optional_secrets = ["CLOUDFLARE_ACCOUNT_ID"]
+
+[config]
+base_url = "https://api.cloudflare.com/client/v4"

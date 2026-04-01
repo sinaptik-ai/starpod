@@ -756,11 +756,13 @@ mod tests {
         let config_dir = agent_home.join("config");
         let db_dir = agent_home.join("db");
         let skills_dir = agent_home.join("skills");
+        let connectors_dir = agent_home.join("connectors");
         let users_dir = agent_home.join("users");
         let home_dir = dir.join("home");
         std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::create_dir_all(&db_dir).unwrap();
         std::fs::create_dir_all(&skills_dir).unwrap();
+        std::fs::create_dir_all(&connectors_dir).unwrap();
         std::fs::create_dir_all(&users_dir).unwrap();
         std::fs::create_dir_all(&home_dir).unwrap();
         starpod_core::ResolvedPaths {
@@ -772,6 +774,7 @@ mod tests {
             config_dir,
             db_dir,
             skills_dir,
+            connectors_dir,
             project_root: dir.to_path_buf(),
             instance_root: dir.to_path_buf(),
             home_dir,

@@ -246,9 +246,9 @@ impl Default for InternetConfig {
 
 /// Secret proxy configuration (`[proxy]` in `agent.toml`).
 ///
-/// When enabled, vault secrets marked `is_secret = true` are returned as opaque
-/// tokens instead of plaintext. The proxy crate (Phase 2+) intercepts outbound
-/// HTTP and swaps tokens for real values.
+/// When enabled, vault secrets are returned as opaque tokens instead of
+/// plaintext. The proxy crate (Phase 2+) intercepts outbound HTTP and swaps
+/// tokens for real values.
 ///
 /// # Example
 ///

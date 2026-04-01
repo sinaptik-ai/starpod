@@ -1,0 +1,8 @@
+name = "discord"
+display_name = "Discord"
+description = "Discord bot messaging and server management"
+secrets = ["DISCORD_BOT_TOKEN"]
+optional_secrets = ["DISCORD_WEBHOOK_URL"]
+
+[config]
+base_url = "https://discord.com/api/v10"

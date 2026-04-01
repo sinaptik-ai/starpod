@@ -1,0 +1,7 @@
+name = "azure"
+display_name = "Azure"
+description = "Microsoft Azure cloud services"
+secrets = ["AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_TENANT_ID"]
+optional_secrets = ["AZURE_SUBSCRIPTION_ID"]
+
+[config]

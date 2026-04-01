@@ -441,33 +441,72 @@ async fn inject_vault_env(paths: &ResolvedPaths, proxy_enabled: bool) -> anyhow:
                 // Starpod process itself to call LLM APIs. They must never
                 // be opaque-ified — only user-facing secrets get tokens.
                 if !starpod_vault::is_system_key(&key) {
-                    let entry =
-                        vault
-                            .get_entry(&key)
-                            .await?
-                            .unwrap_or_else(|| starpod_vault::VaultEntry {
-                                key: key.clone(),
-                                is_secret: true,
-                                allowed_hosts: None,
-                                created_at: String::new(),
-                                updated_at: String::new(),
-                            });
-                    if entry.is_secret {
-                        let hosts = entry.allowed_hosts.unwrap_or_default();
-                        let token = starpod_vault::opaque::encode_opaque_token(
-                            vault.cipher(),
-                            &val,
-                            &hosts,
-                        )?;
-                        std::env::set_var(&key, &token);
-                        continue;
-                    }
+                    let hosts = vault
+                        .get_entry(&key)
+                        .await?
+                        .and_then(|e| e.allowed_hosts)
+                        .unwrap_or_default();
+                    let token = starpod_vault::opaque::encode_opaque_token(
+                        vault.cipher(),
+                        &val,
+                        &hosts,
+                    )?;
+                    std::env::set_var(&key, &token);
+                    continue;
                 }
             }
             let _ = proxy_enabled; // suppress unused warning when feature disabled
             std::env::set_var(&key, &val);
         }
     }
+    Ok(())
+}
+
+/// Validate connector status at boot by checking vault for required secrets.
+///
+/// For each connector in the database:
+/// - If all required secrets are available as env vars → status = "connected"
+/// - If any are missing → status = "pending"
+async fn validate_connectors(paths: &ResolvedPaths) -> anyhow::Result<()> {
+    // Ensure connector templates exist (handles pre-existing projects that
+    // were initialised before connectors were added).
+    let connectors_dir = &paths.connectors_dir;
+    tokio::fs::create_dir_all(connectors_dir).await?;
+    for (name, content) in BUILTIN_CONNECTOR_TEMPLATES {
+        let path = connectors_dir.join(name);
+        if !path.exists() {
+            tokio::fs::write(&path, content).await?;
+        }
+    }
+
+    let core_db = starpod_db::CoreDb::new(&paths.db_dir).await?;
+    let store = starpod_db::connectors::ConnectorStore::from_pool(core_db.pool().clone());
+
+    let connectors = store.list().await?;
+    for connector in &connectors {
+        let all_present = connector
+            .secrets
+            .iter()
+            .all(|key| std::env::var(key).is_ok());
+
+        let new_status = if connector.secrets.is_empty() && connector.auth_method == "oauth" {
+            // OAuth-only connectors: check if the token key is in env
+            if let Some(ref token_key) = connector.oauth_token_key {
+                if std::env::var(token_key).is_ok() { "connected" } else { "not_connected" }
+            } else {
+                "not_connected"
+            }
+        } else if connector.secrets.is_empty() || all_present {
+            "connected"
+        } else {
+            "not_connected"
+        };
+
+        if connector.status != new_status {
+            let _ = store.update_status(&connector.name, new_status).await;
+        }
+    }
+
     Ok(())
 }
 
@@ -493,6 +532,98 @@ fn build_cron_notifier(config: &StarpodConfig) -> Option<starpod_cron::Notificat
         None
     }
 }
+
+// ── Built-in connector templates ────────────────────────────────────────────
+
+/// Built-in connector templates, embedded at compile time via `include_str!`.
+///
+/// Each entry is `(filename, content)`. Written to `.starpod/connectors/`
+/// during `starpod init` to provide out-of-the-box templates for common
+/// services. Users can add custom `.toml` templates to the same directory.
+const BUILTIN_CONNECTOR_TEMPLATES: &[(&str, &str)] = &[
+    // Source control & project management
+    ("github.toml", include_str!("../connectors/github.toml")),
+    (
+        "github-apps.toml",
+        include_str!("../connectors/github-apps.toml"),
+    ),
+    ("linear.toml", include_str!("../connectors/linear.toml")),
+    ("jira.toml", include_str!("../connectors/jira.toml")),
+    ("notion.toml", include_str!("../connectors/notion.toml")),
+    // Cloud providers
+    ("aws.toml", include_str!("../connectors/aws.toml")),
+    (
+        "google-cloud.toml",
+        include_str!("../connectors/google-cloud.toml"),
+    ),
+    ("azure.toml", include_str!("../connectors/azure.toml")),
+    (
+        "cloudflare.toml",
+        include_str!("../connectors/cloudflare.toml"),
+    ),
+    ("vercel.toml", include_str!("../connectors/vercel.toml")),
+    (
+        "digitalocean.toml",
+        include_str!("../connectors/digitalocean.toml"),
+    ),
+    // Databases
+    ("postgres.toml", include_str!("../connectors/postgres.toml")),
+    ("mysql.toml", include_str!("../connectors/mysql.toml")),
+    ("redis.toml", include_str!("../connectors/redis.toml")),
+    ("mongodb.toml", include_str!("../connectors/mongodb.toml")),
+    (
+        "elasticsearch.toml",
+        include_str!("../connectors/elasticsearch.toml"),
+    ),
+    (
+        "supabase.toml",
+        include_str!("../connectors/supabase.toml"),
+    ),
+    // Communication
+    ("slack.toml", include_str!("../connectors/slack.toml")),
+    ("discord.toml", include_str!("../connectors/discord.toml")),
+    (
+        "telegram.toml",
+        include_str!("../connectors/telegram.toml"),
+    ),
+    ("smtp.toml", include_str!("../connectors/smtp.toml")),
+    ("twilio.toml", include_str!("../connectors/twilio.toml")),
+    // Payments & commerce
+    ("stripe.toml", include_str!("../connectors/stripe.toml")),
+    ("shopify.toml", include_str!("../connectors/shopify.toml")),
+    // Marketing & CRM
+    (
+        "hubspot.toml",
+        include_str!("../connectors/hubspot.toml"),
+    ),
+    (
+        "meta-ads.toml",
+        include_str!("../connectors/meta-ads.toml"),
+    ),
+    // Google services
+    (
+        "google-calendar.toml",
+        include_str!("../connectors/google-calendar.toml"),
+    ),
+    (
+        "google-sheets.toml",
+        include_str!("../connectors/google-sheets.toml"),
+    ),
+    // AI providers
+    ("openai.toml", include_str!("../connectors/openai.toml")),
+    (
+        "anthropic.toml",
+        include_str!("../connectors/anthropic.toml"),
+    ),
+    // Email
+    (
+        "sendgrid.toml",
+        include_str!("../connectors/sendgrid.toml"),
+    ),
+    // Monitoring
+    ("sentry.toml", include_str!("../connectors/sentry.toml")),
+    ("datadog.toml", include_str!("../connectors/datadog.toml")),
+];
 
 // ── Main ────────────────────────────────────────────────────────────────────
 
@@ -539,6 +670,13 @@ async fn main() -> anyhow::Result<()> {
             tokio::fs::create_dir_all(starpod_dir.join("db")).await?;
             tokio::fs::create_dir_all(starpod_dir.join("skills")).await?;
             tokio::fs::create_dir_all(starpod_dir.join("users")).await?;
+
+            // Seed connector templates
+            let connectors_dir = starpod_dir.join("connectors");
+            tokio::fs::create_dir_all(&connectors_dir).await?;
+            for (name, content) in BUILTIN_CONNECTOR_TEMPLATES {
+                tokio::fs::write(connectors_dir.join(name), content).await?;
+            }
 
             // Write config files
             tokio::fs::write(
@@ -633,6 +771,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Dev { port } => {
             let (agent, mut config, paths) = resolve_agent().await?;
             inject_vault_env(&paths, config.proxy.enabled).await?;
+            validate_connectors(&paths).await?;
 
             // Override port if specified
             if let Some(p) = port {
@@ -679,6 +818,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Serve => {
             let (agent, config, paths) = resolve_agent().await?;
             inject_vault_env(&paths, config.proxy.enabled).await?;
+            validate_connectors(&paths).await?;
 
             let addr = config.server_addr.clone();
             let display_name = config.agent_name.clone();
@@ -730,6 +870,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Repl => {
             let (agent, config, paths) = resolve_agent().await?;
             inject_vault_env(&paths, config.proxy.enabled).await?;
+            validate_connectors(&paths).await?;
             let name = config.agent_name.clone();
             run_repl(agent, &name).await?;
         }
@@ -752,6 +893,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             };
             inject_vault_env(&paths, config.proxy.enabled).await?;
+            validate_connectors(&paths).await?;
 
             let name = config.agent_name.clone();
             print_header_with_name(&name);
@@ -1063,5 +1205,98 @@ mod tests {
         let fenced = "```json\n{\"a\": 1}\n```";
         let once = strip_json_fence(fenced);
         assert_eq!(strip_json_fence(once), once);
+    }
+
+    #[test]
+    fn builtin_templates_are_valid_toml() {
+        for (name, content) in BUILTIN_CONNECTOR_TEMPLATES {
+            let template: starpod_core::connector_template::ConnectorTemplate =
+                toml::from_str(content)
+                    .unwrap_or_else(|e| panic!("Invalid template {}: {}", name, e));
+            assert!(!template.name.is_empty(), "{} has empty name", name);
+            assert!(!template.display_name.is_empty(), "{} has empty display_name", name);
+            assert!(!template.description.is_empty(), "{} has empty description", name);
+        }
+    }
+
+    #[test]
+    fn builtin_templates_filenames_match_names() {
+        for (filename, content) in BUILTIN_CONNECTOR_TEMPLATES {
+            let template: starpod_core::connector_template::ConnectorTemplate =
+                toml::from_str(content).unwrap();
+            let expected = format!("{}.toml", template.name);
+            assert_eq!(
+                *filename, expected.as_str(),
+                "Template filename '{}' doesn't match name '{}'",
+                filename, template.name
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn validate_connectors_updates_status() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_dir = tmp.path().join("db");
+        tokio::fs::create_dir_all(&db_dir).await.unwrap();
+        let connectors_dir = tmp.path().join("connectors");
+        tokio::fs::create_dir_all(&connectors_dir).await.unwrap();
+
+        // Create core.db with connector table
+        let core_db = starpod_db::CoreDb::new(&db_dir).await.unwrap();
+        let store =
+            starpod_db::connectors::ConnectorStore::from_pool(core_db.pool().clone());
+
+        // Insert a connector that requires GITHUB_TOKEN
+        store
+            .insert(&starpod_db::connectors::ConnectorRow {
+                name: "github".into(),
+                connector_type: "github".into(),
+                display_name: "GitHub".into(),
+                description: "GitHub access".into(),
+                auth_method: "token".into(),
+                secrets: vec!["TEST_CONNECTOR_KEY_12345".into()],
+                config: std::collections::HashMap::new(),
+                oauth_token_url: None,
+                oauth_token_key: None,
+                oauth_refresh_key: None,
+                oauth_expires_at: None,
+                status: "pending".into(),
+                created_at: String::new(),
+                updated_at: String::new(),
+            })
+            .await
+            .unwrap();
+
+        // Build paths that point to our temp dir
+        let paths = ResolvedPaths {
+            mode: starpod_core::workspace::Mode::SingleAgent {
+                starpod_dir: tmp.path().to_path_buf(),
+            },
+            agent_toml: tmp.path().join("config").join("agent.toml"),
+            agent_home: tmp.path().to_path_buf(),
+            config_dir: tmp.path().join("config"),
+            db_dir: db_dir.clone(),
+            skills_dir: tmp.path().join("skills"),
+            users_dir: tmp.path().join("users"),
+            home_dir: tmp.path().join("home"),
+            connectors_dir,
+            project_root: tmp.path().to_path_buf(),
+            instance_root: tmp.path().to_path_buf(),
+            env_file: None,
+        };
+
+        // Without the env var set, status stays "pending"
+        validate_connectors(&paths).await.unwrap();
+        let row = store.get("github").await.unwrap().unwrap();
+        assert_eq!(row.status, "pending");
+
+        // Set the env var and re-validate
+        std::env::set_var("TEST_CONNECTOR_KEY_12345", "fake-token");
+        validate_connectors(&paths).await.unwrap();
+        let row = store.get("github").await.unwrap().unwrap();
+        assert_eq!(row.status, "connected");
+
+        // Clean up env
+        std::env::remove_var("TEST_CONNECTOR_KEY_12345");
     }
 }

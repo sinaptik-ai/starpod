@@ -1,0 +1,8 @@
+name = "stripe"
+display_name = "Stripe"
+description = "Stripe payments API for charges, subscriptions, and invoices"
+secrets = ["STRIPE_SECRET_KEY"]
+optional_secrets = ["STRIPE_WEBHOOK_SECRET"]
+
+[config]
+base_url = "https://api.stripe.com"

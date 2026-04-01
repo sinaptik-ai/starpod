@@ -7,66 +7,6 @@ use tracing::{debug, warn};
 
 use starpod_core::{Result, StarpodError};
 
-// ── Env declarations ────────────────────────────────────────────────────────
-//
-// Skills can declare environment requirements in their YAML frontmatter:
-//
-// ```yaml
-// env:
-//   secrets:
-//     GITHUB_TOKEN:
-//       required: true
-//       description: GitHub PAT for PR access
-//   variables:
-//     GITHUB_ORG:
-//       default: ""
-//       description: Default org to scope PRs
-// ```
-//
-// These are aggregated into deploy.toml on push/deploy for platform
-// readiness validation. Secrets pair to vault secrets; variables have
-// defaults that operators can override.
-
-/// A secret that a skill requires (e.g. an API key or token).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct SecretDecl {
-    /// Whether the skill cannot function without this secret.
-    #[serde(default)]
-    pub required: bool,
-    /// Human-readable explanation of what this secret is for.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub description: String,
-}
-
-/// A configurable variable with an optional default value.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct VariableDecl {
-    /// Default value used when the operator doesn't override.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default: Option<String>,
-    /// Human-readable explanation of what this variable controls.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub description: String,
-}
-
-/// Environment requirements for a skill (secrets + variables).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct SkillEnv {
-    /// Secret keys the skill needs (API tokens, credentials).
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub secrets: HashMap<String, SecretDecl>,
-    /// Configurable variables with optional defaults.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub variables: HashMap<String, VariableDecl>,
-}
-
-impl SkillEnv {
-    /// Returns `true` if there are no secrets and no variables.
-    pub fn is_empty(&self) -> bool {
-        self.secrets.is_empty() && self.variables.is_empty()
-    }
-}
-
 // ── AgentSkills-compatible SKILL.md frontmatter ─────────────────────────────
 
 /// YAML frontmatter parsed from a SKILL.md file.
@@ -85,9 +25,9 @@ pub struct SkillFrontmatter {
     /// Optional compatibility notes (e.g. "Requires git, docker").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compatibility: Option<String>,
-    /// Environment requirements (secrets + variables).
+    /// Connector names this skill requires (e.g. ["github", "postgres"]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub env: Option<SkillEnv>,
+    pub connectors: Option<Vec<String>>,
     /// Arbitrary key-value metadata.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub metadata: HashMap<String, String>,
@@ -121,9 +61,9 @@ pub struct Skill {
     /// Optional compatibility notes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compatibility: Option<String>,
-    /// Environment requirements (secrets + variables).
+    /// Connector names this skill requires (e.g. ["github", "postgres"]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub env: Option<SkillEnv>,
+    pub connectors: Option<Vec<String>>,
     /// Arbitrary metadata from frontmatter.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub metadata: HashMap<String, String>,
@@ -181,23 +121,17 @@ fn format_skill_md(
     name: &str,
     description: &str,
     version: Option<&str>,
-    env: Option<&SkillEnv>,
+    connectors: Option<&[String]>,
     body: &str,
 ) -> String {
     let mut fm = format!("---\nname: {}\ndescription: {}", name, description);
     if let Some(v) = version {
         fm.push_str(&format!("\nversion: {}", v));
     }
-    if let Some(env) = env.filter(|e| !e.is_empty()) {
-        // Serialize the env block as YAML and indent under "env:"
-        let env_yaml = serde_yaml::to_string(env).unwrap_or_default();
-        fm.push_str("\nenv:");
-        for line in env_yaml.lines() {
-            // Skip empty lines that serde_yaml may produce
-            if line.is_empty() {
-                continue;
-            }
-            fm.push_str(&format!("\n  {}", line));
+    if let Some(conns) = connectors.filter(|c| !c.is_empty()) {
+        fm.push_str("\nconnectors:");
+        for c in conns {
+            fm.push_str(&format!("\n  - {}", c));
         }
     }
     fm.push_str("\n---\n\n");
@@ -234,7 +168,7 @@ fn format_skill_md(
 ///
 /// let store = SkillStore::new(tmp.path()).unwrap();
 ///
-/// // Create
+/// // Create (no connectors)
 /// store.create("code-review", "Review code for bugs.", None, None, "Check error handling.").unwrap();
 ///
 /// // Catalog for system prompt
@@ -294,7 +228,7 @@ impl SkillStore {
                 created_at,
                 skill_dir,
                 compatibility: fm.compatibility,
-                env: fm.env.filter(|e| !e.is_empty()),
+                connectors: fm.connectors.filter(|c| !c.is_empty()),
                 metadata: fm.metadata,
                 allowed_tools: fm.allowed_tools,
             }),
@@ -319,7 +253,7 @@ impl SkillStore {
                     created_at,
                     skill_dir,
                     compatibility: None,
-                    env: None,
+                    connectors: None,
                     metadata: HashMap::new(),
                     allowed_tools: None,
                 })
@@ -375,7 +309,7 @@ impl SkillStore {
         name: &str,
         description: &str,
         version: Option<&str>,
-        env: Option<&SkillEnv>,
+        connectors: Option<&[String]>,
         body: &str,
     ) -> Result<()> {
         validate_skill_name(name)?;
@@ -387,7 +321,7 @@ impl SkillStore {
             )));
         }
         std::fs::create_dir_all(&skill_dir)?;
-        let content = format_skill_md(name, description, version, env, body);
+        let content = format_skill_md(name, description, version, connectors, body);
         std::fs::write(skill_dir.join("SKILL.md"), content)?;
         debug!(skill = %name, "Created skill");
         Ok(())
@@ -399,7 +333,7 @@ impl SkillStore {
         name: &str,
         description: &str,
         version: Option<&str>,
-        env: Option<&SkillEnv>,
+        connectors: Option<&[String]>,
         body: &str,
     ) -> Result<()> {
         validate_skill_name(name)?;
@@ -410,7 +344,7 @@ impl SkillStore {
                 name
             )));
         }
-        let content = format_skill_md(name, description, version, env, body);
+        let content = format_skill_md(name, description, version, connectors, body);
         std::fs::write(&skill_file, content)?;
         debug!(skill = %name, "Updated skill");
         Ok(())
@@ -504,18 +438,6 @@ impl SkillStore {
             .map(|skills| skills.into_iter().map(|s| s.name).collect())
     }
 
-    /// Collect env declarations from all skills that have them.
-    ///
-    /// Returns `(skill_name, env)` pairs, sorted by skill name.
-    pub fn collect_env_by_skill(&self) -> Result<Vec<(String, SkillEnv)>> {
-        let skills = self.list()?;
-        let mut result: Vec<(String, SkillEnv)> = skills
-            .into_iter()
-            .filter_map(|s| s.env.map(|e| (s.name, e)))
-            .collect();
-        result.sort_by(|a, b| a.0.cmp(&b.0));
-        Ok(result)
-    }
 }
 
 /// Escape XML special characters.
@@ -1410,350 +1332,169 @@ mod tests {
         );
     }
 
-    // ── Env declarations ──────────────────────────────────────────────────
+    // ── Connector declarations ─────────────────────────────────────────────
 
-    fn sample_env() -> SkillEnv {
-        let mut secrets = HashMap::new();
-        secrets.insert(
-            "GITHUB_TOKEN".to_string(),
-            SecretDecl {
-                required: true,
-                description: "GitHub PAT for PR access".to_string(),
-            },
-        );
-        let mut variables = HashMap::new();
-        variables.insert(
-            "GITHUB_ORG".to_string(),
-            VariableDecl {
-                default: Some("".to_string()),
-                description: "Default org to scope PRs".to_string(),
-            },
-        );
-        SkillEnv { secrets, variables }
+    fn sample_connectors() -> Vec<String> {
+        vec!["github".to_string(), "postgres".to_string()]
     }
 
     #[test]
-    fn test_format_with_env_roundtrip() {
-        let env = sample_env();
+    fn test_format_with_connectors_roundtrip() {
+        let conns = sample_connectors();
         let formatted = format_skill_md(
             "gh-review",
             "Review PRs.",
             Some("0.1.0"),
-            Some(&env),
+            Some(&conns),
             "Do the review.",
         );
-        assert!(formatted.contains("env:"));
-        assert!(formatted.contains("GITHUB_TOKEN"));
-        assert!(formatted.contains("GITHUB_ORG"));
+        assert!(formatted.contains("connectors:"));
+        assert!(formatted.contains("- github"));
+        assert!(formatted.contains("- postgres"));
 
         // Parse it back
         let (fm, body) = parse_skill_md(&formatted);
         let fm = fm.unwrap();
         assert_eq!(fm.name, "gh-review");
         assert_eq!(fm.version.as_deref(), Some("0.1.0"));
-        let parsed_env = fm.env.unwrap();
-        assert!(parsed_env.secrets.contains_key("GITHUB_TOKEN"));
-        assert!(parsed_env.secrets["GITHUB_TOKEN"].required);
-        assert_eq!(
-            parsed_env.secrets["GITHUB_TOKEN"].description,
-            "GitHub PAT for PR access"
-        );
-        assert!(parsed_env.variables.contains_key("GITHUB_ORG"));
-        assert_eq!(
-            parsed_env.variables["GITHUB_ORG"].default.as_deref(),
-            Some("")
-        );
+        let parsed_conns = fm.connectors.unwrap();
+        assert!(parsed_conns.contains(&"github".to_string()));
+        assert!(parsed_conns.contains(&"postgres".to_string()));
         assert_eq!(body.trim(), "Do the review.");
     }
 
     #[test]
-    fn test_format_without_env_no_env_block() {
-        let formatted = format_skill_md("plain", "No env.", None, None, "Body.");
-        assert!(!formatted.contains("env:"));
+    fn test_format_without_connectors_no_connectors_block() {
+        let formatted = format_skill_md("plain", "No connectors.", None, None, "Body.");
+        assert!(!formatted.contains("connectors:"));
     }
 
     #[test]
-    fn test_format_with_empty_env_no_env_block() {
-        let empty = SkillEnv::default();
-        let formatted = format_skill_md("plain", "No env.", None, Some(&empty), "Body.");
-        assert!(!formatted.contains("env:"));
+    fn test_format_with_empty_connectors_no_connectors_block() {
+        let empty: Vec<String> = vec![];
+        let formatted =
+            format_skill_md("plain", "No connectors.", None, Some(&empty), "Body.");
+        assert!(!formatted.contains("connectors:"));
     }
 
     #[test]
-    fn test_create_with_env() {
+    fn test_create_with_connectors() {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
-        let env = sample_env();
+        let conns = sample_connectors();
 
         store
             .create(
                 "gh-review",
                 "Review PRs.",
                 Some("0.1.0"),
-                Some(&env),
+                Some(&conns),
                 "Do review.",
             )
             .unwrap();
 
         let skill = store.get("gh-review").unwrap().unwrap();
-        assert!(skill.env.is_some());
-        let skill_env = skill.env.unwrap();
-        assert!(skill_env.secrets.contains_key("GITHUB_TOKEN"));
-        assert!(skill_env.variables.contains_key("GITHUB_ORG"));
+        assert!(skill.connectors.is_some());
+        let skill_conns = skill.connectors.unwrap();
+        assert!(skill_conns.contains(&"github".to_string()));
+        assert!(skill_conns.contains(&"postgres".to_string()));
     }
 
     #[test]
-    fn test_existing_skills_without_env_parse_as_none() {
+    fn test_existing_skills_without_connectors_parse_as_none() {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
 
         store
-            .create("no-env", "Simple skill.", None, None, "Just do it.")
+            .create("no-conn", "Simple skill.", None, None, "Just do it.")
             .unwrap();
-        let skill = store.get("no-env").unwrap().unwrap();
-        assert!(skill.env.is_none());
+        let skill = store.get("no-conn").unwrap().unwrap();
+        assert!(skill.connectors.is_none());
     }
 
     #[test]
-    fn test_parse_handwritten_env_frontmatter() {
-        let content = "---\nname: weather\ndescription: Check weather.\nenv:\n  secrets:\n    WEATHER_API_KEY:\n      required: true\n      description: OpenWeather key\n  variables:\n    DEFAULT_CITY:\n      default: Rome\n      description: Fallback city\n---\n\nGet the weather.";
+    fn test_parse_handwritten_connectors_frontmatter() {
+        let content = "---\nname: weather\ndescription: Check weather.\nconnectors:\n  - openweather\n  - geocoding\n---\n\nGet the weather.";
         let (fm, body) = parse_skill_md(content);
         let fm = fm.unwrap();
-        let env = fm.env.unwrap();
-        assert!(env.secrets["WEATHER_API_KEY"].required);
-        assert_eq!(
-            env.variables["DEFAULT_CITY"].default.as_deref(),
-            Some("Rome")
-        );
+        let conns = fm.connectors.unwrap();
+        assert!(conns.contains(&"openweather".to_string()));
+        assert!(conns.contains(&"geocoding".to_string()));
         assert_eq!(body.trim(), "Get the weather.");
     }
 
     #[test]
-    fn test_collect_env_by_skill() {
+    fn test_create_with_version_and_connectors() {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
-        let env = sample_env();
-
-        store
-            .create("with-env", "Has env.", None, Some(&env), "body")
-            .unwrap();
-        store
-            .create("no-env", "No env.", None, None, "body")
-            .unwrap();
-
-        let collected = store.collect_env_by_skill().unwrap();
-        assert_eq!(collected.len(), 1);
-        assert_eq!(collected[0].0, "with-env");
-        assert!(collected[0].1.secrets.contains_key("GITHUB_TOKEN"));
-    }
-
-    #[test]
-    fn test_collect_env_multiple_skills_sorted() {
-        let tmp = TempDir::new().unwrap();
-        let store = SkillStore::new(tmp.path()).unwrap();
-
-        let mut secrets_z = HashMap::new();
-        secrets_z.insert(
-            "Z_TOKEN".to_string(),
-            SecretDecl {
-                required: true,
-                description: "Z".to_string(),
-            },
-        );
-        let env_z = SkillEnv {
-            secrets: secrets_z,
-            variables: HashMap::new(),
-        };
-
-        let mut secrets_a = HashMap::new();
-        secrets_a.insert(
-            "A_TOKEN".to_string(),
-            SecretDecl {
-                required: false,
-                description: "A".to_string(),
-            },
-        );
-        let env_a = SkillEnv {
-            secrets: secrets_a,
-            variables: HashMap::new(),
-        };
-
-        store
-            .create("zeta", "Z skill.", None, Some(&env_z), "z")
-            .unwrap();
-        store
-            .create("alpha", "A skill.", None, Some(&env_a), "a")
-            .unwrap();
-        store.create("plain", "No env.", None, None, "p").unwrap();
-
-        let collected = store.collect_env_by_skill().unwrap();
-        assert_eq!(collected.len(), 2);
-        assert_eq!(collected[0].0, "alpha");
-        assert_eq!(collected[1].0, "zeta");
-    }
-
-    #[test]
-    fn test_create_with_version_and_env() {
-        let tmp = TempDir::new().unwrap();
-        let store = SkillStore::new(tmp.path()).unwrap();
-        let env = sample_env();
+        let conns = sample_connectors();
 
         store
             .create(
                 "full",
                 "Full skill.",
                 Some("1.0.0"),
-                Some(&env),
+                Some(&conns),
                 "Instructions.",
             )
             .unwrap();
 
         let skill = store.get("full").unwrap().unwrap();
         assert_eq!(skill.version.as_deref(), Some("1.0.0"));
-        assert!(skill.env.is_some());
-        let skill_env = skill.env.unwrap();
-        assert!(skill_env.secrets.contains_key("GITHUB_TOKEN"));
+        assert!(skill.connectors.is_some());
+        let skill_conns = skill.connectors.unwrap();
+        assert!(skill_conns.contains(&"github".to_string()));
 
-        // Verify raw file contains both version and env
+        // Verify raw file contains both version and connectors
         let raw = std::fs::read_to_string(tmp.path().join("full").join("SKILL.md")).unwrap();
         assert!(raw.contains("version: 1.0.0"));
-        assert!(raw.contains("env:"));
-        assert!(raw.contains("GITHUB_TOKEN"));
+        assert!(raw.contains("connectors:"));
+        assert!(raw.contains("github"));
     }
 
     #[test]
-    fn test_update_replaces_env() {
+    fn test_update_replaces_connectors() {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
-        let env = sample_env();
+        let conns = sample_connectors();
 
         store
-            .create("my-skill", "v1", None, Some(&env), "body v1")
+            .create("my-skill", "v1", None, Some(&conns), "body v1")
             .unwrap();
 
-        // Update with different env
-        let mut new_secrets = HashMap::new();
-        new_secrets.insert(
-            "NEW_TOKEN".to_string(),
-            SecretDecl {
-                required: false,
-                description: "New".to_string(),
-            },
-        );
-        let new_env = SkillEnv {
-            secrets: new_secrets,
-            variables: HashMap::new(),
-        };
+        // Update with different connectors
+        let new_conns = vec!["slack".to_string()];
 
         store
-            .update("my-skill", "v2", None, Some(&new_env), "body v2")
+            .update("my-skill", "v2", None, Some(&new_conns), "body v2")
             .unwrap();
 
         let skill = store.get("my-skill").unwrap().unwrap();
-        let env = skill.env.unwrap();
-        assert!(!env.secrets.contains_key("GITHUB_TOKEN")); // old key gone
-        assert!(env.secrets.contains_key("NEW_TOKEN")); // new key present
-        assert!(!env.secrets["NEW_TOKEN"].required);
+        let conns = skill.connectors.unwrap();
+        assert!(!conns.contains(&"github".to_string())); // old connector gone
+        assert!(conns.contains(&"slack".to_string())); // new connector present
     }
 
     #[test]
-    fn test_update_removes_env() {
+    fn test_update_removes_connectors() {
         let tmp = TempDir::new().unwrap();
         let store = SkillStore::new(tmp.path()).unwrap();
-        let env = sample_env();
+        let conns = sample_connectors();
 
         store
-            .create("my-skill", "Has env", None, Some(&env), "body")
+            .create("my-skill", "Has connectors", None, Some(&conns), "body")
             .unwrap();
-        assert!(store.get("my-skill").unwrap().unwrap().env.is_some());
+        assert!(store.get("my-skill").unwrap().unwrap().connectors.is_some());
 
-        // Update with None env — removes it
+        // Update with None connectors — removes it
         store
-            .update("my-skill", "No env now", None, None, "body")
+            .update("my-skill", "No connectors now", None, None, "body")
             .unwrap();
         let skill = store.get("my-skill").unwrap().unwrap();
-        assert!(skill.env.is_none());
+        assert!(skill.connectors.is_none());
 
-        // Verify no env block in raw file
+        // Verify no connectors block in raw file
         let raw = std::fs::read_to_string(tmp.path().join("my-skill").join("SKILL.md")).unwrap();
-        assert!(!raw.contains("env:"));
-    }
-
-    #[test]
-    fn test_env_with_special_chars_in_description() {
-        let tmp = TempDir::new().unwrap();
-        let store = SkillStore::new(tmp.path()).unwrap();
-
-        let mut secrets = HashMap::new();
-        secrets.insert(
-            "TOKEN".to_string(),
-            SecretDecl {
-                required: true,
-                description: "Token for \"special\" API (v2.0) — required!".to_string(),
-            },
-        );
-        let env = SkillEnv {
-            secrets,
-            variables: HashMap::new(),
-        };
-
-        store
-            .create("special-chars", "Special.", None, Some(&env), "body")
-            .unwrap();
-
-        // Roundtrip: parse it back
-        let skill = store.get("special-chars").unwrap().unwrap();
-        let parsed_env = skill.env.unwrap();
-        assert!(parsed_env.secrets["TOKEN"].description.contains("special"));
-    }
-
-    #[test]
-    fn test_env_secrets_only_no_variables() {
-        let mut secrets = HashMap::new();
-        secrets.insert(
-            "KEY".to_string(),
-            SecretDecl {
-                required: true,
-                description: "key".to_string(),
-            },
-        );
-        let env = SkillEnv {
-            secrets,
-            variables: HashMap::new(),
-        };
-
-        let formatted = format_skill_md("sec-only", "Secrets only.", None, Some(&env), "Body.");
-        assert!(formatted.contains("secrets:"));
-        assert!(!formatted.contains("variables:"));
-
-        let (fm, _) = parse_skill_md(&formatted);
-        let parsed = fm.unwrap().env.unwrap();
-        assert_eq!(parsed.secrets.len(), 1);
-        assert!(parsed.variables.is_empty());
-    }
-
-    #[test]
-    fn test_env_variables_only_no_secrets() {
-        let mut variables = HashMap::new();
-        variables.insert(
-            "TIMEOUT".to_string(),
-            VariableDecl {
-                default: Some("30".to_string()),
-                description: "timeout".to_string(),
-            },
-        );
-        let env = SkillEnv {
-            secrets: HashMap::new(),
-            variables,
-        };
-
-        let formatted = format_skill_md("var-only", "Vars only.", None, Some(&env), "Body.");
-        assert!(!formatted.contains("secrets:"));
-        assert!(formatted.contains("variables:"));
-
-        let (fm, _) = parse_skill_md(&formatted);
-        let parsed = fm.unwrap().env.unwrap();
-        assert!(parsed.secrets.is_empty());
-        assert_eq!(parsed.variables.len(), 1);
+        assert!(!raw.contains("connectors:"));
     }
 }

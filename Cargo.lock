@@ -4922,6 +4922,7 @@ dependencies = [
  "starpod-agent-sdk",
  "starpod-core",
  "starpod-cron",
+ "starpod-db",
  "starpod-gateway",
  "starpod-instances",
  "starpod-vault",
@@ -5071,6 +5072,8 @@ dependencies = [
 name = "starpod-db"
 version = "0.3.1"
 dependencies = [
+ "chrono",
+ "serde_json",
  "sqlx",
  "starpod-core",
  "tempfile",
@@ -5118,6 +5121,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "urlencoding",
+ "uuid",
 ]
 
 [[package]]
