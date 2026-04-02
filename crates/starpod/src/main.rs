@@ -537,6 +537,100 @@ fn build_cron_notifier(config: &StarpodConfig) -> Option<starpod_cron::Notificat
 
 /// Built-in connector templates, embedded at compile time via `include_str!`.
 ///
+/// A file within a bundled skill. `path` is relative to the skill directory.
+struct BuiltinSkillFile {
+    path: &'static str,
+    content: &'static str,
+}
+
+/// A default skill bundled with the binary. Written to `.starpod/skills/<name>/`
+/// during `starpod init`. All skills comply with the agentskills.io specification.
+struct BuiltinSkill {
+    name: &'static str,
+    files: &'static [BuiltinSkillFile],
+}
+
+const BUILTIN_SKILLS: &[BuiltinSkill] = &[
+    // ── PDF ──────────────────────────────────────────────────────────
+    BuiltinSkill {
+        name: "pdf",
+        files: &[
+            BuiltinSkillFile { path: "SKILL.md", content: include_str!("../skills/pdf/SKILL.md") },
+            BuiltinSkillFile { path: "scripts/convert_to_images.py", content: include_str!("../skills/pdf/scripts/convert_to_images.py") },
+            BuiltinSkillFile { path: "scripts/extract_tables.py", content: include_str!("../skills/pdf/scripts/extract_tables.py") },
+            BuiltinSkillFile { path: "scripts/merge.py", content: include_str!("../skills/pdf/scripts/merge.py") },
+            BuiltinSkillFile { path: "scripts/fill_form.py", content: include_str!("../skills/pdf/scripts/fill_form.py") },
+            BuiltinSkillFile { path: "references/forms.md", content: include_str!("../skills/pdf/references/forms.md") },
+            BuiltinSkillFile { path: "references/advanced.md", content: include_str!("../skills/pdf/references/advanced.md") },
+        ],
+    },
+    // ── PPTX ─────────────────────────────────────────────────────────
+    BuiltinSkill {
+        name: "pptx",
+        files: &[
+            BuiltinSkillFile { path: "SKILL.md", content: include_str!("../skills/pptx/SKILL.md") },
+            BuiltinSkillFile { path: "scripts/__init__.py", content: include_str!("../skills/pptx/scripts/__init__.py") },
+            BuiltinSkillFile { path: "scripts/thumbnail.py", content: include_str!("../skills/pptx/scripts/thumbnail.py") },
+            BuiltinSkillFile { path: "scripts/clean.py", content: include_str!("../skills/pptx/scripts/clean.py") },
+            BuiltinSkillFile { path: "scripts/office/__init__.py", content: include_str!("../skills/pptx/scripts/office/__init__.py") },
+            BuiltinSkillFile { path: "scripts/office/soffice.py", content: include_str!("../skills/pptx/scripts/office/soffice.py") },
+            BuiltinSkillFile { path: "scripts/office/unpack.py", content: include_str!("../skills/pptx/scripts/office/unpack.py") },
+            BuiltinSkillFile { path: "scripts/office/pack.py", content: include_str!("../skills/pptx/scripts/office/pack.py") },
+            BuiltinSkillFile { path: "references/editing.md", content: include_str!("../skills/pptx/references/editing.md") },
+        ],
+    },
+    // ── XLSX ─────────────────────────────────────────────────────────
+    BuiltinSkill {
+        name: "xlsx",
+        files: &[
+            BuiltinSkillFile { path: "SKILL.md", content: include_str!("../skills/xlsx/SKILL.md") },
+            BuiltinSkillFile { path: "scripts/recalc.py", content: include_str!("../skills/xlsx/scripts/recalc.py") },
+            BuiltinSkillFile { path: "scripts/office/__init__.py", content: include_str!("../skills/xlsx/scripts/office/__init__.py") },
+            BuiltinSkillFile { path: "scripts/office/soffice.py", content: include_str!("../skills/xlsx/scripts/office/soffice.py") },
+            BuiltinSkillFile { path: "scripts/office/unpack.py", content: include_str!("../skills/xlsx/scripts/office/unpack.py") },
+            BuiltinSkillFile { path: "scripts/office/pack.py", content: include_str!("../skills/xlsx/scripts/office/pack.py") },
+        ],
+    },
+    // ── DOCX ─────────────────────────────────────────────────────────
+    BuiltinSkill {
+        name: "docx",
+        files: &[
+            BuiltinSkillFile { path: "SKILL.md", content: include_str!("../skills/docx/SKILL.md") },
+            BuiltinSkillFile { path: "scripts/__init__.py", content: include_str!("../skills/docx/scripts/__init__.py") },
+            BuiltinSkillFile { path: "scripts/comment.py", content: include_str!("../skills/docx/scripts/comment.py") },
+            BuiltinSkillFile { path: "scripts/accept_changes.py", content: include_str!("../skills/docx/scripts/accept_changes.py") },
+            BuiltinSkillFile { path: "scripts/office/__init__.py", content: include_str!("../skills/docx/scripts/office/__init__.py") },
+            BuiltinSkillFile { path: "scripts/office/soffice.py", content: include_str!("../skills/docx/scripts/office/soffice.py") },
+            BuiltinSkillFile { path: "scripts/office/unpack.py", content: include_str!("../skills/docx/scripts/office/unpack.py") },
+            BuiltinSkillFile { path: "scripts/office/pack.py", content: include_str!("../skills/docx/scripts/office/pack.py") },
+        ],
+    },
+    // ── Web Research ─────────────────────────────────────────────────
+    BuiltinSkill {
+        name: "web-research",
+        files: &[
+            BuiltinSkillFile { path: "SKILL.md", content: include_str!("../skills/web-research/SKILL.md") },
+        ],
+    },
+    // ── Data Analysis ────────────────────────────────────────────────
+    BuiltinSkill {
+        name: "data-analysis",
+        files: &[
+            BuiltinSkillFile { path: "SKILL.md", content: include_str!("../skills/data-analysis/SKILL.md") },
+            BuiltinSkillFile { path: "scripts/profile.py", content: include_str!("../skills/data-analysis/scripts/profile.py") },
+        ],
+    },
+    // ── Image Generation ─────────────────────────────────────────────
+    BuiltinSkill {
+        name: "image-gen",
+        files: &[
+            BuiltinSkillFile { path: "SKILL.md", content: include_str!("../skills/image-gen/SKILL.md") },
+            BuiltinSkillFile { path: "scripts/resize.py", content: include_str!("../skills/image-gen/scripts/resize.py") },
+            BuiltinSkillFile { path: "scripts/watermark.py", content: include_str!("../skills/image-gen/scripts/watermark.py") },
+        ],
+    },
+];
+
 /// Each entry is `(filename, content)`. Written to `.starpod/connectors/`
 /// during `starpod init` to provide out-of-the-box templates for common
 /// services. Users can add custom `.toml` templates to the same directory.
@@ -668,8 +762,20 @@ async fn main() -> anyhow::Result<()> {
             let config_dir = starpod_dir.join("config");
             tokio::fs::create_dir_all(&config_dir).await?;
             tokio::fs::create_dir_all(starpod_dir.join("db")).await?;
-            tokio::fs::create_dir_all(starpod_dir.join("skills")).await?;
+            let skills_dir = starpod_dir.join("skills");
+            tokio::fs::create_dir_all(&skills_dir).await?;
             tokio::fs::create_dir_all(starpod_dir.join("users")).await?;
+
+            // Seed default skills (agentskills.io compliant)
+            for skill in BUILTIN_SKILLS {
+                for file in skill.files {
+                    let dest = skills_dir.join(skill.name).join(file.path);
+                    if let Some(parent) = dest.parent() {
+                        tokio::fs::create_dir_all(parent).await?;
+                    }
+                    tokio::fs::write(&dest, file.content).await?;
+                }
+            }
 
             // Seed connector templates
             let connectors_dir = starpod_dir.join("connectors");
