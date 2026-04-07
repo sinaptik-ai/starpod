@@ -2,6 +2,5 @@ name = "linear"
 display_name = "Linear"
 description = "Linear project management for issues, projects, and cycles"
 secrets = ["LINEAR_API_KEY"]
-
 [config]
 base_url = "https://api.linear.app"

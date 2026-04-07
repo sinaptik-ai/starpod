@@ -572,6 +572,10 @@ async fn health_handler() -> Json<serde_json::Value> {
 async fn frontend_config_handler(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let cfg = state.config.read().unwrap();
     let frontend = starpod_core::FrontendConfig::load(&state.paths.config_dir);
+    let oauth_proxy_url = std::env::var("OAUTH_PROXY_URL")
+        .or_else(|_| std::env::var("STARPOD_URL"))
+        .unwrap_or_else(|_| "https://console.starpod.sh".to_string());
+    let oauth_proxy_url = Some(oauth_proxy_url);
     Json(serde_json::json!({
         "greeting": frontend.greeting,
         "prompts": frontend.prompts,
@@ -582,6 +586,7 @@ async fn frontend_config_handler(State(state): State<Arc<AppState>>) -> Json<ser
             "max_file_size": cfg.attachments.max_file_size,
             "allowed_extensions": cfg.attachments.allowed_extensions,
         },
+        "oauth_proxy_url": oauth_proxy_url,
     }))
 }
 

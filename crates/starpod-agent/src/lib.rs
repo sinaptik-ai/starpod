@@ -501,15 +501,17 @@ impl StarpodAgent {
                         xml.push_str("    <config />\n");
                     }
                     if !r.secrets.is_empty() {
-                        xml.push_str(&format!("    <env>{}</env>\n", r.secrets.join(", ")));
+                        xml.push_str(&format!("    <secrets>{}</secrets>\n", r.secrets.join(", ")));
                     }
                     xml.push_str("  </connector>\n");
                 }
                 xml.push_str("</connectors>\n\
                               Connectors represent configured service connections. Their secrets are \
-                              available as environment variables — use them in Bash commands or read \
-                              with EnvGet. Manage connectors with ConnectorList, ConnectorAdd, \
-                              ConnectorRemove.");
+                              stored in the vault — retrieve them with VaultGet (e.g. VaultGet({\"key\": \"GITHUB_TOKEN\"})) \
+                              before using them in API calls. Do NOT assume secrets are available as \
+                              environment variables. Never hardcode secret values in commands — store \
+                              them in a variable and reference it. \
+                              Manage connectors with ConnectorList, ConnectorAdd, ConnectorRemove.");
                 xml
             }
             _ => String::new(),
@@ -1106,6 +1108,9 @@ impl StarpodAgent {
             proxy_enabled: config.proxy.enabled,
             connector_store: Some(connector_store),
             connectors_dir: self.paths.connectors_dir.clone(),
+            oauth_proxy_url: Some(std::env::var("OAUTH_PROXY_URL")
+                .or_else(|_| std::env::var("STARPOD_URL"))
+                .unwrap_or_else(|_| "https://console.starpod.sh".to_string())),
         });
 
         Box::new(move |tool_name, input| {
@@ -2583,6 +2588,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: std::path::PathBuf::new(),
+            oauth_proxy_url: None,
         };
 
         // Test MemorySearch

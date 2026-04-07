@@ -2249,6 +2249,10 @@ struct UpdateConnectorRequest {
     config: Option<std::collections::HashMap<String, String>>,
     #[serde(default)]
     status: Option<String>,
+    #[serde(default)]
+    oauth_refresh_key: Option<String>,
+    #[serde(default)]
+    oauth_expires_at: Option<String>,
 }
 
 /// Response payload for a connector template (read from `.toml` files).
@@ -2486,6 +2490,18 @@ async fn update_connector(
             .update_config(&name, config)
             .await
             .map_err(|e| internal(format!("connector update_config: {e}")))?;
+    }
+    if let Some(ref refresh_key) = req.oauth_refresh_key {
+        store
+            .update_oauth_refresh_key(&name, refresh_key)
+            .await
+            .map_err(|e| internal(format!("connector update_oauth_refresh_key: {e}")))?;
+    }
+    if let Some(ref expires_at) = req.oauth_expires_at {
+        store
+            .update_oauth_expiry(&name, expires_at)
+            .await
+            .map_err(|e| internal(format!("connector update_oauth_expiry: {e}")))?;
     }
 
     Ok(StatusCode::OK)

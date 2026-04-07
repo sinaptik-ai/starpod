@@ -86,6 +86,10 @@ pub struct ToolContext {
     /// new connectors. Templates are consumed once at setup time — connectors
     /// reference vault keys directly at runtime.
     pub connectors_dir: PathBuf,
+    /// OAuth proxy URL (Spawner / console.starpod.sh) for centralized token
+    /// refresh. When set, `VaultGet` checks if the requested key is a
+    /// connector OAuth token nearing expiry and refreshes it transparently.
+    pub oauth_proxy_url: Option<String>,
 }
 
 /// Build the JSON schema definitions for all Starpod custom tools.
@@ -1187,6 +1191,107 @@ pub async fn handle_custom_tool(
                     is_error: true,
                     raw_content: None,
                 });
+            }
+
+            // Check if this key is a connector OAuth token that needs refreshing
+            if let (Some(store), Some(proxy_url)) =
+                (&ctx.connector_store, &ctx.oauth_proxy_url)
+            {
+                if let Ok(connectors) = store.list().await {
+                    if let Some(conn) = connectors
+                        .iter()
+                        .find(|c| c.oauth_token_key.as_deref() == Some(key))
+                    {
+                        if let Some(expires_at) = &conn.oauth_expires_at {
+                            if let Ok(exp) =
+                                chrono::DateTime::parse_from_rfc3339(expires_at)
+                            {
+                                let now = chrono::Utc::now();
+                                let margin =
+                                    chrono::Duration::minutes(10);
+                                if exp.with_timezone(&chrono::Utc) < now + margin {
+                                    // Token is expired or expiring soon — refresh it
+                                    if let Some(refresh_key) = &conn.oauth_refresh_key
+                                    {
+                                        if let Ok(Some(refresh_token)) =
+                                            vault.get(refresh_key, None).await
+                                        {
+                                            debug!(
+                                                key = %key,
+                                                connector = %conn.name,
+                                                "OAuth token near expiry, refreshing via proxy"
+                                            );
+                                            // Spawner provider names use
+                                            // "{type}-connector" convention.
+                                            let provider = format!(
+                                                "{}-connector",
+                                                conn.connector_type
+                                            );
+                                            match try_refresh_token(
+                                                &ctx.http_client,
+                                                proxy_url,
+                                                &provider,
+                                                &refresh_token,
+                                            )
+                                            .await
+                                            {
+                                                Ok(refreshed) => {
+                                                    // Update access token in vault
+                                                    let _ = vault
+                                                        .set(
+                                                            key,
+                                                            &refreshed.access_token,
+                                                            None,
+                                                        )
+                                                        .await;
+                                                    // Update refresh token if rotated
+                                                    if let Some(new_rt) =
+                                                        &refreshed.refresh_token
+                                                    {
+                                                        let _ = vault
+                                                            .set(
+                                                                refresh_key,
+                                                                new_rt,
+                                                                None,
+                                                            )
+                                                            .await;
+                                                    }
+                                                    // Update expires_at on connector
+                                                    if let Some(exp_secs) =
+                                                        refreshed.expires_in
+                                                    {
+                                                        let new_exp = chrono::Utc::now()
+                                                            + chrono::Duration::seconds(
+                                                                exp_secs as i64,
+                                                            );
+                                                        let _ = store
+                                                            .update_oauth_expiry(
+                                                                &conn.name,
+                                                                &new_exp.to_rfc3339(),
+                                                            )
+                                                            .await;
+                                                    }
+                                                    debug!(
+                                                        key = %key,
+                                                        connector = %conn.name,
+                                                        "OAuth token refreshed successfully"
+                                                    );
+                                                }
+                                                Err(e) => {
+                                                    debug!(
+                                                        key = %key,
+                                                        error = %e,
+                                                        "OAuth token refresh failed, returning existing token"
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             match vault.get(key, ctx.user_id.as_deref()).await {
@@ -3126,6 +3231,59 @@ fn is_private_url(url: &str) -> bool {
         || host.ends_with(".internal")
 }
 
+// ── OAuth token refresh via Spawner proxy ───────────────────────────────────
+
+#[derive(Debug)]
+struct OAuthRefreshResponse {
+    access_token: String,
+    refresh_token: Option<String>,
+    expires_in: Option<i32>,
+}
+
+/// Call Spawner's `POST /api/v1/oauth/refresh/{provider}` to refresh an
+/// expired OAuth access token.  Returns the new token data or an error string.
+async fn try_refresh_token(
+    client: &Client,
+    proxy_url: &str,
+    provider: &str,
+    refresh_token: &str,
+) -> std::result::Result<OAuthRefreshResponse, String> {
+    let url = format!(
+        "{}/api/v1/oauth/refresh/{}",
+        proxy_url.trim_end_matches('/'),
+        provider
+    );
+    let resp = client
+        .post(&url)
+        .json(&serde_json::json!({ "refresh_token": refresh_token }))
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| format!("refresh request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("refresh returned {status}: {body}"));
+    }
+
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("failed to parse refresh response: {e}"))?;
+
+    let access_token = body["access_token"]
+        .as_str()
+        .ok_or("missing access_token in refresh response")?
+        .to_string();
+
+    Ok(OAuthRefreshResponse {
+        access_token,
+        refresh_token: body["refresh_token"].as_str().map(|s| s.to_string()),
+        expires_in: body["expires_in"].as_i64().map(|n| n as i32),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3219,6 +3377,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: PathBuf::new(),
+            oauth_proxy_url: None,
         };
 
         std::env::set_var("STARPOD_ENVGET_TEST_VAR", "test_value_42");
@@ -3273,6 +3432,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: PathBuf::new(),
+            oauth_proxy_url: None,
         };
 
         let result = handle_custom_tool(
@@ -3325,6 +3485,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: PathBuf::new(),
+            oauth_proxy_url: None,
         };
 
         // System keys should be blocked
@@ -3399,6 +3560,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: PathBuf::new(),
+            oauth_proxy_url: None,
         };
 
         // Set an env var and read it via EnvGet — exercises the vault audit path
@@ -3460,6 +3622,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: PathBuf::new(),
+            oauth_proxy_url: None,
         };
 
         // System key should be blocked before reaching the audit code
@@ -3517,6 +3680,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: PathBuf::new(),
+            oauth_proxy_url: None,
         };
 
         // Write a file
@@ -3583,6 +3747,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: PathBuf::new(),
+            oauth_proxy_url: None,
         };
 
         let result = handle_custom_tool(&ctx, "FileList", &serde_json::json!({}))
@@ -3638,6 +3803,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: PathBuf::new(),
+            oauth_proxy_url: None,
         };
 
         let result = handle_custom_tool(
@@ -3694,6 +3860,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: PathBuf::new(),
+            oauth_proxy_url: None,
         };
 
         let result = handle_custom_tool(
@@ -3747,6 +3914,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: PathBuf::new(),
+            oauth_proxy_url: None,
         };
 
         let result = handle_custom_tool(
@@ -3802,6 +3970,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: PathBuf::new(),
+            oauth_proxy_url: None,
         };
 
         // Write to standard folder — no warning
@@ -3877,6 +4046,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: PathBuf::new(),
+            oauth_proxy_url: None,
         };
 
         // Deep nested path in standard folder — no warning
@@ -3959,6 +4129,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: PathBuf::new(),
+            oauth_proxy_url: None,
         };
 
         // Standard folder writes — no warning
@@ -4058,6 +4229,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: PathBuf::new(),
+            oauth_proxy_url: None,
         };
 
         // List root — should nudge about the loose file
@@ -4127,6 +4299,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: PathBuf::new(),
+            oauth_proxy_url: None,
         };
 
         // List root — clean, no nudge
@@ -4182,6 +4355,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: PathBuf::new(),
+            oauth_proxy_url: None,
         };
 
         // Traversal error — should NOT contain a warning
@@ -4256,6 +4430,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: PathBuf::new(),
+            oauth_proxy_url: None,
         }
     }
 
@@ -4685,6 +4860,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: PathBuf::new(),
+            oauth_proxy_url: None,
         }
     }
 
@@ -4866,6 +5042,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: PathBuf::new(),
+            oauth_proxy_url: None,
         }
     }
 
@@ -5262,6 +5439,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: PathBuf::new(),
+            oauth_proxy_url: None,
         }
     }
 
@@ -5375,6 +5553,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: PathBuf::new(),
+            oauth_proxy_url: None,
         }
     }
 
@@ -5636,6 +5815,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: PathBuf::new(),
+            oauth_proxy_url: None,
         }
     }
 
@@ -5882,6 +6062,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: PathBuf::new(),
+            oauth_proxy_url: None,
         };
 
         (ctx, vault)
@@ -6205,6 +6386,7 @@ secrets = ["DATABASE_URL"]
             proxy_enabled: false,
             connector_store: Some(connector_store.clone()),
             connectors_dir,
+            oauth_proxy_url: None,
         };
         (ctx, connector_store)
     }
@@ -6483,5 +6665,528 @@ base_url = "https://slack.com/api"
                 .await
                 .is_none()
         );
+    }
+
+    // ── OAuth token refresh-on-read tests ──────────────────────────────
+
+    /// Build a ToolContext with vault, connector store, and oauth_proxy_url.
+    async fn oauth_refresh_ctx(
+        tmp: &TempDir,
+        proxy_url: Option<String>,
+    ) -> (ToolContext, Arc<starpod_vault::Vault>, ConnectorStore) {
+        let memory = Arc::new(
+            starpod_memory::MemoryStore::new(
+                &tmp.path().join("agent"),
+                &tmp.path().join("agent").join("config"),
+                &tmp.path().join("db"),
+            )
+            .await
+            .unwrap(),
+        );
+        let skills = Arc::new(SkillStore::new(&tmp.path().join("skills")).unwrap());
+        let core_db = starpod_db::CoreDb::in_memory().await.unwrap();
+        let cron = Arc::new(starpod_cron::CronStore::from_pool(core_db.pool().clone()));
+        let connector_store = ConnectorStore::from_pool(core_db.pool().clone());
+
+        let master_key = [0xAB_u8; 32];
+        let vault = Arc::new(
+            starpod_vault::Vault::new(&tmp.path().join("db").join("vault.db"), &master_key)
+                .await
+                .unwrap(),
+        );
+
+        let ctx = ToolContext {
+            memory,
+            user_view: None,
+            skills,
+            cron,
+            browser: Arc::new(tokio::sync::Mutex::new(None)),
+            browser_enabled: false,
+            browser_cdp_url: None,
+            user_tz: None,
+            home_dir: tmp.path().join("home"),
+            agent_home: tmp.path().join(".starpod"),
+            user_id: Some("testuser".into()),
+            http_client: Client::new(),
+            internet: InternetConfig::default(),
+            brave_api_key: None,
+            vault: Some(Arc::clone(&vault)),
+            user_md_limit: 4_000,
+            memory_md_limit: 8_000,
+            attachments: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            proxy_enabled: false,
+            connector_store: Some(connector_store.clone()),
+            connectors_dir: PathBuf::new(),
+            oauth_proxy_url: proxy_url,
+        };
+
+        (ctx, vault, connector_store)
+    }
+
+    /// Insert a connector with OAuth fields.
+    async fn insert_oauth_connector(
+        store: &ConnectorStore,
+        name: &str,
+        connector_type: &str,
+        token_key: &str,
+        refresh_key: &str,
+        expires_at: &str,
+    ) {
+        store
+            .insert(&ConnectorRow {
+                name: name.into(),
+                connector_type: connector_type.into(),
+                display_name: "Test Connector".into(),
+                description: "test".into(),
+                auth_method: "oauth".into(),
+                secrets: vec![token_key.into()],
+                config: std::collections::HashMap::new(),
+                oauth_token_url: Some("https://provider.example.com/token".into()),
+                oauth_token_key: Some(token_key.into()),
+                oauth_refresh_key: Some(refresh_key.into()),
+                oauth_expires_at: Some(expires_at.into()),
+                status: "connected".into(),
+                created_at: String::new(),
+                updated_at: String::new(),
+            })
+            .await
+            .unwrap();
+    }
+
+    /// Start a mock HTTP server that responds to refresh requests.
+    /// Returns the base URL (e.g. "http://127.0.0.1:PORT").
+    async fn start_mock_refresh_server(
+        response_body: serde_json::Value,
+        status_code: u16,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let url = format!("http://127.0.0.1:{}", addr.port());
+
+        let handle = tokio::spawn(async move {
+            // Accept exactly one connection
+            if let Ok((mut stream, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buf = vec![0u8; 4096];
+                let _ = stream.read(&mut buf).await;
+
+                let body = response_body.to_string();
+                let response = format!(
+                    "HTTP/1.1 {} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    status_code,
+                    body.len(),
+                    body,
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+                let _ = stream.shutdown().await;
+            }
+        });
+
+        (url, handle)
+    }
+
+    #[tokio::test]
+    async fn vault_get_no_refresh_when_token_not_expired() {
+        let tmp = TempDir::new().unwrap();
+        // Use a bogus proxy URL — it should never be called
+        let (ctx, vault, store) =
+            oauth_refresh_ctx(&tmp, Some("http://127.0.0.1:1".into())).await;
+
+        // Token expires in 2 hours (well within margin)
+        let future = (chrono::Utc::now() + chrono::Duration::hours(2)).to_rfc3339();
+        insert_oauth_connector(&store, "github", "github", "GH_TOKEN", "GH_REFRESH", &future)
+            .await;
+        vault.set("GH_TOKEN", "valid-token", None).await.unwrap();
+        vault.set("GH_REFRESH", "refresh-tok", None).await.unwrap();
+
+        let result = handle_custom_tool(&ctx, "VaultGet", &json!({"key": "GH_TOKEN"}))
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert_eq!(result.content, "valid-token");
+    }
+
+    #[tokio::test]
+    async fn vault_get_no_refresh_when_key_not_connector_token() {
+        let tmp = TempDir::new().unwrap();
+        let (ctx, vault, store) =
+            oauth_refresh_ctx(&tmp, Some("http://127.0.0.1:1".into())).await;
+
+        // Connector exists but its token key is GH_TOKEN, not RANDOM_KEY
+        let past = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+        insert_oauth_connector(&store, "github", "github", "GH_TOKEN", "GH_REFRESH", &past)
+            .await;
+        vault.set("RANDOM_KEY", "some-value", None).await.unwrap();
+
+        let result = handle_custom_tool(&ctx, "VaultGet", &json!({"key": "RANDOM_KEY"}))
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert_eq!(result.content, "some-value");
+    }
+
+    #[tokio::test]
+    async fn vault_get_no_refresh_without_proxy_url() {
+        let tmp = TempDir::new().unwrap();
+        // No proxy URL — refresh should be skipped
+        let (ctx, vault, store) = oauth_refresh_ctx(&tmp, None).await;
+
+        let past = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+        insert_oauth_connector(&store, "github", "github", "GH_TOKEN", "GH_REFRESH", &past)
+            .await;
+        vault.set("GH_TOKEN", "old-token", None).await.unwrap();
+        vault.set("GH_REFRESH", "refresh-tok", None).await.unwrap();
+
+        let result = handle_custom_tool(&ctx, "VaultGet", &json!({"key": "GH_TOKEN"}))
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        // Returns old token since no proxy to refresh through
+        assert_eq!(result.content, "old-token");
+    }
+
+    #[tokio::test]
+    async fn vault_get_no_refresh_without_connector_store() {
+        let tmp = TempDir::new().unwrap();
+        let (mut ctx, vault, _store) =
+            oauth_refresh_ctx(&tmp, Some("http://127.0.0.1:1".into())).await;
+        ctx.connector_store = None;
+
+        vault.set("GH_TOKEN", "old-token", None).await.unwrap();
+
+        let result = handle_custom_tool(&ctx, "VaultGet", &json!({"key": "GH_TOKEN"}))
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert_eq!(result.content, "old-token");
+    }
+
+    #[tokio::test]
+    async fn vault_get_refreshes_expired_token() {
+        let tmp = TempDir::new().unwrap();
+
+        let (proxy_url, server_handle) = start_mock_refresh_server(
+            json!({
+                "access_token": "new-access-token",
+                "refresh_token": "new-refresh-token",
+                "expires_in": 3600
+            }),
+            200,
+        )
+        .await;
+
+        let (ctx, vault, store) =
+            oauth_refresh_ctx(&tmp, Some(proxy_url)).await;
+
+        // Token expired 1 hour ago
+        let past = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+        insert_oauth_connector(&store, "github", "github", "GH_TOKEN", "GH_REFRESH", &past)
+            .await;
+        vault.set("GH_TOKEN", "old-token", None).await.unwrap();
+        vault.set("GH_REFRESH", "old-refresh", None).await.unwrap();
+
+        let result = handle_custom_tool(&ctx, "VaultGet", &json!({"key": "GH_TOKEN"}))
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        // Should return the refreshed token
+        assert_eq!(result.content, "new-access-token");
+
+        // Verify vault was updated
+        let stored_token = vault.get("GH_TOKEN", None).await.unwrap().unwrap();
+        assert_eq!(stored_token, "new-access-token");
+
+        // Verify refresh token was rotated
+        let stored_refresh = vault.get("GH_REFRESH", None).await.unwrap().unwrap();
+        assert_eq!(stored_refresh, "new-refresh-token");
+
+        // Verify connector expiry was updated
+        let conn = store.get("github").await.unwrap().unwrap();
+        let new_exp = chrono::DateTime::parse_from_rfc3339(
+            conn.oauth_expires_at.as_ref().unwrap(),
+        )
+        .unwrap();
+        // New expiry should be roughly 1 hour from now (3600 seconds)
+        let diff = new_exp.with_timezone(&chrono::Utc) - chrono::Utc::now();
+        assert!(
+            diff.num_minutes() >= 55 && diff.num_minutes() <= 65,
+            "Expected expiry ~60 min from now, got {} min",
+            diff.num_minutes()
+        );
+
+        server_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn vault_get_refreshes_token_within_margin() {
+        let tmp = TempDir::new().unwrap();
+
+        let (proxy_url, server_handle) = start_mock_refresh_server(
+            json!({
+                "access_token": "refreshed-token",
+                "expires_in": 7200
+            }),
+            200,
+        )
+        .await;
+
+        let (ctx, vault, store) =
+            oauth_refresh_ctx(&tmp, Some(proxy_url)).await;
+
+        // Token expires in 5 minutes — within the 10-minute margin
+        let soon = (chrono::Utc::now() + chrono::Duration::minutes(5)).to_rfc3339();
+        insert_oauth_connector(&store, "slack", "slack", "SLACK_TOKEN", "SLACK_REFRESH", &soon)
+            .await;
+        vault.set("SLACK_TOKEN", "about-to-expire", None).await.unwrap();
+        vault.set("SLACK_REFRESH", "refresh-tok", None).await.unwrap();
+
+        let result = handle_custom_tool(&ctx, "VaultGet", &json!({"key": "SLACK_TOKEN"}))
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert_eq!(result.content, "refreshed-token");
+
+        server_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn vault_get_returns_old_token_on_refresh_failure() {
+        let tmp = TempDir::new().unwrap();
+
+        // Mock returns 401 error
+        let (proxy_url, server_handle) = start_mock_refresh_server(
+            json!({"error": "invalid_grant"}),
+            401,
+        )
+        .await;
+
+        let (ctx, vault, store) =
+            oauth_refresh_ctx(&tmp, Some(proxy_url)).await;
+
+        let past = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+        insert_oauth_connector(&store, "github", "github", "GH_TOKEN", "GH_REFRESH", &past)
+            .await;
+        vault.set("GH_TOKEN", "old-token", None).await.unwrap();
+        vault.set("GH_REFRESH", "bad-refresh", None).await.unwrap();
+
+        let result = handle_custom_tool(&ctx, "VaultGet", &json!({"key": "GH_TOKEN"}))
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        // Should still return the old token gracefully
+        assert_eq!(result.content, "old-token");
+
+        // Vault should not have been modified
+        let stored = vault.get("GH_TOKEN", None).await.unwrap().unwrap();
+        assert_eq!(stored, "old-token");
+
+        server_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn vault_get_refresh_without_refresh_token_in_vault() {
+        let tmp = TempDir::new().unwrap();
+        let (ctx, vault, store) =
+            oauth_refresh_ctx(&tmp, Some("http://127.0.0.1:1".into())).await;
+
+        let past = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+        insert_oauth_connector(&store, "github", "github", "GH_TOKEN", "GH_REFRESH", &past)
+            .await;
+        vault.set("GH_TOKEN", "old-token", None).await.unwrap();
+        // GH_REFRESH is NOT set in vault
+
+        let result = handle_custom_tool(&ctx, "VaultGet", &json!({"key": "GH_TOKEN"}))
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        // Should return old token — can't refresh without refresh token
+        assert_eq!(result.content, "old-token");
+    }
+
+    #[tokio::test]
+    async fn vault_get_refresh_no_refresh_key_on_connector() {
+        let tmp = TempDir::new().unwrap();
+        let (ctx, vault, store) =
+            oauth_refresh_ctx(&tmp, Some("http://127.0.0.1:1".into())).await;
+
+        // Connector with no oauth_refresh_key
+        store
+            .insert(&ConnectorRow {
+                name: "sentry".into(),
+                connector_type: "sentry".into(),
+                display_name: "Sentry".into(),
+                description: "test".into(),
+                auth_method: "oauth".into(),
+                secrets: vec!["SENTRY_TOKEN".into()],
+                config: std::collections::HashMap::new(),
+                oauth_token_url: Some("https://sentry.io/oauth/token".into()),
+                oauth_token_key: Some("SENTRY_TOKEN".into()),
+                oauth_refresh_key: None,
+                oauth_expires_at: Some(
+                    (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339(),
+                ),
+                status: "connected".into(),
+                created_at: String::new(),
+                updated_at: String::new(),
+            })
+            .await
+            .unwrap();
+        vault.set("SENTRY_TOKEN", "old-sentry-token", None).await.unwrap();
+
+        let result = handle_custom_tool(&ctx, "VaultGet", &json!({"key": "SENTRY_TOKEN"}))
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert_eq!(result.content, "old-sentry-token");
+    }
+
+    #[tokio::test]
+    async fn vault_get_refresh_no_expires_at() {
+        let tmp = TempDir::new().unwrap();
+        let (ctx, vault, store) =
+            oauth_refresh_ctx(&tmp, Some("http://127.0.0.1:1".into())).await;
+
+        // Connector with no oauth_expires_at — should skip refresh
+        store
+            .insert(&ConnectorRow {
+                name: "github".into(),
+                connector_type: "github".into(),
+                display_name: "GitHub".into(),
+                description: "test".into(),
+                auth_method: "oauth".into(),
+                secrets: vec!["GH_TOKEN".into()],
+                config: std::collections::HashMap::new(),
+                oauth_token_url: Some("https://github.com/oauth/token".into()),
+                oauth_token_key: Some("GH_TOKEN".into()),
+                oauth_refresh_key: Some("GH_REFRESH".into()),
+                oauth_expires_at: None,
+                status: "connected".into(),
+                created_at: String::new(),
+                updated_at: String::new(),
+            })
+            .await
+            .unwrap();
+        vault.set("GH_TOKEN", "gh-token-value", None).await.unwrap();
+
+        let result = handle_custom_tool(&ctx, "VaultGet", &json!({"key": "GH_TOKEN"}))
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert_eq!(result.content, "gh-token-value");
+    }
+
+    #[tokio::test]
+    async fn vault_get_refresh_keeps_old_refresh_token_when_not_rotated() {
+        let tmp = TempDir::new().unwrap();
+
+        // Response has no refresh_token field — keep old one
+        let (proxy_url, server_handle) = start_mock_refresh_server(
+            json!({
+                "access_token": "new-access",
+                "expires_in": 3600
+            }),
+            200,
+        )
+        .await;
+
+        let (ctx, vault, store) =
+            oauth_refresh_ctx(&tmp, Some(proxy_url)).await;
+
+        let past = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+        insert_oauth_connector(&store, "github", "github", "GH_TOKEN", "GH_REFRESH", &past)
+            .await;
+        vault.set("GH_TOKEN", "old-access", None).await.unwrap();
+        vault.set("GH_REFRESH", "original-refresh", None).await.unwrap();
+
+        let result = handle_custom_tool(&ctx, "VaultGet", &json!({"key": "GH_TOKEN"}))
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert_eq!(result.content, "new-access");
+
+        // Refresh token should remain unchanged
+        let stored_refresh = vault.get("GH_REFRESH", None).await.unwrap().unwrap();
+        assert_eq!(stored_refresh, "original-refresh");
+
+        server_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn try_refresh_token_success() {
+        let (proxy_url, server_handle) = start_mock_refresh_server(
+            json!({
+                "access_token": "fresh-token",
+                "refresh_token": "new-rt",
+                "expires_in": 1800
+            }),
+            200,
+        )
+        .await;
+
+        let client = Client::new();
+        let result =
+            try_refresh_token(&client, &proxy_url, "github-connector", "old-refresh")
+                .await;
+
+        let resp = result.unwrap();
+        assert_eq!(resp.access_token, "fresh-token");
+        assert_eq!(resp.refresh_token.as_deref(), Some("new-rt"));
+        assert_eq!(resp.expires_in, Some(1800));
+
+        server_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn try_refresh_token_error_status() {
+        let (proxy_url, server_handle) = start_mock_refresh_server(
+            json!({"error": "invalid_grant"}),
+            400,
+        )
+        .await;
+
+        let client = Client::new();
+        let result =
+            try_refresh_token(&client, &proxy_url, "github-connector", "bad-refresh")
+                .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("400"), "Expected status 400 in error: {err}");
+
+        server_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn try_refresh_token_unreachable_server() {
+        let client = Client::new();
+        // Port 1 should be unreachable
+        let result =
+            try_refresh_token(&client, "http://127.0.0.1:1", "test-connector", "rt")
+                .await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("refresh request failed"));
+    }
+
+    #[tokio::test]
+    async fn try_refresh_token_missing_access_token() {
+        let (proxy_url, server_handle) = start_mock_refresh_server(
+            json!({"expires_in": 3600}), // no access_token
+            200,
+        )
+        .await;
+
+        let client = Client::new();
+        let result =
+            try_refresh_token(&client, &proxy_url, "github-connector", "refresh")
+                .await;
+
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().contains("missing access_token"),
+            "Expected 'missing access_token' error"
+        );
+
+        server_handle.abort();
     }
 }

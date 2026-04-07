@@ -2,6 +2,11 @@ name = "notion"
 display_name = "Notion"
 description = "Notion workspace pages, databases, and content management"
 secrets = ["NOTION_API_KEY"]
-
 [config]
 base_url = "https://api.notion.com/v1"
+
+[oauth]
+authorize_url = "https://api.notion.com/v1/oauth/authorize"
+token_url = "https://api.notion.com/v1/oauth/token"
+scopes = []
+token_key = "NOTION_API_KEY"

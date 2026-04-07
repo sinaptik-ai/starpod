@@ -177,11 +177,16 @@ fn inject_frontend_config(
     starpod_config: &starpod_core::StarpodConfig,
 ) -> String {
     let frontend = starpod_core::FrontendConfig::load(config_dir);
+    let oauth_proxy_url = std::env::var("OAUTH_PROXY_URL")
+        .or_else(|_| std::env::var("STARPOD_URL"))
+        .unwrap_or_else(|_| "https://console.starpod.sh".to_string());
+    let oauth_proxy_url = Some(oauth_proxy_url);
     let merged = serde_json::json!({
         "greeting": frontend.greeting,
         "prompts": frontend.prompts,
         "models": starpod_config.models,
         "agent_name": starpod_config.agent_name,
+        "oauth_proxy_url": oauth_proxy_url,
     });
     let json = serde_json::to_string(&merged).unwrap_or_else(|_| "{}".to_string());
     let script = format!("<script>window.__STARPOD__={}</script>", json);

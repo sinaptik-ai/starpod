@@ -145,6 +145,28 @@ impl ConnectorStore {
         Ok(result.rows_affected() > 0)
     }
 
+    /// Update the OAuth refresh key vault reference.
+    pub async fn update_oauth_refresh_key(
+        &self,
+        name: &str,
+        refresh_key: &str,
+    ) -> Result<bool> {
+        let now = Utc::now().to_rfc3339();
+        let result = sqlx::query(
+            "UPDATE connectors SET oauth_refresh_key = ?1, updated_at = ?2 WHERE name = ?3",
+        )
+        .bind(refresh_key)
+        .bind(&now)
+        .bind(name)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            StarpodError::Database(format!("connector update_oauth_refresh_key: {e}"))
+        })?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Update a connector's config overrides.
     pub async fn update_config(
         &self,
