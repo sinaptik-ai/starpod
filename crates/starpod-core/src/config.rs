@@ -263,6 +263,48 @@ pub struct ProxyConfig {
     pub enabled: bool,
 }
 
+/// Slack channel configuration (lives under `[channels.slack]`).
+///
+/// **Tokens belong in `.env` as `SLACK_APP_TOKEN` (the `xapp-...` token used
+/// for Socket Mode) and `SLACK_BOT_TOKEN` (the `xoxb-...` token used for
+/// Web API calls). They are never stored in config files.**
+///
+/// Slack Socket Mode has no OAuth redirect flow: the user generates both
+/// tokens once from the Slack admin UI (guided by a pre-filled app
+/// manifest), then pastes them into the instance's vault / `.env`. Spawner
+/// stores them and restarts the instance; the `starpod-slack` crate opens
+/// an outbound WebSocket and listens for `app_mention` / `message.im`
+/// events.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SlackChannelConfig {
+    /// Whether this channel is enabled (default: false).
+    pub enabled: bool,
+    /// Inactivity gap (in minutes) before auto-closing a Slack thread
+    /// session (default: 360 = 6h, same as Telegram).
+    #[serde(default = "default_slack_gap_minutes")]
+    pub gap_minutes: Option<i64>,
+    /// Message delivery mode. `"final_only"` (default) posts a single reply
+    /// containing the final assistant message. `"all_messages"` posts each
+    /// assistant message as the stream arrives.
+    #[serde(default = "default_stream_mode")]
+    pub stream_mode: String,
+}
+
+fn default_slack_gap_minutes() -> Option<i64> {
+    Some(360)
+}
+
+impl Default for SlackChannelConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            gap_minutes: default_slack_gap_minutes(),
+            stream_mode: default_stream_mode(),
+        }
+    }
+}
+
 /// Channel configuration namespace (`[channels.*]`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -271,6 +313,8 @@ pub struct ChannelsConfig {
     pub telegram: Option<TelegramChannelConfig>,
     /// Email channel settings.
     pub email: Option<EmailChannelConfig>,
+    /// Slack channel settings.
+    pub slack: Option<SlackChannelConfig>,
 }
 
 fn default_stream_mode() -> String {
@@ -858,12 +902,27 @@ impl StarpodConfig {
         std::env::var("TELEGRAM_BOT_TOKEN").ok()
     }
 
+    /// Resolved Slack app-level token (`xapp-...`) from the
+    /// `SLACK_APP_TOKEN` env var. Used only to open the Socket Mode
+    /// WebSocket via `apps.connections.open`.
+    pub fn resolved_slack_app_token(&self) -> Option<String> {
+        std::env::var("SLACK_APP_TOKEN").ok()
+    }
+
+    /// Resolved Slack bot token (`xoxb-...`) from the `SLACK_BOT_TOKEN`
+    /// env var. Used for all outbound Web API calls (`chat.postMessage`,
+    /// `auth.test`, etc.).
+    pub fn resolved_slack_bot_token(&self) -> Option<String> {
+        std::env::var("SLACK_BOT_TOKEN").ok()
+    }
+
     /// Get the inactivity gap (in minutes) for a channel by name.
     /// Returns `None` for channels that don't use time-gap sessions.
     pub fn channel_gap_minutes(&self, channel: &str) -> Option<i64> {
         match channel {
             "telegram" => self.channels.telegram.as_ref().and_then(|t| t.gap_minutes),
             "email" => self.channels.email.as_ref().and_then(|e| e.gap_minutes),
+            "slack" => self.channels.slack.as_ref().and_then(|s| s.gap_minutes),
             _ => None,
         }
     }

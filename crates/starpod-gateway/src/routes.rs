@@ -853,6 +853,7 @@ mod tests {
             events_tx,
             vault: None,
             telegram_handle: tokio::sync::Mutex::new(None),
+            slack_handle: tokio::sync::Mutex::new(None),
             update_cache: crate::system::new_update_cache(),
             shutdown_tx: tokio::sync::watch::channel(false).0,
         });
@@ -969,6 +970,7 @@ mod tests {
             events_tx: state.events_tx.clone(),
             vault: None,
             telegram_handle: tokio::sync::Mutex::new(None),
+            slack_handle: tokio::sync::Mutex::new(None),
             update_cache: crate::system::new_update_cache(),
             shutdown_tx: tokio::sync::watch::channel(false).0,
         });

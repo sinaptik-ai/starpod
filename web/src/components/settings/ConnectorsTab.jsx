@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { apiHeaders } from "../../lib/api";
 import { Loading } from "../ui/EmptyState";
+import SlackSetupGuide from "./SlackSetupGuide";
 
 // ── Brand logos (filled SVGs, 24x24) ──────────────────────────────────────
 
@@ -989,8 +990,29 @@ export default function ConnectorsTab() {
               gap: "16px",
             }}
           >
+            {/* Slack Socket Mode guided setup. Replaces the generic
+                Secrets / OAuth UI for connectors flagged socket_mode in
+                their template, because Socket Mode bots can't be set up
+                via OAuth distribution and need a specific manifest+token
+                walkthrough. */}
+            {selectedTpl?.socket_mode && selectedConn.type === "slack" && (
+              <SlackSetupGuide
+                vaultKeys={vaultKeys}
+                onSaved={(opts) => {
+                  load();
+                  if (opts && !opts.silent) {
+                    setStatus({
+                      type: "ok",
+                      text: opts.text || "Connected",
+                    });
+                  }
+                }}
+                onError={(text) => setStatus({ type: "error", text })}
+              />
+            )}
+
             {/* Secrets */}
-            {selectedConn.secrets?.length > 0 && (
+            {!selectedTpl?.socket_mode && selectedConn.secrets?.length > 0 && (
               <Section title="Secrets">
                 {selectedConn.secrets.map((key) => {
                   const isSet = vaultKeys.has(key);
@@ -1064,9 +1086,11 @@ export default function ConnectorsTab() {
               </Section>
             )}
 
-            {/* OAuth */}
-            {(selectedConn.auth_method === "oauth" ||
-              selectedConn.oauth_token_url) &&
+            {/* OAuth (suppressed for socket_mode connectors — those use
+                their own guided setup component above). */}
+            {!selectedTpl?.socket_mode &&
+              (selectedConn.auth_method === "oauth" ||
+                selectedConn.oauth_token_url) &&
               selectedTpl?.has_oauth &&
               (() => {
                 // Check if this connector's type matches a proxy provider

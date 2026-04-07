@@ -62,6 +62,7 @@ export default defineConfig({
           items: [
             { text: 'Web UI', link: '/integrations/web-ui' },
             { text: 'Telegram Bot', link: '/integrations/telegram' },
+            { text: 'Slack Bot', link: '/integrations/slack' },
             { text: 'WebSocket', link: '/integrations/websocket' },
           ],
         },
@@ -96,6 +97,7 @@ export default defineConfig({
             { text: 'starpod-agent', link: '/crates/starpod-agent' },
             { text: 'starpod-gateway', link: '/crates/starpod-gateway' },
             { text: 'starpod-telegram', link: '/crates/starpod-telegram' },
+            { text: 'starpod-slack', link: '/crates/starpod-slack' },
             { text: 'starpod-instances', link: '/crates/starpod-instances' },
           ],
         },

@@ -68,6 +68,8 @@ pub struct AppState {
     pub vault: Option<Arc<starpod_vault::Vault>>,
     /// Handle to the running Telegram bot task (if any).
     pub telegram_handle: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Handle to the running Slack bot task (if any).
+    pub slack_handle: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// Cached latest-release info for version checks (`GET /api/system/version`).
     /// Populated on first request and refreshed after 1 hour.
     pub update_cache: system::UpdateCache,
@@ -118,6 +120,55 @@ impl AppState {
             }
             (false, _) => {
                 debug!("Telegram channel disabled, bot not started");
+            }
+        }
+    }
+
+    /// (Re)start the Slack bot, aborting any previously running instance.
+    ///
+    /// Reads `SLACK_APP_TOKEN` (Socket Mode app-level token) and
+    /// `SLACK_BOT_TOKEN` (bot user OAuth token) from env vars, and the
+    /// `enabled` flag from `[channels.slack]` in the live config. Both
+    /// tokens are required — with only one the bot is inert.
+    ///
+    /// Called in three situations:
+    /// 1. On gateway startup (initial boot).
+    /// 2. When the admin saves channel settings via the Settings UI.
+    /// 3. When the config file watcher detects a change to `[channels.slack]`.
+    pub async fn restart_slack(&self) {
+        let mut handle = self.slack_handle.lock().await;
+        if let Some(h) = handle.take() {
+            h.abort();
+            info!("Slack bot stopped");
+        }
+
+        let config = self.config.read().unwrap().clone();
+        let enabled = config.channels.slack.as_ref().is_some_and(|s| s.enabled);
+        let app_token = config.resolved_slack_app_token();
+        let bot_token = config.resolved_slack_bot_token();
+
+        match (enabled, app_token, bot_token) {
+            (true, Some(app), Some(bot)) => {
+                let agent = Arc::clone(&self.agent);
+                let auth = Arc::clone(&self.auth);
+                let h = tokio::spawn(async move {
+                    if let Err(e) =
+                        starpod_slack::run_with_agent_and_auth(agent, auth, app, bot).await
+                    {
+                        tracing::error!(error = %e, "Slack bot error");
+                    }
+                });
+                info!("Slack bot started");
+                *handle = Some(h);
+            }
+            (true, None, _) => {
+                warn!("Slack channel enabled but SLACK_APP_TOKEN is not set");
+            }
+            (true, _, None) => {
+                warn!("Slack channel enabled but SLACK_BOT_TOKEN is not set");
+            }
+            (false, _, _) => {
+                debug!("Slack channel disabled, bot not started");
             }
         }
     }
@@ -440,12 +491,16 @@ pub async fn serve_with_agent(
         events_tx,
         vault,
         telegram_handle: tokio::sync::Mutex::new(None),
+        slack_handle: tokio::sync::Mutex::new(None),
         update_cache: system::new_update_cache(),
         shutdown_tx,
     });
 
     // Start Telegram bot if configured
     state.restart_telegram().await;
+
+    // Start Slack bot if configured
+    state.restart_slack().await;
 
     // Start config file watcher in background
     let _watcher_handle = start_config_watcher(Arc::clone(&state), &config, &state.paths);
@@ -613,6 +668,9 @@ fn start_config_watcher(
                                 // Check if Telegram config changed
                                 let tg_changed =
                                     old_config.channels.telegram != new_config.channels.telegram;
+                                // Check if Slack config changed
+                                let slack_changed =
+                                    old_config.channels.slack != new_config.channels.slack;
 
                                 // Update the agent's config (affects next chat request)
                                 state.agent.reload_config(new_config.clone());
@@ -627,6 +685,16 @@ fn start_config_watcher(
                                     let rt = rt_handle.clone();
                                     rt.spawn(async move {
                                         state.restart_telegram().await;
+                                    });
+                                }
+
+                                // Restart Slack bot if its config changed
+                                if slack_changed {
+                                    info!("Slack config changed, restarting bot...");
+                                    let state = Arc::clone(&state);
+                                    let rt = rt_handle.clone();
+                                    rt.spawn(async move {
+                                        state.restart_slack().await;
                                     });
                                 }
                             }

@@ -61,6 +61,11 @@ pub struct ConnectorTemplate {
     /// OAuth setup path (optional).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oauth: Option<OAuthConfig>,
+    /// Socket Mode flag — connector uses an outbound WebSocket and is set up
+    /// via a guided manifest install rather than OAuth distribution.
+    /// Currently used by the Slack template.
+    #[serde(default)]
+    pub socket_mode: bool,
 }
 
 // ── Loading ─────────────────────────────────────────────────────────────────

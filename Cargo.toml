@@ -12,6 +12,7 @@ members = [
     "crates/starpod-agent",
     "crates/starpod-gateway",
     "crates/starpod-telegram",
+    "crates/starpod-slack",
     "crates/starpod-instances",
     "crates/starpod-vault",
     "crates/starpod-proxy",
@@ -38,6 +39,7 @@ starpod-browser = { version = "0.3.1", path = "crates/starpod-browser" }
 starpod-agent = { version = "0.3.1", path = "crates/starpod-agent" }
 starpod-gateway = { version = "0.3.1", path = "crates/starpod-gateway" }
 starpod-telegram = { version = "0.3.1", path = "crates/starpod-telegram" }
+starpod-slack = { version = "0.3.1", path = "crates/starpod-slack" }
 starpod-instances = { version = "0.3.1", path = "crates/starpod-instances" }
 starpod-vault = { version = "0.3.1", path = "crates/starpod-vault" }
 starpod-auth = { version = "0.3.1", path = "crates/starpod-auth" }

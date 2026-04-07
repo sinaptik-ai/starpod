@@ -477,6 +477,15 @@ pub fn settings_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/settings/connectors/{name}/oauth/callback",
             get(oauth_callback),
         )
+        // Slack Socket Mode setup helpers (no OAuth distribution possible)
+        .route(
+            "/api/settings/connectors/slack/test",
+            axum::routing::post(slack_test),
+        )
+        .route(
+            "/api/settings/connectors/slack/reload",
+            axum::routing::post(slack_reload),
+        )
         // Attachments
         .route(
             "/api/settings/attachments",
@@ -2270,6 +2279,10 @@ struct ConnectorTemplateInfo {
     oauth_authorize_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     oauth_scopes: Option<Vec<String>>,
+    /// True for connectors that use Socket Mode (Slack), which require a
+    /// guided manifest install rather than OAuth distribution.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    socket_mode: bool,
 }
 
 /// Create a [`ConnectorStore`] from the shared core database pool.
@@ -2556,6 +2569,7 @@ async fn list_connector_templates(
                     has_oauth: t.oauth.is_some(),
                     oauth_authorize_url,
                     oauth_scopes,
+                    socket_mode: t.socket_mode,
                 }
             })
             .collect(),
@@ -2780,6 +2794,136 @@ if (window.opener) {{
     )))
 }
 
+// ── Slack Socket Mode setup helpers ────────────────────────────────────────
+//
+// Slack uses Socket Mode (outbound WebSocket), so distributing it via OAuth
+// is impossible — the user must create their own Slack app from a manifest
+// and copy two tokens (xapp-… app-level + xoxb-… bot user). To make that
+// flow as friction-free as possible, the connectors UI calls these two
+// endpoints:
+//
+// 1. `POST /api/settings/connectors/slack/test` — validates both tokens by
+//    calling `auth.test`. Returns `{ team, team_id, bot_user_id }` on
+//    success or a precise error message on failure (invalid token,
+//    missing scopes, etc.). Lets the UI show a green checkmark *before*
+//    the user commits to enabling the bot.
+//
+// 2. `POST /api/settings/connectors/slack/reload` — flips
+//    `[channels.slack].enabled = true` in `agent.toml`, reloads the
+//    in-memory config, and calls `AppState::restart_slack()` so the bot
+//    starts immediately without waiting for the file watcher debounce.
+//    Also marks the connector row as `connected`.
+
+#[derive(Serialize)]
+struct SlackTestResponse {
+    team: String,
+    team_id: String,
+    bot_user_id: String,
+}
+
+/// `POST /api/settings/connectors/slack/test` — validate both Slack tokens
+/// by calling `auth.test` and return the workspace identity.
+///
+/// Reads `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN` from the vault (falling
+/// back to the process environment). The bot token is the only one that
+/// `auth.test` actually uses, but we also fast-fail when the app-level
+/// token is missing or has the wrong prefix because Socket Mode needs
+/// both and there's no point pretending the connector is "connected"
+/// when half the credentials are absent.
+async fn slack_test(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<SlackTestResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let app_token = read_vault_key(&state, "SLACK_APP_TOKEN").await.ok_or_else(
+        || bad_request("SLACK_APP_TOKEN is not set. Save it in the connector form first."),
+    )?;
+    if !app_token.starts_with("xapp-") {
+        return Err(bad_request(
+            "SLACK_APP_TOKEN must start with 'xapp-'. \
+             Generate one in your Slack app's Basic Information → App-Level Tokens \
+             with the connections:write scope.",
+        ));
+    }
+
+    let bot_token = read_vault_key(&state, "SLACK_BOT_TOKEN").await.ok_or_else(
+        || bad_request("SLACK_BOT_TOKEN is not set. Save it in the connector form first."),
+    )?;
+    if !bot_token.starts_with("xoxb-") {
+        return Err(bad_request(
+            "SLACK_BOT_TOKEN must start with 'xoxb-'. \
+             Copy it from your Slack app's OAuth & Permissions → Bot User OAuth Token.",
+        ));
+    }
+
+    let web = starpod_slack::SlackWebClient::new(bot_token);
+    match web.auth_test().await {
+        Ok(info) => Ok(Json(SlackTestResponse {
+            team: info.team,
+            team_id: info.team_id,
+            bot_user_id: info.user_id,
+        })),
+        Err(e) => Err(bad_request(format!(
+            "Slack auth.test failed: {e}. \
+             Double-check that the bot token is valid and the app is installed to your workspace."
+        ))),
+    }
+}
+
+/// `POST /api/settings/connectors/slack/reload` — enable Slack in
+/// `agent.toml`, hot-reload the config, and (re)start the bot.
+///
+/// Idempotent: safe to call repeatedly. After the call returns, either
+/// the bot is running (success) or `restart_slack` has logged a warning
+/// and the connector status is left as-is for the UI to inspect.
+async fn slack_reload(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    // 1. Set [channels.slack].enabled = true in agent.toml.
+    let mut doc = read_agent_toml(&state)?;
+    {
+        let table = doc
+            .as_table_mut()
+            .ok_or_else(|| internal("agent.toml is not a table"))?;
+        let channels = table
+            .entry("channels")
+            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+            .as_table_mut()
+            .ok_or_else(|| internal("channels is not a table"))?;
+        let slack = channels
+            .entry("slack")
+            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+            .as_table_mut()
+            .ok_or_else(|| internal("channels.slack is not a table"))?;
+        slack.insert("enabled".into(), toml::Value::Boolean(true));
+        // Default the gap so future reads through ChannelsConfig find a sane value.
+        slack
+            .entry("gap_minutes")
+            .or_insert(toml::Value::Integer(360));
+        slack
+            .entry("stream_mode")
+            .or_insert(toml::Value::String("final_only".into()));
+    }
+    write_agent_toml(&state, &doc)?;
+
+    // 2. Hot-reload the in-memory config so restart_slack sees the new flag.
+    if let Ok(agent_cfg) = reload_agent_config(&state.paths) {
+        let new_config = agent_cfg.into_starpod_config(&state.paths);
+        state.agent.reload_config(new_config.clone());
+        *state.config.write().unwrap() = new_config;
+    }
+
+    // 3. (Re)start the bot.
+    state.restart_slack().await;
+
+    // 4. Mark the connector row as connected so the tile lights up. We
+    //    swallow errors here because the connector row is optional —
+    //    callers may have skipped the explicit POST /connectors call and
+    //    just gone straight to the test/reload flow.
+    let store = connector_store(&state);
+    let _ = store.update_status("slack", "connected").await;
+
+    Ok(Json(serde_json::json!({ "status": "ok" })))
+}
+
 /// Read a system key from the vault, falling back to the process environment.
 async fn read_vault_key(state: &AppState, key: &str) -> Option<String> {
     if let Some(ref vault) = state.vault {
@@ -2905,6 +3049,7 @@ mod tests {
             events_tx,
             vault: None,
             telegram_handle: tokio::sync::Mutex::new(None),
+            slack_handle: tokio::sync::Mutex::new(None),
             update_cache: crate::system::new_update_cache(),
             shutdown_tx: tokio::sync::watch::channel(false).0,
         });
@@ -4646,6 +4791,7 @@ mod tests {
             events_tx: state.events_tx.clone(),
             vault: Some(Arc::new(vault)),
             telegram_handle: tokio::sync::Mutex::new(None),
+            slack_handle: tokio::sync::Mutex::new(None),
             update_cache: crate::system::new_update_cache(),
             shutdown_tx: tokio::sync::watch::channel(false).0,
         });

@@ -2332,6 +2332,17 @@ fn resolve_channel(msg: &ChatMessage) -> (Channel, String) {
                 .unwrap_or_else(|| "unknown@sender".into());
             (Channel::Email, key)
         }
+        "slack" => {
+            // Slack channel: key is "{team_id}:{channel_id}:{thread_ts}"
+            // so each Slack thread is a distinct, continuous session.
+            // Falls back to user_id if the handler forgot to set the key.
+            let key = msg
+                .channel_session_key
+                .clone()
+                .or_else(|| msg.user_id.clone())
+                .unwrap_or_else(|| "default".into());
+            (Channel::Slack, key)
+        }
         _ => {
             // "main", "scheduler", or any unknown → explicit Main session
             let key = msg

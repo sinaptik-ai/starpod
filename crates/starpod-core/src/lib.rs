@@ -10,7 +10,8 @@ pub mod workspace;
 pub use config::{
     parse_model_spec, AttachmentsConfig, AuthConfig, BrowserConfig, ChannelsConfig,
     CompactionConfig, CronConfig, FollowupMode, FrontendConfig, InternetConfig, MemoryConfig,
-    ProviderConfig, ProvidersConfig, ReasoningEffort, StarpodConfig, TelegramChannelConfig,
+    ProviderConfig, ProvidersConfig, ReasoningEffort, SlackChannelConfig, StarpodConfig,
+    TelegramChannelConfig,
 };
 pub use error::{Result, StarpodError};
 pub use instance::{apply_blueprint, build_standalone, create_ephemeral_instance, EnvSource};
