@@ -156,7 +156,7 @@ fn build_openai_request(request: &CreateMessageRequest) -> serde_json::Value {
 
     let mut body = serde_json::json!({
         "model": request.model,
-        "max_tokens": request.max_tokens,
+        "max_completion_tokens": request.max_tokens,
         "messages": messages,
         "stream": request.stream,
     });
