@@ -27,12 +27,23 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
     scrollToBottom()
   }, [messages, streamingMessage, scrollToBottom])
 
+  // Mirror streamingMessage into a ref so the session-change effect can read
+  // it without re-running on every token delta.
+  const streamingRef = useRef(null)
+  useEffect(() => { streamingRef.current = streamingMessage }, [streamingMessage])
+
   // Reactively load session when currentSessionId changes
   const prevSessionIdRef = useRef(undefined)
   useEffect(() => {
     if (prevSessionIdRef.current === currentSessionId) return
+    const wasEmpty = prevSessionIdRef.current == null
     prevSessionIdRef.current = currentSessionId
     if (currentSessionId) {
+      // If we're coming from a fresh chat (no previous session id) AND a stream
+      // has already started, the new session id is the id the server just
+      // assigned to the in-flight message. Reloading would wipe the streaming
+      // state and kill token rendering for the first message of a chat.
+      if (wasEmpty && streamingRef.current) return
       loadSession(currentSessionId)
     } else {
       showWelcome()
@@ -218,13 +229,17 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
 
         // Reconstruct the bubble/tool interleaving that streaming produces.
         // DB order: assistant → tool_use* → tool_result* → assistant → …
-        // Streaming structure: bubble, tool, bubble, tool, … (one bubble per
-        // tool boundary plus initial text).
-        let bubbles = []
+        // The render contract (see renderBubblesAndTools) is strictly
+        // bubbles[0], tools[0], bubbles[1], tools[1], … so we must keep
+        // bubbles.length === tools.length + 1 and only write assistant text
+        // into the bubble slot that sits *after* the most recent tool.
+        let bubbles = [{ text: '' }]
         let tools = []
+        let cur = 0 // index of the bubble that collects the next assistant text
 
         function flushAssistant() {
-          if (bubbles.length > 0 || tools.length > 0) {
+          const hasText = bubbles.some(b => b.text && b.text.trim())
+          if (hasText || tools.length > 0) {
             parsed.push({
               role: 'assistant_stream',
               bubbles: bubbles.map(b => ({ ...b, done: true })),
@@ -232,9 +247,10 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
               stats: null,
               errors: null,
             })
-            bubbles = []
-            tools = []
           }
+          bubbles = [{ text: '' }]
+          tools = []
+          cur = 0
         }
 
         msgs.forEach(m => {
@@ -243,13 +259,13 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
             parsed.push({ role: 'user', content: m.content, attachments: m.attachments })
           } else if (m.role === 'assistant') {
             if (m.content) {
-              // If the last bubble is empty (placeholder after a tool),
-              // fill it with this text — just like streaming does.
-              const last = bubbles[bubbles.length - 1]
-              if (last && !last.text.trim()) {
-                last.text = m.content
+              // Always write into the current slot. Multiple consecutive
+              // assistant text messages (same turn, split by the API) are
+              // concatenated so they stay *before* any following tool.
+              if (bubbles[cur].text) {
+                bubbles[cur].text += '\n\n' + m.content
               } else {
-                bubbles.push({ text: m.content })
+                bubbles[cur].text = m.content
               }
             }
           } else if (m.role === 'tool_use') {
@@ -262,7 +278,8 @@ const Chat = forwardRef(function Chat({ wsRef, onSendPrompt }, ref) {
                 status: 'done',
                 result: null,
               })
-              // Create a placeholder bubble after each tool (mirrors streaming)
+              // Open a fresh slot after the tool for subsequent text.
+              cur = bubbles.length
               bubbles.push({ text: '' })
             } catch {}
           } else if (m.role === 'tool_result') {
