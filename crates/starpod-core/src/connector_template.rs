@@ -103,15 +103,18 @@ pub fn load_all_templates(dir: &Path) -> Result<Vec<ConnectorTemplate>> {
         ))
     })?;
     for entry in entries {
-        let entry = entry.map_err(|e| {
-            StarpodError::Config(format!("Failed to read directory entry: {}", e))
-        })?;
+        let entry = entry
+            .map_err(|e| StarpodError::Config(format!("Failed to read directory entry: {}", e)))?;
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) == Some("toml") {
             match load_template(&path) {
                 Ok(t) => templates.push(t),
                 Err(e) => {
-                    tracing::warn!("Skipping invalid connector template {}: {}", path.display(), e);
+                    tracing::warn!(
+                        "Skipping invalid connector template {}: {}",
+                        path.display(),
+                        e
+                    );
                 }
             }
         }
@@ -198,7 +201,10 @@ refresh_key = "GOOGLE_CALENDAR_REFRESH_TOKEN"
         let t: ConnectorTemplate = toml::from_str(toml).unwrap();
         assert!(t.secrets.is_empty());
         let oauth = t.oauth.unwrap();
-        assert_eq!(oauth.refresh_key.as_deref(), Some("GOOGLE_CALENDAR_REFRESH_TOKEN"));
+        assert_eq!(
+            oauth.refresh_key.as_deref(),
+            Some("GOOGLE_CALENDAR_REFRESH_TOKEN")
+        );
     }
 
     #[test]

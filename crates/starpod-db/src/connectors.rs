@@ -116,15 +116,14 @@ impl ConnectorStore {
     /// Update the status of a connector.
     pub async fn update_status(&self, name: &str, status: &str) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
-        let result = sqlx::query(
-            "UPDATE connectors SET status = ?1, updated_at = ?2 WHERE name = ?3",
-        )
-        .bind(status)
-        .bind(&now)
-        .bind(name)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| StarpodError::Database(format!("connector update_status: {e}")))?;
+        let result =
+            sqlx::query("UPDATE connectors SET status = ?1, updated_at = ?2 WHERE name = ?3")
+                .bind(status)
+                .bind(&now)
+                .bind(name)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| StarpodError::Database(format!("connector update_status: {e}")))?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -146,11 +145,7 @@ impl ConnectorStore {
     }
 
     /// Update the OAuth refresh key vault reference.
-    pub async fn update_oauth_refresh_key(
-        &self,
-        name: &str,
-        refresh_key: &str,
-    ) -> Result<bool> {
+    pub async fn update_oauth_refresh_key(&self, name: &str, refresh_key: &str) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
         let result = sqlx::query(
             "UPDATE connectors SET oauth_refresh_key = ?1, updated_at = ?2 WHERE name = ?3",
@@ -160,9 +155,7 @@ impl ConnectorStore {
         .bind(name)
         .execute(&self.pool)
         .await
-        .map_err(|e| {
-            StarpodError::Database(format!("connector update_oauth_refresh_key: {e}"))
-        })?;
+        .map_err(|e| StarpodError::Database(format!("connector update_oauth_refresh_key: {e}")))?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -175,15 +168,14 @@ impl ConnectorStore {
     ) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
         let config_json = serde_json::to_string(config).unwrap_or_default();
-        let result = sqlx::query(
-            "UPDATE connectors SET config = ?1, updated_at = ?2 WHERE name = ?3",
-        )
-        .bind(&config_json)
-        .bind(&now)
-        .bind(name)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| StarpodError::Database(format!("connector update_config: {e}")))?;
+        let result =
+            sqlx::query("UPDATE connectors SET config = ?1, updated_at = ?2 WHERE name = ?3")
+                .bind(&config_json)
+                .bind(&now)
+                .bind(name)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| StarpodError::Database(format!("connector update_config: {e}")))?;
 
         Ok(result.rows_affected() > 0)
     }

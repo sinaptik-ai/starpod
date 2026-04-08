@@ -2291,9 +2291,7 @@ fn connector_store(state: &AppState) -> starpod_db::connectors::ConnectorStore {
 }
 
 /// `GET /api/settings/connectors` — list all configured connectors.
-async fn list_connectors(
-    State(state): State<Arc<AppState>>,
-) -> ApiResult<Vec<ConnectorInfo>> {
+async fn list_connectors(State(state): State<Arc<AppState>>) -> ApiResult<Vec<ConnectorInfo>> {
     let store = connector_store(&state);
     let rows = store
         .list()
@@ -2331,7 +2329,12 @@ async fn get_connector(
         .get(&name)
         .await
         .map_err(|e| internal(format!("connector get: {e}")))?
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, format!("Connector '{}' not found", name)))?;
+        .ok_or_else(|| {
+            err(
+                StatusCode::NOT_FOUND,
+                format!("Connector '{}' not found", name),
+            )
+        })?;
     Ok(Json(ConnectorInfo {
         name: row.name,
         connector_type: row.connector_type,
@@ -2364,16 +2367,15 @@ async fn create_connector(
         .paths
         .connectors_dir
         .join(format!("{}.toml", req.connector_type));
-    let template = starpod_core::connector_template::load_template(&template_path)
-        .map_err(|_| {
-            let available = starpod_core::connector_template::load_all_templates(
-                &state.paths.connectors_dir,
-            )
-            .unwrap_or_default()
-            .into_iter()
-            .map(|t| t.name)
-            .collect::<Vec<_>>()
-            .join(", ");
+    let template =
+        starpod_core::connector_template::load_template(&template_path).map_err(|_| {
+            let available =
+                starpod_core::connector_template::load_all_templates(&state.paths.connectors_dir)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|t| t.name)
+                    .collect::<Vec<_>>()
+                    .join(", ");
             bad_request(format!(
                 "Unknown connector type '{}'. Available: {}",
                 req.connector_type, available
@@ -2381,13 +2383,15 @@ async fn create_connector(
         })?;
 
     let instance_name = if template.multi_instance {
-        req.name.as_deref().ok_or_else(|| {
-            bad_request(format!(
-                "Connector type '{}' supports multiple instances — 'name' is required",
-                req.connector_type
-            ))
-        })?
-        .to_string()
+        req.name
+            .as_deref()
+            .ok_or_else(|| {
+                bad_request(format!(
+                    "Connector type '{}' supports multiple instances — 'name' is required",
+                    req.connector_type
+                ))
+            })?
+            .to_string()
     } else {
         req.name
             .as_deref()
@@ -2405,17 +2409,18 @@ async fn create_connector(
     };
 
     let resolved_secrets: Vec<String> = template.secrets.iter().map(|s| resolve_key(s)).collect();
-    let initial_status = if resolved_secrets.is_empty() { "connected" } else { "not_connected" };
+    let initial_status = if resolved_secrets.is_empty() {
+        "connected"
+    } else {
+        "not_connected"
+    };
 
     let mut merged_config = template.config.clone();
     for (k, v) in &req.config {
         merged_config.insert(k.clone(), v.clone());
     }
 
-    let description = req
-        .description
-        .as_deref()
-        .unwrap_or(&template.description);
+    let description = req.description.as_deref().unwrap_or(&template.description);
 
     let auth_method = if template.oauth.is_some() && template.secrets.is_empty() {
         "oauth"
@@ -2490,7 +2495,12 @@ async fn update_connector(
         .get(&name)
         .await
         .map_err(|e| internal(format!("connector get: {e}")))?
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, format!("Connector '{}' not found", name)))?;
+        .ok_or_else(|| {
+            err(
+                StatusCode::NOT_FOUND,
+                format!("Connector '{}' not found", name),
+            )
+        })?;
 
     if let Some(ref status) = req.status {
         store
@@ -2591,7 +2601,12 @@ async fn oauth_start(
         .get(&name)
         .await
         .map_err(|e| internal(format!("connector get: {e}")))?
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, format!("Connector '{}' not found", name)))?;
+        .ok_or_else(|| {
+            err(
+                StatusCode::NOT_FOUND,
+                format!("Connector '{}' not found", name),
+            )
+        })?;
 
     let template_path = state
         .paths
@@ -2665,7 +2680,12 @@ async fn oauth_callback(
         .get(&name)
         .await
         .map_err(|e| internal(format!("connector get: {e}")))?
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, format!("Connector '{}' not found", name)))?;
+        .ok_or_else(|| {
+            err(
+                StatusCode::NOT_FOUND,
+                format!("Connector '{}' not found", name),
+            )
+        })?;
 
     let template_path = state
         .paths
@@ -2734,10 +2754,7 @@ async fn oauth_callback(
         })?;
 
     // Store access token in vault
-    let token_vault_key = conn
-        .oauth_token_key
-        .as_deref()
-        .unwrap_or(&oauth.token_key);
+    let token_vault_key = conn.oauth_token_key.as_deref().unwrap_or(&oauth.token_key);
     if let Some(ref vault) = state.vault {
         vault
             .set(token_vault_key, access_token, None)
@@ -2833,9 +2850,11 @@ struct SlackTestResponse {
 async fn slack_test(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<SlackTestResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let app_token = read_vault_key(&state, "SLACK_APP_TOKEN").await.ok_or_else(
-        || bad_request("SLACK_APP_TOKEN is not set. Save it in the connector form first."),
-    )?;
+    let app_token = read_vault_key(&state, "SLACK_APP_TOKEN")
+        .await
+        .ok_or_else(|| {
+            bad_request("SLACK_APP_TOKEN is not set. Save it in the connector form first.")
+        })?;
     if !app_token.starts_with("xapp-") {
         return Err(bad_request(
             "SLACK_APP_TOKEN must start with 'xapp-'. \
@@ -2844,9 +2863,11 @@ async fn slack_test(
         ));
     }
 
-    let bot_token = read_vault_key(&state, "SLACK_BOT_TOKEN").await.ok_or_else(
-        || bad_request("SLACK_BOT_TOKEN is not set. Save it in the connector form first."),
-    )?;
+    let bot_token = read_vault_key(&state, "SLACK_BOT_TOKEN")
+        .await
+        .ok_or_else(|| {
+            bad_request("SLACK_BOT_TOKEN is not set. Save it in the connector form first.")
+        })?;
     if !bot_token.starts_with("xoxb-") {
         return Err(bad_request(
             "SLACK_BOT_TOKEN must start with 'xoxb-'. \
@@ -5033,12 +5054,7 @@ mod tests {
         let (_tmp, state) = test_app_state_with_vault().await;
         let vault = state.vault.as_ref().unwrap();
         vault
-            .set_with_hosts(
-                "MY_KEY",
-                "secret",
-                Some(&["api.example.com".into()]),
-                None,
-            )
+            .set_with_hosts("MY_KEY", "secret", Some(&["api.example.com".into()]), None)
             .await
             .unwrap();
 
@@ -5606,21 +5622,13 @@ secrets = ["DATABASE_URL"]
         assert_eq!(json["secrets"][0], "GITHUB_TOKEN");
 
         // GET single
-        let (status, json) = get_json(
-            Arc::clone(&state),
-            "/api/settings/connectors/github",
-        )
-        .await;
+        let (status, json) = get_json(Arc::clone(&state), "/api/settings/connectors/github").await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(json["name"], "github");
         assert_eq!(json["type"], "github");
 
         // GET list
-        let (status, json) = get_json(
-            Arc::clone(&state),
-            "/api/settings/connectors",
-        )
-        .await;
+        let (status, json) = get_json(Arc::clone(&state), "/api/settings/connectors").await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(json.as_array().unwrap().len(), 1);
 
@@ -5634,20 +5642,12 @@ secrets = ["DATABASE_URL"]
         assert_eq!(status, StatusCode::OK);
 
         // Verify update took effect
-        let (status, json) = get_json(
-            Arc::clone(&state),
-            "/api/settings/connectors/github",
-        )
-        .await;
+        let (status, json) = get_json(Arc::clone(&state), "/api/settings/connectors/github").await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(json["status"], "active");
 
         // DELETE
-        let status = delete_req(
-            Arc::clone(&state),
-            "/api/settings/connectors/github",
-        )
-        .await;
+        let status = delete_req(Arc::clone(&state), "/api/settings/connectors/github").await;
         assert_eq!(status, StatusCode::NO_CONTENT);
 
         // Verify deletion
