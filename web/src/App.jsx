@@ -1,7 +1,6 @@
 import React, { useRef, useEffect, useCallback, useMemo } from 'react'
 import './style.css'
 import { AppProvider, useApp, isMobile } from './contexts/AppContext'
-import { generateUUID } from './lib/utils'
 import { markSessionRead } from './lib/api'
 import AuthGate, { useUser } from './components/AuthGate'
 import OnboardingGate from './components/OnboardingGate'
@@ -109,6 +108,18 @@ function AppInner() {
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(sessions => {
         dispatch({ type: 'SET_SESSIONS', payload: sessions || [] })
+        // Hydrate channel_session_key for the currently active session.
+        // On page refresh the URL gives us the session id but the key is
+        // initialised to a fresh random UUID. The server routes by
+        // (channel, channel_session_key), so sending with the wrong key
+        // forks off a brand new session and wipes the chat.
+        const sid = currentSessionIdRef.current
+        if (sid) {
+          const match = (sessions || []).find(s => s.id === sid)
+          if (match && match.channel_session_key) {
+            dispatch({ type: 'SET_SESSION_KEY', payload: { id: sid, key: match.channel_session_key } })
+          }
+        }
         return sessions || []
       })
       .catch(() => [])
@@ -149,7 +160,12 @@ function AppInner() {
     if (cronVisible) dispatch({ type: 'HIDE_CRON' })
     if (filesVisible) dispatch({ type: 'HIDE_FILES' })
     if (previewUrl) dispatch({ type: 'CLOSE_PREVIEW' })
-    dispatch({ type: 'SET_SESSION', payload: { id: session.id, key: session.channel_session_key || generateUUID() } })
+    // Pass the session's real key through — do NOT fall back to a fresh
+    // random UUID, because the server routes by channel_session_key and a
+    // random key would fork the conversation into a brand new session on
+    // the next send. SET_SESSION preserves the existing key when this one
+    // is nullish (?? in the reducer).
+    dispatch({ type: 'SET_SESSION', payload: { id: session.id, key: session.channel_session_key } })
     if (!session.is_read) {
       dispatch({ type: 'MARK_SESSION_READ', payload: session.id })
       markSessionRead(session.id)
