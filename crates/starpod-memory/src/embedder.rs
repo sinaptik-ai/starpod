@@ -30,13 +30,16 @@ pub trait Embedder: Send + Sync {
 /// Local embedder using fastembed (BGE-Small-EN v1.5, 384 dims).
 ///
 /// The model is lazily initialized on the first call to [`embed`](Embedder::embed),
-/// which downloads the model weights (~45 MB) if not already cached.
+/// which downloads the model weights (~45 MB) if not already cached. Both the
+/// init and inference are CPU-bound and internally blocking, so all calls are
+/// dispatched onto Tokio's blocking thread pool via [`spawn_blocking`] to
+/// avoid stalling async runtime workers during cold starts on slow networks.
 ///
-/// Thread-safe: the inner model is protected by a `Mutex` and the struct
-/// implements `Send + Sync` via the `Embedder` trait.
+/// Thread-safe: the inner model is protected by a `Mutex` and shared across
+/// tasks via `Arc`.
 #[cfg(feature = "embeddings")]
 pub struct LocalEmbedder {
-    model: std::sync::Mutex<Option<fastembed::TextEmbedding>>,
+    model: std::sync::Arc<std::sync::Mutex<Option<fastembed::TextEmbedding>>>,
 }
 
 #[cfg(feature = "embeddings")]
@@ -44,25 +47,31 @@ impl LocalEmbedder {
     /// Create a new `LocalEmbedder`. The underlying model is loaded lazily.
     pub fn new() -> Self {
         Self {
-            model: std::sync::Mutex::new(None),
+            model: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
-    /// Get or initialize the fastembed model.
-    fn get_or_init(&self) -> Result<std::sync::MutexGuard<'_, Option<fastembed::TextEmbedding>>> {
-        let mut guard = self
-            .model
+    /// Blocking helper: get or initialize the fastembed model and run
+    /// inference on the provided texts. Intended to be called from inside
+    /// `tokio::task::spawn_blocking`.
+    fn embed_blocking(
+        model: &std::sync::Mutex<Option<fastembed::TextEmbedding>>,
+        texts: Vec<String>,
+    ) -> Result<Vec<Vec<f32>>> {
+        let mut guard = model
             .lock()
             .map_err(|e| StarpodError::Agent(format!("Embedder lock poisoned: {}", e)))?;
         if guard.is_none() {
-            let model = fastembed::TextEmbedding::try_new(
+            let m = fastembed::TextEmbedding::try_new(
                 fastembed::InitOptions::new(fastembed::EmbeddingModel::BGESmallENV15)
                     .with_show_download_progress(false),
             )
             .map_err(|e| StarpodError::Agent(format!("Failed to init embedding model: {}", e)))?;
-            *guard = Some(model);
+            *guard = Some(m);
         }
-        Ok(guard)
+        let m = guard.as_ref().expect("initialized above");
+        m.embed(texts, None)
+            .map_err(|e| StarpodError::Agent(format!("Embedding failed: {}", e)))
     }
 }
 
@@ -77,12 +86,11 @@ impl Default for LocalEmbedder {
 #[async_trait::async_trait]
 impl Embedder for LocalEmbedder {
     async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        let guard = self.get_or_init()?;
-        let model = guard.as_ref().unwrap();
-        let results = model
-            .embed(texts.to_vec(), None)
-            .map_err(|e| StarpodError::Agent(format!("Embedding failed: {}", e)))?;
-        Ok(results)
+        let model = self.model.clone();
+        let texts = texts.to_vec();
+        tokio::task::spawn_blocking(move || Self::embed_blocking(&model, texts))
+            .await
+            .map_err(|e| StarpodError::Agent(format!("Embedder task join failed: {}", e)))?
     }
 
     fn dimensions(&self) -> usize {

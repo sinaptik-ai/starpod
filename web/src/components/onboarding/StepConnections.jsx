@@ -75,6 +75,19 @@ export default function StepConnections({ data, updateData, onNext, onBack }) {
   const [error, setError] = useState(null)
   const [toast, setToast] = useState(null)
   const toastTimer = useRef(null)
+  // Custom API connector panel state. Opened by the "+ Custom API" tile,
+  // lets the user paste a name + api key + docs URL; the server fetches
+  // the docs, generates a SKILL.md via an LLM call, and registers a
+  // connector of type "custom".
+  const [customOpen, setCustomOpen] = useState(false)
+  const [customForm, setCustomForm] = useState({
+    name: '',
+    api_key: '',
+    docs_url: '',
+    description: '',
+  })
+  const [customBusy, setCustomBusy] = useState(false)
+  const [customResult, setCustomResult] = useState(null)
 
   const showToast = useCallback((text) => {
     setToast(text)
@@ -380,6 +393,64 @@ export default function StepConnections({ data, updateData, onNext, onBack }) {
     setBusy(null)
   }
 
+  // ── Custom API creation ────────────────────────────────────────────────
+
+  const openCustomPanel = useCallback(() => {
+    setError(null)
+    setCustomResult(null)
+    setExpanded(null)
+    setCustomForm({ name: '', api_key: '', docs_url: '', description: '' })
+    setCustomOpen(true)
+  }, [])
+
+  const closeCustomPanel = useCallback(() => {
+    setCustomOpen(false)
+    setCustomBusy(false)
+    setCustomResult(null)
+  }, [])
+
+  const handleCreateCustom = useCallback(async () => {
+    const name = customForm.name.trim().toLowerCase()
+    const api_key = customForm.api_key.trim()
+    const docs_url = customForm.docs_url.trim()
+    const description = customForm.description.trim()
+    if (!name) { setError('Name is required'); return }
+    if (!/^[a-z0-9-]+$/.test(name)) {
+      setError('Name must be lowercase letters, digits, and hyphens only')
+      return
+    }
+    if (name.length > 63) { setError('Name must be ≤ 63 characters'); return }
+    if (!api_key) { setError('API key is required'); return }
+    if (!docs_url) { setError('Docs URL is required'); return }
+    setError(null)
+    setCustomBusy(true)
+    try {
+      const resp = await fetch('/api/settings/connectors/custom', {
+        method: 'POST',
+        headers: apiHeaders(),
+        body: JSON.stringify({
+          name,
+          api_key,
+          docs_url,
+          ...(description ? { description } : {}),
+        }),
+      })
+      if (!resp.ok) {
+        const d = await resp.json().catch(() => ({}))
+        throw new Error(d.error || 'Failed to create custom connector')
+      }
+      const result = await resp.json()
+      await reload()
+      setCustomResult(result)
+      setCustomForm({ name: '', api_key: '', docs_url: '', description: '' })
+      showToast(`${result.connector?.display_name || name} wired up`)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setCustomBusy(false)
+    }
+  }, [customForm, reload, showToast])
+
   const handleChipClick = useCallback((instanceName) => {
     setError(null)
     setSecretValues({})
@@ -558,6 +629,128 @@ export default function StepConnections({ data, updateData, onNext, onBack }) {
         </div>
       )}
 
+      {customOpen && (
+        <div className="ob-conn-panel">
+          <div className="ob-conn-panel-header">
+            <span className="ob-conn-panel-logo" aria-hidden="true">+</span>
+            <div>
+              <div className="ob-conn-panel-name">Custom API</div>
+              <div className="ob-conn-panel-desc">
+                Paste an API key and a docs URL. Starpod reads the docs and
+                writes a skill that teaches {data.agentName} how to call it.
+              </div>
+            </div>
+            <button
+              type="button"
+              className="ob-conn-panel-close"
+              onClick={closeCustomPanel}
+              aria-label="Close"
+            >
+              ×
+            </button>
+          </div>
+          {customResult ? (
+            <div className="ob-conn-panel-body">
+              <p className="ob-hint">
+                <strong>{customResult.connector?.display_name}</strong> wired
+                up. Skill <code>{customResult.skill_name}</code> created and
+                key stored in <code>${customResult.env_var}</code>.
+              </p>
+              <details>
+                <summary>View generated skill description</summary>
+                <p className="ob-hint" style={{ marginTop: '0.5rem' }}>
+                  {customResult.generated_description}
+                </p>
+              </details>
+              <div className="ob-actions ob-actions--end">
+                <button
+                  type="button"
+                  className="ob-btn-primary ob-btn-primary--sm"
+                  onClick={closeCustomPanel}
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="ob-conn-panel-body">
+              <div className="ob-field-group">
+                <label className="ob-label ob-label--sm">
+                  Name
+                  <span className="ob-stored"> · kebab-case</span>
+                </label>
+                <input
+                  type="text"
+                  className="ob-input ob-input--mono"
+                  value={customForm.name}
+                  onChange={e =>
+                    setCustomForm(prev => ({ ...prev, name: e.target.value }))
+                  }
+                  placeholder="e.g. semrush"
+                  autoComplete="off"
+                  disabled={customBusy}
+                />
+              </div>
+              <div className="ob-field-group">
+                <label className="ob-label ob-label--sm">API key</label>
+                <input
+                  type="password"
+                  className="ob-input ob-input--mono"
+                  value={customForm.api_key}
+                  onChange={e =>
+                    setCustomForm(prev => ({ ...prev, api_key: e.target.value }))
+                  }
+                  placeholder="Paste the API key"
+                  autoComplete="off"
+                  disabled={customBusy}
+                />
+              </div>
+              <div className="ob-field-group">
+                <label className="ob-label ob-label--sm">Docs URL</label>
+                <input
+                  type="url"
+                  className="ob-input ob-input--mono"
+                  value={customForm.docs_url}
+                  onChange={e =>
+                    setCustomForm(prev => ({ ...prev, docs_url: e.target.value }))
+                  }
+                  placeholder="https://developer.example.com/api"
+                  autoComplete="off"
+                  disabled={customBusy}
+                />
+              </div>
+              <div className="ob-field-group">
+                <label className="ob-label ob-label--sm">
+                  Description
+                  <span className="ob-stored"> · optional</span>
+                </label>
+                <input
+                  type="text"
+                  className="ob-input"
+                  value={customForm.description}
+                  onChange={e =>
+                    setCustomForm(prev => ({ ...prev, description: e.target.value }))
+                  }
+                  placeholder="What is this API used for?"
+                  autoComplete="off"
+                  disabled={customBusy}
+                />
+              </div>
+              <div className="ob-actions ob-actions--end">
+                <button
+                  type="button"
+                  className="ob-btn-primary ob-btn-primary--sm"
+                  onClick={handleCreateCustom}
+                  disabled={customBusy}
+                >
+                  {customBusy ? 'Generating skill…' : 'Create'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="ob-conn-toolbar">
         <input
           type="text"
@@ -575,12 +768,30 @@ export default function StepConnections({ data, updateData, onNext, onBack }) {
           renderGrid(searchResults)
         )
       ) : (
-        categorized.map(section => (
-          <div key={section.label} className="ob-conn-section">
-            <div className="ob-conn-section-label">{section.label}</div>
-            {renderGrid(section.items)}
+        <>
+          {categorized.map(section => (
+            <div key={section.label} className="ob-conn-section">
+              <div className="ob-conn-section-label">{section.label}</div>
+              {renderGrid(section.items)}
+            </div>
+          ))}
+          <div className="ob-conn-section">
+            <div className="ob-conn-section-label">Custom</div>
+            <div className="ob-conn-grid">
+              <button
+                type="button"
+                onClick={openCustomPanel}
+                className={
+                  'ob-conn-tile' + (customOpen ? ' ob-conn-tile--equipped' : '')
+                }
+                title="Add a custom API by key + docs URL"
+              >
+                <span className="ob-conn-logo" aria-hidden="true">+</span>
+                <span className="ob-conn-name">Custom API</span>
+              </button>
+            </div>
           </div>
-        ))
+        </>
       )}
 
       {error && <p className="ob-error">{error}</p>}

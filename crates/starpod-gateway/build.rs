@@ -10,6 +10,15 @@ fn main() {
         "npm"
     };
 
+    // Skip web/docs builds when STARPOD_SKIP_WEB_BUILD=1 is set. Used when
+    // the pre-built `static/dist` and `docs/.vitepress/dist` directories
+    // have been provisioned externally and the Node toolchain isn't
+    // necessarily usable (e.g. Node 16 on a worktree).
+    if env::var("STARPOD_SKIP_WEB_BUILD").ok().as_deref() == Some("1") {
+        println!("cargo:warning=STARPOD_SKIP_WEB_BUILD=1 — skipping npm build");
+        return;
+    }
+
     build_web_ui(&manifest_dir, npm);
     build_docs(&manifest_dir, npm);
 }

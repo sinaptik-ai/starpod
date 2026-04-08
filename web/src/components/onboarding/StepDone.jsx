@@ -1,15 +1,14 @@
 import { useEffect, useState } from 'react'
 import { StarpodIcon } from '../ui/Logo'
 import { apiHeaders } from '../../lib/api'
-import { useApp } from '../../contexts/AppContext'
 
 export default function StepDone({ agentName, onComplete }) {
-  const { dispatch } = useApp()
   const [pendingCount, setPendingCount] = useState(0)
 
   const handleGoToConnectors = () => {
-    dispatch({ type: 'SET_SETTINGS_TAB', payload: 'connectors' })
-    dispatch({ type: 'SHOW_SETTINGS' })
+    // Set the hash before AppProvider mounts — its initial state reads from
+    // window.location.hash, so we land directly on Settings → Connectors.
+    window.location.hash = '#/settings/connectors'
     onComplete()
   }
 
