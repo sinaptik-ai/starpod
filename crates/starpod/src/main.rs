@@ -446,11 +446,8 @@ async fn inject_vault_env(paths: &ResolvedPaths, proxy_enabled: bool) -> anyhow:
                         .await?
                         .and_then(|e| e.allowed_hosts)
                         .unwrap_or_default();
-                    let token = starpod_vault::opaque::encode_opaque_token(
-                        vault.cipher(),
-                        &val,
-                        &hosts,
-                    )?;
+                    let token =
+                        starpod_vault::opaque::encode_opaque_token(vault.cipher(), &val, &hosts)?;
                     std::env::set_var(&key, &token);
                     continue;
                 }
@@ -466,7 +463,7 @@ async fn inject_vault_env(paths: &ResolvedPaths, proxy_enabled: bool) -> anyhow:
 ///
 /// For each connector in the database:
 /// - If all required secrets are available as env vars → status = "connected"
-/// - If any are missing → status = "pending"
+/// - If any are missing → status = "not_connected"
 async fn validate_connectors(paths: &ResolvedPaths) -> anyhow::Result<()> {
     // Ensure connector templates exist (handles pre-existing projects that
     // were initialised before connectors were added).
@@ -492,7 +489,11 @@ async fn validate_connectors(paths: &ResolvedPaths) -> anyhow::Result<()> {
         let new_status = if connector.secrets.is_empty() && connector.auth_method == "oauth" {
             // OAuth-only connectors: check if the token key is in env
             if let Some(ref token_key) = connector.oauth_token_key {
-                if std::env::var(token_key).is_ok() { "connected" } else { "not_connected" }
+                if std::env::var(token_key).is_ok() {
+                    "connected"
+                } else {
+                    "not_connected"
+                }
             } else {
                 "not_connected"
             }
@@ -555,78 +556,184 @@ const BUILTIN_SKILLS: &[BuiltinSkill] = &[
     BuiltinSkill {
         name: "pdf",
         files: &[
-            BuiltinSkillFile { path: "SKILL.md", content: include_str!("../skills/pdf/SKILL.md") },
-            BuiltinSkillFile { path: "scripts/convert_to_images.py", content: include_str!("../skills/pdf/scripts/convert_to_images.py") },
-            BuiltinSkillFile { path: "scripts/extract_tables.py", content: include_str!("../skills/pdf/scripts/extract_tables.py") },
-            BuiltinSkillFile { path: "scripts/merge.py", content: include_str!("../skills/pdf/scripts/merge.py") },
-            BuiltinSkillFile { path: "scripts/fill_form.py", content: include_str!("../skills/pdf/scripts/fill_form.py") },
-            BuiltinSkillFile { path: "references/forms.md", content: include_str!("../skills/pdf/references/forms.md") },
-            BuiltinSkillFile { path: "references/advanced.md", content: include_str!("../skills/pdf/references/advanced.md") },
+            BuiltinSkillFile {
+                path: "SKILL.md",
+                content: include_str!("../skills/pdf/SKILL.md"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/convert_to_images.py",
+                content: include_str!("../skills/pdf/scripts/convert_to_images.py"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/extract_tables.py",
+                content: include_str!("../skills/pdf/scripts/extract_tables.py"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/merge.py",
+                content: include_str!("../skills/pdf/scripts/merge.py"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/fill_form.py",
+                content: include_str!("../skills/pdf/scripts/fill_form.py"),
+            },
+            BuiltinSkillFile {
+                path: "references/forms.md",
+                content: include_str!("../skills/pdf/references/forms.md"),
+            },
+            BuiltinSkillFile {
+                path: "references/advanced.md",
+                content: include_str!("../skills/pdf/references/advanced.md"),
+            },
         ],
     },
     // ── PPTX ─────────────────────────────────────────────────────────
     BuiltinSkill {
         name: "pptx",
         files: &[
-            BuiltinSkillFile { path: "SKILL.md", content: include_str!("../skills/pptx/SKILL.md") },
-            BuiltinSkillFile { path: "scripts/__init__.py", content: include_str!("../skills/pptx/scripts/__init__.py") },
-            BuiltinSkillFile { path: "scripts/thumbnail.py", content: include_str!("../skills/pptx/scripts/thumbnail.py") },
-            BuiltinSkillFile { path: "scripts/clean.py", content: include_str!("../skills/pptx/scripts/clean.py") },
-            BuiltinSkillFile { path: "scripts/office/__init__.py", content: include_str!("../skills/pptx/scripts/office/__init__.py") },
-            BuiltinSkillFile { path: "scripts/office/soffice.py", content: include_str!("../skills/pptx/scripts/office/soffice.py") },
-            BuiltinSkillFile { path: "scripts/office/unpack.py", content: include_str!("../skills/pptx/scripts/office/unpack.py") },
-            BuiltinSkillFile { path: "scripts/office/pack.py", content: include_str!("../skills/pptx/scripts/office/pack.py") },
-            BuiltinSkillFile { path: "references/editing.md", content: include_str!("../skills/pptx/references/editing.md") },
+            BuiltinSkillFile {
+                path: "SKILL.md",
+                content: include_str!("../skills/pptx/SKILL.md"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/__init__.py",
+                content: include_str!("../skills/pptx/scripts/__init__.py"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/thumbnail.py",
+                content: include_str!("../skills/pptx/scripts/thumbnail.py"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/clean.py",
+                content: include_str!("../skills/pptx/scripts/clean.py"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/office/__init__.py",
+                content: include_str!("../skills/pptx/scripts/office/__init__.py"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/office/soffice.py",
+                content: include_str!("../skills/pptx/scripts/office/soffice.py"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/office/unpack.py",
+                content: include_str!("../skills/pptx/scripts/office/unpack.py"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/office/pack.py",
+                content: include_str!("../skills/pptx/scripts/office/pack.py"),
+            },
+            BuiltinSkillFile {
+                path: "references/editing.md",
+                content: include_str!("../skills/pptx/references/editing.md"),
+            },
         ],
     },
     // ── XLSX ─────────────────────────────────────────────────────────
     BuiltinSkill {
         name: "xlsx",
         files: &[
-            BuiltinSkillFile { path: "SKILL.md", content: include_str!("../skills/xlsx/SKILL.md") },
-            BuiltinSkillFile { path: "scripts/recalc.py", content: include_str!("../skills/xlsx/scripts/recalc.py") },
-            BuiltinSkillFile { path: "scripts/office/__init__.py", content: include_str!("../skills/xlsx/scripts/office/__init__.py") },
-            BuiltinSkillFile { path: "scripts/office/soffice.py", content: include_str!("../skills/xlsx/scripts/office/soffice.py") },
-            BuiltinSkillFile { path: "scripts/office/unpack.py", content: include_str!("../skills/xlsx/scripts/office/unpack.py") },
-            BuiltinSkillFile { path: "scripts/office/pack.py", content: include_str!("../skills/xlsx/scripts/office/pack.py") },
+            BuiltinSkillFile {
+                path: "SKILL.md",
+                content: include_str!("../skills/xlsx/SKILL.md"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/recalc.py",
+                content: include_str!("../skills/xlsx/scripts/recalc.py"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/office/__init__.py",
+                content: include_str!("../skills/xlsx/scripts/office/__init__.py"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/office/soffice.py",
+                content: include_str!("../skills/xlsx/scripts/office/soffice.py"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/office/unpack.py",
+                content: include_str!("../skills/xlsx/scripts/office/unpack.py"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/office/pack.py",
+                content: include_str!("../skills/xlsx/scripts/office/pack.py"),
+            },
         ],
     },
     // ── DOCX ─────────────────────────────────────────────────────────
     BuiltinSkill {
         name: "docx",
         files: &[
-            BuiltinSkillFile { path: "SKILL.md", content: include_str!("../skills/docx/SKILL.md") },
-            BuiltinSkillFile { path: "scripts/__init__.py", content: include_str!("../skills/docx/scripts/__init__.py") },
-            BuiltinSkillFile { path: "scripts/comment.py", content: include_str!("../skills/docx/scripts/comment.py") },
-            BuiltinSkillFile { path: "scripts/accept_changes.py", content: include_str!("../skills/docx/scripts/accept_changes.py") },
-            BuiltinSkillFile { path: "scripts/office/__init__.py", content: include_str!("../skills/docx/scripts/office/__init__.py") },
-            BuiltinSkillFile { path: "scripts/office/soffice.py", content: include_str!("../skills/docx/scripts/office/soffice.py") },
-            BuiltinSkillFile { path: "scripts/office/unpack.py", content: include_str!("../skills/docx/scripts/office/unpack.py") },
-            BuiltinSkillFile { path: "scripts/office/pack.py", content: include_str!("../skills/docx/scripts/office/pack.py") },
+            BuiltinSkillFile {
+                path: "SKILL.md",
+                content: include_str!("../skills/docx/SKILL.md"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/__init__.py",
+                content: include_str!("../skills/docx/scripts/__init__.py"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/comment.py",
+                content: include_str!("../skills/docx/scripts/comment.py"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/accept_changes.py",
+                content: include_str!("../skills/docx/scripts/accept_changes.py"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/office/__init__.py",
+                content: include_str!("../skills/docx/scripts/office/__init__.py"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/office/soffice.py",
+                content: include_str!("../skills/docx/scripts/office/soffice.py"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/office/unpack.py",
+                content: include_str!("../skills/docx/scripts/office/unpack.py"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/office/pack.py",
+                content: include_str!("../skills/docx/scripts/office/pack.py"),
+            },
         ],
     },
     // ── Web Research ─────────────────────────────────────────────────
     BuiltinSkill {
         name: "web-research",
-        files: &[
-            BuiltinSkillFile { path: "SKILL.md", content: include_str!("../skills/web-research/SKILL.md") },
-        ],
+        files: &[BuiltinSkillFile {
+            path: "SKILL.md",
+            content: include_str!("../skills/web-research/SKILL.md"),
+        }],
     },
     // ── Data Analysis ────────────────────────────────────────────────
     BuiltinSkill {
         name: "data-analysis",
         files: &[
-            BuiltinSkillFile { path: "SKILL.md", content: include_str!("../skills/data-analysis/SKILL.md") },
-            BuiltinSkillFile { path: "scripts/profile.py", content: include_str!("../skills/data-analysis/scripts/profile.py") },
+            BuiltinSkillFile {
+                path: "SKILL.md",
+                content: include_str!("../skills/data-analysis/SKILL.md"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/profile.py",
+                content: include_str!("../skills/data-analysis/scripts/profile.py"),
+            },
         ],
     },
     // ── Image Generation ─────────────────────────────────────────────
     BuiltinSkill {
         name: "image-gen",
         files: &[
-            BuiltinSkillFile { path: "SKILL.md", content: include_str!("../skills/image-gen/SKILL.md") },
-            BuiltinSkillFile { path: "scripts/resize.py", content: include_str!("../skills/image-gen/scripts/resize.py") },
-            BuiltinSkillFile { path: "scripts/watermark.py", content: include_str!("../skills/image-gen/scripts/watermark.py") },
+            BuiltinSkillFile {
+                path: "SKILL.md",
+                content: include_str!("../skills/image-gen/SKILL.md"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/resize.py",
+                content: include_str!("../skills/image-gen/scripts/resize.py"),
+            },
+            BuiltinSkillFile {
+                path: "scripts/watermark.py",
+                content: include_str!("../skills/image-gen/scripts/watermark.py"),
+            },
         ],
     },
 ];
@@ -669,31 +776,19 @@ const BUILTIN_CONNECTOR_TEMPLATES: &[(&str, &str)] = &[
         "elasticsearch.toml",
         include_str!("../connectors/elasticsearch.toml"),
     ),
-    (
-        "supabase.toml",
-        include_str!("../connectors/supabase.toml"),
-    ),
+    ("supabase.toml", include_str!("../connectors/supabase.toml")),
     // Communication
     ("slack.toml", include_str!("../connectors/slack.toml")),
     ("discord.toml", include_str!("../connectors/discord.toml")),
-    (
-        "telegram.toml",
-        include_str!("../connectors/telegram.toml"),
-    ),
+    ("telegram.toml", include_str!("../connectors/telegram.toml")),
     ("smtp.toml", include_str!("../connectors/smtp.toml")),
     ("twilio.toml", include_str!("../connectors/twilio.toml")),
     // Payments & commerce
     ("stripe.toml", include_str!("../connectors/stripe.toml")),
     ("shopify.toml", include_str!("../connectors/shopify.toml")),
     // Marketing & CRM
-    (
-        "hubspot.toml",
-        include_str!("../connectors/hubspot.toml"),
-    ),
-    (
-        "meta-ads.toml",
-        include_str!("../connectors/meta-ads.toml"),
-    ),
+    ("hubspot.toml", include_str!("../connectors/hubspot.toml")),
+    ("meta-ads.toml", include_str!("../connectors/meta-ads.toml")),
     // Google services
     (
         "google-calendar.toml",
@@ -710,10 +805,7 @@ const BUILTIN_CONNECTOR_TEMPLATES: &[(&str, &str)] = &[
         include_str!("../connectors/anthropic.toml"),
     ),
     // Email
-    (
-        "sendgrid.toml",
-        include_str!("../connectors/sendgrid.toml"),
-    ),
+    ("sendgrid.toml", include_str!("../connectors/sendgrid.toml")),
     // Monitoring
     ("sentry.toml", include_str!("../connectors/sentry.toml")),
     ("datadog.toml", include_str!("../connectors/datadog.toml")),
@@ -1320,8 +1412,16 @@ mod tests {
                 toml::from_str(content)
                     .unwrap_or_else(|e| panic!("Invalid template {}: {}", name, e));
             assert!(!template.name.is_empty(), "{} has empty name", name);
-            assert!(!template.display_name.is_empty(), "{} has empty display_name", name);
-            assert!(!template.description.is_empty(), "{} has empty description", name);
+            assert!(
+                !template.display_name.is_empty(),
+                "{} has empty display_name",
+                name
+            );
+            assert!(
+                !template.description.is_empty(),
+                "{} has empty description",
+                name
+            );
         }
     }
 
@@ -1332,9 +1432,11 @@ mod tests {
                 toml::from_str(content).unwrap();
             let expected = format!("{}.toml", template.name);
             assert_eq!(
-                *filename, expected.as_str(),
+                *filename,
+                expected.as_str(),
                 "Template filename '{}' doesn't match name '{}'",
-                filename, template.name
+                filename,
+                template.name
             );
         }
     }
@@ -1349,8 +1451,7 @@ mod tests {
 
         // Create core.db with connector table
         let core_db = starpod_db::CoreDb::new(&db_dir).await.unwrap();
-        let store =
-            starpod_db::connectors::ConnectorStore::from_pool(core_db.pool().clone());
+        let store = starpod_db::connectors::ConnectorStore::from_pool(core_db.pool().clone());
 
         // Insert a connector that requires GITHUB_TOKEN
         store
@@ -1391,10 +1492,10 @@ mod tests {
             env_file: None,
         };
 
-        // Without the env var set, status stays "pending"
+        // Without the env var set, status becomes "not_connected"
         validate_connectors(&paths).await.unwrap();
         let row = store.get("github").await.unwrap().unwrap();
-        assert_eq!(row.status, "pending");
+        assert_eq!(row.status, "not_connected");
 
         // Set the env var and re-validate
         std::env::set_var("TEST_CONNECTOR_KEY_12345", "fake-token");

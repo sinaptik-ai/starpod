@@ -1358,9 +1358,7 @@ fn parse_content_blocks(content: &serde_json::Value) -> Option<Vec<ApiContentBlo
 /// can be resumed without API validation errors.
 fn repair_orphaned_tool_uses(conversation: &mut Vec<ApiMessage>) {
     // Walk backwards to find the last assistant message.
-    let last_assistant_idx = conversation
-        .iter()
-        .rposition(|m| m.role == "assistant");
+    let last_assistant_idx = conversation.iter().rposition(|m| m.role == "assistant");
 
     let Some(idx) = last_assistant_idx else {
         return;
@@ -2234,10 +2232,7 @@ mod tests {
                     is_error,
                     ..
                 } => {
-                    assert!(
-                        tool_use_id == "toolu_orphaned_1"
-                            || tool_use_id == "toolu_orphaned_2"
-                    );
+                    assert!(tool_use_id == "toolu_orphaned_1" || tool_use_id == "toolu_orphaned_2");
                     assert_eq!(*is_error, Some(true));
                 }
                 _ => panic!("expected ToolResult block"),
@@ -2349,15 +2344,13 @@ mod tests {
 
     #[test]
     fn repair_orphaned_tool_uses_noop_only_user_messages() {
-        let mut conversation = vec![
-            ApiMessage {
-                role: "user".to_string(),
-                content: vec![ApiContentBlock::Text {
-                    text: "hello".to_string(),
-                    cache_control: None,
-                }],
-            },
-        ];
+        let mut conversation = vec![ApiMessage {
+            role: "user".to_string(),
+            content: vec![ApiContentBlock::Text {
+                text: "hello".to_string(),
+                cache_control: None,
+            }],
+        }];
 
         let original_len = conversation.len();
         repair_orphaned_tool_uses(&mut conversation);
@@ -2366,16 +2359,14 @@ mod tests {
 
     #[test]
     fn repair_orphaned_single_tool_use() {
-        let mut conversation = vec![
-            ApiMessage {
-                role: "assistant".to_string(),
-                content: vec![ApiContentBlock::ToolUse {
-                    id: "toolu_single".to_string(),
-                    name: "Read".to_string(),
-                    input: json!({"path": "/tmp/test"}),
-                }],
-            },
-        ];
+        let mut conversation = vec![ApiMessage {
+            role: "assistant".to_string(),
+            content: vec![ApiContentBlock::ToolUse {
+                id: "toolu_single".to_string(),
+                name: "Read".to_string(),
+                input: json!({"path": "/tmp/test"}),
+            }],
+        }];
 
         repair_orphaned_tool_uses(&mut conversation);
         assert_eq!(conversation.len(), 2);
@@ -2392,10 +2383,7 @@ mod tests {
         {
             assert_eq!(tool_use_id, "toolu_single");
             assert_eq!(*is_error, Some(true));
-            assert!(content
-                .as_str()
-                .unwrap()
-                .contains("Session interrupted"));
+            assert!(content.as_str().unwrap().contains("Session interrupted"));
         } else {
             panic!("expected ToolResult");
         }
@@ -2517,16 +2505,14 @@ mod tests {
     #[test]
     fn repair_orphaned_idempotent() {
         // Calling repair twice should not add duplicate synthetic results
-        let mut conversation = vec![
-            ApiMessage {
-                role: "assistant".to_string(),
-                content: vec![ApiContentBlock::ToolUse {
-                    id: "toolu_idem".to_string(),
-                    name: "Bash".to_string(),
-                    input: json!({"command": "ls"}),
-                }],
-            },
-        ];
+        let mut conversation = vec![ApiMessage {
+            role: "assistant".to_string(),
+            content: vec![ApiContentBlock::ToolUse {
+                id: "toolu_idem".to_string(),
+                name: "Bash".to_string(),
+                input: json!({"command": "ls"}),
+            }],
+        }];
 
         repair_orphaned_tool_uses(&mut conversation);
         assert_eq!(conversation.len(), 2);
@@ -2588,25 +2574,23 @@ mod tests {
     #[test]
     fn repair_orphaned_with_thinking_blocks() {
         // Assistant message has thinking + tool_use — thinking shouldn't interfere
-        let mut conversation = vec![
-            ApiMessage {
-                role: "assistant".to_string(),
-                content: vec![
-                    ApiContentBlock::Thinking {
-                        thinking: "Let me think about this...".to_string(),
-                    },
-                    ApiContentBlock::Text {
-                        text: "I'll check that.".to_string(),
-                        cache_control: None,
-                    },
-                    ApiContentBlock::ToolUse {
-                        id: "toolu_think".to_string(),
-                        name: "Bash".to_string(),
-                        input: json!({"command": "cat /etc/hosts"}),
-                    },
-                ],
-            },
-        ];
+        let mut conversation = vec![ApiMessage {
+            role: "assistant".to_string(),
+            content: vec![
+                ApiContentBlock::Thinking {
+                    thinking: "Let me think about this...".to_string(),
+                },
+                ApiContentBlock::Text {
+                    text: "I'll check that.".to_string(),
+                    cache_control: None,
+                },
+                ApiContentBlock::ToolUse {
+                    id: "toolu_think".to_string(),
+                    name: "Bash".to_string(),
+                    input: json!({"command": "cat /etc/hosts"}),
+                },
+            ],
+        }];
 
         repair_orphaned_tool_uses(&mut conversation);
         assert_eq!(conversation.len(), 2);

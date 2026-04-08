@@ -15,6 +15,10 @@ pub enum Channel {
     Telegram,
     /// Time-gap sessions via email — new session after inactivity threshold (24h).
     Email,
+    /// Time-gap sessions scoped to a Slack thread. Key is
+    /// `{team_id}:{channel_id}:{thread_ts_or_root_ts}` so every thread is
+    /// its own continuous conversation.
+    Slack,
 }
 
 impl Channel {
@@ -23,6 +27,7 @@ impl Channel {
             Channel::Main => "main",
             Channel::Telegram => "telegram",
             Channel::Email => "email",
+            Channel::Slack => "slack",
         }
     }
 
@@ -30,6 +35,7 @@ impl Channel {
         match s {
             "telegram" => Channel::Telegram,
             "email" => Channel::Email,
+            "slack" => Channel::Slack,
             _ => Channel::Main,
         }
     }

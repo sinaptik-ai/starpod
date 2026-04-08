@@ -483,9 +483,8 @@ impl StarpodAgent {
         //
         // Remaining vault keys that are NOT owned by any connector are still
         // listed in a separate "ENVIRONMENT VARIABLES" section below.
-        let connector_store = starpod_db::connectors::ConnectorStore::from_pool(
-            self.core_db.pool().clone(),
-        );
+        let connector_store =
+            starpod_db::connectors::ConnectorStore::from_pool(self.core_db.pool().clone());
         let connectors_section = match connector_store.list().await {
             Ok(rows) if !rows.is_empty() => {
                 let mut xml = String::from("\n\n--- CONNECTORS ---\n<connectors>\n");
@@ -495,28 +494,38 @@ impl StarpodAgent {
                         r.name, r.connector_type, r.status, r.description,
                     ));
                     if !r.config.is_empty() {
-                        let attrs: Vec<String> = r.config.iter().map(|(k, v)| format!("{k}=\"{v}\"")).collect();
+                        let attrs: Vec<String> = r
+                            .config
+                            .iter()
+                            .map(|(k, v)| format!("{k}=\"{v}\""))
+                            .collect();
                         xml.push_str(&format!("    <config {} />\n", attrs.join(" ")));
                     } else {
                         xml.push_str("    <config />\n");
                     }
                     if !r.secrets.is_empty() {
-                        xml.push_str(&format!("    <env>{}</env>\n", r.secrets.join(", ")));
+                        xml.push_str(&format!(
+                            "    <secrets>{}</secrets>\n",
+                            r.secrets.join(", ")
+                        ));
                     }
                     xml.push_str("  </connector>\n");
                 }
                 xml.push_str("</connectors>\n\
                               Connectors represent configured service connections. Their secrets are \
-                              available as environment variables — use them in Bash commands or read \
-                              with EnvGet. Manage connectors with ConnectorList, ConnectorAdd, \
-                              ConnectorRemove.");
+                              stored in the vault — retrieve them with VaultGet (e.g. VaultGet({\"key\": \"GITHUB_TOKEN\"})) \
+                              before using them in API calls. Do NOT assume secrets are available as \
+                              environment variables. Never hardcode secret values in commands — store \
+                              them in a variable and reference it. \
+                              Manage connectors with ConnectorList, ConnectorAdd, ConnectorRemove.");
                 xml
             }
             _ => String::new(),
         };
 
         // Collect vault keys that are NOT owned by any connector (standalone secrets)
-        let mut connector_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut connector_keys: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         if let Ok(rows) = connector_store.list().await {
             for r in &rows {
                 for s in &r.secrets {
@@ -1080,9 +1089,8 @@ impl StarpodAgent {
 
         let brave_api_key = std::env::var("BRAVE_API_KEY").ok();
 
-        let connector_store = starpod_db::connectors::ConnectorStore::from_pool(
-            self.core_db.pool().clone(),
-        );
+        let connector_store =
+            starpod_db::connectors::ConnectorStore::from_pool(self.core_db.pool().clone());
 
         let ctx = Arc::new(ToolContext {
             memory: Arc::clone(&self.memory),
@@ -1106,6 +1114,11 @@ impl StarpodAgent {
             proxy_enabled: config.proxy.enabled,
             connector_store: Some(connector_store),
             connectors_dir: self.paths.connectors_dir.clone(),
+            oauth_proxy_url: Some(
+                std::env::var("OAUTH_PROXY_URL")
+                    .or_else(|_| std::env::var("STARPOD_URL"))
+                    .unwrap_or_else(|_| "https://console.starpod.sh".to_string()),
+            ),
         });
 
         Box::new(move |tool_name, input| {
@@ -2327,6 +2340,17 @@ fn resolve_channel(msg: &ChatMessage) -> (Channel, String) {
                 .unwrap_or_else(|| "unknown@sender".into());
             (Channel::Email, key)
         }
+        "slack" => {
+            // Slack channel: key is "{team_id}:{channel_id}:{thread_ts}"
+            // so each Slack thread is a distinct, continuous session.
+            // Falls back to user_id if the handler forgot to set the key.
+            let key = msg
+                .channel_session_key
+                .clone()
+                .or_else(|| msg.user_id.clone())
+                .unwrap_or_else(|| "default".into());
+            (Channel::Slack, key)
+        }
         _ => {
             // "main", "scheduler", or any unknown → explicit Main session
             let key = msg
@@ -2583,6 +2607,7 @@ mod tests {
             proxy_enabled: false,
             connector_store: None,
             connectors_dir: std::path::PathBuf::new(),
+            oauth_proxy_url: None,
         };
 
         // Test MemorySearch
@@ -3195,8 +3220,10 @@ mod tests {
 
     #[test]
     fn resolve_background_model_none_falls_back_to_default() {
-        let mut cfg = StarpodConfig::default();
-        cfg.models = vec!["anthropic/claude-sonnet-4-6".to_string()];
+        let cfg = StarpodConfig {
+            models: vec!["anthropic/claude-sonnet-4-6".to_string()],
+            ..Default::default()
+        };
         let (provider, model) = resolve_background_model(None, &cfg);
         assert_eq!(provider, "anthropic");
         assert_eq!(model, "claude-sonnet-4-6");

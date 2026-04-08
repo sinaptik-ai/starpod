@@ -1,7 +1,7 @@
 name = "google-sheets"
 display_name = "Google Sheets"
 description = "Google Sheets spreadsheet access and manipulation"
-secrets = ["GOOGLE_SHEETS_CREDENTIALS_JSON"]
+secrets = ["GOOGLE_SHEETS_TOKEN"]
 
 [oauth]
 authorize_url = "https://accounts.google.com/o/oauth2/v2/auth"

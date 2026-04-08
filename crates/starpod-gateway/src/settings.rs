@@ -477,6 +477,15 @@ pub fn settings_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/settings/connectors/{name}/oauth/callback",
             get(oauth_callback),
         )
+        // Slack Socket Mode setup helpers (no OAuth distribution possible)
+        .route(
+            "/api/settings/connectors/slack/test",
+            axum::routing::post(slack_test),
+        )
+        .route(
+            "/api/settings/connectors/slack/reload",
+            axum::routing::post(slack_reload),
+        )
         // Attachments
         .route(
             "/api/settings/attachments",
@@ -2249,6 +2258,10 @@ struct UpdateConnectorRequest {
     config: Option<std::collections::HashMap<String, String>>,
     #[serde(default)]
     status: Option<String>,
+    #[serde(default)]
+    oauth_refresh_key: Option<String>,
+    #[serde(default)]
+    oauth_expires_at: Option<String>,
 }
 
 /// Response payload for a connector template (read from `.toml` files).
@@ -2266,6 +2279,10 @@ struct ConnectorTemplateInfo {
     oauth_authorize_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     oauth_scopes: Option<Vec<String>>,
+    /// True for connectors that use Socket Mode (Slack), which require a
+    /// guided manifest install rather than OAuth distribution.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    socket_mode: bool,
 }
 
 /// Create a [`ConnectorStore`] from the shared core database pool.
@@ -2274,9 +2291,7 @@ fn connector_store(state: &AppState) -> starpod_db::connectors::ConnectorStore {
 }
 
 /// `GET /api/settings/connectors` — list all configured connectors.
-async fn list_connectors(
-    State(state): State<Arc<AppState>>,
-) -> ApiResult<Vec<ConnectorInfo>> {
+async fn list_connectors(State(state): State<Arc<AppState>>) -> ApiResult<Vec<ConnectorInfo>> {
     let store = connector_store(&state);
     let rows = store
         .list()
@@ -2314,7 +2329,12 @@ async fn get_connector(
         .get(&name)
         .await
         .map_err(|e| internal(format!("connector get: {e}")))?
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, format!("Connector '{}' not found", name)))?;
+        .ok_or_else(|| {
+            err(
+                StatusCode::NOT_FOUND,
+                format!("Connector '{}' not found", name),
+            )
+        })?;
     Ok(Json(ConnectorInfo {
         name: row.name,
         connector_type: row.connector_type,
@@ -2337,7 +2357,7 @@ async fn get_connector(
 ///
 /// Loads the template from `.starpod/connectors/<type>.toml`, resolves vault
 /// key names (namespaced for multi-instance types), merges config overrides,
-/// and inserts a row into the connectors table with status "pending".
+/// and inserts a row into the connectors table with status "not_connected".
 async fn create_connector(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateConnectorRequest>,
@@ -2347,16 +2367,15 @@ async fn create_connector(
         .paths
         .connectors_dir
         .join(format!("{}.toml", req.connector_type));
-    let template = starpod_core::connector_template::load_template(&template_path)
-        .map_err(|_| {
-            let available = starpod_core::connector_template::load_all_templates(
-                &state.paths.connectors_dir,
-            )
-            .unwrap_or_default()
-            .into_iter()
-            .map(|t| t.name)
-            .collect::<Vec<_>>()
-            .join(", ");
+    let template =
+        starpod_core::connector_template::load_template(&template_path).map_err(|_| {
+            let available =
+                starpod_core::connector_template::load_all_templates(&state.paths.connectors_dir)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|t| t.name)
+                    .collect::<Vec<_>>()
+                    .join(", ");
             bad_request(format!(
                 "Unknown connector type '{}'. Available: {}",
                 req.connector_type, available
@@ -2364,13 +2383,15 @@ async fn create_connector(
         })?;
 
     let instance_name = if template.multi_instance {
-        req.name.as_deref().ok_or_else(|| {
-            bad_request(format!(
-                "Connector type '{}' supports multiple instances — 'name' is required",
-                req.connector_type
-            ))
-        })?
-        .to_string()
+        req.name
+            .as_deref()
+            .ok_or_else(|| {
+                bad_request(format!(
+                    "Connector type '{}' supports multiple instances — 'name' is required",
+                    req.connector_type
+                ))
+            })?
+            .to_string()
     } else {
         req.name
             .as_deref()
@@ -2388,17 +2409,18 @@ async fn create_connector(
     };
 
     let resolved_secrets: Vec<String> = template.secrets.iter().map(|s| resolve_key(s)).collect();
-    let initial_status = if resolved_secrets.is_empty() { "connected" } else { "not_connected" };
+    let initial_status = if resolved_secrets.is_empty() {
+        "connected"
+    } else {
+        "not_connected"
+    };
 
     let mut merged_config = template.config.clone();
     for (k, v) in &req.config {
         merged_config.insert(k.clone(), v.clone());
     }
 
-    let description = req
-        .description
-        .as_deref()
-        .unwrap_or(&template.description);
+    let description = req.description.as_deref().unwrap_or(&template.description);
 
     let auth_method = if template.oauth.is_some() && template.secrets.is_empty() {
         "oauth"
@@ -2473,7 +2495,12 @@ async fn update_connector(
         .get(&name)
         .await
         .map_err(|e| internal(format!("connector get: {e}")))?
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, format!("Connector '{}' not found", name)))?;
+        .ok_or_else(|| {
+            err(
+                StatusCode::NOT_FOUND,
+                format!("Connector '{}' not found", name),
+            )
+        })?;
 
     if let Some(ref status) = req.status {
         store
@@ -2486,6 +2513,18 @@ async fn update_connector(
             .update_config(&name, config)
             .await
             .map_err(|e| internal(format!("connector update_config: {e}")))?;
+    }
+    if let Some(ref refresh_key) = req.oauth_refresh_key {
+        store
+            .update_oauth_refresh_key(&name, refresh_key)
+            .await
+            .map_err(|e| internal(format!("connector update_oauth_refresh_key: {e}")))?;
+    }
+    if let Some(ref expires_at) = req.oauth_expires_at {
+        store
+            .update_oauth_expiry(&name, expires_at)
+            .await
+            .map_err(|e| internal(format!("connector update_oauth_expiry: {e}")))?;
     }
 
     Ok(StatusCode::OK)
@@ -2540,6 +2579,7 @@ async fn list_connector_templates(
                     has_oauth: t.oauth.is_some(),
                     oauth_authorize_url,
                     oauth_scopes,
+                    socket_mode: t.socket_mode,
                 }
             })
             .collect(),
@@ -2561,7 +2601,12 @@ async fn oauth_start(
         .get(&name)
         .await
         .map_err(|e| internal(format!("connector get: {e}")))?
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, format!("Connector '{}' not found", name)))?;
+        .ok_or_else(|| {
+            err(
+                StatusCode::NOT_FOUND,
+                format!("Connector '{}' not found", name),
+            )
+        })?;
 
     let template_path = state
         .paths
@@ -2635,7 +2680,12 @@ async fn oauth_callback(
         .get(&name)
         .await
         .map_err(|e| internal(format!("connector get: {e}")))?
-        .ok_or_else(|| err(StatusCode::NOT_FOUND, format!("Connector '{}' not found", name)))?;
+        .ok_or_else(|| {
+            err(
+                StatusCode::NOT_FOUND,
+                format!("Connector '{}' not found", name),
+            )
+        })?;
 
     let template_path = state
         .paths
@@ -2704,10 +2754,7 @@ async fn oauth_callback(
         })?;
 
     // Store access token in vault
-    let token_vault_key = conn
-        .oauth_token_key
-        .as_deref()
-        .unwrap_or(&oauth.token_key);
+    let token_vault_key = conn.oauth_token_key.as_deref().unwrap_or(&oauth.token_key);
     if let Some(ref vault) = state.vault {
         vault
             .set(token_vault_key, access_token, None)
@@ -2762,6 +2809,140 @@ if (window.opener) {{
         display_name = conn.display_name,
         name = name,
     )))
+}
+
+// ── Slack Socket Mode setup helpers ────────────────────────────────────────
+//
+// Slack uses Socket Mode (outbound WebSocket), so distributing it via OAuth
+// is impossible — the user must create their own Slack app from a manifest
+// and copy two tokens (xapp-… app-level + xoxb-… bot user). To make that
+// flow as friction-free as possible, the connectors UI calls these two
+// endpoints:
+//
+// 1. `POST /api/settings/connectors/slack/test` — validates both tokens by
+//    calling `auth.test`. Returns `{ team, team_id, bot_user_id }` on
+//    success or a precise error message on failure (invalid token,
+//    missing scopes, etc.). Lets the UI show a green checkmark *before*
+//    the user commits to enabling the bot.
+//
+// 2. `POST /api/settings/connectors/slack/reload` — flips
+//    `[channels.slack].enabled = true` in `agent.toml`, reloads the
+//    in-memory config, and calls `AppState::restart_slack()` so the bot
+//    starts immediately without waiting for the file watcher debounce.
+//    Also marks the connector row as `connected`.
+
+#[derive(Serialize)]
+struct SlackTestResponse {
+    team: String,
+    team_id: String,
+    bot_user_id: String,
+}
+
+/// `POST /api/settings/connectors/slack/test` — validate both Slack tokens
+/// by calling `auth.test` and return the workspace identity.
+///
+/// Reads `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN` from the vault (falling
+/// back to the process environment). The bot token is the only one that
+/// `auth.test` actually uses, but we also fast-fail when the app-level
+/// token is missing or has the wrong prefix because Socket Mode needs
+/// both and there's no point pretending the connector is "connected"
+/// when half the credentials are absent.
+async fn slack_test(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<SlackTestResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let app_token = read_vault_key(&state, "SLACK_APP_TOKEN")
+        .await
+        .ok_or_else(|| {
+            bad_request("SLACK_APP_TOKEN is not set. Save it in the connector form first.")
+        })?;
+    if !app_token.starts_with("xapp-") {
+        return Err(bad_request(
+            "SLACK_APP_TOKEN must start with 'xapp-'. \
+             Generate one in your Slack app's Basic Information → App-Level Tokens \
+             with the connections:write scope.",
+        ));
+    }
+
+    let bot_token = read_vault_key(&state, "SLACK_BOT_TOKEN")
+        .await
+        .ok_or_else(|| {
+            bad_request("SLACK_BOT_TOKEN is not set. Save it in the connector form first.")
+        })?;
+    if !bot_token.starts_with("xoxb-") {
+        return Err(bad_request(
+            "SLACK_BOT_TOKEN must start with 'xoxb-'. \
+             Copy it from your Slack app's OAuth & Permissions → Bot User OAuth Token.",
+        ));
+    }
+
+    let web = starpod_slack::SlackWebClient::new(bot_token);
+    match web.auth_test().await {
+        Ok(info) => Ok(Json(SlackTestResponse {
+            team: info.team,
+            team_id: info.team_id,
+            bot_user_id: info.user_id,
+        })),
+        Err(e) => Err(bad_request(format!(
+            "Slack auth.test failed: {e}. \
+             Double-check that the bot token is valid and the app is installed to your workspace."
+        ))),
+    }
+}
+
+/// `POST /api/settings/connectors/slack/reload` — enable Slack in
+/// `agent.toml`, hot-reload the config, and (re)start the bot.
+///
+/// Idempotent: safe to call repeatedly. After the call returns, either
+/// the bot is running (success) or `restart_slack` has logged a warning
+/// and the connector status is left as-is for the UI to inspect.
+async fn slack_reload(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    // 1. Set [channels.slack].enabled = true in agent.toml.
+    let mut doc = read_agent_toml(&state)?;
+    {
+        let table = doc
+            .as_table_mut()
+            .ok_or_else(|| internal("agent.toml is not a table"))?;
+        let channels = table
+            .entry("channels")
+            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+            .as_table_mut()
+            .ok_or_else(|| internal("channels is not a table"))?;
+        let slack = channels
+            .entry("slack")
+            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+            .as_table_mut()
+            .ok_or_else(|| internal("channels.slack is not a table"))?;
+        slack.insert("enabled".into(), toml::Value::Boolean(true));
+        // Default the gap so future reads through ChannelsConfig find a sane value.
+        slack
+            .entry("gap_minutes")
+            .or_insert(toml::Value::Integer(360));
+        slack
+            .entry("stream_mode")
+            .or_insert(toml::Value::String("final_only".into()));
+    }
+    write_agent_toml(&state, &doc)?;
+
+    // 2. Hot-reload the in-memory config so restart_slack sees the new flag.
+    if let Ok(agent_cfg) = reload_agent_config(&state.paths) {
+        let new_config = agent_cfg.into_starpod_config(&state.paths);
+        state.agent.reload_config(new_config.clone());
+        *state.config.write().unwrap() = new_config;
+    }
+
+    // 3. (Re)start the bot.
+    state.restart_slack().await;
+
+    // 4. Mark the connector row as connected so the tile lights up. We
+    //    swallow errors here because the connector row is optional —
+    //    callers may have skipped the explicit POST /connectors call and
+    //    just gone straight to the test/reload flow.
+    let store = connector_store(&state);
+    let _ = store.update_status("slack", "connected").await;
+
+    Ok(Json(serde_json::json!({ "status": "ok" })))
 }
 
 /// Read a system key from the vault, falling back to the process environment.
@@ -2889,6 +3070,7 @@ mod tests {
             events_tx,
             vault: None,
             telegram_handle: tokio::sync::Mutex::new(None),
+            slack_handle: tokio::sync::Mutex::new(None),
             update_cache: crate::system::new_update_cache(),
             shutdown_tx: tokio::sync::watch::channel(false).0,
         });
@@ -4630,6 +4812,7 @@ mod tests {
             events_tx: state.events_tx.clone(),
             vault: Some(Arc::new(vault)),
             telegram_handle: tokio::sync::Mutex::new(None),
+            slack_handle: tokio::sync::Mutex::new(None),
             update_cache: crate::system::new_update_cache(),
             shutdown_tx: tokio::sync::watch::channel(false).0,
         });
@@ -4871,12 +5054,7 @@ mod tests {
         let (_tmp, state) = test_app_state_with_vault().await;
         let vault = state.vault.as_ref().unwrap();
         vault
-            .set_with_hosts(
-                "MY_KEY",
-                "secret",
-                Some(&["api.example.com".into()]),
-                None,
-            )
+            .set_with_hosts("MY_KEY", "secret", Some(&["api.example.com".into()]), None)
             .await
             .unwrap();
 
@@ -5440,25 +5618,17 @@ secrets = ["DATABASE_URL"]
         assert_eq!(json["name"], "github");
         assert_eq!(json["type"], "github");
         assert_eq!(json["display_name"], "GitHub");
-        assert_eq!(json["status"], "pending");
+        assert_eq!(json["status"], "not_connected");
         assert_eq!(json["secrets"][0], "GITHUB_TOKEN");
 
         // GET single
-        let (status, json) = get_json(
-            Arc::clone(&state),
-            "/api/settings/connectors/github",
-        )
-        .await;
+        let (status, json) = get_json(Arc::clone(&state), "/api/settings/connectors/github").await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(json["name"], "github");
         assert_eq!(json["type"], "github");
 
         // GET list
-        let (status, json) = get_json(
-            Arc::clone(&state),
-            "/api/settings/connectors",
-        )
-        .await;
+        let (status, json) = get_json(Arc::clone(&state), "/api/settings/connectors").await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(json.as_array().unwrap().len(), 1);
 
@@ -5472,20 +5642,12 @@ secrets = ["DATABASE_URL"]
         assert_eq!(status, StatusCode::OK);
 
         // Verify update took effect
-        let (status, json) = get_json(
-            Arc::clone(&state),
-            "/api/settings/connectors/github",
-        )
-        .await;
+        let (status, json) = get_json(Arc::clone(&state), "/api/settings/connectors/github").await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(json["status"], "active");
 
         // DELETE
-        let status = delete_req(
-            Arc::clone(&state),
-            "/api/settings/connectors/github",
-        )
-        .await;
+        let status = delete_req(Arc::clone(&state), "/api/settings/connectors/github").await;
         assert_eq!(status, StatusCode::NO_CONTENT);
 
         // Verify deletion
