@@ -2357,7 +2357,7 @@ async fn get_connector(
 ///
 /// Loads the template from `.starpod/connectors/<type>.toml`, resolves vault
 /// key names (namespaced for multi-instance types), merges config overrides,
-/// and inserts a row into the connectors table with status "pending".
+/// and inserts a row into the connectors table with status "not_connected".
 async fn create_connector(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateConnectorRequest>,
@@ -5618,7 +5618,7 @@ secrets = ["DATABASE_URL"]
         assert_eq!(json["name"], "github");
         assert_eq!(json["type"], "github");
         assert_eq!(json["display_name"], "GitHub");
-        assert_eq!(json["status"], "pending");
+        assert_eq!(json["status"], "not_connected");
         assert_eq!(json["secrets"][0], "GITHUB_TOKEN");
 
         // GET single
