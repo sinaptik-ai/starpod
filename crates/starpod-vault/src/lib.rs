@@ -287,11 +287,7 @@ impl Vault {
     ///
     /// Does **not** touch the encrypted value or nonce. Returns `Ok(false)` if the
     /// key does not exist.
-    pub async fn update_hosts(
-        &self,
-        key: &str,
-        allowed_hosts: Option<&[String]>,
-    ) -> Result<bool> {
+    pub async fn update_hosts(&self, key: &str, allowed_hosts: Option<&[String]>) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
         let hosts_json: Option<String> =
             allowed_hosts.map(|h| serde_json::to_string(h).unwrap_or_default());
@@ -627,12 +623,7 @@ mod tests {
             .await
             .unwrap();
         vault
-            .set_with_hosts(
-                "KEY",
-                "new",
-                Some(&["example.com".to_string()]),
-                None,
-            )
+            .set_with_hosts("KEY", "new", Some(&["example.com".to_string()]), None)
             .await
             .unwrap();
 
@@ -662,12 +653,7 @@ mod tests {
             .await
             .unwrap();
         vault
-            .set_with_hosts(
-                "A_KEY",
-                "v",
-                Some(&["api.example.com".to_string()]),
-                None,
-            )
+            .set_with_hosts("A_KEY", "v", Some(&["api.example.com".to_string()]), None)
             .await
             .unwrap();
 
@@ -710,10 +696,7 @@ mod tests {
         );
 
         // Value should be unchanged
-        assert_eq!(
-            vault.get("KEY", None).await.unwrap().as_deref(),
-            Some("v")
-        );
+        assert_eq!(vault.get("KEY", None).await.unwrap().as_deref(), Some("v"));
     }
 
     #[tokio::test]
@@ -842,10 +825,7 @@ mod tests {
         let vault = setup().await;
         // Keys with unusual but valid characters
         for key in &["MY_KEY_123", "a", "A_B_C_D_E_F"] {
-            vault
-                .set_with_hosts(key, "val", None, None)
-                .await
-                .unwrap();
+            vault.set_with_hosts(key, "val", None, None).await.unwrap();
             let entry = vault.get_entry(key).await.unwrap().unwrap();
             assert_eq!(entry.key, *key);
         }

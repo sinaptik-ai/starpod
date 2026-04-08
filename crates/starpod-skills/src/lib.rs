@@ -437,7 +437,6 @@ impl SkillStore {
         self.list()
             .map(|skills| skills.into_iter().map(|s| s.name).collect())
     }
-
 }
 
 /// Escape XML special characters.
@@ -1372,8 +1371,7 @@ mod tests {
     #[test]
     fn test_format_with_empty_connectors_no_connectors_block() {
         let empty: Vec<String> = vec![];
-        let formatted =
-            format_skill_md("plain", "No connectors.", None, Some(&empty), "Body.");
+        let formatted = format_skill_md("plain", "No connectors.", None, Some(&empty), "Body.");
         assert!(!formatted.contains("connectors:"));
     }
 

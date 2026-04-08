@@ -286,10 +286,7 @@ impl DeployManifest {
     }
 
     /// Generate, merge with any existing deploy.toml at `path`, and write.
-    pub fn generate_and_write(
-        config: &AgentConfigInput,
-        path: &Path,
-    ) -> Result<Self> {
+    pub fn generate_and_write(config: &AgentConfigInput, path: &Path) -> Result<Self> {
         let generated = Self::generate(config);
         let merged = if let Some(existing) = Self::load(path)? {
             generated.merge_with_existing(&existing)

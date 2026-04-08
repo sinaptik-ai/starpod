@@ -483,9 +483,8 @@ impl StarpodAgent {
         //
         // Remaining vault keys that are NOT owned by any connector are still
         // listed in a separate "ENVIRONMENT VARIABLES" section below.
-        let connector_store = starpod_db::connectors::ConnectorStore::from_pool(
-            self.core_db.pool().clone(),
-        );
+        let connector_store =
+            starpod_db::connectors::ConnectorStore::from_pool(self.core_db.pool().clone());
         let connectors_section = match connector_store.list().await {
             Ok(rows) if !rows.is_empty() => {
                 let mut xml = String::from("\n\n--- CONNECTORS ---\n<connectors>\n");
@@ -495,13 +494,20 @@ impl StarpodAgent {
                         r.name, r.connector_type, r.status, r.description,
                     ));
                     if !r.config.is_empty() {
-                        let attrs: Vec<String> = r.config.iter().map(|(k, v)| format!("{k}=\"{v}\"")).collect();
+                        let attrs: Vec<String> = r
+                            .config
+                            .iter()
+                            .map(|(k, v)| format!("{k}=\"{v}\""))
+                            .collect();
                         xml.push_str(&format!("    <config {} />\n", attrs.join(" ")));
                     } else {
                         xml.push_str("    <config />\n");
                     }
                     if !r.secrets.is_empty() {
-                        xml.push_str(&format!("    <secrets>{}</secrets>\n", r.secrets.join(", ")));
+                        xml.push_str(&format!(
+                            "    <secrets>{}</secrets>\n",
+                            r.secrets.join(", ")
+                        ));
                     }
                     xml.push_str("  </connector>\n");
                 }
@@ -528,7 +534,8 @@ impl StarpodAgent {
         };
 
         // Collect vault keys that are NOT owned by any connector (standalone secrets)
-        let mut connector_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut connector_keys: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         if let Ok(rows) = connector_store.list().await {
             for r in &rows {
                 for s in &r.secrets {
@@ -1121,9 +1128,8 @@ impl StarpodAgent {
 
         let brave_api_key = std::env::var("BRAVE_API_KEY").ok();
 
-        let connector_store = starpod_db::connectors::ConnectorStore::from_pool(
-            self.core_db.pool().clone(),
-        );
+        let connector_store =
+            starpod_db::connectors::ConnectorStore::from_pool(self.core_db.pool().clone());
 
         let ctx = Arc::new(ToolContext {
             memory: Arc::clone(&self.memory),
@@ -1147,9 +1153,11 @@ impl StarpodAgent {
             proxy_enabled: config.proxy.enabled,
             connector_store: Some(connector_store),
             connectors_dir: self.paths.connectors_dir.clone(),
-            oauth_proxy_url: Some(std::env::var("OAUTH_PROXY_URL")
-                .or_else(|_| std::env::var("STARPOD_URL"))
-                .unwrap_or_else(|_| "https://console.starpod.sh".to_string())),
+            oauth_proxy_url: Some(
+                std::env::var("OAUTH_PROXY_URL")
+                    .or_else(|_| std::env::var("STARPOD_URL"))
+                    .unwrap_or_else(|_| "https://console.starpod.sh".to_string()),
+            ),
         });
 
         Box::new(move |tool_name, input| {

@@ -1194,25 +1194,19 @@ pub async fn handle_custom_tool(
             }
 
             // Check if this key is a connector OAuth token that needs refreshing
-            if let (Some(store), Some(proxy_url)) =
-                (&ctx.connector_store, &ctx.oauth_proxy_url)
-            {
+            if let (Some(store), Some(proxy_url)) = (&ctx.connector_store, &ctx.oauth_proxy_url) {
                 if let Ok(connectors) = store.list().await {
                     if let Some(conn) = connectors
                         .iter()
                         .find(|c| c.oauth_token_key.as_deref() == Some(key))
                     {
                         if let Some(expires_at) = &conn.oauth_expires_at {
-                            if let Ok(exp) =
-                                chrono::DateTime::parse_from_rfc3339(expires_at)
-                            {
+                            if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(expires_at) {
                                 let now = chrono::Utc::now();
-                                let margin =
-                                    chrono::Duration::minutes(10);
+                                let margin = chrono::Duration::minutes(10);
                                 if exp.with_timezone(&chrono::Utc) < now + margin {
                                     // Token is expired or expiring soon — refresh it
-                                    if let Some(refresh_key) = &conn.oauth_refresh_key
-                                    {
+                                    if let Some(refresh_key) = &conn.oauth_refresh_key {
                                         if let Ok(Some(refresh_token)) =
                                             vault.get(refresh_key, None).await
                                         {
@@ -1223,10 +1217,8 @@ pub async fn handle_custom_tool(
                                             );
                                             // Spawner provider names use
                                             // "{type}-connector" convention.
-                                            let provider = format!(
-                                                "{}-connector",
-                                                conn.connector_type
-                                            );
+                                            let provider =
+                                                format!("{}-connector", conn.connector_type);
                                             match try_refresh_token(
                                                 &ctx.http_client,
                                                 proxy_url,
@@ -1238,28 +1230,16 @@ pub async fn handle_custom_tool(
                                                 Ok(refreshed) => {
                                                     // Update access token in vault
                                                     let _ = vault
-                                                        .set(
-                                                            key,
-                                                            &refreshed.access_token,
-                                                            None,
-                                                        )
+                                                        .set(key, &refreshed.access_token, None)
                                                         .await;
                                                     // Update refresh token if rotated
-                                                    if let Some(new_rt) =
-                                                        &refreshed.refresh_token
-                                                    {
+                                                    if let Some(new_rt) = &refreshed.refresh_token {
                                                         let _ = vault
-                                                            .set(
-                                                                refresh_key,
-                                                                new_rt,
-                                                                None,
-                                                            )
+                                                            .set(refresh_key, new_rt, None)
                                                             .await;
                                                     }
                                                     // Update expires_at on connector
-                                                    if let Some(exp_secs) =
-                                                        refreshed.expires_in
-                                                    {
+                                                    if let Some(exp_secs) = refreshed.expires_in {
                                                         let new_exp = chrono::Utc::now()
                                                             + chrono::Duration::seconds(
                                                                 exp_secs as i64,
@@ -1402,12 +1382,7 @@ pub async fn handle_custom_tool(
                 allowed_hosts.or_else(|| starpod_vault::known_hosts::default_hosts_for_key(key));
 
             match vault
-                .set_with_hosts(
-                    key,
-                    value,
-                    hosts.as_deref(),
-                    ctx.user_id.as_deref(),
-                )
+                .set_with_hosts(key, value, hosts.as_deref(), ctx.user_id.as_deref())
                 .await
             {
                 Ok(()) => {
@@ -2758,12 +2733,13 @@ pub async fn handle_custom_tool(
                 Ok(t) => t,
                 Err(_) => {
                     // Try loading all templates to suggest available ones
-                    let available = starpod_core::connector_template::load_all_templates(&ctx.connectors_dir)
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|t| t.name)
-                        .collect::<Vec<_>>()
-                        .join(", ");
+                    let available =
+                        starpod_core::connector_template::load_all_templates(&ctx.connectors_dir)
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|t| t.name)
+                            .collect::<Vec<_>>()
+                            .join(", ");
                     return Some(ToolResult {
                         content: format!(
                             "Unknown connector type '{connector_type}'. Available templates: {available}"
@@ -2827,7 +2803,8 @@ pub async fn handle_custom_tool(
                 }
             };
 
-            let resolved_secrets: Vec<String> = template.secrets.iter().map(|s| resolve_key(s)).collect();
+            let resolved_secrets: Vec<String> =
+                template.secrets.iter().map(|s| resolve_key(s)).collect();
 
             // Merge config: template defaults + user overrides
             let mut merged_config = template.config.clone();
@@ -2873,13 +2850,18 @@ pub async fn handle_custom_tool(
 
             match store.insert(&row).await {
                 Ok(()) => {
-                    let mut msg = format!("Connector '{}' created (type: {}).", instance_name, connector_type);
+                    let mut msg = format!(
+                        "Connector '{}' created (type: {}).",
+                        instance_name, connector_type
+                    );
                     if !resolved_secrets.is_empty() {
                         msg.push_str(&format!(
                             "\nRequired vault keys: {}",
                             resolved_secrets.join(", ")
                         ));
-                        msg.push_str("\nStore these secrets with VaultSet to activate the connector.");
+                        msg.push_str(
+                            "\nStore these secrets with VaultSet to activate the connector.",
+                        );
                     }
                     Some(ToolResult {
                         content: msg,
@@ -6220,12 +6202,7 @@ mod tests {
         ctx.proxy_enabled = true;
 
         vault
-            .set_with_hosts(
-                "TOKEN",
-                "real-secret",
-                Some(&["api.x.com".into()]),
-                None,
-            )
+            .set_with_hosts("TOKEN", "real-secret", Some(&["api.x.com".into()]), None)
             .await
             .unwrap();
 
@@ -6253,10 +6230,7 @@ mod tests {
         let (mut ctx, vault) = vault_ctx(&tmp).await;
         ctx.proxy_enabled = true;
 
-        vault
-            .set("CONFIG_VAR", "plain-value", None)
-            .await
-            .unwrap();
+        vault.set("CONFIG_VAR", "plain-value", None).await.unwrap();
 
         let result =
             handle_custom_tool(&ctx, "VaultGet", &serde_json::json!({"key": "CONFIG_VAR"}))
@@ -6448,13 +6422,9 @@ secrets = ["DATABASE_URL"]
         let tmp = TempDir::new().unwrap();
         let (ctx, store) = connector_tool_context(&tmp).await;
 
-        let result = handle_custom_tool(
-            &ctx,
-            "ConnectorAdd",
-            &json!({"type": "github"}),
-        )
-        .await
-        .unwrap();
+        let result = handle_custom_tool(&ctx, "ConnectorAdd", &json!({"type": "github"}))
+            .await
+            .unwrap();
         assert!(!result.is_error);
         assert!(result.content.contains("github"));
         assert!(result.content.contains("Created") || result.content.contains("created"));
@@ -6471,13 +6441,9 @@ secrets = ["DATABASE_URL"]
         let tmp = TempDir::new().unwrap();
         let (ctx, _store) = connector_tool_context(&tmp).await;
 
-        let result = handle_custom_tool(
-            &ctx,
-            "ConnectorAdd",
-            &json!({"type": "postgres"}),
-        )
-        .await
-        .unwrap();
+        let result = handle_custom_tool(&ctx, "ConnectorAdd", &json!({"type": "postgres"}))
+            .await
+            .unwrap();
         assert!(result.is_error);
         assert!(result.content.contains("name"));
     }
@@ -6508,13 +6474,9 @@ secrets = ["DATABASE_URL"]
         let tmp = TempDir::new().unwrap();
         let (ctx, _store) = connector_tool_context(&tmp).await;
 
-        let result = handle_custom_tool(
-            &ctx,
-            "ConnectorAdd",
-            &json!({"type": "nonexistent"}),
-        )
-        .await
-        .unwrap();
+        let result = handle_custom_tool(&ctx, "ConnectorAdd", &json!({"type": "nonexistent"}))
+            .await
+            .unwrap();
         assert!(result.is_error);
         assert!(result.content.contains("Unknown connector type"));
         // Should list available templates
@@ -6527,23 +6489,15 @@ secrets = ["DATABASE_URL"]
         let (ctx, _store) = connector_tool_context(&tmp).await;
 
         // First add succeeds
-        let result = handle_custom_tool(
-            &ctx,
-            "ConnectorAdd",
-            &json!({"type": "github"}),
-        )
-        .await
-        .unwrap();
+        let result = handle_custom_tool(&ctx, "ConnectorAdd", &json!({"type": "github"}))
+            .await
+            .unwrap();
         assert!(!result.is_error);
 
         // Second add with same name fails
-        let result = handle_custom_tool(
-            &ctx,
-            "ConnectorAdd",
-            &json!({"type": "github"}),
-        )
-        .await
-        .unwrap();
+        let result = handle_custom_tool(&ctx, "ConnectorAdd", &json!({"type": "github"}))
+            .await
+            .unwrap();
         assert!(result.is_error);
         assert!(result.content.contains("already exists"));
     }
@@ -6580,7 +6534,10 @@ base_url = "https://slack.com/api"
         assert!(!result.is_error);
 
         let row = store.get("slack").await.unwrap().unwrap();
-        assert_eq!(row.config.get("base_url").unwrap(), "https://custom.slack.com/api");
+        assert_eq!(
+            row.config.get("base_url").unwrap(),
+            "https://custom.slack.com/api"
+        );
         assert_eq!(row.config.get("extra").unwrap(), "val");
     }
 
@@ -6617,13 +6574,9 @@ base_url = "https://slack.com/api"
         assert!(store.get("github").await.unwrap().is_some());
 
         // Remove it
-        let result = handle_custom_tool(
-            &ctx,
-            "ConnectorRemove",
-            &json!({"name": "github"}),
-        )
-        .await
-        .unwrap();
+        let result = handle_custom_tool(&ctx, "ConnectorRemove", &json!({"name": "github"}))
+            .await
+            .unwrap();
         assert!(!result.is_error);
         assert!(result.content.contains("removed"));
 
@@ -6636,13 +6589,9 @@ base_url = "https://slack.com/api"
         let tmp = TempDir::new().unwrap();
         let (ctx, _store) = connector_tool_context(&tmp).await;
 
-        let result = handle_custom_tool(
-            &ctx,
-            "ConnectorRemove",
-            &json!({"name": "doesnotexist"}),
-        )
-        .await
-        .unwrap();
+        let result = handle_custom_tool(&ctx, "ConnectorRemove", &json!({"name": "doesnotexist"}))
+            .await
+            .unwrap();
         assert!(result.is_error);
         assert!(result.content.contains("not found"));
     }
@@ -6654,7 +6603,9 @@ base_url = "https://slack.com/api"
         // skill_tool_context sets connector_store: None
 
         // All three connector tools should return None (pass-through)
-        assert!(handle_custom_tool(&ctx, "ConnectorList", &json!({})).await.is_none());
+        assert!(handle_custom_tool(&ctx, "ConnectorList", &json!({}))
+            .await
+            .is_none());
         assert!(
             handle_custom_tool(&ctx, "ConnectorAdd", &json!({"type": "github"}))
                 .await
@@ -6789,13 +6740,19 @@ base_url = "https://slack.com/api"
     async fn vault_get_no_refresh_when_token_not_expired() {
         let tmp = TempDir::new().unwrap();
         // Use a bogus proxy URL — it should never be called
-        let (ctx, vault, store) =
-            oauth_refresh_ctx(&tmp, Some("http://127.0.0.1:1".into())).await;
+        let (ctx, vault, store) = oauth_refresh_ctx(&tmp, Some("http://127.0.0.1:1".into())).await;
 
         // Token expires in 2 hours (well within margin)
         let future = (chrono::Utc::now() + chrono::Duration::hours(2)).to_rfc3339();
-        insert_oauth_connector(&store, "github", "github", "GH_TOKEN", "GH_REFRESH", &future)
-            .await;
+        insert_oauth_connector(
+            &store,
+            "github",
+            "github",
+            "GH_TOKEN",
+            "GH_REFRESH",
+            &future,
+        )
+        .await;
         vault.set("GH_TOKEN", "valid-token", None).await.unwrap();
         vault.set("GH_REFRESH", "refresh-tok", None).await.unwrap();
 
@@ -6809,13 +6766,11 @@ base_url = "https://slack.com/api"
     #[tokio::test]
     async fn vault_get_no_refresh_when_key_not_connector_token() {
         let tmp = TempDir::new().unwrap();
-        let (ctx, vault, store) =
-            oauth_refresh_ctx(&tmp, Some("http://127.0.0.1:1".into())).await;
+        let (ctx, vault, store) = oauth_refresh_ctx(&tmp, Some("http://127.0.0.1:1".into())).await;
 
         // Connector exists but its token key is GH_TOKEN, not RANDOM_KEY
         let past = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
-        insert_oauth_connector(&store, "github", "github", "GH_TOKEN", "GH_REFRESH", &past)
-            .await;
+        insert_oauth_connector(&store, "github", "github", "GH_TOKEN", "GH_REFRESH", &past).await;
         vault.set("RANDOM_KEY", "some-value", None).await.unwrap();
 
         let result = handle_custom_tool(&ctx, "VaultGet", &json!({"key": "RANDOM_KEY"}))
@@ -6832,8 +6787,7 @@ base_url = "https://slack.com/api"
         let (ctx, vault, store) = oauth_refresh_ctx(&tmp, None).await;
 
         let past = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
-        insert_oauth_connector(&store, "github", "github", "GH_TOKEN", "GH_REFRESH", &past)
-            .await;
+        insert_oauth_connector(&store, "github", "github", "GH_TOKEN", "GH_REFRESH", &past).await;
         vault.set("GH_TOKEN", "old-token", None).await.unwrap();
         vault.set("GH_REFRESH", "refresh-tok", None).await.unwrap();
 
@@ -6875,13 +6829,11 @@ base_url = "https://slack.com/api"
         )
         .await;
 
-        let (ctx, vault, store) =
-            oauth_refresh_ctx(&tmp, Some(proxy_url)).await;
+        let (ctx, vault, store) = oauth_refresh_ctx(&tmp, Some(proxy_url)).await;
 
         // Token expired 1 hour ago
         let past = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
-        insert_oauth_connector(&store, "github", "github", "GH_TOKEN", "GH_REFRESH", &past)
-            .await;
+        insert_oauth_connector(&store, "github", "github", "GH_TOKEN", "GH_REFRESH", &past).await;
         vault.set("GH_TOKEN", "old-token", None).await.unwrap();
         vault.set("GH_REFRESH", "old-refresh", None).await.unwrap();
 
@@ -6902,10 +6854,8 @@ base_url = "https://slack.com/api"
 
         // Verify connector expiry was updated
         let conn = store.get("github").await.unwrap().unwrap();
-        let new_exp = chrono::DateTime::parse_from_rfc3339(
-            conn.oauth_expires_at.as_ref().unwrap(),
-        )
-        .unwrap();
+        let new_exp =
+            chrono::DateTime::parse_from_rfc3339(conn.oauth_expires_at.as_ref().unwrap()).unwrap();
         // New expiry should be roughly 1 hour from now (3600 seconds)
         let diff = new_exp.with_timezone(&chrono::Utc) - chrono::Utc::now();
         assert!(
@@ -6930,15 +6880,27 @@ base_url = "https://slack.com/api"
         )
         .await;
 
-        let (ctx, vault, store) =
-            oauth_refresh_ctx(&tmp, Some(proxy_url)).await;
+        let (ctx, vault, store) = oauth_refresh_ctx(&tmp, Some(proxy_url)).await;
 
         // Token expires in 5 minutes — within the 10-minute margin
         let soon = (chrono::Utc::now() + chrono::Duration::minutes(5)).to_rfc3339();
-        insert_oauth_connector(&store, "slack", "slack", "SLACK_TOKEN", "SLACK_REFRESH", &soon)
-            .await;
-        vault.set("SLACK_TOKEN", "about-to-expire", None).await.unwrap();
-        vault.set("SLACK_REFRESH", "refresh-tok", None).await.unwrap();
+        insert_oauth_connector(
+            &store,
+            "slack",
+            "slack",
+            "SLACK_TOKEN",
+            "SLACK_REFRESH",
+            &soon,
+        )
+        .await;
+        vault
+            .set("SLACK_TOKEN", "about-to-expire", None)
+            .await
+            .unwrap();
+        vault
+            .set("SLACK_REFRESH", "refresh-tok", None)
+            .await
+            .unwrap();
 
         let result = handle_custom_tool(&ctx, "VaultGet", &json!({"key": "SLACK_TOKEN"}))
             .await
@@ -6954,18 +6916,13 @@ base_url = "https://slack.com/api"
         let tmp = TempDir::new().unwrap();
 
         // Mock returns 401 error
-        let (proxy_url, server_handle) = start_mock_refresh_server(
-            json!({"error": "invalid_grant"}),
-            401,
-        )
-        .await;
+        let (proxy_url, server_handle) =
+            start_mock_refresh_server(json!({"error": "invalid_grant"}), 401).await;
 
-        let (ctx, vault, store) =
-            oauth_refresh_ctx(&tmp, Some(proxy_url)).await;
+        let (ctx, vault, store) = oauth_refresh_ctx(&tmp, Some(proxy_url)).await;
 
         let past = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
-        insert_oauth_connector(&store, "github", "github", "GH_TOKEN", "GH_REFRESH", &past)
-            .await;
+        insert_oauth_connector(&store, "github", "github", "GH_TOKEN", "GH_REFRESH", &past).await;
         vault.set("GH_TOKEN", "old-token", None).await.unwrap();
         vault.set("GH_REFRESH", "bad-refresh", None).await.unwrap();
 
@@ -6986,12 +6943,10 @@ base_url = "https://slack.com/api"
     #[tokio::test]
     async fn vault_get_refresh_without_refresh_token_in_vault() {
         let tmp = TempDir::new().unwrap();
-        let (ctx, vault, store) =
-            oauth_refresh_ctx(&tmp, Some("http://127.0.0.1:1".into())).await;
+        let (ctx, vault, store) = oauth_refresh_ctx(&tmp, Some("http://127.0.0.1:1".into())).await;
 
         let past = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
-        insert_oauth_connector(&store, "github", "github", "GH_TOKEN", "GH_REFRESH", &past)
-            .await;
+        insert_oauth_connector(&store, "github", "github", "GH_TOKEN", "GH_REFRESH", &past).await;
         vault.set("GH_TOKEN", "old-token", None).await.unwrap();
         // GH_REFRESH is NOT set in vault
 
@@ -7006,8 +6961,7 @@ base_url = "https://slack.com/api"
     #[tokio::test]
     async fn vault_get_refresh_no_refresh_key_on_connector() {
         let tmp = TempDir::new().unwrap();
-        let (ctx, vault, store) =
-            oauth_refresh_ctx(&tmp, Some("http://127.0.0.1:1".into())).await;
+        let (ctx, vault, store) = oauth_refresh_ctx(&tmp, Some("http://127.0.0.1:1".into())).await;
 
         // Connector with no oauth_refresh_key
         store
@@ -7031,7 +6985,10 @@ base_url = "https://slack.com/api"
             })
             .await
             .unwrap();
-        vault.set("SENTRY_TOKEN", "old-sentry-token", None).await.unwrap();
+        vault
+            .set("SENTRY_TOKEN", "old-sentry-token", None)
+            .await
+            .unwrap();
 
         let result = handle_custom_tool(&ctx, "VaultGet", &json!({"key": "SENTRY_TOKEN"}))
             .await
@@ -7043,8 +7000,7 @@ base_url = "https://slack.com/api"
     #[tokio::test]
     async fn vault_get_refresh_no_expires_at() {
         let tmp = TempDir::new().unwrap();
-        let (ctx, vault, store) =
-            oauth_refresh_ctx(&tmp, Some("http://127.0.0.1:1".into())).await;
+        let (ctx, vault, store) = oauth_refresh_ctx(&tmp, Some("http://127.0.0.1:1".into())).await;
 
         // Connector with no oauth_expires_at — should skip refresh
         store
@@ -7089,14 +7045,15 @@ base_url = "https://slack.com/api"
         )
         .await;
 
-        let (ctx, vault, store) =
-            oauth_refresh_ctx(&tmp, Some(proxy_url)).await;
+        let (ctx, vault, store) = oauth_refresh_ctx(&tmp, Some(proxy_url)).await;
 
         let past = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
-        insert_oauth_connector(&store, "github", "github", "GH_TOKEN", "GH_REFRESH", &past)
-            .await;
+        insert_oauth_connector(&store, "github", "github", "GH_TOKEN", "GH_REFRESH", &past).await;
         vault.set("GH_TOKEN", "old-access", None).await.unwrap();
-        vault.set("GH_REFRESH", "original-refresh", None).await.unwrap();
+        vault
+            .set("GH_REFRESH", "original-refresh", None)
+            .await
+            .unwrap();
 
         let result = handle_custom_tool(&ctx, "VaultGet", &json!({"key": "GH_TOKEN"}))
             .await
@@ -7125,8 +7082,7 @@ base_url = "https://slack.com/api"
 
         let client = Client::new();
         let result =
-            try_refresh_token(&client, &proxy_url, "github-connector", "old-refresh")
-                .await;
+            try_refresh_token(&client, &proxy_url, "github-connector", "old-refresh").await;
 
         let resp = result.unwrap();
         assert_eq!(resp.access_token, "fresh-token");
@@ -7138,16 +7094,12 @@ base_url = "https://slack.com/api"
 
     #[tokio::test]
     async fn try_refresh_token_error_status() {
-        let (proxy_url, server_handle) = start_mock_refresh_server(
-            json!({"error": "invalid_grant"}),
-            400,
-        )
-        .await;
+        let (proxy_url, server_handle) =
+            start_mock_refresh_server(json!({"error": "invalid_grant"}), 400).await;
 
         let client = Client::new();
         let result =
-            try_refresh_token(&client, &proxy_url, "github-connector", "bad-refresh")
-                .await;
+            try_refresh_token(&client, &proxy_url, "github-connector", "bad-refresh").await;
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -7160,9 +7112,7 @@ base_url = "https://slack.com/api"
     async fn try_refresh_token_unreachable_server() {
         let client = Client::new();
         // Port 1 should be unreachable
-        let result =
-            try_refresh_token(&client, "http://127.0.0.1:1", "test-connector", "rt")
-                .await;
+        let result = try_refresh_token(&client, "http://127.0.0.1:1", "test-connector", "rt").await;
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("refresh request failed"));
@@ -7177,9 +7127,7 @@ base_url = "https://slack.com/api"
         .await;
 
         let client = Client::new();
-        let result =
-            try_refresh_token(&client, &proxy_url, "github-connector", "refresh")
-                .await;
+        let result = try_refresh_token(&client, &proxy_url, "github-connector", "refresh").await;
 
         assert!(result.is_err());
         assert!(
