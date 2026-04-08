@@ -98,6 +98,15 @@ function appReducer(state, action) {
         previewUrl: null,
       }
 
+    case 'SET_SESSION_KEY':
+      // Hydrate the channel_session_key for the current session without
+      // touching any other state (no pushState, no previewUrl reset). Used
+      // after a refresh where the URL gave us a session id but the key was
+      // initialised to a fresh random UUID that won't match the server.
+      if (action.payload.id !== state.currentSessionId) return state
+      if (action.payload.key === state.currentSessionKey) return state
+      return { ...state, currentSessionKey: action.payload.key }
+
     case 'NEW_CHAT':
       if (!action._fromPopState) {
         window.history.pushState(null, '', '#/')
