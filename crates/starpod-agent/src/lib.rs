@@ -3220,8 +3220,10 @@ mod tests {
 
     #[test]
     fn resolve_background_model_none_falls_back_to_default() {
-        let mut cfg = StarpodConfig::default();
-        cfg.models = vec!["anthropic/claude-sonnet-4-6".to_string()];
+        let cfg = StarpodConfig {
+            models: vec!["anthropic/claude-sonnet-4-6".to_string()],
+            ..Default::default()
+        };
         let (provider, model) = resolve_background_model(None, &cfg);
         assert_eq!(provider, "anthropic");
         assert_eq!(model, "claude-sonnet-4-6");
