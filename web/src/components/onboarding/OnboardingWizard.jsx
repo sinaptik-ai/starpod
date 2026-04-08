@@ -1,12 +1,11 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { StarpodIcon } from '../ui/Logo'
-import StepIdentity from './StepIdentity'
-import StepModel from './StepModel'
+import StepAgent from './StepAgent'
+import StepConnections from './StepConnections'
 import StepRole from './StepRole'
-import StepSkills from './StepSkills'
 import StepDone from './StepDone'
 
-const STEPS = ['Identity', 'Model', 'Role', 'Skills']
+const STEPS = ['Agent', 'Connections', 'Role']
 
 export default function OnboardingWizard({ initialData, onComplete }) {
   const [phase, setPhase] = useState('intro') // intro | steps | done
@@ -16,6 +15,8 @@ export default function OnboardingWizard({ initialData, onComplete }) {
     agentName: initialData?.agent_name || 'Nova',
     provider: initialData?.provider || 'anthropic',
     model: '',
+    browserEnabled: false,
+    connectors: [],
     generatedSkills: [],
   })
 
@@ -35,8 +36,14 @@ export default function OnboardingWizard({ initialData, onComplete }) {
     }, 150)
   }, [])
 
-  const next = useCallback(() => animateTransition(step + 1), [step, animateTransition])
-  const back = useCallback(() => animateTransition(step - 1), [step, animateTransition])
+  const next = useCallback(
+    () => animateTransition(step + 1),
+    [step, animateTransition],
+  )
+  const back = useCallback(
+    () => animateTransition(Math.max(0, step - 1)),
+    [step, animateTransition],
+  )
 
   if (phase === 'intro') {
     return <IntroScreen onStart={() => setPhase('steps')} />
@@ -46,27 +53,36 @@ export default function OnboardingWizard({ initialData, onComplete }) {
     return <StepDone agentName={data.agentName} onComplete={onComplete} />
   }
 
-  const stepComponent = (() => {
-    switch (step) {
-      case 0: return <StepIdentity data={data} updateData={updateData} onNext={next} />
-      case 1: return <StepModel data={data} updateData={updateData} onNext={next} onBack={back} />
-      case 2: return <StepRole data={data} updateData={updateData} onNext={next} onBack={back} />
-      case 3: return <StepSkills data={data} onNext={next} onBack={back} />
-      default: return null
-    }
-  })()
+  let stepComponent = null
+  if (step === 0) {
+    stepComponent = <StepAgent data={data} updateData={updateData} onNext={next} />
+  } else if (step === 1) {
+    stepComponent = (
+      <StepConnections
+        data={data}
+        updateData={updateData}
+        onNext={next}
+        onBack={back}
+      />
+    )
+  } else if (step === 2) {
+    stepComponent = (
+      <StepRole data={data} updateData={updateData} onNext={next} onBack={back} />
+    )
+  }
 
   return (
     <div className="ob-shell">
-      {/* Progress — segmented bar with step labels */}
       <div className="ob-header">
         <div className="ob-progress">
           {STEPS.map((label, i) => (
-            <div key={i} className="ob-progress-step">
+            <div key={label} className="ob-progress-step">
               <div
                 className={`ob-progress-bar ${i <= step ? 'ob-progress-bar--filled' : ''}`}
               />
-              <span className={`ob-progress-label ${i <= step ? 'ob-progress-label--active' : ''}`}>
+              <span
+                className={`ob-progress-label ${i <= step ? 'ob-progress-label--active' : ''}`}
+              >
                 {label}
               </span>
             </div>
@@ -74,7 +90,6 @@ export default function OnboardingWizard({ initialData, onComplete }) {
         </div>
       </div>
 
-      {/* Content */}
       <div className="ob-content-area">
         <div className={`ob-step-container ${transitioning ? 'ob-fading' : ''}`}>
           {stepComponent}
@@ -98,7 +113,7 @@ function IntroScreen({ onStart }) {
         <StarpodIcon className="w-12 h-12 text-primary" />
         <h1 className="ob-intro-brand">Starpod</h1>
         <p className="ob-intro-sub">Set up your agent</p>
-        <button className="ob-intro-btn" onClick={onStart} autoFocus>
+        <button className="ob-intro-btn" onClick={onStart} autoFocus type="button">
           Begin
         </button>
       </div>
