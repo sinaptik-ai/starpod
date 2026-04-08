@@ -512,11 +512,21 @@ impl StarpodAgent {
                     xml.push_str("  </connector>\n");
                 }
                 xml.push_str("</connectors>\n\
-                              Connectors represent configured service connections. Their secrets are \
-                              stored in the vault — retrieve them with VaultGet (e.g. VaultGet({\"key\": \"GITHUB_TOKEN\"})) \
-                              before using them in API calls. Do NOT assume secrets are available as \
-                              environment variables. Never hardcode secret values in commands — store \
-                              them in a variable and reference it. \
+                              Connectors represent configured service connections. Their secrets live in \
+                              the vault AND are exported to this process as real environment variables at \
+                              boot — any shell command, script, or program you run via Bash inherits them \
+                              automatically (e.g. `curl -H \"Authorization: Bearer $GITHUB_TOKEN\" ...`). \
+                              Reference secrets ONLY as shell variables (`$VARNAME`); never echo, print, \
+                              or paste the literal value into any command, memory, or response. Use \
+                              `VaultGet` only in the rare case you need the raw value inside your own \
+                              reasoning. \
+                              Custom connectors (type=\"custom\") come with a dedicated skill — listed in \
+                              the skill catalog under the same name — that documents exactly how to call \
+                              the API with `curl` and the env var named in the connector's config. \
+                              ALWAYS `SkillActivate` that skill before calling a custom API, and if \
+                              anything it says turns out to be wrong, incomplete, or out of date, call \
+                              `SkillUpdate` with a corrected body BEFORE replying to the user (see the \
+                              skill self-maintenance guidance below). \
                               Manage connectors with ConnectorList, ConnectorAdd, ConnectorRemove.");
                 xml
             }
@@ -655,21 +665,50 @@ impl StarpodAgent {
              Do NOT save: task progress, TODO lists, or information that only matters right now.",
         );
 
-        // ── Self-improve guidance (skill auto-creation + improvement) ─
+        // ── Skill self-maintenance (ALWAYS ON) ───────────────────────
+        // Skills that wrap external APIs rot silently — endpoints change,
+        // parameters get renamed, error codes shift. The only defence is
+        // to treat every active skill as living documentation that YOU
+        // are responsible for keeping correct. This guidance runs on
+        // every turn, not just in self-improve mode, because a stale
+        // custom-API skill actively misleads future invocations.
+        prompt.push_str(
+            "\n\n--- SKILL SELF-MAINTENANCE ---\n\
+             Skills are living documentation. If an active skill turns out to be wrong, you MUST \
+             fix it with SkillUpdate BEFORE replying to the user — do not work around it silently. \
+             A stale skill misleads every future invocation, so leaving it broken is worse than \
+             having no skill at all.\n\n\
+             Trigger SkillUpdate IMMEDIATELY when any of these happen while using a skill:\n\
+             • A command the skill told you to run fails (non-zero exit, unexpected HTTP status, \
+             auth error, missing field, schema mismatch).\n\
+             • The skill's recipes don't match what you observe: wrong endpoint path, wrong \
+             parameter name, wrong response format, wrong error string.\n\
+             • The skill is missing an operation the user needs — add a new recipe.\n\
+             • The skill references a connector, env var, or base URL that no longer exists or \
+             has been renamed.\n\
+             • You hit an error whose meaning isn't documented in the skill's \"Errors to \
+             recognize\" section — add it there with the fix.\n\n\
+             When you update a skill, preserve the parts that still work and narrow your edit \
+             to the broken section. Keep curl examples referencing secrets as `$VARNAME` \
+             (never the literal value). After updating, retry the original task with the \
+             corrected instructions before telling the user what you did.\n\n\
+             Custom connectors (type=\"custom\") are the most important case: their skills were \
+             generated automatically from docs and WILL contain inaccuracies that only surface \
+             on real calls. Treat the first failure of a custom-connector skill as expected and \
+             fix the skill as part of completing the task.",
+        );
+
+        // ── Self-improve guidance (skill auto-creation) ──────────────
+        // The create-new-skill-from-experience behaviour is still gated
+        // behind self_improve because it's a stronger opinion.
         if config.self_improve {
             prompt.push_str(
                 "\n\n--- SELF-IMPROVE MODE (beta) ---\n\
-                 You have self-improvement enabled. This means:\n\n\
                  SKILL AUTO-CREATION:\n\
                  After completing a complex task (roughly 5+ tool calls), fixing a tricky error, \
                  or discovering a non-trivial workflow, save the approach as a skill with SkillCreate \
                  so you can reuse it next time. Include clear steps, context on when to use it, \
                  and any pitfalls you encountered. Do not create skills for trivial or one-off tasks.\n\n\
-                 SKILL SELF-IMPROVEMENT:\n\
-                 When using a skill and finding it outdated, incomplete, or wrong, update it \
-                 immediately with SkillUpdate — don't wait to be asked. Skills that aren't \
-                 maintained become liabilities. If a skill's instructions led you astray, \
-                 fix them so the next invocation succeeds.\n\n\
                  SKILL CONNECTOR DECLARATIONS:\n\
                  When creating or updating skills that interact with external services, declare their \
                  connector requirements using the `connectors` parameter — a list of connector names \

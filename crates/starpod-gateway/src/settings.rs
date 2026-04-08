@@ -460,6 +460,10 @@ pub fn settings_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             get(list_connectors).post(create_connector),
         )
         .route(
+            "/api/settings/connectors/custom",
+            axum::routing::post(create_custom_connector),
+        )
+        .route(
             "/api/settings/connectors/{name}",
             get(get_connector)
                 .put(update_connector)
@@ -1289,6 +1293,158 @@ fn strip_json_fence(raw: &str) -> &str {
     s.strip_suffix("```").unwrap_or(s).trim()
 }
 
+/// Best-effort repair of the most common JSON mistakes LLMs make when
+/// emitting structured output: raw control characters (newlines, carriage
+/// returns, tabs) inside string values. Walks the bytes once, tracking
+/// in-string / escape state, and replaces raw control bytes with their
+/// escaped equivalents. Bytes outside strings are passed through verbatim.
+///
+/// Does NOT attempt to fix unescaped quotes or trailing commas — if those
+/// occur, the caller falls back to the corrective-retry path.
+fn repair_json_string_escapes(raw: &str) -> String {
+    let bytes = raw.as_bytes();
+    let mut out = String::with_capacity(bytes.len() + 16);
+    let mut in_string = false;
+    let mut escape = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_string {
+            if escape {
+                out.push(b as char);
+                escape = false;
+                i += 1;
+                continue;
+            }
+            match b {
+                b'\\' => {
+                    out.push('\\');
+                    escape = true;
+                }
+                b'"' => {
+                    out.push('"');
+                    in_string = false;
+                }
+                b'\n' => out.push_str("\\n"),
+                b'\r' => out.push_str("\\r"),
+                b'\t' => out.push_str("\\t"),
+                _ if b < 0x20 => {
+                    // Other C0 control chars: emit as \u00XX.
+                    out.push_str(&format!("\\u{:04x}", b));
+                }
+                _ => {
+                    // Pass through (including UTF-8 continuation bytes).
+                    out.push(b as char);
+                }
+            }
+        } else if b == b'"' {
+            in_string = true;
+            out.push('"');
+        } else {
+            out.push(b as char);
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Parse an AI text response into a typed value, with best-effort repair.
+///
+/// Strategy:
+/// 1. Strip markdown fences.
+/// 2. Try `serde_json::from_str` directly.
+/// 3. On failure, run the repair pass and try again.
+///
+/// Returns the *original* parser error on failure (more useful for diagnostics
+/// than the post-repair error, which is usually identical).
+fn parse_ai_json<T: serde::de::DeserializeOwned>(raw: &str) -> Result<T, serde_json::Error> {
+    let stripped = strip_json_fence(raw);
+    match serde_json::from_str::<T>(stripped) {
+        Ok(v) => Ok(v),
+        Err(first_err) => {
+            let repaired = repair_json_string_escapes(stripped);
+            serde_json::from_str::<T>(&repaired).map_err(|_| first_err)
+        }
+    }
+}
+
+/// Run a structured-output query against the agent SDK and return the raw
+/// result text. Centralises the boilerplate so call sites can focus on
+/// schema + parsing.
+async fn run_structured_query(
+    user_prompt: &str,
+    system_prompt: &str,
+    schema: serde_json::Value,
+) -> Result<String, (StatusCode, Json<ErrorResponse>)> {
+    let options = agent_sdk::Options::builder()
+        .system_prompt(agent_sdk::options::SystemPrompt::Custom(
+            system_prompt.to_string(),
+        ))
+        .output_format(schema)
+        .max_turns(1)
+        .persist_session(false)
+        .permission_mode(agent_sdk::PermissionMode::Plan)
+        .build();
+
+    let mut stream = agent_sdk::query(user_prompt, options);
+
+    use futures::StreamExt;
+    let mut result_msg = None;
+    while let Some(msg_result) = stream.next().await {
+        let msg = msg_result.map_err(internal)?;
+        if let agent_sdk::Message::Result(result) = msg {
+            result_msg = Some(result);
+        }
+    }
+    let result = result_msg.ok_or_else(|| internal("No result from AI"))?;
+    if result.is_error {
+        return Err(internal(result.errors.join("; ")));
+    }
+    result
+        .result
+        .ok_or_else(|| internal("No text returned from AI"))
+}
+
+/// Run a structured-output query and parse it into `T`, with one corrective
+/// retry on parser failure. The retry re-prompts the model with the parser
+/// error so it can self-correct.
+async fn structured_query_with_retry<T: serde::de::DeserializeOwned>(
+    user_prompt: &str,
+    system_prompt: &str,
+    schema: serde_json::Value,
+) -> Result<T, (StatusCode, Json<ErrorResponse>)> {
+    let first_text = run_structured_query(user_prompt, system_prompt, schema.clone()).await?;
+    match parse_ai_json::<T>(&first_text) {
+        Ok(v) => Ok(v),
+        Err(parse_err) => {
+            tracing::warn!(
+                error = %parse_err,
+                "Structured AI response failed to parse; retrying with corrective prompt"
+            );
+            let corrective_prompt = format!(
+                "{user_prompt}\n\n\
+                 ---\n\
+                 IMPORTANT: Your previous response was NOT valid JSON.\n\
+                 Parser error: {parse_err}\n\
+                 Return ONLY a single valid JSON object matching the schema. \
+                 All string values MUST escape newlines as \\n, tabs as \\t, \
+                 carriage returns as \\r, double quotes as \\\", and backslashes as \\\\. \
+                 Do not wrap the JSON in markdown fences. Do not include any prose \
+                 before or after the JSON object."
+            );
+            let retry_text =
+                run_structured_query(&corrective_prompt, system_prompt, schema).await?;
+            parse_ai_json::<T>(&retry_text).map_err(|e| {
+                tracing::error!(
+                    error = %e,
+                    "Structured AI response failed to parse even after retry"
+                );
+                internal(format!("Failed to parse AI response after retry: {e}"))
+            })
+        }
+    }
+}
+
 async fn generate_skill(
     State(_state): State<Arc<AppState>>,
     Json(req): Json<GenerateSkillRequest>,
@@ -1322,46 +1478,14 @@ async fn generate_skill(
         "additionalProperties": false
     });
 
-    let options = agent_sdk::Options::builder()
-        .system_prompt(agent_sdk::options::SystemPrompt::Custom(
-            SKILL_GEN_SYSTEM_PROMPT.to_string(),
-        ))
-        .output_format(output_schema)
-        .max_turns(1)
-        .persist_session(false)
-        .permission_mode(agent_sdk::PermissionMode::Plan)
-        .build();
-
-    let mut stream = agent_sdk::query(&user_prompt, options);
-
-    use futures::StreamExt;
-    let mut result_msg = None;
-    while let Some(msg_result) = stream.next().await {
-        let msg = msg_result.map_err(internal)?;
-        if let agent_sdk::Message::Result(result) = msg {
-            result_msg = Some(result);
-        }
-    }
-
-    let result = result_msg.ok_or_else(|| internal("No result from AI"))?;
-
-    if result.is_error {
-        return Err(internal(result.errors.join("; ")));
-    }
-
-    let result_text = result
-        .result
-        .ok_or_else(|| internal("No text returned from AI"))?;
-
     #[derive(serde::Deserialize)]
     struct SkillGen {
         description: String,
         body: String,
     }
 
-    let json_str = strip_json_fence(&result_text);
-    let gen: SkillGen = serde_json::from_str(json_str)
-        .map_err(|e| internal(format!("Failed to parse AI response: {e}")))?;
+    let gen: SkillGen =
+        structured_query_with_retry(&user_prompt, SKILL_GEN_SYSTEM_PROMPT, output_schema).await?;
 
     Ok(Json(GenerateSkillResponse {
         description: gen.description,
@@ -1432,6 +1556,8 @@ const ROLE_GEN_SYSTEM_PROMPT: &str = r#"You are an AI agent configurator for the
 
 Return a JSON object with exactly: `soul_md`, `heartbeat_md`, `skills`.
 If the user's description is vague, make reasonable creative choices that feel coherent. Always think about what API keys and credentials each skill would need to actually function.
+
+IMPORTANT: If the integrations list the user provides includes any connector of type `"custom"`, that connector already has a dedicated skill that was generated automatically at connector-creation time. Do NOT emit a duplicate skill for it in the `skills` array. You may reference it in `soul_md` (e.g. "uses the <name> skill for ..."), but leave the skill body itself alone.
 "#;
 
 async fn generate_role(
@@ -1480,40 +1606,8 @@ async fn generate_role(
         "additionalProperties": false
     });
 
-    let options = agent_sdk::Options::builder()
-        .system_prompt(agent_sdk::options::SystemPrompt::Custom(
-            ROLE_GEN_SYSTEM_PROMPT.to_string(),
-        ))
-        .output_format(output_schema)
-        .max_turns(1)
-        .persist_session(false)
-        .permission_mode(agent_sdk::PermissionMode::Plan)
-        .build();
-
-    let mut stream = agent_sdk::query(&user_prompt, options);
-
-    use futures::StreamExt;
-    let mut result_msg = None;
-    while let Some(msg_result) = stream.next().await {
-        let msg = msg_result.map_err(internal)?;
-        if let agent_sdk::Message::Result(result) = msg {
-            result_msg = Some(result);
-        }
-    }
-
-    let result = result_msg.ok_or_else(|| internal("No result from AI"))?;
-
-    if result.is_error {
-        return Err(internal(result.errors.join("; ")));
-    }
-
-    let result_text = result
-        .result
-        .ok_or_else(|| internal("No text returned from AI"))?;
-
-    let json_str = strip_json_fence(&result_text);
-    let gen: GeneratePersonalityResponse = serde_json::from_str(json_str)
-        .map_err(|e| internal(format!("Failed to parse AI response: {e}")))?;
+    let gen: GeneratePersonalityResponse =
+        structured_query_with_retry(&user_prompt, ROLE_GEN_SYSTEM_PROMPT, output_schema).await?;
 
     Ok(Json(gen))
 }
@@ -2249,6 +2343,44 @@ struct CreateConnectorRequest {
     config: std::collections::HashMap<String, String>,
 }
 
+/// Request body for `POST /api/settings/connectors/custom`.
+///
+/// A custom connector is a (vault key + auto-generated skill) pair. The user
+/// supplies an API key and a docs URL; the server fetches the docs, asks
+/// Claude to write a `SKILL.md` that teaches the agent how to call the API
+/// via `bash` + `curl`, stores the key in the vault with host binding,
+/// exports it to the live process environment, and inserts a connector row
+/// of type `"custom"` so the UI can list it alongside built-in connectors.
+#[derive(Deserialize)]
+struct CreateCustomConnectorRequest {
+    /// Connector instance name (kebab-case, e.g. `"semrush"`). Also becomes
+    /// the skill name under `.starpod/skills/<name>/`.
+    name: String,
+    /// The API key / token the user obtained from the service.
+    api_key: String,
+    /// URL of the API's human docs. The server fetches this to give the
+    /// skill-generation prompt something concrete to work from.
+    docs_url: String,
+    /// Optional free-text description shown in the connector list. Defaults
+    /// to something derived from the skill.
+    #[serde(default)]
+    description: Option<String>,
+    /// Optional override for the env var name. Defaults to `<NAME>_API_KEY`
+    /// with hyphens replaced by underscores, e.g. `SEMRUSH_API_KEY`.
+    #[serde(default)]
+    env_var: Option<String>,
+}
+
+/// Response for `POST /api/settings/connectors/custom`.
+#[derive(Serialize)]
+struct CreateCustomConnectorResponse {
+    connector: ConnectorInfo,
+    skill_name: String,
+    env_var: String,
+    /// Short summary of what was generated, suitable for surfacing in the UI.
+    generated_description: String,
+}
+
 /// Request body for `PUT /api/settings/connectors/:name`.
 ///
 /// Both fields are optional — only provided fields are updated.
@@ -2480,6 +2612,334 @@ async fn create_connector(
             updated_at: created.updated_at,
         }),
     ))
+}
+
+// ── Custom (user-defined) connectors ────────────────────────────────────
+
+/// System prompt for the skill-generation LLM call.
+///
+/// The model reads raw API docs and must return a JSON object with a
+/// `description`, a `body` (the SKILL.md markdown body — no frontmatter),
+/// and a best-effort `base_url`. The generated body must teach a *future*
+/// instance of the agent how to call the API from `bash` using `curl` and
+/// the env var that holds the key. It must also include self-improvement
+/// guidance: if a call fails or a detail is wrong, the agent should call
+/// `SkillUpdate` immediately with a corrected body.
+const CUSTOM_SKILL_SYSTEM_PROMPT: &str = r#"You are writing a Starpod SKILL.md body that teaches another LLM how to use a specific REST API.
+
+The agent that will read your output has these properties, which shape what you must produce:
+- It has a `Bash` tool and `curl` is available. It does NOT have a dedicated HTTP tool.
+- The API key is already exported as an environment variable in the agent's process. You MUST reference it as a shell variable (e.g. `$SEMRUSH_API_KEY`) in every curl example. NEVER print, echo, or interpolate the raw secret — always `$VARNAME`.
+- The agent can call `SkillUpdate` to rewrite this skill. You must tell it to do so whenever it discovers the skill is wrong, incomplete, or outdated.
+
+Given the raw documentation the user pasted, produce a JSON object with exactly these fields:
+
+1. **description** — ONE sentence, under 200 characters, phrased so another LLM can decide whether to activate this skill for a given user question. Mention the concrete things the API does ("SEO keyword rankings, backlinks, competitor analysis") rather than the brand alone. This is the routing surface — make it specific.
+
+2. **base_url** — the canonical API base URL you can infer from the docs (e.g. "https://api.semrush.com"). Best effort. If unclear, return an empty string.
+
+3. **body** — the full markdown body of SKILL.md, NO frontmatter (the server adds it). Structure the body as:
+
+   ```
+   # <Service name>
+
+   One paragraph: what this skill covers, and a reminder that the API key is in `$<ENV_VAR>` and must NEVER be printed.
+
+   ## Auth & request shape
+   - Base URL
+   - How auth is passed (header, query param, etc.) with a literal curl example
+   - Response format (JSON, CSV, XML, etc.) and how to parse it with jq / awk / etc.
+   - Regional / database parameters the API requires, if any
+
+   ## Recipes
+   Three to six concrete operations the user is likely to ask for. Each is a working `curl` command using `$<ENV_VAR>`. Prefer `curl -sG` with `--data-urlencode` for GET requests with many params. Include a one-line explanation of what each returns.
+
+   ## Errors to recognize
+   Bullet list of error patterns the agent should detect and what they mean. Include auth failures, rate limits, empty results, and any known quirks (e.g. "the API returns HTTP 200 on auth failure with `ERROR 121` in the body").
+
+   ## Output to the user
+   How to format the response: parse the payload, show a small table or summary, cite any parameters you used.
+
+   ## Self-improvement (IMPORTANT)
+   If you (the agent reading this skill) encounter any of the following, you MUST call `SkillUpdate` with a corrected `body` BEFORE replying to the user:
+   - A curl recipe returns an unexpected status or error you hadn't seen before.
+   - The docs described a parameter or endpoint that doesn't exist or is named differently.
+   - You discover a new operation the user needs that isn't listed in Recipes.
+   - The auth scheme, base URL, or response format is different from what this skill claims.
+   - An error message in the wild doesn't match any pattern under "Errors to recognize".
+   Treat this skill as living documentation. A skill that silently leads another invocation astray is worse than no skill. Keep it correct and keep it current.
+   ```
+
+Rules:
+- Every curl in the body MUST reference the env var as `$<ENV_VAR>`, never the literal key.
+- Do NOT include any frontmatter (no `---`, no `name:`, no `description:` lines) in `body`. The server adds it.
+- Keep the body under ~200 lines.
+- If the docs you were given are thin or don't mention certain things, make reasonable guesses and explicitly say in the body that the agent should verify and self-update via SkillUpdate on the first real call.
+- Return ONLY the JSON object. No prose before or after.
+"#;
+
+/// `POST /api/settings/connectors/custom` — create a custom API connector.
+///
+/// Steps:
+/// 1. Validate inputs (name is kebab-case, docs_url parses).
+/// 2. Derive the env var name and the allowed-hosts list.
+/// 3. Store the API key in the vault with host binding and export it live
+///    to the current process so `Bash`-spawned subprocesses inherit it.
+/// 4. Fetch the docs URL (best effort — if it fails we still continue with
+///    whatever description the user supplied).
+/// 5. Call `agent_sdk::query` with a fixed system prompt + structured output
+///    to generate the SKILL.md body.
+/// 6. Write the skill via `SkillStore`.
+/// 7. Insert a `ConnectorRow` with `connector_type="custom"`,
+///    `auth_method="custom"`, `secrets=[env_var]`,
+///    `config={base_url, docs_url, skill}`, `status="connected"`.
+/// 8. Return the connector + generated skill name.
+async fn create_custom_connector(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CreateCustomConnectorRequest>,
+) -> Result<(StatusCode, Json<CreateCustomConnectorResponse>), (StatusCode, Json<ErrorResponse>)> {
+    // ── 1. Validate name ─────────────────────────────────────────────
+    let name = req.name.trim().to_string();
+    if name.is_empty() {
+        return Err(bad_request("name is required"));
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err(bad_request(
+            "name must be lowercase letters, digits, and hyphens only",
+        ));
+    }
+    if name.len() > 63 {
+        return Err(bad_request("name must be ≤ 63 characters"));
+    }
+    if req.api_key.trim().is_empty() {
+        return Err(bad_request("api_key is required"));
+    }
+    if req.docs_url.trim().is_empty() {
+        return Err(bad_request("docs_url is required"));
+    }
+
+    // ── 2. Env var name + allowed hosts ──────────────────────────────
+    let env_var = req
+        .env_var
+        .clone()
+        .unwrap_or_else(|| format!("{}_API_KEY", name.to_uppercase().replace('-', "_")));
+    if !env_var
+        .chars()
+        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+    {
+        return Err(bad_request(
+            "env_var must be uppercase letters, digits, and underscores only",
+        ));
+    }
+
+    let docs_host =
+        host_of(&req.docs_url).ok_or_else(|| bad_request("docs_url is not a valid URL"))?;
+    // Allowed hosts: the docs host itself is usually the marketing site
+    // (e.g. `developer.semrush.com`), so we also add an `api.` sibling as
+    // a best-effort guess. The LLM's generated skill will narrow this down
+    // to the correct base URL; the user can edit the vault entry later if
+    // it turns out to need another host.
+    let mut allowed_hosts: Vec<String> = vec![docs_host.clone()];
+    if let Some(apex) = docs_host.split_once('.').map(|(_, rest)| rest) {
+        let api_host = format!("api.{apex}");
+        if api_host != docs_host {
+            allowed_hosts.push(api_host);
+        }
+    }
+
+    // ── 3. Vault store + live env export ─────────────────────────────
+    let vault = state
+        .vault
+        .as_ref()
+        .ok_or_else(|| internal("Vault is not available — cannot create custom connector"))?;
+    vault
+        .set_with_hosts(&env_var, &req.api_key, Some(&allowed_hosts), None)
+        .await
+        .map_err(|e| internal(format!("vault set: {e}")))?;
+    // Make the key immediately visible to any Bash subprocess the agent
+    // spawns in this very session, without requiring a restart.
+    // SAFETY: Writing env vars is racy in multi-threaded processes on Unix.
+    // This is the same pattern used by `inject_vault_env` at boot.
+    #[allow(unused_unsafe)]
+    unsafe {
+        std::env::set_var(&env_var, &req.api_key);
+    }
+
+    // ── 4. Fetch docs (best effort) ──────────────────────────────────
+    let docs_excerpt = fetch_docs_excerpt(&req.docs_url).await;
+
+    // ── 5. LLM skill generation ──────────────────────────────────────
+    let user_prompt = format!(
+        "Connector name: {name}\n\
+         Env var holding the API key: ${env_var}\n\
+         Docs URL: {docs_url}\n\
+         \n\
+         Raw documentation excerpt (may be truncated or noisy):\n\
+         <<<DOCS\n{docs}\n>>>\n",
+        name = name,
+        env_var = env_var,
+        docs_url = req.docs_url,
+        docs = docs_excerpt.as_deref().unwrap_or("(docs fetch failed — rely on your prior knowledge of this API and instruct the agent to SkillUpdate after first use)"),
+    );
+
+    let output_schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "description": { "type": "string" },
+            "base_url":    { "type": "string" },
+            "body":        { "type": "string" },
+        },
+        "required": ["description", "base_url", "body"],
+        "additionalProperties": false
+    });
+
+    #[derive(Deserialize)]
+    struct GeneratedSkill {
+        description: String,
+        base_url: String,
+        body: String,
+    }
+    let generated: GeneratedSkill =
+        structured_query_with_retry(&user_prompt, CUSTOM_SKILL_SYSTEM_PROMPT, output_schema)
+            .await?;
+
+    // ── 6. Write the skill ───────────────────────────────────────────
+    let skill_store = starpod_skills::SkillStore::new(&state.paths.skills_dir)
+        .map_err(|e| internal(format!("skill store: {e}")))?;
+    // Declare the connector dependency so the UI / system prompt can
+    // correlate skill ↔ connector.
+    let connectors = [name.clone()];
+    skill_store
+        .create(
+            &name,
+            &generated.description,
+            None,
+            Some(&connectors),
+            &generated.body,
+        )
+        .map_err(|e| internal(format!("skill create: {e}")))?;
+
+    // ── 7. Insert the connector row ──────────────────────────────────
+    let mut config = std::collections::HashMap::new();
+    if !generated.base_url.trim().is_empty() {
+        config.insert("base_url".into(), generated.base_url.clone());
+    }
+    config.insert("docs_url".into(), req.docs_url.clone());
+    config.insert("skill".into(), name.clone());
+    config.insert("env_var".into(), env_var.clone());
+
+    let description = req
+        .description
+        .clone()
+        .unwrap_or_else(|| generated.description.clone());
+
+    let row = starpod_db::connectors::ConnectorRow {
+        name: name.clone(),
+        connector_type: "custom".to_string(),
+        display_name: pretty_display_name(&name),
+        description,
+        auth_method: "custom".to_string(),
+        secrets: vec![env_var.clone()],
+        config,
+        oauth_token_url: None,
+        oauth_token_key: None,
+        oauth_refresh_key: None,
+        oauth_expires_at: None,
+        status: "connected".to_string(),
+        created_at: String::new(),
+        updated_at: String::new(),
+    };
+
+    let store = connector_store(&state);
+    store
+        .insert(&row)
+        .await
+        .map_err(|e| bad_request(format!("connector create: {e}")))?;
+    let created = store
+        .get(&name)
+        .await
+        .map_err(|e| internal(format!("connector get: {e}")))?
+        .ok_or_else(|| internal("Connector created but not found"))?;
+
+    // ── 8. Return ────────────────────────────────────────────────────
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateCustomConnectorResponse {
+            connector: ConnectorInfo {
+                name: created.name,
+                connector_type: created.connector_type,
+                display_name: created.display_name,
+                description: created.description,
+                auth_method: created.auth_method,
+                secrets: created.secrets,
+                config: created.config,
+                oauth_token_url: created.oauth_token_url,
+                oauth_token_key: created.oauth_token_key,
+                oauth_refresh_key: created.oauth_refresh_key,
+                oauth_expires_at: created.oauth_expires_at,
+                status: created.status,
+                created_at: created.created_at,
+                updated_at: created.updated_at,
+            },
+            skill_name: name,
+            env_var,
+            generated_description: generated.description,
+        }),
+    ))
+}
+
+/// Extract the host portion of a URL without pulling in a URL crate.
+fn host_of(url: &str) -> Option<String> {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+    let host = rest.split('/').next()?.split(':').next()?;
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_lowercase())
+    }
+}
+
+/// Turn a kebab-case connector name into a Title Case display label.
+fn pretty_display_name(name: &str) -> String {
+    name.split('-')
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(c) => c.to_uppercase().chain(chars).collect::<String>(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Fetch the API docs and return a truncated text excerpt for the LLM.
+///
+/// Best effort — failures return `None` and the skill generator falls back
+/// on the model's prior knowledge of the API.
+async fn fetch_docs_excerpt(url: &str) -> Option<String> {
+    const MAX_BYTES: usize = 64 * 1024;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .user_agent("Starpod/1.0 (custom-connector skill generator)")
+        .build()
+        .ok()?;
+    let resp = client.get(url).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let bytes = resp.bytes().await.ok()?;
+    let slice = if bytes.len() > MAX_BYTES {
+        &bytes[..MAX_BYTES]
+    } else {
+        &bytes[..]
+    };
+    Some(String::from_utf8_lossy(slice).into_owned())
 }
 
 /// `PUT /api/settings/connectors/:name` — update a connector's config or status.

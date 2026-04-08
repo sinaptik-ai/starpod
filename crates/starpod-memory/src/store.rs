@@ -5,7 +5,7 @@ use std::sync::Arc;
 use chrono::Local;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use starpod_core::{Result, StarpodError};
 
@@ -581,7 +581,12 @@ impl MemoryStore {
 
         std::fs::write(&path, content)?;
 
-        // Reindex this file (FTS5 + vectors)
+        // Reindex this file. FTS5 is cheap and on the critical path — any
+        // failure is surfaced. Vector embedding is best-effort: the embedder
+        // may need to download weights on first use, run over a slow network,
+        // or be misconfigured entirely. We never want those failures to
+        // bubble up as a failed user-facing write (e.g. during onboarding).
+        // Stale vectors can always be rebuilt via `reindex()`.
         reindex_source(
             &self.pool,
             name,
@@ -590,7 +595,13 @@ impl MemoryStore {
             self.chunk_overlap,
         )
         .await?;
-        self.embed_and_store_source(name, content).await?;
+        if let Err(e) = self.embed_and_store_source(name, content).await {
+            warn!(
+                source = name,
+                error = %e,
+                "Vector embedding failed; file written and FTS indexed, vectors will be stale until reindex"
+            );
+        }
 
         Ok(())
     }
